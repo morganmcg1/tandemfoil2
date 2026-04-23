@@ -404,6 +404,7 @@ class Config:
     huber_delta: float = 1.0  # Huber transition point (normalized units)
     amp: bool = False  # bf16 autocast on training forward/backward (val/test stay fp32)
     grad_accum: int = 1  # accumulate gradients over N micro-batches before optimizer step
+    seed: int | None = None  # random seed for reproducibility (None = no seeding)
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -417,6 +418,17 @@ if cfg.loss_type not in LOSS_TYPES:
     raise ValueError(f"--loss_type must be one of {LOSS_TYPES}, got {cfg.loss_type!r}")
 if cfg.grad_accum < 1:
     raise ValueError(f"--grad_accum must be >=1, got {cfg.grad_accum}")
+
+# Seed for reproducibility
+if cfg.seed is not None:
+    import random
+    import numpy as _np
+    random.seed(cfg.seed)
+    _np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
+    torch.cuda.manual_seed_all(cfg.seed)
+    print(f"Random seed: {cfg.seed}")
+
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
