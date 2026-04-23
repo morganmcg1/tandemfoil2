@@ -119,3 +119,68 @@
 - All experiment on MSE; new baseline (103.036, L1) makes 125.86 obsolete as a merge candidate.
 
 ### Decision: **SENT BACK** to nezuko. Rebase on L1, 3-seed disambiguation of floor=1e-5 + WSD scheduler test.
+
+---
+
+## 2026-04-23 22:15 — PR #8: edward: EMA of weights + gradient clipping (round 1 / MSE)
+
+- **Branch:** `edward/ema-gradclip-stability`
+- **W&B group:** `edward/ema-gradclip-stability`
+- **Hypothesis:** EMA of model weights + gradient clipping stabilize training on heavy-tailed CFD regression.
+
+### Results
+
+| Rank | Config (ema / clip) | val_avg/mae_surf_p | W&B run |
+|------|---------------------|--------------------|---------|
+| 1 | 0.999 / 1.0 | **103.302** | `jvpser43` |
+| 2 | 0 / 0.5 | 109.492 | `72qcolpt` |
+| 3 | 0 / 1.0 | 118.120 | `i6dnta6r` |
+| 4 | 0.999 / 0 | 128.018 | `6ptzwqgy` |
+| 5 | 0 / 0 (baseline) | 137.558 | `lruq653s` |
+| 6 | 0.9999 / 0 | 294.597 | `cfvqv705` |
+| 7 | 0.9999 / 1.0 | 301.702 | `9cry9jff` |
+| 8 | 0.9999 / 0.5 | 302.122 | `0bi9hip6` |
+
+### Analysis
+
+- **Winner ties (+0.26) track L1 baseline 103.036** on MSE. Not a merge, but strong signal — 24.9% improvement over in-PR MSE baseline via stability alone.
+- **Clip is the dominant lever.** Clip alone (clip0.5=109.49) captures most of the gain. EMA 0.999 alone = 128.02 (−6.9%).
+- **Stacking slightly super-additive**: expected 21.0% from summing isolated gains, observed 24.9%.
+- **EMA 0.9999 catastrophically fails** (294–302) — horizon mismatch. At 14 epochs (5250 steps) vs EMA decay-horizon ~10k steps, shadow weights never escape init. Student's diagnosis correct.
+- **Grad-clip at 1.0 fires 100% of steps** (median norm = 44, p99 = 330). The optimizer uses unit-norm direction only. Higher thresholds (5, 10, 50) would gate only the tail — that's the informative regime.
+- Overlap with L1: grad-clip and L1 both damp heavy-tail gradient signal. May be redundant when combined.
+
+### Decision: **SENT BACK** to edward. Rebase on L1, sweep higher clip thresholds {1, 5, 10, 50}, 2-seed EMA-only read.
+
+---
+
+## 2026-04-23 22:15 — PR #9: thorfinn: Pressure target reparameterization (round 1 / MSE)
+
+- **Branch:** `thorfinn/pressure-target-reparam`
+- **W&B group:** `thorfinn/pressure-target-reparam`
+- **Hypothesis:** Reparameterizing pressure target (asinh, robust z-score, per-domain z-score) reduces heavy-tail bias in loss.
+
+### Results
+
+| Rank | y_norm | asinh_scale | val_avg/mae_surf_p | test_avg/mae_surf_p |
+|------|--------|-------------|---------------------|----------------------|
+| 1 | asinh | 458 (per-sample avg y_std) | **100.034** | **90.261** ← first finite test on track |
+| 2 | asinh | 500 | 106.292 | 95.169 |
+| 3 | asinh | 100 | 108.387 | 97.617 |
+| 4 | asinh | 1000 | 111.537 | 100.782 |
+| 5 | asinh | 2000 | 118.296 | 105.418 |
+| 6 | per_domain (zscore) | — | 129.756 | 142.916 |
+| 7 | baseline (zscore) | — | 134.843 | 121.932 |
+| 8 | robust (median/MAD) | — | 143.406 | 130.164 |
+
+### Analysis
+
+- **Winner beats track L1 baseline (103.036) by 2.91%** — while still running MSE. Asinh mechanism is **orthogonal to loss shape** → signal should compound with L1 (expected combined gain ≥ 2.9%, possibly more).
+- **Clean U-shape over asinh scale:** 458 < 500 < 100 < 1000 < 2000. Optimum near per-sample σ, matching theory — linear regime covers typical pressure, log kicks in for outliers.
+- **robust LOSES (+6.4%)** — median/MAD fixes scale-stat robustness but not tail damping. The effective mechanism is **compression of extreme target values**, not resistance to outliers in the divisor.
+- **per_domain LOSES (val −3.8%, test +17.2%)**. On `test_re_rand` raceCar MAE jumps 132→266 (+102%). Classic shortcut failure: domain-baked normalization breaks cross-domain transfer. Right way to use domain signal: as input feature (FiLM / one-hot), not normalization.
+- **BUG FIX PROVIDED:** student patched `data/scoring.py::accumulate_batch` to zero non-finite samples' y before the subtract, so `(Inf - pred).abs() * 0.0 = NaN` no longer poisons the accumulator. First finite `test_avg/mae_surf_p` on this track (= 90.26 for winner).
+
+### Decision: **PARTIAL MERGE**
+- **Scoring.py fix cherry-picked** to advisor branch (commit 7d71abd). GH issue #10 closed. Unblocks test metrics for every in-flight and future PR.
+- **asinh hypothesis SENT BACK** for rebase on L1 + 3-seed compound sweep. Couldn't clean-merge the combined PR due to train.py conflict with L1. If thorfinn's L1+asinh replicates ≤103.036, the new baseline will shift.
