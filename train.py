@@ -219,6 +219,14 @@ class Transolver(nn.Module):
 
 LOSS_TYPES = ("mse", "l1", "huber")
 
+# Horizontal-flip augmentation (x → −x). Under this reflection a 2D
+# incompressible NS solution stays valid provided the x-component of every
+# polar/vector quantity flips sign and scalars/orthogonal components are kept.
+# Applied to raw (pre-normalization) features so normalization uses the same
+# stats for flipped and unflipped samples.
+X_HFLIP_NEG_DIMS = (0, 2, 14, 18, 23)  # x-coord, saf[0], AoA foil1, AoA foil2, stagger
+Y_HFLIP_NEG_DIMS = (0,)                 # Ux (x-component of velocity); Uy/p unchanged
+
 
 def elementwise_loss(pred: torch.Tensor, target: torch.Tensor, loss_type: str,
                      huber_delta: float) -> torch.Tensor:
@@ -408,6 +416,9 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    hflip_aug: bool = False  # enable physics-exact horizontal-flip augmentation (train-only)
+    hflip_prob: float = 0.5  # per-sample probability of applying the hflip
+    seed: int = 0  # seeds torch RNG (model init + data sampling + hflip decisions)
 
 
 cfg = sp.parse(Config)
@@ -416,11 +427,18 @@ if cfg.loss_type not in LOSS_TYPES:
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
+torch.manual_seed(cfg.seed)
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
 print(f"Loss: {cfg.loss_type}"
       + (f" (delta={cfg.huber_delta})" if cfg.loss_type == "huber" else "")
       + f"  surf_weight={cfg.surf_weight}")
+print(
+    f"hflip_aug: {cfg.hflip_aug}"
+    + (f" (p={cfg.hflip_prob})" if cfg.hflip_aug else "")
+    + f"  seed={cfg.seed}"
+)
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -505,11 +523,26 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
 
+    epoch_flipped = 0
+    epoch_samples = 0
+
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
+
+        if cfg.hflip_aug:
+            B = x.shape[0]
+            flip_mask = torch.rand(B, device=device) < cfg.hflip_prob  # [B]
+            # sign=-1 at flipped samples, +1 elsewhere; broadcast over nodes
+            sign = torch.where(flip_mask, -1.0, 1.0).to(x.dtype).view(B, 1)
+            for d in X_HFLIP_NEG_DIMS:
+                x[:, :, d] = x[:, :, d] * sign
+            for d in Y_HFLIP_NEG_DIMS:
+                y[:, :, d] = y[:, :, d] * sign
+            epoch_flipped += int(flip_mask.sum().item())
+            epoch_samples += B
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
@@ -556,6 +589,8 @@ for epoch in range(MAX_EPOCHS):
         "epoch_time_s": dt,
         "global_step": global_step,
     }
+    if cfg.hflip_aug and epoch_samples > 0:
+        log_metrics["train/hflip_fraction"] = epoch_flipped / epoch_samples
     for split_name, m in split_metrics.items():
         for k, v in m.items():
             log_metrics[f"{split_name}/{k}"] = v
