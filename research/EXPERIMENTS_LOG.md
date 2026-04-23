@@ -408,3 +408,39 @@ Bonus insight: **x-flip is physics-exact for all three domains** (raceCar single
 ### Decision: **MERGED** into `kagent_v_students`. New baseline = 88.268 val / 79.733 test. train.py now includes `--amp` and `--grad_accum` flags. Every future PR should use the AMP recipe.
 
 **Throughput unlock is the force multiplier of the round.** It should compound with every other improvement — the next round of capacity/loss/conditioning experiments all inherit +5 epochs of training.
+
+---
+
+## 2026-04-23 23:30 — PR #14: frieren: surf_weight sub-1 micro-sweep + AMP compound (round 4)
+
+- **Branch:** `frieren/surf-weight-sub1` (or similar)
+- **W&B group:** `frieren/sw-sub1-amp`
+- **Hypothesis:** sub-1 surf_weight might help under L1 by giving the volume gradient more weight; expected to test whether PR #11's sw=1 optimum is a plateau edge.
+
+### Results (8 runs: 4 sw × {no-AMP, AMP+accum=2})
+
+| Rank | Config (sw / AMP / accum) | val_avg | test_avg | W&B run |
+|------|---------------------------|---------|----------|---------|
+| 1 | sw=2 / AMP / accum=2 | **89.268** | **80.332** | `u511jzaa` |
+| 2 | sw=0.5 / AMP / accum=2 | 96.078 | 85.452 | `ydh5xr81` |
+| 3 | sw=1 / AMP / accum=2 | 96.969 | 86.169 | `2awyn4bk` |
+| 4 | sw=0.25 / AMP / accum=2 | 98.417 | 88.967 | `f4ptf5ez` |
+| 5 | sw=2 / no-AMP | 101.155 | 91.768 | `j0u8r174` |
+| 6 | sw=1 / no-AMP (anchor) | 102.164 | 92.840 | `wetr25tj` |
+| 7 | sw=0.5 / no-AMP | 104.890 | 93.287 | `l2kmvob1` |
+| 8 | sw=0.25 / no-AMP | 109.586 | 97.647 | `jwl4hxi1` |
+
+### Analysis
+
+- **Sub-1 surf_weight confirmed as dead end.** This is a two-experiment replication with PR #12's side-probes (sw=0.5 → 93.10, sw=0.25 → 96.19). sw<1 regresses in every configuration tested.
+- **AMP lift is 5–12% across all sw values**, biggest at sw=2 (−11.8%). Clean replication of PR #12's main finding.
+- **⚡ sw=2 wins the AMP arm at 89.268** — **reverses PR #11's finding**. Under AMP + grad_accum=2 (eff_bs=8), a little more surface weight is the new optimum. The minimum has shifted right.
+- **But ran at grad_accum=2, not the merged baseline's grad_accum=4 (eff_bs=16).** Not a clean test against the current 88.268 baseline. Winner is +1.13% WORSE than merged baseline — does not merge.
+- **Noise-floor concern:** frieren's no-AMP sw=1 anchor hit 102.164 vs PR #11's published 93.127 at identical config. That's a ~9% gap. **No seed pinning is the issue.** Going forward, multi-seed runs are required for any claim <5% improvement (was <3%).
+- **Split story:** sw=2 wins at `val_single_in_dist` (−0.7%) but hurts `val_geom_camber_cruise` (+5.5%). Cruise has highest volume fraction — weighing surface more starves volume precision there. No per-split "surprise win."
+
+### Decision: **SENT BACK** to frieren.
+
+- Close sub-1 direction.
+- Refined sweep: sw ∈ {1, 1.5, 2, 3, 5, 10} × AMP + grad_accum=4 (eff_bs=16 to match merged recipe). 2-seed anchor at sw=1 to establish baseline noise floor.
+- If sw=2 holds at eff_bs=16 → new baseline candidate (~86–88 possible). If it compresses → sw=1 is the robust optimum and we close this direction.

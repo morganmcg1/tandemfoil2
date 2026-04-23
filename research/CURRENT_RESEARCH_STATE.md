@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Updated:** 2026-04-23 23:05 (round 4 start)
+- **Updated:** 2026-04-23 23:35 (round 4 continued)
 - **Advisor branch:** `kagent_v_students`
 - **Research tag:** `kagent-v-students-20260423-2055`
 - **W&B project:** `wandb-applied-ai-team/senpai-kagent-v-students`
@@ -17,11 +17,12 @@
 **Round-4 takeaway:** AMP + accum=4 gives a ~5% direct improvement AND unlocks +5 epochs per 30-min budget, which compounds with every subsequent experiment. **First finite `test_avg/mae_surf_p` on this track.**
 
 **Key prior insights still binding:**
-- L1 > MSE (PR #3), surf_weight=1 under L1 > sw=10 (PR #11)
+- L1 > MSE (PR #3), surf_weight=1 under L1 > sw=10 without AMP (PR #11)
+- **New (PR #14 r4):** sw=2 beats sw=1 under L1+AMP+accum=2. The surface-weight optimum has shifted right with throughput improvements — retest at accum=4 pending.
 - Scoring bug (GH #10) fixed (commit 7d71abd) — `test_avg/mae_surf_p` now produces finite numbers.
 - Fourier σ=1 on L1 monotonic in m (m=40 hit 93.25, m not saturated; PR #7 r3b)
 - Asinh + L1 compounds within sw=10 (−9 pts); open question whether it also compounds on sw=1.
-- Seed variance at s=458: std 2.07 — effects <3% need multi-seed replication.
+- **Seed noise floor is ~9%** on single-seed runs (frieren's sw=1 no-AMP anchor vs PR #11 anchor). **Multi-seed required for any claim <5% improvement.**
 
 ---
 
@@ -29,7 +30,7 @@
 
 | Student | Status | PR | Branch |
 |---------|--------|----|--------|
-| frieren  | WIP | #14: sub-1 surf_weight micro-sweep + AMP compound | `frieren/...` |
+| frieren  | WIP (r4b) | #14: sw>1 sweep at eff_bs=16 + 2-seed anchor | `frieren/surf-weight-sub1` |
 | fern     | WIP (r4) | #16: Capacity scaling on AMP baseline (h/l/s sweep) | `fern/capacity-on-amp` |
 | tanjiro  | WIP (r3b) | #15: H-flip augmentation (physics-confirmed, running next) | `tanjiro/horizontal-flip-augmentation` |
 | nezuko   | WIP (r3b) | #6: LR floor + WSD on **sw=1** (rerun) | `nezuko/lr-schedule-sweep` |
@@ -56,7 +57,7 @@ None at this time.
 | PR | Student | Hypothesis | Target |
 |----|---------|-----------|--------|
 | #16 | fern     | Capacity scaling on AMP baseline (width/depth/slice sweep) | Beat **88.268** |
-| #14 | frieren  | surf_weight sub-1 micro-sweep {0.25, 0.5, 1} + AMP compound | Beat **88.268** |
+| #14 | frieren  | sw>1 sweep {1, 1.5, 2, 3, 5, 10} × AMP + grad_accum=4 + 2-seed anchor | Beat **88.268** |
 | #15 | tanjiro  | Horizontal-flip augmentation (x-flip, physics-confirmed) on sw=1 | Beat **88.268** |
 | #6  | nezuko   | Rerun: WSD@1e-3 + floor=1e-5 stacked on sw=1 (2-seed) | Beat **88.268** |
 | #7  | alphonse | Fourier m-saturation {40, 80, 160} at σ=1 on sw=1, no FiLM | Beat **88.268** |
@@ -84,6 +85,7 @@ None at this time.
 - **Round 3b insight:** Per-block FiLM alone is a regressor (−9.2% on sw=10); dropping it from next alphonse sweep.
 - **Round 4 (23:00): Merged PR #12 (fern AMP + accum=4): new baseline 88.268 val / 79.733 test (−5.2% on val, −13.2% on test vs PR #11).** AMP unlocks +5 epochs per 30-min budget. First finite test metric on track.
 - **Round 4 (23:05):** Assigned fern PR #16 (capacity scaling on AMP) — the clean capacity sweep that round 1's PR #4 couldn't run because of wall-clock bottleneck.
+- **Round 4b (23:30):** Sent back PR #14 (frieren). Sub-1 surf_weight confirmed dead (2-experiment replication with PR #12). But **sw=2 wins the AMP arm at val 89.27** — reverses PR #11's sw=1 optimum. Ran at grad_accum=2 not grad_accum=4, so not a clean test of current baseline — retesting at eff_bs=16 with 2-seed anchor. Also tightened multi-seed requirement from <3% → <5% effects, because frieren's no-seed anchor varied 9% from PR #11's published number.
 
 ---
 
