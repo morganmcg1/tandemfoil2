@@ -1,4 +1,4 @@
-# TandemFoilSet Balanced
+# TandemFoilSet-Balanced
 
 **[TandemFoilSet Paper](https://openreview.net/forum?id=4Z0P4Nbosn)**
 
