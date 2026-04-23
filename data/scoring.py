@@ -45,7 +45,17 @@ def accumulate_batch(
     surf_mask = effective & is_surface
     vol_mask = effective & ~is_surface
 
-    err = (pred_orig.double() - y.double()).abs()
+    # Zero out non-finite samples' y (and mirror pred_orig for safety) so that
+    # err is finite at positions about to be masked out. Without this,
+    # ``(inf - pred).abs() * 0.0 == NaN`` poisons the accumulator and the
+    # whole split's MAE ends up NaN. Observed on test_geom_camber_cruise,
+    # which contains one Inf sample.
+    zeros_y = torch.zeros_like(y)
+    zeros_pred = torch.zeros_like(pred_orig)
+    y_safe = torch.where(sample_mask.unsqueeze(-1), y, zeros_y)
+    pred_safe = torch.where(sample_mask.unsqueeze(-1), pred_orig, zeros_pred)
+
+    err = (pred_safe.double() - y_safe.double()).abs()
     mae_surf += (err * surf_mask.unsqueeze(-1).double()).sum(dim=(0, 1))
     mae_vol += (err * vol_mask.unsqueeze(-1).double()).sum(dim=(0, 1))
     return int(surf_mask.sum().item()), int(vol_mask.sum().item())
