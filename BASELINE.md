@@ -8,21 +8,31 @@
 
 ## Current best
 
-**PR #11 — frieren: Fine surf_weight sweep on L1 loss (surf_weight=1 wins)**
-- **val_avg/mae_surf_p: 93.127** (lower is better)
-- W&B run: `yt7eup38` (`frieren/l1-sw1`)
-- Best epoch: 14 (run timeout-bounded at 30 min; still improving)
-- test_avg/mae_surf_p: NaN (pre-existing +Inf bug in `test_geom_camber_cruise/000020.pt`)
+**PR #12 — fern: Throughput scaling — AMP + grad accumulation to unlock more epochs**
+- **val_avg/mae_surf_p: 88.268** (lower is better)
+- W&B run: `n68w9q7o` (`fern/sw1-amp-accum4`)
+- Best epoch: 19 (timeout-bounded at ~31.5 min; AMP unlocked +5 epochs vs baseline)
+- test_avg/mae_surf_p: **79.733** (test_geom_camber_cruise +Inf bug now patched)
 
-### Per-split val surface-p MAE (best checkpoint)
+### Per-split val surface-p MAE (best checkpoint, epoch 19)
+
+| Split | mae_surf_p | vs PR #11 |
+|-------|-----------|-----------|
+| val_single_in_dist | 104.50 | −2.3% |
+| val_geom_camber_rc | 100.70 | −5.1% |
+| val_geom_camber_cruise | 65.19 | −11.0% |
+| val_re_rand | 82.69 | −4.0% |
+| **val_avg** | **88.268** | **−5.2%** |
+
+### Per-split test surface-p MAE (best checkpoint)
 
 | Split | mae_surf_p |
 |-------|-----------|
-| val_single_in_dist | 106.92 |
-| val_geom_camber_rc | 106.14 |
-| val_geom_camber_cruise | 73.28 |
-| val_re_rand | 86.16 |
-| **val_avg** | **93.127** |
+| test_single_in_dist | 94.07 |
+| test_geom_camber_rc | 90.90 |
+| test_geom_camber_cruise | 56.18 |
+| test_re_rand | 77.78 |
+| **test_avg** | **79.733** |
 
 ### Current default config (post-merge)
 
@@ -31,7 +41,9 @@
 | lr | 5e-4 |
 | weight_decay | 1e-4 |
 | batch_size | 4 |
-| surf_weight | **1.0** |
+| grad_accum | **4** (effective bs=16) |
+| amp | **True** (bf16 autocast, no GradScaler) |
+| surf_weight | 1.0 |
 | epochs | 50 |
 | n_hidden | 128 |
 | n_layers | 5 |
@@ -39,8 +51,8 @@
 | slice_num | 64 |
 | mlp_ratio | 2 |
 | optimizer | AdamW |
-| scheduler | CosineAnnealingLR(T_max=epochs) |
-| **loss** | **L1 (abs, vol + surf_weight × surf) in normalized space** |
+| scheduler | CosineAnnealingLR(T_max=total_optimizer_steps) |
+| loss | L1 (abs, vol + surf_weight × surf) in normalized space |
 
 Reproduce:
 ```bash
@@ -48,12 +60,23 @@ cd target && python train.py \
     --agent <student> \
     --loss_type l1 \
     --surf_weight 1 \
+    --amp true \
+    --grad_accum 4 \
+    --batch_size 4 \
     --wandb_name "<student>/<experiment>"
 ```
 
 ---
 
 ## Baseline history
+
+### 2026-04-23 — PR #12: fern throughput scaling (AMP bf16 + grad_accum=4)
+
+- **val_avg/mae_surf_p: 88.268** (previous: 93.127, PR #11)
+- W&B run: `n68w9q7o` (group: `fern/throughput-amp-sw1`)
+- Change: Added `--amp true` (bf16 autocast) + `--grad_accum 4` (eff_bs=16). AMP cuts per-epoch time 132s→100s (+28% throughput), unlocking epoch 19 vs epoch 14 under the same 30-min budget. Grad-accum at eff_bs=16 via 4 micro-batches compresses noisy gradient steps without inflating VRAM (~33 GB peak).
+- Delta: −5.2% vs previous baseline (93.127). Uniform improvement across all 4 val splits (largest: camber_cruise −11.0%).
+- test_avg/mae_surf_p now finite (79.733) — test_geom_camber_cruise +Inf scoring bug patched in this PR.
 
 ### 2026-04-23 — PR #11: frieren fine surf_weight sweep on L1 (surf_weight=1)
 
