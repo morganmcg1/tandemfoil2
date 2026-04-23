@@ -1,10 +1,9 @@
 """One-time: generate the split manifest and check it into the repo.
 
 Run locally or on a pod with access to the raw pickle files:
-  python generate_manifest.py
+  python data/generate_manifest.py
 
-Writes: cfd-competition/organizer/split_manifest.json
-This file is checked into git and is the single source of truth for all splits.
+Writes: data/split_manifest.json (checked into git, single source of truth).
 """
 
 import json

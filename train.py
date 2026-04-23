@@ -1,19 +1,25 @@
-"""Train Transolver on TandemFoilSet.
+"""Train a Transolver surrogate on TandemFoilSet.
 
-Structured benchmark with four validation tracks:
-  val_in_dist          — interpolation (raceCar single holdout)
-  val_tandem_transfer  — unseen tandem front foil (Part2)
-  val_ood_cond         — extreme conditions (frontier 20%)
-  val_ood_re           — OOD Reynolds number (cruise Part2)
+Four validation tracks with one pinned test track each:
+  val_single_in_dist      / test_single_in_dist      — in-distribution sanity
+  val_geom_camber_rc      / test_geom_camber_rc      — unseen front foil (raceCar)
+  val_geom_camber_cruise  / test_geom_camber_cruise  — unseen front foil (cruise)
+  val_re_rand             / test_re_rand             — stratified Re holdout
 
-Run:
-  uv run train.py [--debug]
+Primary ranking metric is ``avg/mae_surf_p`` — the equal-weight mean surface
+pressure MAE across the four splits, computed in the original (denormalized)
+target space. Train/val/test MAE all flow through ``data.scoring`` so the
+numbers are produced identically.
+
+Usage:
+  python train.py [--debug] [--epochs 50] [--agent <name>] [--wandb_name <name>]
 """
+
+from __future__ import annotations
 
 import os
 import time
-from collections.abc import Mapping
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import simple_parsing as sp
@@ -27,9 +33,17 @@ from timm.layers import trunc_normal_
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
-from data import X_DIM, VAL_SPLIT_NAMES, pad_collate, load_data
-from viz import visualize
-
+from data import (
+    TEST_SPLIT_NAMES,
+    VAL_SPLIT_NAMES,
+    X_DIM,
+    accumulate_batch,
+    aggregate_splits,
+    finalize_split,
+    load_data,
+    load_test_data,
+    pad_collate,
+)
 
 # ---------------------------------------------------------------------------
 # Transolver model
@@ -133,7 +147,7 @@ class TransolverBlock(nn.Module):
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
         self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
-                        n_layers=0, res=False, act=act)
+                       n_layers=0, res=False, act=act)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
@@ -163,10 +177,10 @@ class Transolver(nn.Module):
 
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
-                                   n_layers=0, res=False, act=act)
+                                  n_layers=0, res=False, act=act)
         else:
             self.preprocess = MLP(fun_dim + space_dim, n_hidden * 2, n_hidden,
-                                   n_layers=0, res=False, act=act)
+                                  n_layers=0, res=False, act=act)
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
@@ -199,10 +213,72 @@ class Transolver(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Evaluation helpers
+# ---------------------------------------------------------------------------
+
+def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+    """Run inference over a split and return metrics matching the organizer scorer.
+
+    ``loss`` is the normalized-space loss used for training monitoring; the MAE
+    channels are in the original target space and accumulated per organizer
+    ``score.py`` (float64, non-finite samples skipped).
+    """
+    vol_loss_sum = surf_loss_sum = 0.0
+    mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
+    mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
+    n_surf = n_vol = n_batches = 0
+
+    with torch.no_grad():
+        for x, y, is_surface, mask in loader:
+            x = x.to(device, non_blocking=True)
+            y = y.to(device, non_blocking=True)
+            is_surface = is_surface.to(device, non_blocking=True)
+            mask = mask.to(device, non_blocking=True)
+
+            x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            y_norm = (y - stats["y_mean"]) / stats["y_std"]
+            pred = model({"x": x_norm})["preds"]
+
+            sq_err = (pred - y_norm) ** 2
+            vol_mask = mask & ~is_surface
+            surf_mask = mask & is_surface
+            vol_loss_sum += (
+                (sq_err * vol_mask.unsqueeze(-1)).sum()
+                / vol_mask.sum().clamp(min=1)
+            ).item()
+            surf_loss_sum += (
+                (sq_err * surf_mask.unsqueeze(-1)).sum()
+                / surf_mask.sum().clamp(min=1)
+            ).item()
+            n_batches += 1
+
+            pred_orig = pred * stats["y_std"] + stats["y_mean"]
+            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            n_surf += ds
+            n_vol += dv
+
+    vol_loss = vol_loss_sum / max(n_batches, 1)
+    surf_loss = surf_loss_sum / max(n_batches, 1)
+    out = {"vol_loss": vol_loss, "surf_loss": surf_loss,
+           "loss": vol_loss + surf_weight * surf_loss}
+    out.update(finalize_split(mae_surf, mae_vol, n_surf, n_vol))
+    return out
+
+
+def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
+    print(
+        f"    {split_name:<26s} "
+        f"loss={m['loss']:.4f}  "
+        f"surf[p={m['mae_surf_p']:.4f} Ux={m['mae_surf_Ux']:.4f} Uy={m['mae_surf_Uy']:.4f}]  "
+        f"vol[p={m['mae_vol_p']:.4f} Ux={m['mae_vol_Ux']:.4f} Uy={m['mae_vol_Uy']:.4f}]"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
 
-MAX_TIMEOUT = 30.0  # minutes
+DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 
 
 @dataclass
@@ -217,10 +293,12 @@ class Config:
     wandb_name: str | None = None
     agent: str | None = None
     debug: bool = False
+    skip_test: bool = False  # skip end-of-run test evaluation
 
 
 cfg = sp.parse(Config)
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
+MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
@@ -259,12 +337,14 @@ model_config = dict(
 
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
+print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
 run = wandb.init(
-    entity=os.environ.get("WANDB_ENTITY", "wandb-applied-ai-team"),
-    project=os.environ.get("WANDB_PROJECT", "kagent-v2"),
+    entity=os.environ.get("WANDB_ENTITY"),
+    project=os.environ.get("WANDB_PROJECT"),
     group=cfg.wandb_group,
     name=cfg.wandb_name,
     tags=[cfg.agent] if cfg.agent else [],
@@ -286,19 +366,19 @@ for _name in VAL_SPLIT_NAMES:
 wandb.define_metric("lr", step_metric="global_step")
 
 model_dir = Path(f"models/model-{run.id}")
-model_dir.mkdir(parents=True)
+model_dir.mkdir(parents=True, exist_ok=True)
 model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
 
-best_val = float("inf")
+best_avg_surf_p = float("inf")
 best_metrics: dict = {}
 global_step = 0
 train_start = time.time()
 
 for epoch in range(MAX_EPOCHS):
-    if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT:
-        print(f"Timeout ({MAX_TIMEOUT} min). Stopping.")
+    if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
+        print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
         break
 
     t0 = time.time()
@@ -307,14 +387,14 @@ for epoch in range(MAX_EPOCHS):
     n_batches = 0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
-        x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+        x = x.to(device, non_blocking=True)
+        y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
 
-        x = (x - stats["x_mean"]) / stats["x_std"]
+        x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-
-        pred = model({"x": x})["preds"]
+        pred = model({"x": x_norm})["preds"]
         sq_err = (pred - y_norm) ** 2
 
         vol_mask = mask & ~is_surface
@@ -334,128 +414,91 @@ for epoch in range(MAX_EPOCHS):
         n_batches += 1
 
     scheduler.step()
-    epoch_vol /= n_batches
-    epoch_surf /= n_batches
+    epoch_vol /= max(n_batches, 1)
+    epoch_surf /= max(n_batches, 1)
 
     # --- Validate ---
     model.eval()
-    val_loss_sum = 0.0
-    split_metrics: dict[str, dict] = {}
-
-    for split_name, vloader in val_loaders.items():
-        val_vol = val_surf = 0.0
-        mae_surf = torch.zeros(3, device=device)
-        mae_vol = torch.zeros(3, device=device)
-        n_surf = n_vol = n_vb = 0
-
-        with torch.no_grad():
-            for x, y, is_surface, mask in vloader:
-                x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-                is_surface = is_surface.to(device, non_blocking=True)
-                mask = mask.to(device, non_blocking=True)
-
-                x = (x - stats["x_mean"]) / stats["x_std"]
-                y_norm = (y - stats["y_mean"]) / stats["y_std"]
-
-                pred = model({"x": x})["preds"]
-                sq_err = (pred - y_norm) ** 2
-
-                vol_mask = mask & ~is_surface
-                surf_mask = mask & is_surface
-                val_vol += (sq_err * vol_mask.unsqueeze(-1)).sum().item() / vol_mask.sum().clamp(min=1).item()
-                val_surf += (sq_err * surf_mask.unsqueeze(-1)).sum().item() / surf_mask.sum().clamp(min=1).item()
-                n_vb += 1
-
-                pred_orig = pred * stats["y_std"] + stats["y_mean"]
-                err = (pred_orig - y).abs()
-                mae_surf += (err * surf_mask.unsqueeze(-1)).sum(dim=(0, 1))
-                mae_vol += (err * vol_mask.unsqueeze(-1)).sum(dim=(0, 1))
-                n_surf += surf_mask.sum().item()
-                n_vol += vol_mask.sum().item()
-
-        val_vol /= max(n_vb, 1)
-        val_surf /= max(n_vb, 1)
-        split_loss = val_vol + cfg.surf_weight * val_surf
-        mae_surf /= max(n_surf, 1)
-        mae_vol /= max(n_vol, 1)
-
-        split_metrics[split_name] = {
-            f"{split_name}/vol_loss": val_vol,
-            f"{split_name}/surf_loss": val_surf,
-            f"{split_name}/loss": split_loss,
-            f"{split_name}/mae_vol_Ux": mae_vol[0].item(),
-            f"{split_name}/mae_vol_Uy": mae_vol[1].item(),
-            f"{split_name}/mae_vol_p": mae_vol[2].item(),
-            f"{split_name}/mae_surf_Ux": mae_surf[0].item(),
-            f"{split_name}/mae_surf_Uy": mae_surf[1].item(),
-            f"{split_name}/mae_surf_p": mae_surf[2].item(),
-        }
-        val_loss_sum += split_loss
-
-    mean_val_loss = val_loss_sum / len(val_loaders)
+    split_metrics = {
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        for name, loader in val_loaders.items()
+    }
+    val_avg = aggregate_splits(split_metrics)
+    avg_surf_p = val_avg["avg/mae_surf_p"]
+    val_loss_mean = sum(m["loss"] for m in split_metrics.values()) / len(split_metrics)
     dt = time.time() - t0
 
-    metrics = {
+    log_metrics = {
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
-        "val/loss": mean_val_loss,
+        "val/loss": val_loss_mean,
         "lr": scheduler.get_last_lr()[0],
         "epoch_time_s": dt,
         "global_step": global_step,
     }
-    for sm in split_metrics.values():
-        metrics.update(sm)
-    wandb.log(metrics)
+    for split_name, m in split_metrics.items():
+        for k, v in m.items():
+            log_metrics[f"{split_name}/{k}"] = v
+    for k, v in val_avg.items():
+        log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
+    wandb.log(log_metrics)
 
     tag = ""
-    if mean_val_loss < best_val:
-        best_val = mean_val_loss
-        best_metrics = {"epoch": epoch + 1, "val_loss": mean_val_loss}
-        for sm in split_metrics.values():
-            best_metrics.update({f"best_{k}": v for k, v in sm.items()})
+    if avg_surf_p < best_avg_surf_p:
+        best_avg_surf_p = avg_surf_p
+        best_metrics = {
+            "epoch": epoch + 1,
+            "val_avg/mae_surf_p": avg_surf_p,
+            "per_split": split_metrics,
+        }
         torch.save(model.state_dict(), model_path)
         tag = " *"
 
-    peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0
-    split_summary = "  ".join(
-        f"{name}={split_metrics[name][f'{name}/loss']:.4f}" for name in VAL_SPLIT_NAMES
-    )
+    peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
-        f"val[{split_summary}]{tag}"
+        f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
     )
+    for name in VAL_SPLIT_NAMES:
+        print_split_metrics(name, split_metrics[name])
 
-# --- Final ---
 total_time = (time.time() - train_start) / 60.0
-print(f"\nDone ({total_time:.1f} min)")
+print(f"\nTraining done in {total_time:.1f} min")
 
-if best_metrics:
-    print(f"Best: epoch {best_metrics['epoch']}, val/loss={best_metrics['val_loss']:.4f}")
-    wandb.summary.update({"best_" + k: v for k, v in best_metrics.items()})
+# --- Test evaluation ---
+if best_metrics and not cfg.skip_test:
+    print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
+    wandb.summary.update({
+        "best_epoch": best_metrics["epoch"],
+        "best_val_avg/mae_surf_p": best_avg_surf_p,
+    })
 
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-    plot_dir = Path("plots") / run.id
-    n = 1 if cfg.debug else 4
-    for split_name, split_ds in val_splits.items():
-        images = visualize(model, split_ds, stats, device, n_samples=n,
-                           out_dir=plot_dir / split_name)
-        if images:
-            wandb.log({
-                f"val_predictions/{split_name}": [wandb.Image(str(p)) for p in images],
-                "global_step": global_step,
-            })
+    model.eval()
 
-# --- Auto-submit predictions ---
-if best_metrics and not cfg.debug:
-    import subprocess
-    print("\nGenerating test predictions...")
-    pred_cmd = ["python", "predict.py", "--checkpoint", str(model_path)]
-    if cfg.agent:
-        pred_cmd += ["--agent", cfg.agent]
-    result = subprocess.run(pred_cmd, capture_output=True, text=True)
-    print(result.stdout)
-    if result.returncode != 0:
-        print(f"predict.py failed:\n{result.stderr[-500:]}")
+    print("\nEvaluating on held-out test splits...")
+    test_datasets = load_test_data(cfg.splits_dir, debug=cfg.debug)
+    test_loaders = {
+        name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
+        for name, ds in test_datasets.items()
+    }
+    test_metrics = {
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        for name, loader in test_loaders.items()
+    }
+    test_avg = aggregate_splits(test_metrics)
+    print(f"\n  TEST  avg_surf_p={test_avg['avg/mae_surf_p']:.4f}")
+    for name in TEST_SPLIT_NAMES:
+        print_split_metrics(name, test_metrics[name])
+
+    test_log: dict[str, float] = {}
+    for split_name, m in test_metrics.items():
+        for k, v in m.items():
+            test_log[f"test/{split_name}/{k}"] = v
+    for k, v in test_avg.items():
+        test_log[f"test_{k}"] = v
+    wandb.log(test_log)
+    wandb.summary.update(test_log)
 
 wandb.finish()
