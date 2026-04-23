@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import os
+import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -265,6 +266,97 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     return out
 
 
+def _sanitize_artifact_token(s: str) -> str:
+    """wandb artifact names allow alnum, '-', '_', '.' — replace everything else."""
+    out = "".join(c if c.isalnum() or c in "-_." else "-" for c in s)
+    return out.strip("-_.") or "run"
+
+
+def _git_commit_short() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL, text=True,
+        ).strip() or "unknown"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
+
+
+def save_model_artifact(
+    run,
+    model_path: Path,
+    model_dir: Path,
+    cfg: "Config",
+    best_metrics: dict,
+    best_avg_surf_p: float,
+    test_metrics: dict | None,
+    test_avg: dict | None,
+    n_params: int,
+    model_config: dict,
+) -> None:
+    """Log the best checkpoint as a wandb model artifact.
+
+    Name: ``model-<agent-or-wandb_name>-<run.id>`` (run.id guarantees uniqueness).
+    Aliases: ``best`` + ``epoch-N`` so the best checkpoint is addressable
+    both by role and by the epoch it came from.
+    Payload: ``checkpoint.pt`` + ``config.yaml`` (if present).
+    Metadata: run context, selected val metric, optional test metrics, git
+    commit, model config, and hyperparams — enough to trace and reload.
+    """
+    if cfg.wandb_name:
+        base = _sanitize_artifact_token(cfg.wandb_name)
+    elif cfg.agent:
+        base = _sanitize_artifact_token(cfg.agent)
+    else:
+        base = "tandemfoil"
+    artifact_name = f"model-{base}-{run.id}"
+
+    metadata: dict = {
+        "run_id": run.id,
+        "run_name": run.name,
+        "agent": cfg.agent,
+        "wandb_name": cfg.wandb_name,
+        "wandb_group": cfg.wandb_group,
+        "git_commit": _git_commit_short(),
+        "n_params": n_params,
+        "model_config": model_config,
+        "best_epoch": best_metrics["epoch"],
+        "best_val_avg/mae_surf_p": best_avg_surf_p,
+        "lr": cfg.lr,
+        "weight_decay": cfg.weight_decay,
+        "batch_size": cfg.batch_size,
+        "surf_weight": cfg.surf_weight,
+        "epochs_configured": cfg.epochs,
+    }
+
+    description = (
+        f"Transolver checkpoint — best val_avg/mae_surf_p = {best_avg_surf_p:.4f} "
+        f"at epoch {best_metrics['epoch']}"
+    )
+
+    if test_avg is not None and "avg/mae_surf_p" in test_avg:
+        metadata["test_avg/mae_surf_p"] = test_avg["avg/mae_surf_p"]
+        if test_metrics is not None:
+            for split_name, m in test_metrics.items():
+                metadata[f"test/{split_name}/mae_surf_p"] = m["mae_surf_p"]
+        description += f" | test_avg/mae_surf_p = {test_avg['avg/mae_surf_p']:.4f}"
+
+    artifact = wandb.Artifact(
+        name=artifact_name,
+        type="model",
+        description=description,
+        metadata=metadata,
+    )
+    artifact.add_file(str(model_path), name="checkpoint.pt")
+    config_yaml = model_dir / "config.yaml"
+    if config_yaml.exists():
+        artifact.add_file(str(config_yaml), name="config.yaml")
+
+    aliases = ["best", f"epoch-{best_metrics['epoch']}"]
+    run.log_artifact(artifact, aliases=aliases)
+    print(f"\nLogged model artifact '{artifact_name}' (aliases: {', '.join(aliases)})")
+
+
 def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
     print(
         f"    {split_name:<26s} "
@@ -466,39 +558,58 @@ for epoch in range(MAX_EPOCHS):
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
 
-# --- Test evaluation ---
-if best_metrics and not cfg.skip_test:
+# --- Test evaluation + artifact upload ---
+if best_metrics:
     print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
     wandb.summary.update({
         "best_epoch": best_metrics["epoch"],
         "best_val_avg/mae_surf_p": best_avg_surf_p,
+        "total_train_minutes": total_time,
     })
 
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
 
-    print("\nEvaluating on held-out test splits...")
-    test_datasets = load_test_data(cfg.splits_dir, debug=cfg.debug)
-    test_loaders = {
-        name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
-        for name, ds in test_datasets.items()
-    }
-    test_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
-        for name, loader in test_loaders.items()
-    }
-    test_avg = aggregate_splits(test_metrics)
-    print(f"\n  TEST  avg_surf_p={test_avg['avg/mae_surf_p']:.4f}")
-    for name in TEST_SPLIT_NAMES:
-        print_split_metrics(name, test_metrics[name])
+    test_metrics = None
+    test_avg = None
+    if not cfg.skip_test:
+        print("\nEvaluating on held-out test splits...")
+        test_datasets = load_test_data(cfg.splits_dir, debug=cfg.debug)
+        test_loaders = {
+            name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
+            for name, ds in test_datasets.items()
+        }
+        test_metrics = {
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            for name, loader in test_loaders.items()
+        }
+        test_avg = aggregate_splits(test_metrics)
+        print(f"\n  TEST  avg_surf_p={test_avg['avg/mae_surf_p']:.4f}")
+        for name in TEST_SPLIT_NAMES:
+            print_split_metrics(name, test_metrics[name])
 
-    test_log: dict[str, float] = {}
-    for split_name, m in test_metrics.items():
-        for k, v in m.items():
-            test_log[f"test/{split_name}/{k}"] = v
-    for k, v in test_avg.items():
-        test_log[f"test_{k}"] = v
-    wandb.log(test_log)
-    wandb.summary.update(test_log)
+        test_log: dict[str, float] = {}
+        for split_name, m in test_metrics.items():
+            for k, v in m.items():
+                test_log[f"test/{split_name}/{k}"] = v
+        for k, v in test_avg.items():
+            test_log[f"test_{k}"] = v
+        wandb.log(test_log)
+        wandb.summary.update(test_log)
+
+    save_model_artifact(
+        run=run,
+        model_path=model_path,
+        model_dir=model_dir,
+        cfg=cfg,
+        best_metrics=best_metrics,
+        best_avg_surf_p=best_avg_surf_p,
+        test_metrics=test_metrics,
+        test_avg=test_avg,
+        n_params=n_params,
+        model_config=model_config,
+    )
+else:
+    print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping artifact upload.")
 
 wandb.finish()
