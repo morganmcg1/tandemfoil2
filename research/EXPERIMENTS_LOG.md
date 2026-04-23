@@ -444,3 +444,42 @@ Bonus insight: **x-flip is physics-exact for all three domains** (raceCar single
 - Close sub-1 direction.
 - Refined sweep: sw ∈ {1, 1.5, 2, 3, 5, 10} × AMP + grad_accum=4 (eff_bs=16 to match merged recipe). 2-seed anchor at sw=1 to establish baseline noise floor.
 - If sw=2 holds at eff_bs=16 → new baseline candidate (~86–88 possible). If it compresses → sw=1 is the robust optimum and we close this direction.
+
+---
+
+## 2026-04-24 00:00 — Round 5: PRs #6, #9, #15 reviewed
+
+All three round-4 rerun submissions ran on **stale pre-AMP recipe** (branch forked from PR #11 tip, not post-PR-#12). Second round in a row that students have silently missed the merged recipe. Footgun flagged; going forward every assignment leads with explicit `--amp true --grad_accum 4` and requires a `--debug` sanity-check run BEFORE the full sweep.
+
+### PR #6 nezuko (round 4, pre-AMP): LR floor + WSD stack on sw=1
+
+**Winner:** `sw1-floor-s7` val=99.254, test=90.374. vs track baseline 88.268: **+12.45%** — no merge.
+
+**Findings:**
+- Floor=1e-5 effect shrinks from −4.7% (sw=10) to −1.5% (sw=1) — ~1σ at sw=1. Weak, replicating but decreasingly valuable as the baseline recipe improves.
+- **Stack test (floor+WSD) FAILED BY CONSTRUCTION.** GPU 5 is bit-exact identical to GPU 3 (no-floor+WSD) because `wsd_lambda` doesn't thread `cfg.min_lr`. Plus WSD decay phase starts at epoch 37 of 50; realized runs end at 14. Main bet untested, not falsified.
+- **WSD vs cosine at lr=1e-3 not testable** (student repurposed the control GPU slot).
+- Seed=99 is a consistent outlier (108.15 here, 102.07 in v2); drop from future sweeps.
+
+**Decision:** SENT BACK. Rebase to pick up AMP + grad_accum=4. Fix `wsd_lambda` to thread `cfg.min_lr`. Retune WSD phase splits to 10/30/60 so decay engages before ep 14. Proper stack test on AMP.
+
+### PR #9 thorfinn (round 4, pre-AMP): asinh × sw=1 orthogonality test
+
+**Winner:** `sw1-asinh-s250-s2` val=89.330, test=79.386. vs track baseline 88.268: **+1.06%** — no merge.
+
+**ORTHOGONALITY TEST RESOLVED: partial redundancy.** Delta compressed from −9 pts (sw=10) to −3 pts (sw=1). Asinh and sw=1 largely rebalance the same surface↔volume residual imbalance; sw=1 already down-weights surface over-representation, leaving little headroom for asinh's tail compression.
+
+**Seed variance at s=350 on sw=1: σ=6.74 (range 12.72), worse than round-3's σ=2.07 on sw=10.** The ~3 pt residual gain is within noise. Optimum shifted from s≈350 (sw=10) to s≈250–300 (sw=1), directionally consistent but not statistically defensible.
+
+**Decision: CLOSED** after 5 rounds of asinh work. Mechanism well-mapped. Thorfinn reassigned to a fresh architectural direction: cross-attention surface decoder (PR #18).
+
+### PR #15 tanjiro (round 3b, pre-AMP + physics-confirmed invariants): Horizontal-flip augmentation
+
+**Anchor (no flip):** val=100.27 (+12 vs baseline, explained by stale branch).  
+**Best hflip variant:** p=0.3 val=122.87. **All hflip settings REGRESS.**
+
+**Structural failure:** AoA sign-flip pushes raceCar samples OOD — raceCar AoA ∈ [-10°, 0°] flipped → [0°, +10°] which is absent from val. Hypothesis cleanly refuted.
+
+**Execution quality excellent:** invariants correctly implemented per round-3b physics correction; flip applied per-sample pre-normalization; seed-pinned 3-seed variance tight (std 1.11, 28× noise floor) — confident negative.
+
+**Decision: CLOSED.** Hflip direction dead. Salvage paths (cruise-only, no-AoA-flip) low-EV vs what's already in flight. Tanjiro reassigned to fresh direction: in-distribution input feature jitter (PR #17).

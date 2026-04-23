@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Updated:** 2026-04-23 23:35 (round 4 continued)
+- **Updated:** 2026-04-24 00:10 (round 5 start)
 - **Advisor branch:** `kagent_v_students`
 - **Research tag:** `kagent-v-students-20260423-2055`
 - **W&B project:** `wandb-applied-ai-team/senpai-kagent-v-students`
@@ -30,19 +30,29 @@
 
 | Student | Status | PR | Branch |
 |---------|--------|----|--------|
-| frieren  | WIP (r4b) | #14: sw>1 sweep at eff_bs=16 + 2-seed anchor | `frieren/surf-weight-sub1` |
+| frieren  | WIP (r4b) | #14: sw>1 sweep at eff_bs=16 + 2-seed anchor | `frieren/surf-weight-subunit-plus-amp` |
 | fern     | WIP (r4) | #16: Capacity scaling on AMP baseline (h/l/s sweep) | `fern/capacity-on-amp` |
-| tanjiro  | WIP (r3b) | #15: H-flip augmentation (physics-confirmed, running next) | `tanjiro/horizontal-flip-augmentation` |
-| nezuko   | WIP (r3b) | #6: LR floor + WSD on **sw=1** (rerun) | `nezuko/lr-schedule-sweep` |
-| alphonse | WIP (r3b) | #7: Fourier m-extend {40,80,160} on **sw=1**, no FiLM | `alphonse/fourier-pe-film-re` |
+| tanjiro  | WIP (r5) | #17: In-distribution input jitter (AoA/logRe/gap) | `tanjiro/input-feature-jitter` |
+| nezuko   | WIP (r5) | #6: AMP rebase + fixed WSD stack test + cosine@1e-3 control | `nezuko/lr-schedule-sweep` |
+| alphonse | WIP (r3b) | #7: Fourier m-extend {40,80,160} on sw=1, no FiLM | `alphonse/fourier-pe-film-re` |
 | edward   | WIP (r2) | #8: EMA + grad-clip on L1 | `edward/ema-gradclip-stability` |
-| thorfinn | WIP (r3b) | #9: asinh + **sw=1** 3-seed compound | `thorfinn/pressure-target-reparam` |
+| thorfinn | WIP (r5) | #18: Cross-attention surface decoder head | `thorfinn/cross-attn-surface-decoder` |
 
 **Idle students needing assignment:** none. All 7 GPUs occupied.
 
-## ⚠️ Round-3 systemic footgun
+## ⚠️ Systemic footgun — two rounds deep
 
-Argparse default for `surf_weight` is still `10.0` in train.py. PR #11 established sw=1 as the winning recipe but did NOT change the default (it passed `--surf_weight 1` at runtime). **Three of four round-3b submissions (PRs #6, #7, #9) silently ran on sw=10** because students rebased the code but didn't realize the flag change was load-bearing. Every send-back now explicitly asks for `--surf_weight 1`. Future assignment templates should include this flag in the reproduce command.
+Argparse defaults for `surf_weight`, `amp`, `grad_accum` are stale. Merged-winner recipes (PR #11 sw=1, PR #12 AMP+grad_accum=4) were runtime-flag changes, not code-default changes.
+
+**Round 3b (sw=1 flag):** PRs #6, #7, #9 silently ran on sw=10.
+**Round 5 (AMP + grad_accum flags):** PRs #6 (nezuko), #9 (thorfinn), #15 (tanjiro) silently ran pre-AMP. All three branches forked BEFORE PR #12 merged and never picked up AMP/grad_accum.
+
+Every new assignment now:
+1. Leads with explicit `--loss_type l1 --surf_weight 1 --amp true --grad_accum 4`
+2. Requires a `--debug` sanity-check run with verification that W&B config shows `amp=True, grad_accum=4` BEFORE committing to the full sweep
+3. Pins seeds and requires 2-seed anchors for any claim <5%
+
+**Noise floor:** ~9% on single-seed pre-AMP runs (frieren sw=1 no-AMP ≈ 102 vs PR #11's 93.13; thorfinn s=350 σ=6.74). AMP+grad_accum likely tightens this.
 
 ---
 
@@ -58,13 +68,11 @@ None at this time.
 |----|---------|-----------|--------|
 | #16 | fern     | Capacity scaling on AMP baseline (width/depth/slice sweep) | Beat **88.268** |
 | #14 | frieren  | sw>1 sweep {1, 1.5, 2, 3, 5, 10} × AMP + grad_accum=4 + 2-seed anchor | Beat **88.268** |
-| #15 | tanjiro  | Horizontal-flip augmentation (x-flip, physics-confirmed) on sw=1 | Beat **88.268** |
-| #6  | nezuko   | Rerun: WSD@1e-3 + floor=1e-5 stacked on sw=1 (2-seed) | Beat **88.268** |
+| #17 | tanjiro  | In-distribution input jitter (AoA/logRe/gap) on AMP + sw=1 | Beat **88.268** |
+| #6  | nezuko   | AMP rebase + fixed WSD stack + cosine@1e-3 control | Beat **88.268** |
 | #7  | alphonse | Fourier m-saturation {40, 80, 160} at σ=1 on sw=1, no FiLM | Beat **88.268** |
 | #8  | edward   | EMA 0.999 + wider grad-clip ({1, 5, 10, 50}) on L1 sw=1 | Beat **88.268** |
-| #9  | thorfinn | asinh-on-sw=1 3-seed compound @ s∈{250,300,350,458} | Beat **88.268** |
-
-**Note:** Six of seven in-flight PRs were assigned against the 93.127 target. Now that AMP merged as 88.268, they all have a harder bar. Most WIP experiments will rebase onto AMP on their next iteration; the asinh compound (thorfinn) and Fourier m-saturation (alphonse) are the most likely candidates to clear 88.268.
+| #18 | thorfinn | Cross-attention surface decoder head on AMP + sw=1 | Beat **88.268** |
 
 ---
 
@@ -86,6 +94,8 @@ None at this time.
 - **Round 4 (23:00): Merged PR #12 (fern AMP + accum=4): new baseline 88.268 val / 79.733 test (−5.2% on val, −13.2% on test vs PR #11).** AMP unlocks +5 epochs per 30-min budget. First finite test metric on track.
 - **Round 4 (23:05):** Assigned fern PR #16 (capacity scaling on AMP) — the clean capacity sweep that round 1's PR #4 couldn't run because of wall-clock bottleneck.
 - **Round 4b (23:30):** Sent back PR #14 (frieren). Sub-1 surf_weight confirmed dead (2-experiment replication with PR #12). But **sw=2 wins the AMP arm at val 89.27** — reverses PR #11's sw=1 optimum. Ran at grad_accum=2 not grad_accum=4, so not a clean test of current baseline — retesting at eff_bs=16 with 2-seed anchor. Also tightened multi-seed requirement from <3% → <5% effects, because frieren's no-seed anchor varied 9% from PR #11's published number.
+- **Round 5 (00:00):** Three pre-AMP rebase failures (PRs #6, #9, #15). Closed PR #9 (thorfinn asinh — partial redundancy with sw=1 confirmed, 5 rounds deep, reassigned to cross-attention surface decoder PR #18). Closed PR #15 (tanjiro hflip — AoA sign-flip creates OOD samples, clean negative, reassigned to in-distribution input jitter PR #17). Sent back PR #6 (nezuko — AMP rebase + WSD min_lr bug fix + retune phase splits 10/30/60 for realized 14-epoch budget).
+- **Round 5 insight:** Asinh × sw=1 partial redundancy (both rebalance surface↔volume residuals). The asinh direction is now well-mapped. Architectural approaches (surface decoder, capacity) should take precedence over further loss-weight tuning.
 
 ---
 
@@ -99,23 +109,23 @@ No human issues received as of 2026-04-23 (round 3).
 
 The research has established a strong new operating point: L1 loss + surf_weight=1. The key insight is that under L1, volume supervision is equally load-bearing to surface supervision for the pressure metric — upweighting surface starves the shared trunk. This is the opposite of the MSE-era intuition.
 
-**Highest-EV in-flight experiments (vs new 88.268 baseline):**
+**Highest-EV in-flight experiments (vs 88.268 baseline):**
 
-1. **alphonse #7 r4 (Fourier σ=1, m ∈ {40, 80, 160} on sw=1+AMP)** — Fourier m was NOT saturated at m=40 on sw=10 (monotonic m=10→20→40 win pattern). Combined with AMP's extra 5 epochs, m=80–160 should produce the strongest compound gain; most likely to beat 88.268.
+1. **alphonse #7 (Fourier σ=1, m ∈ {40, 80, 160} on sw=1+AMP)** — Fourier m was NOT saturated at m=40 on sw=10 (monotonic m=10→20→40 win pattern). With AMP's 19 epochs, m=80–160 should produce the strongest compound gain; most likely to beat 88.268.
 
-2. **thorfinn #9 r4 (asinh-on-sw=1+AMP 3-seed compound)** — The decisive orthogonality test. If asinh and sw=1 stack, expect val ≈ 82–85. If redundant, ≈ 88–90 and we close asinh as a dead end under the new recipe.
+2. **thorfinn #18 (cross-attention surface decoder)** — Fresh architectural direction. Primary metric is surface-p; dedicated decoder head for surface nodes (Perceiver IO-style) directly targets it. No prior experiment has tried this architectural angle. Researcher-agent top-5 idea.
 
-3. **fern #16 r4 (capacity scaling on AMP)** — Now properly evaluable because AMP+accum unblocked the epoch budget. Width=192 or 256 is the canonical first bet.
+3. **fern #16 (capacity scaling on AMP)** — The clean capacity sweep unblocked by AMP+grad_accum. Width=192 or 256 is the canonical first bet; previously failed at pre-AMP due to wall-clock constraint.
 
-4. **tanjiro #15 (horizontal-flip augmentation)** — Physics-exact 2× data, orthogonal to every other change. Expected 3–5% on OOD splits.
+4. **tanjiro #17 (input jitter: AoA + logRe + gap)** — In-distribution augmentation that doesn't hit hflip's AoA-OOD trap. Physics-safe, 40 LOC, expected 2–4% on OOD splits.
 
 **Medium-EV:**
 
-5. **edward #8 r2 (EMA + wider clip on L1 sw=1)** — EMA 0.999 is orthogonal to loss choice; clip threshold {5, 10, 50} probes the informative regime (round 1 showed all threshold ≤1 clip 100% of steps).
+5. **nezuko #6 (AMP rebase + fixed WSD + cosine@1e-3 control)** — WSD implementation bug fixed (min_lr now threads into lambda), phase splits retuned for 14-epoch realized budget. GPU 6 is the corrected stack test.
 
-6. **nezuko #6 r3b (WSD + LR floor stacked on sw=1)** — WSD@1e-3 and floor=1e-5 both replicate on L1. GPU 5 tests the stack (floor+WSD).
+6. **edward #8 (EMA + wider clip on L1 sw=1)** — EMA 0.999 is orthogonal to loss choice; clip thresholds {5, 10, 50} probe the informative regime (round 1 showed clip ≤1 fires 100% of steps, effectively unit-normalizing gradients).
 
-7. **frieren #14 (sub-1 surf_weight + AMP compound)** — probes sw ∈ {0.25, 0.5, 1} on AMP. Likely confirms sw=1 is the optimum given PR #12 already probed sw=0.5 and sw=0.25 (both regress).
+7. **frieren #14 (sw>1 at eff_bs=16 + 2-seed)** — tests whether sw=2's AMP-arm win replicates at grad_accum=4. Same mechanism as PR #11 but at the right batch-size regime.
 
 ---
 
