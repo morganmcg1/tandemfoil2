@@ -393,6 +393,9 @@ def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
 DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 
 
+SCHEDULERS = ("cosine", "wsd")
+
+
 @dataclass
 class Config:
     lr: float = 5e-4
@@ -404,6 +407,13 @@ class Config:
     huber_delta: float = 1.0  # Huber transition point (normalized units)
     amp: bool = False  # bf16 autocast on training forward/backward (val/test stay fp32)
     grad_accum: int = 1  # accumulate gradients over N micro-batches before optimizer step
+    # LR schedule
+    scheduler: str = "cosine"  # cosine | wsd
+    warmup_frac: float = 0.0  # fraction of total optimizer steps for linear warmup
+    min_lr: float = 0.0  # floor LR (cosine eta_min, WSD decay floor)
+    wsd_stable_frac: float = 0.30  # WSD: peak-LR plateau fraction (after warmup)
+    # reproducibility
+    seed: int = 42
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -417,6 +427,29 @@ if cfg.loss_type not in LOSS_TYPES:
     raise ValueError(f"--loss_type must be one of {LOSS_TYPES}, got {cfg.loss_type!r}")
 if cfg.grad_accum < 1:
     raise ValueError(f"--grad_accum must be >=1, got {cfg.grad_accum}")
+if cfg.scheduler not in SCHEDULERS:
+    raise ValueError(f"--scheduler must be one of {SCHEDULERS}, got {cfg.scheduler!r}")
+if not (0.0 <= cfg.warmup_frac < 1.0):
+    raise ValueError(f"--warmup_frac must be in [0, 1), got {cfg.warmup_frac}")
+if cfg.scheduler == "wsd":
+    if not (0.0 < cfg.wsd_stable_frac < 1.0):
+        raise ValueError(f"--wsd_stable_frac must be in (0, 1), got {cfg.wsd_stable_frac}")
+    if cfg.warmup_frac + cfg.wsd_stable_frac >= 1.0:
+        raise ValueError(
+            f"--warmup_frac ({cfg.warmup_frac}) + --wsd_stable_frac "
+            f"({cfg.wsd_stable_frac}) must be < 1.0 to leave room for decay phase"
+        )
+
+# Seed everything (model init, sampler, cuDNN). Non-determinism from CUDA
+# kernels remains, but this is enough for sub-1% seed variance in practice.
+import random as _random
+
+import numpy as _np
+_random.seed(cfg.seed)
+_np.random.seed(cfg.seed)
+torch.manual_seed(cfg.seed)
+torch.cuda.manual_seed_all(cfg.seed)
+
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
@@ -465,11 +498,51 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-# Cosine schedule spans the full set of *optimizer* steps (grad-accum aware)
-# so LR reaches its floor exactly at the configured epoch budget regardless of
-# accumulation depth. Stepped once per optimizer step, not per epoch.
+# All schedulers step once per *optimizer* step (grad-accum aware) so the
+# schedule trajectory is invariant to accumulation depth. Matches fern's
+# baseline stepping cadence.
 total_optimizer_steps = max(1, (len(train_loader) * MAX_EPOCHS) // cfg.grad_accum)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_optimizer_steps)
+warmup_steps = int(total_optimizer_steps * cfg.warmup_frac)
+
+if cfg.scheduler == "cosine":
+    if warmup_steps > 0:
+        warmup_sched = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=1e-8, end_factor=1.0, total_iters=warmup_steps,
+        )
+        cosine_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max(1, total_optimizer_steps - warmup_steps), eta_min=cfg.min_lr,
+        )
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer, schedulers=[warmup_sched, cosine_sched], milestones=[warmup_steps],
+        )
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=total_optimizer_steps, eta_min=cfg.min_lr,
+        )
+elif cfg.scheduler == "wsd":
+    # Warmup-Stable-Decay: linear warmup (warmup_frac) → flat peak
+    # (wsd_stable_frac) → linear decay to (min_lr / lr) floor (remaining).
+    stable_end_step = int(total_optimizer_steps * (cfg.warmup_frac + cfg.wsd_stable_frac))
+    decay_steps = max(1, total_optimizer_steps - stable_end_step)
+    min_frac = cfg.min_lr / cfg.lr if cfg.lr > 0 else 0.0
+
+    def wsd_lambda(step: int, ws=warmup_steps, se=stable_end_step,
+                   ds=decay_steps, mf=min_frac) -> float:
+        if step < ws:
+            return (step + 1) / max(ws, 1)
+        if step < se:
+            return 1.0
+        frac = 1.0 - (step - se) / ds
+        return max(mf, frac)
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=wsd_lambda)
+
+print(
+    f"Scheduler: {cfg.scheduler}  "
+    f"warmup_frac={cfg.warmup_frac} ({warmup_steps} steps)  "
+    f"min_lr={cfg.min_lr}"
+    + (f"  wsd_stable_frac={cfg.wsd_stable_frac}" if cfg.scheduler == "wsd" else "")
+)
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
