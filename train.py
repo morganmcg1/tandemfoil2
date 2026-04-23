@@ -17,11 +17,15 @@ Usage:
 
 from __future__ import annotations
 
+import math
 import os
+import random
 import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+import numpy as np
 
 import simple_parsing as sp
 import torch
@@ -79,6 +83,40 @@ class MLP(nn.Module):
         for i in range(self.n_layers):
             x = self.linears[i](x) + x if self.res else self.linears[i](x)
         return self.linear_post(x)
+
+
+class FourierEncoder(nn.Module):
+    """Random Fourier Features (Tancik et al. 2020) for (x, z) coordinates.
+
+    Produces [sin(2π xy·Bᵀ), cos(2π xy·Bᵀ)] with B ∈ R^{m×2} drawn from
+    N(0, σ²). Output dim = 2m. When ``learnable=True``, B is an
+    ``nn.Parameter``; otherwise a fixed buffer.
+    """
+
+    def __init__(self, m: int = 10, sigma: float = 1.0, learnable: bool = False):
+        super().__init__()
+        B_init = torch.randn(m, 2) * sigma
+        if learnable:
+            self.B = nn.Parameter(B_init)
+        else:
+            self.register_buffer("B", B_init)
+        self.out_dim = 2 * m
+
+    def forward(self, xy: torch.Tensor) -> torch.Tensor:
+        proj = 2 * math.pi * (xy @ self.B.T)  # [B, N, m]
+        return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
+
+
+def apply_fourier_pe(x_norm: torch.Tensor, enc: "FourierEncoder | None") -> torch.Tensor:
+    """Append Fourier PE of the leading (x, z) coords to the input features.
+
+    Returns x_norm unchanged when enc is None, else concat(x_norm, pe) so the
+    spatial signal survives alongside the original (mean-0, std-1) coordinates.
+    """
+    if enc is None:
+        return x_norm
+    pe = enc(x_norm[..., :2])
+    return torch.cat([x_norm, pe], dim=-1)
 
 
 class PhysicsAttention(nn.Module):
@@ -237,7 +275,8 @@ def elementwise_loss(pred: torch.Tensor, target: torch.Tensor, loss_type: str,
 # ---------------------------------------------------------------------------
 
 def evaluate_split(model, loader, stats, surf_weight, device,
-                   loss_type: str, huber_delta: float) -> dict[str, float]:
+                   loss_type: str, huber_delta: float,
+                   fourier_enc: "FourierEncoder | None" = None) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -257,8 +296,9 @@ def evaluate_split(model, loader, stats, surf_weight, device,
             mask = mask.to(device, non_blocking=True)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            x_aug = apply_fourier_pe(x_norm, fourier_enc)
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            pred = model({"x": x_aug})["preds"]
 
             per_elem = elementwise_loss(pred, y_norm, loss_type, huber_delta)
             vol_mask = mask & ~is_surface
@@ -398,12 +438,17 @@ class Config:
     lr: float = 5e-4
     weight_decay: float = 1e-4
     batch_size: int = 4
-    surf_weight: float = 10.0
+    surf_weight: float = 1.0  # matches current baseline (PR #11 sw=1); pre-PR#11 default was 10.0
     epochs: int = 50
     loss_type: str = "mse"  # mse | l1 | huber — applied in normalized space
     huber_delta: float = 1.0  # Huber transition point (normalized units)
     amp: bool = False  # bf16 autocast on training forward/backward (val/test stay fp32)
     grad_accum: int = 1  # accumulate gradients over N micro-batches before optimizer step
+    # Fourier positional encoding of (x, z) coords (Tancik 2020).
+    fourier_features: str = "none"  # "none" | "fixed" | "learnable"
+    fourier_m: int = 10             # number of frequency bands (output dim = 2m)
+    fourier_sigma: float = 1.0      # bandwidth for random B ~ N(0, σ²)
+    seed: int = 0                   # RNG seed for torch / numpy / python random
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -417,8 +462,19 @@ if cfg.loss_type not in LOSS_TYPES:
     raise ValueError(f"--loss_type must be one of {LOSS_TYPES}, got {cfg.loss_type!r}")
 if cfg.grad_accum < 1:
     raise ValueError(f"--grad_accum must be >=1, got {cfg.grad_accum}")
+if cfg.fourier_features not in ("none", "fixed", "learnable"):
+    raise ValueError(
+        f"--fourier_features must be one of none|fixed|learnable, got {cfg.fourier_features!r}"
+    )
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
+
+# Seed before any model / Fourier-B init so runs with the same seed are bit-exact
+# on init (sampler + CUDA kernels are still stochastic).
+random.seed(cfg.seed)
+np.random.seed(cfg.seed)
+torch.manual_seed(cfg.seed)
+torch.cuda.manual_seed_all(cfg.seed)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
@@ -427,6 +483,10 @@ print(f"Loss: {cfg.loss_type}"
       + f"  surf_weight={cfg.surf_weight}")
 print(f"AMP (bf16): {cfg.amp}  |  grad_accum: {cfg.grad_accum}  "
       f"|  effective batch: {cfg.batch_size * cfg.grad_accum}")
+print(f"Fourier: {cfg.fourier_features}"
+      + (f" (m={cfg.fourier_m}, σ={cfg.fourier_sigma})"
+         if cfg.fourier_features != "none" else "")
+      + f"  seed={cfg.seed}")
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -447,8 +507,20 @@ val_loaders = {
     for name, ds in val_splits.items()
 }
 
+fourier_enc: FourierEncoder | None = None
+if cfg.fourier_features != "none":
+    fourier_enc = FourierEncoder(
+        m=cfg.fourier_m,
+        sigma=cfg.fourier_sigma,
+        learnable=(cfg.fourier_features == "learnable"),
+    ).to(device)
+
+# Fourier PE *appends* 2m features alongside the raw (x, z) coords, so
+# space_dim = 2 (raw) + (2*m if fourier enabled else 0).
+space_dim = 2 + (fourier_enc.out_dim if fourier_enc is not None else 0)
+
 model_config = dict(
-    space_dim=2,
+    space_dim=space_dim,
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
@@ -461,10 +533,17 @@ model_config = dict(
 )
 
 model = Transolver(**model_config).to(device)
-n_params = sum(p.numel() for p in model.parameters())
-print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+# Include learnable Fourier B in the parameter list so AdamW + cosine schedule
+# see it. Fixed Fourier B is a buffer and has no gradient, so nothing to add.
+trainable_params = list(model.parameters())
+if fourier_enc is not None and cfg.fourier_features == "learnable":
+    trainable_params += list(fourier_enc.parameters())
+n_params = sum(p.numel() for p in trainable_params)
+print(f"Model: Transolver ({n_params/1e6:.2f}M params, "
+      f"space_dim={space_dim}, fourier={cfg.fourier_features})")
+
+optimizer = torch.optim.AdamW(trainable_params, lr=cfg.lr, weight_decay=cfg.weight_decay)
 # Cosine schedule spans the full set of *optimizer* steps (grad-accum aware)
 # so LR reaches its floor exactly at the configured epoch budget regardless of
 # accumulation depth. Stepped once per optimizer step, not per epoch.
@@ -530,13 +609,14 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
+        x_aug = apply_fourier_pe(x_norm, fourier_enc)
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
 
         # bf16 autocast wraps forward + loss; backward inherits the cast through
         # the autograd graph. No GradScaler needed for bf16 (full fp32 exponent
         # range, so no underflow — GradScaler is only required for fp16).
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=cfg.amp):
-            pred = model({"x": x_norm})["preds"]
+            pred = model({"x": x_aug})["preds"]
             per_elem = elementwise_loss(pred, y_norm, cfg.loss_type, cfg.huber_delta)
 
             vol_mask = mask & ~is_surface
@@ -581,7 +661,7 @@ for epoch in range(MAX_EPOCHS):
     model.eval()
     split_metrics = {
         name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
-                             cfg.loss_type, cfg.huber_delta)
+                             cfg.loss_type, cfg.huber_delta, fourier_enc=fourier_enc)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -650,7 +730,7 @@ if best_metrics:
         }
         test_metrics = {
             name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
-                                 cfg.loss_type, cfg.huber_delta)
+                                 cfg.loss_type, cfg.huber_delta, fourier_enc=fourier_enc)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
