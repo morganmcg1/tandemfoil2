@@ -236,13 +236,13 @@ def elementwise_loss(pred: torch.Tensor, target: torch.Tensor, loss_type: str,
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device,
-                   loss_type: str, huber_delta: float) -> dict[str, float]:
+def evaluate_split(model, loader, stats, channel_weights_vol, channel_weights_surf,
+                   device, loss_type: str, huber_delta: float) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
-    ``loss`` is the normalized-space loss used for training monitoring; the MAE
-    channels are in the original target space and accumulated per organizer
-    ``score.py`` (float64, non-finite samples skipped).
+    ``loss`` is the normalized-space channel-weighted loss used for training
+    monitoring; the MAE channels are in the original target space and accumulated
+    per organizer ``score.py`` (float64, non-finite samples skipped).
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
@@ -264,11 +264,11 @@ def evaluate_split(model, loader, stats, surf_weight, device,
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
-                (per_elem * vol_mask.unsqueeze(-1)).sum()
+                (per_elem * channel_weights_vol * vol_mask.unsqueeze(-1)).sum()
                 / vol_mask.sum().clamp(min=1)
             ).item()
             surf_loss_sum += (
-                (per_elem * surf_mask.unsqueeze(-1)).sum()
+                (per_elem * channel_weights_surf * surf_mask.unsqueeze(-1)).sum()
                 / surf_mask.sum().clamp(min=1)
             ).item()
             n_batches += 1
@@ -281,7 +281,7 @@ def evaluate_split(model, loader, stats, surf_weight, device,
     vol_loss = vol_loss_sum / max(n_batches, 1)
     surf_loss = surf_loss_sum / max(n_batches, 1)
     out = {"vol_loss": vol_loss, "surf_loss": surf_loss,
-           "loss": vol_loss + surf_weight * surf_loss}
+           "loss": vol_loss + surf_loss}
     out.update(finalize_split(mae_surf, mae_vol, n_surf, n_vol))
     return out
 
@@ -313,6 +313,7 @@ def save_model_artifact(
     test_avg: dict | None,
     n_params: int,
     model_config: dict,
+    effective_weights: dict,
 ) -> None:
     """Log the best checkpoint as a wandb model artifact.
 
@@ -346,6 +347,7 @@ def save_model_artifact(
         "weight_decay": cfg.weight_decay,
         "batch_size": cfg.batch_size,
         "surf_weight": cfg.surf_weight,
+        **effective_weights,
         "epochs_configured": cfg.epochs,
     }
 
@@ -399,6 +401,14 @@ class Config:
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 10.0
+    # Per-channel surface weights. If None, fall back to --surf_weight.
+    w_surf_Ux: float | None = None
+    w_surf_Uy: float | None = None
+    w_surf_p: float | None = None
+    # Per-channel volume weights.
+    w_vol_Ux: float = 1.0
+    w_vol_Uy: float = 1.0
+    w_vol_p: float = 1.0
     epochs: int = 50
     loss_type: str = "mse"  # mse | l1 | huber — applied in normalized space
     huber_delta: float = 1.0  # Huber transition point (normalized units)
@@ -421,6 +431,34 @@ print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
 print(f"Loss: {cfg.loss_type}"
       + (f" (delta={cfg.huber_delta})" if cfg.loss_type == "huber" else "")
       + f"  surf_weight={cfg.surf_weight}")
+
+# Resolve effective channel weights. Channel order matches output_fields=[Ux, Uy, p].
+# Surface channels fall back to --surf_weight when not explicitly set so default
+# behaviour reproduces the legacy (vol + surf_weight * surf) loss.
+w_surf_Ux_eff = cfg.w_surf_Ux if cfg.w_surf_Ux is not None else cfg.surf_weight
+w_surf_Uy_eff = cfg.w_surf_Uy if cfg.w_surf_Uy is not None else cfg.surf_weight
+w_surf_p_eff = cfg.w_surf_p if cfg.w_surf_p is not None else cfg.surf_weight
+w_vol_Ux_eff = cfg.w_vol_Ux
+w_vol_Uy_eff = cfg.w_vol_Uy
+w_vol_p_eff = cfg.w_vol_p
+effective_weights = {
+    "w_surf_Ux_eff": w_surf_Ux_eff,
+    "w_surf_Uy_eff": w_surf_Uy_eff,
+    "w_surf_p_eff": w_surf_p_eff,
+    "w_vol_Ux_eff": w_vol_Ux_eff,
+    "w_vol_Uy_eff": w_vol_Uy_eff,
+    "w_vol_p_eff": w_vol_p_eff,
+}
+print(f"Channel weights: {effective_weights}")
+
+channel_weights_surf = torch.tensor(
+    [w_surf_Ux_eff, w_surf_Uy_eff, w_surf_p_eff],
+    dtype=torch.float32, device=device,
+).view(1, 1, 3)
+channel_weights_vol = torch.tensor(
+    [w_vol_Ux_eff, w_vol_Uy_eff, w_vol_p_eff],
+    dtype=torch.float32, device=device,
+).view(1, 1, 3)
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -469,6 +507,7 @@ run = wandb.init(
     tags=[cfg.agent] if cfg.agent else [],
     config={
         **asdict(cfg),
+        **effective_weights,
         "model_config": model_config,
         "n_params": n_params,
         "train_samples": len(train_ds),
@@ -518,9 +557,9 @@ for epoch in range(MAX_EPOCHS):
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (per_elem * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (per_elem * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+        vol_loss = (per_elem * channel_weights_vol * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+        surf_loss = (per_elem * channel_weights_surf * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        loss = vol_loss + surf_loss
 
         optimizer.zero_grad()
         loss.backward()
@@ -539,8 +578,8 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
-                             cfg.loss_type, cfg.huber_delta)
+        name: evaluate_split(model, loader, stats, channel_weights_vol, channel_weights_surf,
+                             device, cfg.loss_type, cfg.huber_delta)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -608,8 +647,8 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
-                                 cfg.loss_type, cfg.huber_delta)
+            name: evaluate_split(model, loader, stats, channel_weights_vol, channel_weights_surf,
+                                 device, cfg.loss_type, cfg.huber_delta)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
@@ -637,6 +676,7 @@ if best_metrics:
         test_avg=test_avg,
         n_params=n_params,
         model_config=model_config,
+        effective_weights=effective_weights,
     )
 else:
     print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping artifact upload.")
