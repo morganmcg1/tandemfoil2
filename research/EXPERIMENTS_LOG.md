@@ -373,3 +373,38 @@ Bonus insight: **x-flip is physics-exact for all three domains** (raceCar single
 **Decision:** SENT BACK with confirmation + green-light to run. Explicitly asked for `--surf_weight 1`.
 
 **Student behavior commendation:** this is exactly the right way to handle a hypothesis with ambiguous physics — verify before burning compute. Worth emulating in future assignments.
+
+---
+
+## 2026-04-23 23:00 — PR #12: fern: Throughput scaling (AMP + grad accumulation) — MERGED
+
+- **Branch:** `fern/throughput-amp`
+- **W&B group:** `fern/throughput-amp` (rerun on sw=1)
+- **Hypothesis:** AMP (bf16) + grad accumulation unlocks 25–35 epochs per 30-min budget vs baseline's 14, compounding with every other improvement.
+
+### Results
+
+| Rank | Config (amp / bs / accum / sw) | val_avg/mae_surf_p | test_avg/mae_surf_p | best_epoch | W&B run |
+|------|--------------------------------|---------------------|---------------------|-----------|---------|
+| 1 | AMP / bs=4 / accum=4 / sw=1 | **88.268** ✓ WINNER | **79.733** (first finite test) | 19 | `n68w9q7o` |
+| 2 | AMP / bs=4 / accum=2 / sw=1 | 88.770 | 79.641 | 18 | — |
+| 3 | AMP / bs=4 / accum=2 / sw=2 | 89.712 | 81.554 | 18 | — |
+| 4 | AMP / bs=4 / accum=1 / sw=1 | 90.415 | 80.749 | 18 | — |
+| 5 | AMP / bs=4 / accum=2 / sw=0.5 | 93.102 | 84.640 | 17 | — |
+| 6 | AMP / bs=4 / accum=2 / sw=0.25 | 96.189 | 87.364 | 17 | — |
+| 7 | no-AMP / bs=4 / accum=1 / sw=1 (anchor) | 104.271 | 94.210 | 11 | — |
+| 8 | AMP / bs=8 / accum=2 / sw=1 | 113.716 | 103.005 | 15 | — |
+
+### Analysis
+
+- **WINNER beats previous baseline (93.127) by −5.2% (val), −13.2% (test). New baseline: 88.268 val / 79.733 test.**
+- **AMP delivers +4–5 epochs per 30-min budget** (14 → 18–19). Only ~24% per-epoch speedup (not theoretical 2×) because padding on variable meshes (74K–242K nodes) dominates compute.
+- **Grad accumulation is genuinely free throughput at bs=4.** Time/epoch unchanged; only optimizer-step frequency drops. accum=4 vs accum=2 both ~100s/epoch.
+- **bs=8 fails the wall-clock test** (17 epochs vs 19). Padding waste at bs=8 is ~2× bs=4 because a single 242K-node sample forces all 8 samples to pad. Critical insight: **effective batch size matters less than real batch size** — eff_bs=16 via bs=4+accum=4 (winner) far beats eff_bs=16 via bs=8+accum=2 (worst config).
+- **sw ∈ {0.25, 0.5}** probe confirms PR #11's finding: sw=1 is the optimum; sub-1 values regress (93 → 96). No surprise, but useful double-check on this new baseline.
+- Winner beats baseline uniformly on all 4 val splits, largest gain on `val_geom_camber_cruise` (−11.0%) and `val_geom_camber_rc` (−5.1%). Extra epochs = cleaner OOD generalization.
+- **First finite `test_avg/mae_surf_p` on this track:** 79.733. Scoring bug fix (commit 7d71abd) validated.
+
+### Decision: **MERGED** into `kagent_v_students`. New baseline = 88.268 val / 79.733 test. train.py now includes `--amp` and `--grad_accum` flags. Every future PR should use the AMP recipe.
+
+**Throughput unlock is the force multiplier of the round.** It should compound with every other improvement — the next round of capacity/loss/conditioning experiments all inherit +5 epochs of training.

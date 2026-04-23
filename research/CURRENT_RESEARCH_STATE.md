@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Updated:** 2026-04-23 (round 3b — post-review)
+- **Updated:** 2026-04-23 23:05 (round 4 start)
 - **Advisor branch:** `kagent_v_students`
 - **Research tag:** `kagent-v-students-20260423-2055`
 - **W&B project:** `wandb-applied-ai-team/senpai-kagent-v-students`
@@ -9,13 +9,19 @@
 
 ## Current Baseline
 
-**val_avg/mae_surf_p = 93.127** (PR #11, `frieren/l1-sw1`, W&B run `yt7eup38`)
-- Per-split val: in_dist=106.92 | camber_rc=106.14 | camber_cruise=73.28 | re_rand=86.16
-- Config: L1 loss, **surf_weight=1**, n_hidden=128, n_layers=5, slice_num=64, lr=5e-4, bs=4
+**val_avg/mae_surf_p = 88.268 / test_avg/mae_surf_p = 79.733** (PR #12, `fern/sw1-amp-accum4`, W&B run `n68w9q7o`)
+- Per-split val: in_dist=104.50 | camber_rc=100.70 | camber_cruise=65.19 | re_rand=82.69
+- Config: **L1 loss, surf_weight=1, AMP (bf16), grad_accum=4**, bs=4, n_hidden=128, n_layers=5, slice_num=64, lr=5e-4
+- Best epoch: 19 (AMP unlocked +5 epochs vs PR #11's 14)
 
-**Key insight from round 3:** surf_weight=1 (no surface upweighting) dominates under L1 loss — volume supervision is load-bearing for the shared feature extractor. This is a departure from the MSE-era intuition.
+**Round-4 takeaway:** AMP + accum=4 gives a ~5% direct improvement AND unlocks +5 epochs per 30-min budget, which compounds with every subsequent experiment. **First finite `test_avg/mae_surf_p` on this track.**
 
-**Scoring bug (GH #10) FIXED** — cherry-picked from thorfinn's PR #9 (commit 7d71abd). `test_avg/mae_surf_p` now produces finite numbers (except test_geom_camber_cruise NaN, unblocked separately).
+**Key prior insights still binding:**
+- L1 > MSE (PR #3), surf_weight=1 under L1 > sw=10 (PR #11)
+- Scoring bug (GH #10) fixed (commit 7d71abd) — `test_avg/mae_surf_p` now produces finite numbers.
+- Fourier σ=1 on L1 monotonic in m (m=40 hit 93.25, m not saturated; PR #7 r3b)
+- Asinh + L1 compounds within sw=10 (−9 pts); open question whether it also compounds on sw=1.
+- Seed variance at s=458: std 2.07 — effects <3% need multi-seed replication.
 
 ---
 
@@ -24,7 +30,7 @@
 | Student | Status | PR | Branch |
 |---------|--------|----|--------|
 | frieren  | WIP | #14: sub-1 surf_weight micro-sweep + AMP compound | `frieren/...` |
-| fern     | WIP (r3) | #12: AMP + accum rerun with surf_weight=1 | `fern/throughput-amp` |
+| fern     | WIP (r4) | #16: Capacity scaling on AMP baseline (h/l/s sweep) | `fern/capacity-on-amp` |
 | tanjiro  | WIP (r3b) | #15: H-flip augmentation (physics-confirmed, running next) | `tanjiro/horizontal-flip-augmentation` |
 | nezuko   | WIP (r3b) | #6: LR floor + WSD on **sw=1** (rerun) | `nezuko/lr-schedule-sweep` |
 | alphonse | WIP (r3b) | #7: Fourier m-extend {40,80,160} on **sw=1**, no FiLM | `alphonse/fourier-pe-film-re` |
@@ -49,13 +55,15 @@ None at this time.
 
 | PR | Student | Hypothesis | Target |
 |----|---------|-----------|--------|
-| #12 | fern     | AMP (bf16) + grad_accum=2 on **sw=1** | Beat **93.127** |
-| #14 | frieren  | surf_weight sub-1 micro-sweep {0.25, 0.5, 1} + AMP compound | Beat **93.127** |
-| #15 | tanjiro  | Horizontal-flip augmentation (x-flip, physics-confirmed) on **sw=1** | Beat **93.127** |
-| #6  | nezuko   | Rerun: WSD@1e-3 + floor=1e-5 stacked on **sw=1** (2-seed) | Beat **93.127** |
-| #7  | alphonse | Fourier m-saturation {40, 80, 160} at σ=1 on **sw=1**, no FiLM | Beat **93.127** |
-| #8  | edward   | EMA 0.999 + wider grad-clip ({1, 5, 10, 50}) on L1 sw=1 | Beat **93.127** |
-| #9  | thorfinn | asinh-on-**sw=1** 3-seed compound @ s∈{250,300,350,458} | Beat **93.127** |
+| #16 | fern     | Capacity scaling on AMP baseline (width/depth/slice sweep) | Beat **88.268** |
+| #14 | frieren  | surf_weight sub-1 micro-sweep {0.25, 0.5, 1} + AMP compound | Beat **88.268** |
+| #15 | tanjiro  | Horizontal-flip augmentation (x-flip, physics-confirmed) on sw=1 | Beat **88.268** |
+| #6  | nezuko   | Rerun: WSD@1e-3 + floor=1e-5 stacked on sw=1 (2-seed) | Beat **88.268** |
+| #7  | alphonse | Fourier m-saturation {40, 80, 160} at σ=1 on sw=1, no FiLM | Beat **88.268** |
+| #8  | edward   | EMA 0.999 + wider grad-clip ({1, 5, 10, 50}) on L1 sw=1 | Beat **88.268** |
+| #9  | thorfinn | asinh-on-sw=1 3-seed compound @ s∈{250,300,350,458} | Beat **88.268** |
+
+**Note:** Six of seven in-flight PRs were assigned against the 93.127 target. Now that AMP merged as 88.268, they all have a harder bar. Most WIP experiments will rebase onto AMP on their next iteration; the asinh compound (thorfinn) and Fourier m-saturation (alphonse) are the most likely candidates to clear 88.268.
 
 ---
 
@@ -74,6 +82,8 @@ None at this time.
 - **Round 3b insight:** Asinh + L1 compound confirmed (−9 pts within sw=10). Seed variance at s=458 is std 2.07 — any effect < 3% needs multi-seed confirmation going forward.
 - **Round 3b insight:** Fourier m is NOT saturated on L1. Monotonic m=10→20→40 val improvement (97.51→94.11→93.25). m=80+ is the obvious next step.
 - **Round 3b insight:** Per-block FiLM alone is a regressor (−9.2% on sw=10); dropping it from next alphonse sweep.
+- **Round 4 (23:00): Merged PR #12 (fern AMP + accum=4): new baseline 88.268 val / 79.733 test (−5.2% on val, −13.2% on test vs PR #11).** AMP unlocks +5 epochs per 30-min budget. First finite test metric on track.
+- **Round 4 (23:05):** Assigned fern PR #16 (capacity scaling on AMP) — the clean capacity sweep that round 1's PR #4 couldn't run because of wall-clock bottleneck.
 
 ---
 
@@ -87,19 +97,23 @@ No human issues received as of 2026-04-23 (round 3).
 
 The research has established a strong new operating point: L1 loss + surf_weight=1. The key insight is that under L1, volume supervision is equally load-bearing to surface supervision for the pressure metric — upweighting surface starves the shared trunk. This is the opposite of the MSE-era intuition.
 
-**Highest-EV in-flight experiments:**
+**Highest-EV in-flight experiments (vs new 88.268 baseline):**
 
-1. **thorfinn #9 r2 (asinh-on-L1, sw=1)** — asinh reparameterization showed 2.9% improvement even on MSE (100.034 val). Under L1 + sw=1, the compound effect could push to 88–90. This is the most promising pending PR.
+1. **alphonse #7 r4 (Fourier σ=1, m ∈ {40, 80, 160} on sw=1+AMP)** — Fourier m was NOT saturated at m=40 on sw=10 (monotonic m=10→20→40 win pattern). Combined with AMP's extra 5 epochs, m=80–160 should produce the strongest compound gain; most likely to beat 88.268.
 
-2. **alphonse #7 r2 (Fourier σ-sweep + per-block FiLM on L1, sw=1)** — Fourier σ=1 showed −9.4% on MSE; orthogonal to L1. Per-block FiLM is the real test of Re-conditioning.
+2. **thorfinn #9 r4 (asinh-on-sw=1+AMP 3-seed compound)** — The decisive orthogonality test. If asinh and sw=1 stack, expect val ≈ 82–85. If redundant, ≈ 88–90 and we close asinh as a dead end under the new recipe.
 
-3. **fern #12 r3 (AMP + sw=1)** — throughput infrastructure that could add 4–5 epochs to every subsequent experiment. Force-multiplier if it holds at sw=1.
+3. **fern #16 r4 (capacity scaling on AMP)** — Now properly evaluable because AMP+accum unblocked the epoch budget. Width=192 or 256 is the canonical first bet.
+
+4. **tanjiro #15 (horizontal-flip augmentation)** — Physics-exact 2× data, orthogonal to every other change. Expected 3–5% on OOD splits.
 
 **Medium-EV:**
 
-4. **edward #8 r2 (EMA + wider clip on L1, sw=1)** — EMA 0.999 is orthogonal to loss choice; clip value >1.0 should preserve gradient direction better.
+5. **edward #8 r2 (EMA + wider clip on L1 sw=1)** — EMA 0.999 is orthogonal to loss choice; clip threshold {5, 10, 50} probes the informative regime (round 1 showed all threshold ≤1 clip 100% of steps).
 
-5. **nezuko #6 r2 (schedule + seeds on L1, sw=1)** — WSD scheduler and LR floor at the new config.
+6. **nezuko #6 r3b (WSD + LR floor stacked on sw=1)** — WSD@1e-3 and floor=1e-5 both replicate on L1. GPU 5 tests the stack (floor+WSD).
+
+7. **frieren #14 (sub-1 surf_weight + AMP compound)** — probes sw ∈ {0.25, 0.5, 1} on AMP. Likely confirms sw=1 is the optimum given PR #12 already probed sw=0.5 and sw=0.25 (both regress).
 
 ---
 
