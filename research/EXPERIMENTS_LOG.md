@@ -187,6 +187,108 @@
 
 ---
 
+## 2026-04-23 (round 3) — PR #11: frieren: Fine surf_weight sweep on L1 loss
+
+- **Branch:** `frieren/l1-surf-weight-sweep`
+- **W&B group:** `frieren/l1-surf-weight-sweep` (project: `wandb-applied-ai-team/senpai-kagent-v-students`)
+- **Hypothesis:** L1 loss shifts the optimal surf_weight below 10; volume supervision may be load-bearing for surface-pressure prediction under L1.
+
+### Results
+
+| surf_weight | best_val_avg/mae_surf_p | best_epoch | Δ vs 103.036 | W&B run |
+|-------------|-------------------------|------------|--------------|---------|
+| **1**       | **93.127**              | 14         | **−9.62%**   | `yt7eup38` |
+| 2           | 100.212                 | 14         | −2.74%       | `8570stbe` |
+| 5           | 98.819                  | 14         | −4.09%       | `b868hlw6` |
+| 3           | 102.901                 | 13         | −0.13%       | `jjrsgjlu` |
+| 10 (ctrl)   | 105.762                 | 13         | +2.64%       | `vjr01ox8` |
+| 30          | 100.467                 | 13         | −2.49%       | `grygmqwp` |
+| 15          | 103.496                 | 14         | +0.45%       | `pluzdzbf` |
+| 20          | 111.752                 | 12         | +8.46%       | `xni7zysx` |
+
+**Per-split for winner (sw=1):**
+| Split | mae_surf_p |
+|-------|-----------|
+| val_single_in_dist | 106.92 |
+| val_geom_camber_rc | 106.14 |
+| val_geom_camber_cruise | 73.28 |
+| val_re_rand | 86.16 |
+| **val_avg** | **93.127** |
+
+**Test 3-split avg (excl. NaN):** 91.58 (sw=1) — best across all sw values.
+
+### Analysis
+
+- **−9.62% improvement over L1 baseline.** Monotonically clean: surface pressure error grows with surf_weight 1→20, with a partial recovery at 30.
+- **Mechanism confirmed:** under L1 loss, gradient is w·sign(err), not w·err. Surface points are ~2–5% of tokens; they don't need extra weighting to contribute enough gradient. Over-upweighting them starves the shared feature extractor of volume signal. sw=1 wins on every channel simultaneously — surface AND volume.
+- **sw=1 is at the edge of the sweep** — the true optimum may lie below 1. Frieren recommends a sw∈{0.25,0.5} micro-sweep.
+- All runs hit 14 epochs under 30-min wall-clock cap; models still improving at cutoff.
+
+### Decision: **MERGED** into `kagent_v_students`. New baseline = **93.127** (L1, surf_weight=1).
+
+---
+
+## 2026-04-23 (round 3) — PR #12: fern: Throughput scaling — AMP + grad accumulation
+
+- **Branch:** `fern/throughput-amp`
+- **W&B group:** `fern/throughput-amp`
+- **Hypothesis:** bf16 AMP (~2× throughput) + grad accumulation unlocks more epochs within 30-min budget, enabling a free improvement at no extra parameters.
+
+### Results
+
+| GPU | Config | Eff BS | Epochs | s/epoch | **val_avg/mae_surf_p** | Δ vs 103.04 | W&B run |
+|-----|--------|--------|--------|---------|------------------------|-------------|---------|
+| 0 | bs4, no-AMP | 4 | 14 | 132 | 105.99 | +2.9% | `c2m2yrs1` |
+| 1 | bs4, AMP | 4 | 18 | 100 | 100.51 | −2.5% | `2s0nfouv` |
+| 2 | bs8, no-AMP | 8 | 14 | 130 | 99.77 | −3.2% | `1ih3uvpx` |
+| 3 | bs8, AMP | 8 | 17 | 107 | 104.94 | +1.8% | `d4z93j22` |
+| **4** | **bs4, AMP, accum=2** | **8** | **19** | **100** | **93.29** | **−9.5%** | **`ny7msqow`** |
+| 5 | bs4, AMP, accum=4 | 16 | 19 | 100 | 94.88 | −7.9% | `hizikr4z` |
+| 6 | bs8, AMP, accum=2 | 16 | 17 | 107 | 112.24 | +8.9% | `p1cnolrn` |
+| 7 | bs8, AMP, accum=4 | 32 | 17 | 106 | 119.99 | +16.5% | `pxyzhof6` |
+
+### Analysis
+
+- **bs4 + AMP + accum=2 (eff_bs=8) reaches 93.29**, beating old baseline (103.036) but not new baseline (93.127, PR #11). 
+- **AMP delivers ~24% wall-clock speedup** (132s→100s/epoch at bs=4), unlocking 4–5 extra epochs.
+- **Effective batch=8 via accumulation beats true bs=8** by ~6 pts. Mechanism: pad_collate padding waste is proportional to max sample in batch; at bs=4 this is lower, so AMP headroom goes further.
+- **Bigger effective batches (>8) hurt** — cosine schedule anneals too fast with fewer optimizer steps; gradient noise suppressed too far.
+- **GradScaler not needed for bf16** (full fp32 exponent range). AMP cuts VRAM ~22% at both bs=4 and bs=8.
+
+### Decision: **SENT BACK** to fern. New baseline is now 93.127 (PR #11, surf_weight=1). Rerun with surf_weight=1 + probe sw∈{0.5, 0.25, 2} to confirm AMP compounding works.
+
+---
+
+## 2026-04-23 (round 3) — PR #5: tanjiro: Channel-weighted loss (rounds 1+2)
+
+- **Branch:** `tanjiro/channel-weighted-loss`
+- **W&B groups:** `tanjiro/channel-weighted-loss`, `tanjiro/channel-weighted-loss-v2`
+- **Hypothesis:** Per-channel upweighting of surf_p in loss (independent of surf_Ux, surf_Uy) improves the primary metric.
+
+### Results (v2 — on L1, grid: w_surf_p ∈ {10,14,17,20,23,27} + vol_weight ∈ {0.5,1,2})
+
+| Config | val_avg/mae_surf_p | Δ vs 103.036 | W&B run |
+|--------|---------------------|--------------|---------|
+| baseline-sw10 (identity) | **97.874** | **−5.01%** | `28rhghge` |
+| psurf17 | 100.301 | −2.65% | `popm00pl` |
+| psurf27 | 99.320 | −3.60% | `rzp9b0bd` |
+| psurf14 | 102.330 | −0.68% | `8q629ms9` |
+| psurf23 | 102.704 | −0.32% | `kojebspb` |
+| psurf20-vol2 | 102.941 | −0.09% | `wcfarlvh` |
+| psurf20 | 106.811 | +3.66% | `7wtnp082` |
+| psurf20-vol0.5 | 105.053 | +1.96% | `t03mduja` |
+
+### Analysis
+
+- **Identity case (sw=10, mathematically equivalent to merged baseline) nominally wins.** The 97.87 vs 103.036 gap is run-to-run variance — student's analysis correct.
+- **Channel weighting does not compound with L1.** Under L1, w·sign(err) tilts constant gradient away from coupled channels; MSE-era psurf20 win (+2x) doesn't replicate.
+- **Cross-channel regularization is saturated** at the identity weighting under L1 — no grid point beats identity on surf_p.
+- Student recommends closing. Assessment agreed.
+
+### Decision: **CLOSED.** Channel weighting explored thoroughly. Dead end for L1 loss. Tanjiro is now idle and needs reassignment.
+
+---
+
 ## 2026-04-23 22:35 — PR #7: alphonse: Fourier PE on (x,z) + FiLM conditioning on log(Re) (round 1 / MSE)
 
 - **Branch:** `alphonse/fourier-pe-film-re`

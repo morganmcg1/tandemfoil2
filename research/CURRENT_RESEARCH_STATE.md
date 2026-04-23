@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Updated:** 2026-04-23 22:35
+- **Updated:** 2026-04-23 (round 3)
 - **Advisor branch:** `kagent_v_students`
 - **Research tag:** `kagent-v-students-20260423-2055`
 - **W&B project:** `wandb-applied-ai-team/senpai-kagent-v-students`
@@ -9,13 +9,13 @@
 
 ## Current Baseline
 
-**val_avg/mae_surf_p = 103.036** (PR #3, `frieren/loss-l1-sw10`, W&B run `w2jsabii`)
-- Per-split val: in_dist=133.19 | camber_rc=117.21 | camber_cruise=70.11 | re_rand=91.63
-- Config: L1 loss, surf_weight=10, n_hidden=128, n_layers=5, slice_num=64, lr=5e-4
+**val_avg/mae_surf_p = 93.127** (PR #11, `frieren/l1-sw1`, W&B run `yt7eup38`)
+- Per-split val: in_dist=106.92 | camber_rc=106.14 | camber_cruise=73.28 | re_rand=86.16
+- Config: L1 loss, **surf_weight=1**, n_hidden=128, n_layers=5, slice_num=64, lr=5e-4, bs=4
 
-**Scoring bug (GH #10) FIXED** — cherry-picked from thorfinn's PR #9 (commit 7d71abd). `test_avg/mae_surf_p` now produces finite numbers across the track.
+**Key insight from round 3:** surf_weight=1 (no surface upweighting) dominates under L1 loss — volume supervision is load-bearing for the shared feature extractor. This is a departure from the MSE-era intuition.
 
-**Leading unmerged candidate:** thorfinn's asinh-s458 at **100.034 val / 90.26 test** (on MSE) — to be validated on L1 after rebase.
+**Scoring bug (GH #10) FIXED** — cherry-picked from thorfinn's PR #9 (commit 7d71abd). `test_avg/mae_surf_p` now produces finite numbers (except test_geom_camber_cruise NaN, unblocked separately).
 
 ---
 
@@ -23,39 +23,35 @@
 
 | Student | Status | PR | Branch |
 |---------|--------|----|--------|
-| frieren  | WIP | #11: L1 + fine surf_weight sweep | `frieren/l1-surf-weight-sweep` |
-| fern     | WIP | #12: Throughput — AMP + grad accumulation | `fern/throughput-amp` |
-| tanjiro  | WIP (r2) | #5: Channel-weighting on top of L1 | `tanjiro/channel-weighted-loss` |
-| nezuko   | WIP (r2) | #6: 3-seed LR replay + WSD on L1 | `nezuko/lr-schedule-sweep` |
+| frieren  | **IDLE** | #11 MERGED | — |
+| fern     | WIP (r3) | #12: AMP + accum rerun with surf_weight=1 | `fern/throughput-amp` |
+| tanjiro  | **IDLE** | #5 CLOSED | — |
+| nezuko   | WIP (r2) | #6: LR floor + WSD on L1 | `nezuko/lr-schedule-sweep` |
 | alphonse | WIP (r2) | #7: Fourier σ-sweep + per-block FiLM on L1 | `alphonse/fourier-pe-film-re` |
-| edward   | WIP (r2) | #8: EMA + grad-clip (wider threshold sweep) on L1 | `edward/ema-gradclip-stability` |
-| thorfinn | WIP (r2) | #9: asinh-on-L1 compound + 3-seed replay | `thorfinn/pressure-target-reparam` |
+| edward   | WIP (r2) | #8: EMA + grad-clip on L1 | `edward/ema-gradclip-stability` |
+| thorfinn | WIP (r2) | #9: asinh-on-L1 compound | `thorfinn/pressure-target-reparam` |
 
-**Idle students:** none. Zero idle GPUs.
+**Idle students needing assignment:** frieren, tanjiro. Fern is WIP (r3 rerun).
 
 ---
 
 ## PRs Ready for Review
 
-None.
+None at this time.
 
 ---
 
 ## PRs In Progress (`status:wip`)
 
-### Round 2 (rebased on L1 baseline + scoring fix)
-
 | PR | Student | Hypothesis | Target |
 |----|---------|-----------|--------|
-| #11 | frieren  | Fine surf_weight sweep under L1 (sw ∈ {1,2,3,5,10,15,20,30}) | Beat 103.036 |
-| #12 | fern     | AMP (bf16) + grad accumulation to unlock 25–35 epochs vs current 14 | Beat 103.036 |
-| #5  | tanjiro  | Channel-weight fine sweep (psurf ∈ {14,17,20,23,27}) + vol_weight on L1 | Beat 103.036 |
-| #6  | nezuko   | 3-seed replay of LR floor + WSD scheduler on L1 | Beat 103.036 |
-| #7  | alphonse | Fourier σ-sweep {0.5,1,2} × m-sweep {10,20,40} + per-block FiLM on L1 | Beat 103.036 |
-| #8  | edward   | EMA + wider grad-clip sweep ({1,5,10,50}) on L1 | Beat 103.036 |
-| #9  | thorfinn | asinh-on-L1 + 3-seed replay around s=458 | Beat 103.036 |
+| #12 | fern     | AMP (bf16) + grad_accum=2 compound with surf_weight=1 (new baseline) | Beat **93.127** |
+| #6  | nezuko   | 3-seed LR floor replay + WSD scheduler on L1 | Beat **93.127** |
+| #7  | alphonse | Fourier σ-sweep {0.5,1,2} × m-sweep {10,20,40} + per-block FiLM on L1 sw=1 | Beat **93.127** |
+| #8  | edward   | EMA 0.999 + wider grad-clip sweep ({1,5,10,50}) on L1 sw=1 | Beat **93.127** |
+| #9  | thorfinn | asinh-on-L1 (sw=1) + 3-seed replay around s=458 | Beat **93.127** |
 
-All 7 PRs are round-2 (post-L1 rebase) now. No round-1 experiments still in flight.
+Note: All in-flight PRs were assigned against the old baseline of 103.036. After PR #11 merged, the target shifted to 93.127. Students may need to be reminded of this upon review.
 
 ---
 
@@ -63,64 +59,63 @@ All 7 PRs are round-2 (post-L1 rebase) now. No round-1 experiments still in flig
 
 - **2026-04-23 21:40** Merged PR #3 (frieren L1): baseline set to 103.036.
 - **2026-04-23 21:40** Closed PR #4 (fern capacity): undertrained, not undercapacity — reassigned to throughput (PR #12).
-- **2026-04-23 21:40** Sent back PR #5 (tanjiro), PR #6 (nezuko) for L1 rebase.
 - **2026-04-23 22:20** Cherry-picked scoring.py fix from PR #9 (commit 7d71abd). Closed GH issue #10.
-- **2026-04-23 22:20** Sent back PR #8 (edward): clip fires 100% — need higher thresholds; rebase on L1.
-- **2026-04-23 22:20** Sent back PR #9 (thorfinn): conflict with L1 merge; rebase + compound sweep on L1. **The asinh-s458 MSE result beats L1 baseline by 2.9% — if it replicates on L1 it'll be the new baseline.**
-- **2026-04-23 22:35** Sent back PR #7 (alphonse): Fourier σ=1 wins geometry splits (−27% in_dist, −20% camber_rc on MSE), but +13% vs L1 baseline. Rebase, σ-sweep around 1, proper per-block FiLM.
-- **2026-04-23 22:35** Filed low-priority data-quality issue #13 for upstream Inf values in `test_geom_camber_cruise/000020.pt`. Not blocking — scoring fix (7d71abd) sufficient for our purposes.
+- **2026-04-23 22:20** Sent back PR #8 (edward): wider clip thresholds; rebase on L1.
+- **2026-04-23 22:20** Sent back PR #9 (thorfinn): conflict with L1 merge; rebase + compound sweep.
+- **2026-04-23 22:35** Sent back PR #7 (alphonse): Fourier σ=1 wins on MSE, needs L1 rebase + per-block FiLM.
+- **Round 3:** Merged PR #11 (frieren surf_weight=1): **new baseline 93.127** (−9.62% vs prior).
+- **Round 3:** Closed PR #5 (tanjiro channel-weighting): dead end under L1. Tanjiro idle.
+- **Round 3:** Sent back PR #12 (fern AMP): 93.29 no longer beats new baseline; rerun with sw=1.
 
 ---
 
 ## Most Recent Research Direction from Human Team
 
-No human issues received as of 2026-04-23 22:20.
+No human issues received as of 2026-04-23 (round 3).
 
 ---
 
 ## Current Research Focus and Themes
 
-**Highest-EV experiments currently in flight:**
+The research has established a strong new operating point: L1 loss + surf_weight=1. The key insight is that under L1, volume supervision is equally load-bearing to surface supervision for the pressure metric — upweighting surface starves the shared trunk. This is the opposite of the MSE-era intuition.
 
-1. **thorfinn #9 r2 (asinh-on-L1)** — If asinh mechanism is orthogonal to L1 (as theory predicts), compound gain could push baseline into the 95–98 range. Target reparameterization is a genuinely new axis; the MSE result showed large OOD effects (win on test splits).
+**Highest-EV in-flight experiments:**
 
-2. **fern #12 (throughput/AMP)** — The hidden bottleneck. Every round-1 run stopped at epoch 14/50 due to 30-min wall-clock. Unlocking 25–35 epochs compounds with every other improvement. This is the force-multiplier experiment.
+1. **thorfinn #9 r2 (asinh-on-L1, sw=1)** — asinh reparameterization showed 2.9% improvement even on MSE (100.034 val). Under L1 + sw=1, the compound effect could push to 88–90. This is the most promising pending PR.
 
-3. **alphonse #7 r2 (Fourier σ-sweep + per-block FiLM on L1)** — Fourier σ=1 already shows −9.4% on MSE with geometry-split dominance; on L1 the mechanism should compound orthogonally. Per-block FiLM (vs single-point) is the real test of Re-conditioning.
+2. **alphonse #7 r2 (Fourier σ-sweep + per-block FiLM on L1, sw=1)** — Fourier σ=1 showed −9.4% on MSE; orthogonal to L1. Per-block FiLM is the real test of Re-conditioning.
+
+3. **fern #12 r3 (AMP + sw=1)** — throughput infrastructure that could add 4–5 epochs to every subsequent experiment. Force-multiplier if it holds at sw=1.
 
 **Medium-EV:**
 
-4. **edward #8 r2 (EMA + wider clip)** — EMA 0.999 is orthogonal to loss choice and should add ~3–5% on top of L1. Higher clip thresholds test whether clip has residual value on L1.
+4. **edward #8 r2 (EMA + wider clip on L1, sw=1)** — EMA 0.999 is orthogonal to loss choice; clip value >1.0 should preserve gradient direction better.
 
-5. **frieren #11 (fine surf_weight)** — L1-sw10 ≈ L1-sw20 at round 1 — the optimum may lie below 10.
-
-6. **tanjiro #5 r2 (channel-weighting on L1)** — psurf=20 gave −4.9% on MSE; need to see if it compounds.
-
-7. **nezuko #6 r2 (schedule + seeds)** — disambiguate whether min_lr=1e-5 effect is real or noise.
+5. **nezuko #6 r2 (schedule + seeds on L1, sw=1)** — WSD scheduler and LR floor at the new config.
 
 ---
 
-## Potential Next Research Directions (Round 3+)
+## Potential Next Research Directions (Round 4+)
 
-Ranked candidates from `research/RESEARCH_IDEAS_2026-04-23_21:00.md`:
-
-### Not yet assigned, high EV
-- **Horizontal-flip augmentation with Uy sign-flip** — physics-exact 2× data doubling. Cheap, orthogonal to everything in flight.
-- **Domain-id as input feature (one-hot or FiLM)** — the right way to use the per-domain signal that broke in thorfinn's normalization experiment.
-- **Channel-aware asinh** — asinh only on p, keep Ux/Uy z-score. Probably cleaner than the current global reparameterization.
-- **Near-surface volume-band weighting** (3-tier: far-vol / near-vol / surf) — boundary-layer resolution directly drives surface pressure fidelity.
+### Immediate high-EV (ready to assign once students idle)
+- **sw sub-1 micro-sweep** (sw ∈ {0.25, 0.5}) — frieren's suggestion: edge of sweep, true minimum may be below 1. Quick 2-run check.
+- **Horizontal-flip augmentation with Uy sign-flip** — physics-exact 2× data doubling. ~80 LOC. Orthogonal to all current changes.
+- **Near-surface volume-band weighting** (3-tier: far-vol / near-vol / surf) — boundary-layer nodes need more gradient; sw=1 treats all volume equally. Target: 3–5% further gain.
+- **SwiGLU feedforward replacement** — replace standard MLP in each TransolverBlock with SwiGLU (~30 LOC). Known wins in transformers. Orthogonal.
 
 ### Mid-term architectural
-- **Cross-attention decoder with surface/volume query separation** — specialised surface head.
-- **Sample-wise z-score with Re-predicted scale** — addresses 10× per-sample y_std variance directly.
+- **Cross-attention decoder with surface/volume query separation** — dedicated surface head at ~120 LOC. Directly targets the primary metric.
+- **Attention temperature schedule** — anneal hardcoded `self.temperature=0.5` from high→0.5 in first 20% of training. ~10 LOC.
+- **Sample-wise per-sample normalization** — addresses 10× per-sample y_std variance; moderate complexity.
+- **Coordinate-based slice assignment** (slice projection from (x,z,is_surface) only) — more interpretable spatial partition; may improve OOD.
 
-### Longer-term physics-informed
-- **Panel-method residual learning** — predict viscous correction on top of potential-flow prior.
-- **Divergence-free regularization** + Kutta condition at trailing edge.
+### Physics-informed
+- **Kutta condition soft enforcement at trailing edge** — identify TE node, add |p_upper - p_lower| aux loss. ~150 LOC.
+- **Learnable dsdf aux head** — predict signed distance as aux target; forces trunk to encode geometry cleanly. ~40 LOC.
+- **Panel-method residual learning** — model predicts viscous correction on top of thin-airfoil prior. High impact, high complexity.
 
-### Compounding plan after current round 2 lands
-If asinh-on-L1 (thorfinn) and throughput (fern) both merge:
-1. Re-run Fourier/FiLM on the improved + longer-epoch baseline.
-2. Test EMA at 0.9999 (longer EMA horizon now feasible with more epochs).
-3. Introduce horizontal-flip augmentation as standalone PR (high expected lift).
-4. Channel-weighting + asinh combined experiment.
+### Compounding plan after in-flight PRs land
+If asinh (thorfinn) and AMP (fern) both merge, rerun with combined config as new baseline. Then:
+1. H-flip augmentation as standalone PR.
+2. Fourier + FiLM on the compounded config.
+3. Capacity scaling (h=256) now feasible with AMP+accum — VRAM headroom exists.
