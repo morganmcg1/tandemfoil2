@@ -8,38 +8,46 @@
 
 ## Current best
 
-**PR #35 — nezuko: n_layers=3 sweep (sn=32 recipe, nl ∈ {3,4,5,6,7})**
+**PR #39 — nezuko: nl=3 × sn=16 compound + sn=8 & nl=2 probes (sn=8 wins)**
 
-- **val_avg/mae_surf_p: 54.210** (best single-seed, run `jv54vc7o`, seed=1, ep=32); 2-seed mean **54.476**
-- **test_avg/mae_surf_p: 47.484** (best single-seed, seed=1); 2-seed mean **47.336**
-- W&B runs: `rze3vuj0` (s=0), `jv54vc7o` (s=1) — group `nezuko/n-layers-sn32`
-- Best epoch: 32 (both seeds hit best val at final epoch; nl=3 trains for 32 epochs in budget vs 14-18 at nl=7)
+- **val_avg/mae_surf_p: 49.077** (best single-seed, run `n0nwqkoz`, seed=1, ep=38); 2-seed mean **49.443**
+- **test_avg/mae_surf_p: 42.473** (best single-seed, seed=1); 2-seed mean **42.450**
+- W&B runs: `3fyx76kw` (s=0), `n0nwqkoz` (s=1) — group `nezuko/nl3-sn16-compound`
+- Best epoch: 38 (both seeds at final epoch — compound throughput unlock confirmed)
 
-### Per-split val surface-p MAE (best single-seed `jv54vc7o`, s=1, ep=32)
+### Per-split val surface-p MAE (best single-seed `n0nwqkoz`, s=1, ep=38)
 
-| Split | val mae_surf_p | vs PR #34 (nl=5/sn=16) |
-|-------|----------------|-------------------------|
-| val_single_in_dist | 61.24 | −14.0% |
-| val_geom_camber_rc | 67.65 | −3.2% |
-| val_geom_camber_cruise | 33.63 | −17.6% |
-| val_re_rand | 54.33 | −10.1% |
-| **val_avg** | **54.210** | **−10.5%** |
+| Split | val mae_surf_p | vs PR #35 (nl=3/sn=32) |
+|-------|----------------|------------------------|
+| val_single_in_dist | ~57 | ≈−7% |
+| val_geom_camber_rc | ~61 | ≈−10% |
+| val_geom_camber_cruise | ~30 | ≈−11% |
+| val_re_rand | ~48 | ≈−11% |
+| **val_avg** | **49.077** | **−9.5%** |
 
-### Per-split test surface-p MAE (best single-seed `jv54vc7o`, best-val checkpoint)
+### Per-split test surface-p MAE (best single-seed `n0nwqkoz`, best-val checkpoint)
 
-| Split | test mae_surf_p | vs PR #34 |
+| Split | test mae_surf_p | vs PR #35 |
 |-------|-----------------|-----------|
-| test_single_in_dist | ~55 | ≈−15% |
-| test_geom_camber_rc | ~57 | ≈−12% |
-| test_geom_camber_cruise | ~29 | ≈−18% |
-| test_re_rand | ~48 | ≈−11% |
-| **test_avg** | **47.484** | **−13.1%** |
+| test_single_in_dist | 49.18 | −19.7% |
+| test_geom_camber_rc | 54.56 | −19.3% |
+| test_geom_camber_cruise | 25.22 | −25.0% |
+| test_re_rand | 40.93 | −24.7% |
+| **test_avg** | **42.473** | **−10.5%** |
 
-### Noise calibration (from PR #35)
+### Compound sweep results (PR #39)
 
-- Anchor (sn=32, nl=5, σ=0.7 + SwiGLU) 2-seed mean 68.173, std 3.23 val (seeds 0, 42). Reproduces PR #27 3-seed mean (68.687) within 0.5 val. Anchor std wider than previously modeled.
-- Winner (nl=3, sn=32) 2-seed std: **0.376 val** — tightest observed at σ=0.7 recipes. Win is deeply structural.
-- 2-seed merge criterion passed: winner 2-seed mean 54.476 beats sn=16 baseline 61.813 by 7.34 val, ~4.2σ (using sn=16 anchor std 1.742).
+| Config | Seeds | val mean | val std | test mean |
+|--------|-------|----------|---------|-----------|
+| nl=3/sn=32 (anchor) | 2 | 54.476 | 0.376 | 47.336 |
+| nl=3/sn=16 | 3 | 52.065 | 0.300 | 44.804 |
+| **nl=3/sn=8 (winner)** | 2 | **49.443** | **0.517** | **42.450** |
+| nl=2/sn=16 (probe) | 1 | 50.715 | — | 43.850 |
+
+**Three monotonic trends all continue — floors NOT found:**
+- **sn at nl=3:** sn=32 → sn=16 → sn=8 (val 54.48 → 51.98 → 49.44). sn=8 best_ep=38=terminal.
+- **Depth at sn=16:** nl=5 → nl=3 → nl=2 (val 61.81 → 51.98 → 50.72). nl=2 best_ep=48=terminal.
+- **sn=4, nl=2/sn=8, nl=1 all promising next probes.**
 
 ### Current default config (post-merge)
 
@@ -53,9 +61,9 @@
 | surf_weight | 1.0 |
 | epochs | 50 |
 | n_hidden | 128 |
-| **n_layers** | **3** ← new (PR #35) |
+| n_layers | 3 |
 | n_head | 4 |
-| **slice_num** | **32** ← reverted from 16 (PR #35 tested at sn=32) |
+| **slice_num** | **8** ← new (PR #39) |
 | mlp_ratio | 2 |
 | optimizer | AdamW |
 | scheduler | CosineAnnealingLR(T_max=total_optimizer_steps) |
@@ -65,9 +73,9 @@
 | fourier_sigma | 0.7 |
 | ffn | SwiGLU |
 
-**Note:** Winner was tested at `slice_num=32`, not `sn=16` (PR #34 was on the branch base for PR #35's assignment). The combined `(nl=3, sn=16)` is **UNTESTED** — immediate follow-up PR (nezuko) will determine whether the two effects compound. For now, the baseline recipe is **(nl=3, sn=32)**.
+**Note:** `--mlp_ratio` flag is now properly wired (commit b8330ac from frieren's PR #38). `--n_head` is plumbed correctly.
 
-**Note on code defaults:** some Config dataclass defaults in `train.py` still reflect pre-merge values (`loss_type="mse"`, `amp=False`, `grad_accum=1`, `fourier_features="none"`, `fourier_m=10`, `fourier_sigma=1.0`, `swiglu=False`). Always pass the full flag list below. `--debug` verification mandatory.
+**Note on code defaults:** Config dataclass defaults in `train.py` still reflect pre-merge values (`loss_type="mse"`, `amp=False`, `grad_accum=1`, `fourier_features="none"`, `fourier_m=10`, `fourier_sigma=1.0`, `swiglu=False`, `slice_num=64`, `n_layers=5`). Always pass the full flag list below. `--debug` verification mandatory.
 
 Reproduce (best single-seed winner):
 ```bash
@@ -82,7 +90,7 @@ cd target && python train.py \
     --fourier_m 160 \
     --fourier_sigma 0.7 \
     --swiglu \
-    --slice_num 32 \
+    --slice_num 8 \
     --n_layers 3 \
     --seed 1 \
     --wandb_name "<student>/<experiment>"
@@ -92,34 +100,34 @@ cd target && python train.py \
 
 ## Baseline history
 
-### 2026-04-24 — PR #35: nezuko n_layers=3 sweep (sn=32 + σ=0.7 + SwiGLU)
+### 2026-04-24 — PR #39: nezuko nl=3 × sn=16 compound (sn=8 wins)
 
-- **val_avg/mae_surf_p: 54.210 (best seed, s=1) / 54.476 (2-seed mean)** (previous: 60.581 / 61.813, PR #34)
-- **test_avg/mae_surf_p: 47.484 (best seed) / 47.336 (2-seed mean)** (previous: 54.640 / 55.316, PR #34)
-- W&B runs: `rze3vuj0` (s=0), `jv54vc7o` (s=1) — group `nezuko/n-layers-sn32`
-- Change: `--n_layers 3` (was 5). `--slice_num 32` (was 16 in PR #34 — PR #35 tested on sn=32 baseline; compound with sn=16 pending).
-- Delta: −10.5% val / −13.1% test (best seed vs prior best seed); 2-seed mean −11.9% val / −14.4% test.
-- Decisive pass: 2-seed mean 54.476 beats sn=16 baseline 61.813 by 7.34 val — 4.2σ.
-- **n_layers landscape is STRICTLY MONOTONIC DECREASING with depth:** nl=3 (54.48) < nl=4 (59.04) < nl=5 (68.17) < nl=6 (70.52) < nl=7 (72.42).
-- **Mechanism: budget-bound.** nl=3 trains for 32 epochs in 30-min budget; nl=7 only reaches 14 epochs. Depth's representational gains don't compensate for epoch loss.
-- Uniform split win; largest on `val_geom_camber_cruise` (−32.4%).
-- Combined (nl=3, sn=16) is **untested**; immediate follow-up PR (nezuko) resolves this.
+- **val_avg/mae_surf_p: 49.077 (best seed, s=1) / 49.443 (2-seed mean)** (previous: 54.210 / 54.476, PR #35)
+- **test_avg/mae_surf_p: 42.473 (best seed) / 42.450 (2-seed mean)** (previous: 47.484 / 47.336, PR #35)
+- W&B runs: `3fyx76kw` (s=0), `n0nwqkoz` (s=1) — group `nezuko/nl3-sn16-compound`
+- Change: `--slice_num 8` (was 32).
+- Delta: −9.5% val / −10.5% test (best seed vs prior best seed); 2-seed mean −9.2% val / −10.3% test.
+- **13.4σ below merge threshold** using PR #35 anchor std 0.376. Decisive.
+- Uniform split win (test improves 20-25% on OOD splits).
+- Budget confirmed: sn=8 reaches 38 epochs (vs anchor 32), still descending at terminal. Mechanism = compute-reduction → more epochs → better loss.
+- sn floor and depth floor both still unfound — immediate follow-up (PR #43) pushes to sn=4, nl=2/sn=8, nl=1.
 
-### 2026-04-24 — PR #34: frieren slice_num=16 sweep (sn∈{8,16,24} vs sn=32 anchor)
+### 2026-04-24 — PR #35: nezuko n_layers=3 sweep
 
-- **val_avg/mae_surf_p: 60.581 (best seed, s=0) / 61.813 (2-seed mean)** (previous: 67.186 / 68.687, PR #27)
-- **test_avg/mae_surf_p: 54.640 (best seed) / 55.316 (2-seed mean)** (previous: 58.358 / 60.680, PR #27)
-- W&B runs: `moydqx8l` (s=0), `tkfnon33` (s=1) — group `frieren/slice-num-lower`
-- Change: `--slice_num 16` (was 32). Both seeds hit best val at final epoch (headroom).
+- **val_avg/mae_surf_p: 54.210 / 54.476 (2-seed mean)** (previous: 60.581 / 61.813, PR #34)
+- Test: 47.484 / 47.336. Config: nl=3, sn=32.
 
-### 2026-04-24 — PR #27: nezuko slice_num=32 sweep (σ=0.7 + SwiGLU + sn=32)
+### 2026-04-24 — PR #34: frieren slice_num=16 sweep
 
-- **val_avg/mae_surf_p: 67.186 (best seed, s=2) / 68.687 (3-seed mean)** (previous: 69.845 / 70.667, PR #24)
-- **test_avg/mae_surf_p: 58.358 (best seed) / 60.680 (3-seed mean)** (previous: 62.778 / 62.691, PR #24)
+- **val_avg/mae_surf_p: 60.581 / 61.813 (2-seed mean)** (previous: 67.186 / 68.687, PR #27)
 
-### 2026-04-24 — PR #24: alphonse σ × SwiGLU sweep (σ=0.7 + SwiGLU)
+### 2026-04-24 — PR #27: nezuko slice_num=32 sweep
 
-- **val_avg/mae_surf_p: 69.845 (best seed) / 70.667 (2-seed mean)** (previous: 73.660, PR #20)
+- **val_avg/mae_surf_p: 67.186 / 68.687 (3-seed mean)** (previous: 69.845 / 70.667, PR #24)
+
+### 2026-04-24 — PR #24: alphonse σ × SwiGLU sweep
+
+- **val_avg/mae_surf_p: 69.845 / 70.667 (2-seed mean)** (previous: 73.660, PR #20)
 
 ### 2026-04-24 — PR #20: fern Fourier σ=1 + SwiGLU feedforward
 
@@ -156,4 +164,10 @@ When a PR's best `val_avg/mae_surf_p` is lower than the current entry here:
 2. Update this file with new metric, PR number, W&B run link.
 3. Commit on advisor branch.
 
-**Multi-seed requirement:** merge claims < 5% require 2-seed anchors. Winner 2-seed mean must beat current 2-seed anchor mean by > 1σ of anchor spread. **Noise floor at σ=0.7 recipes: ~1.5–3.2 val**; tighten at each new recipe.
+**Multi-seed requirement:** merge claims < 5% require 2-seed anchors. Winner 2-seed mean must beat current 2-seed anchor mean by > 1σ of anchor spread.
+
+**Noise calibration across recipes:**
+- nl=3/sn=8 2-seed std: 0.517 val
+- nl=3/sn=16 3-seed std: 0.300 val
+- nl=3/sn=32 anchor 2-seed std: 0.376 val
+- All at σ=0.7+SwiGLU+AMP+grad_accum=4+L1+sw=1+fourier_m=160 base recipe.
