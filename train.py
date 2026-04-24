@@ -486,6 +486,7 @@ class Config:
     fourier_sigma_x: float | None = None  # per-coord σ for x; both x & z must be set
     fourier_sigma_z: float | None = None  # per-coord σ for z; both x & z must be set
     swiglu: bool = False            # replace GELU-MLP with SwiGLU in each TransolverBlock
+    mlp_ratio: int = 2              # TransolverBlock MLP hidden = n_hidden * mlp_ratio (SwiGLU: 2/3-corrected)
     slice_num: int = 64             # number of slice tokens in PhysicsAttention softmax-over-nodes
     seed: int = 0                   # RNG seed for torch / numpy / python random
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
@@ -578,7 +579,7 @@ model_config = dict(
     n_layers=5,
     n_head=4,
     slice_num=cfg.slice_num,
-    mlp_ratio=2,
+    mlp_ratio=cfg.mlp_ratio,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
     swiglu=cfg.swiglu,
