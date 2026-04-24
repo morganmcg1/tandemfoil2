@@ -241,7 +241,10 @@ class Transolver(nn.Module):
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None,
-                 swiglu: bool = False):
+                 swiglu: bool = False,
+                 per_block_fourier: bool = False,
+                 fourier_proj_shared: bool = True,
+                 fourier_m: int = 0):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -257,6 +260,7 @@ class Transolver(nn.Module):
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
+        self.n_layers = n_layers
         self.blocks = nn.ModuleList([
             TransolverBlock(
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
@@ -267,7 +271,35 @@ class Transolver(nn.Module):
             for i in range(n_layers)
         ])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
+
+        # Per-block Fourier re-injection: project γ(x,z) to n_hidden and ADD to
+        # the residual stream before each block. Zero-init so step 0 matches the
+        # no-injection baseline exactly (ReZero/Fixup-style).
+        self.per_block_fourier = per_block_fourier
+        self.fourier_proj_shared = fourier_proj_shared
+        self.fourier_dim = 2 * fourier_m  # [sin, cos] pairs × m freqs
+        if per_block_fourier:
+            assert fourier_m > 0, "per_block_fourier requires fourier_m > 0"
+            if fourier_proj_shared:
+                self.fourier_proj = nn.Linear(self.fourier_dim, n_hidden)
+                self.fourier_projs = None
+            else:
+                self.fourier_projs = nn.ModuleList([
+                    nn.Linear(self.fourier_dim, n_hidden) for _ in range(n_layers)
+                ])
+                self.fourier_proj = None
+        else:
+            self.fourier_proj = None
+            self.fourier_projs = None
+
         self.apply(self._init_weights)
+
+        # Zero-init AFTER self.apply (which would otherwise trunc_normal the Linear).
+        if per_block_fourier:
+            projs = [self.fourier_proj] if fourier_proj_shared else list(self.fourier_projs)
+            for p in projs:
+                nn.init.zeros_(p.weight)
+                nn.init.zeros_(p.bias)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -280,8 +312,14 @@ class Transolver(nn.Module):
 
     def forward(self, data, **kwargs):
         x = data["x"]
+        # apply_fourier_pe appends 2m Fourier features to the tail of x.
+        if self.per_block_fourier:
+            pe_code = x[..., -self.fourier_dim:]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        for block in self.blocks:
+        for i, block in enumerate(self.blocks):
+            if self.per_block_fourier:
+                proj = self.fourier_proj if self.fourier_proj is not None else self.fourier_projs[i]
+                fx = fx + proj(pe_code)
             fx = block(fx)
         return {"preds": fx}
 
@@ -486,6 +524,11 @@ class Config:
     fourier_sigma_x: float | None = None  # per-coord σ for x; both x & z must be set
     fourier_sigma_z: float | None = None  # per-coord σ for z; both x & z must be set
     swiglu: bool = False            # replace GELU-MLP with SwiGLU in each TransolverBlock
+    # Per-block Fourier re-injection (PR #30): add projected γ(x,z) to the residual
+    # stream before each TransolverBlock; zero-init the projector so step 0 == baseline.
+    per_block_fourier: bool = False
+    fourier_proj_shared: bool = True  # if False, use L separate projectors
+    mlp_ratio: int = 2              # TransolverBlock MLP/SwiGLU expansion ratio
     seed: int = 0                   # RNG seed for torch / numpy / python random
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -509,6 +552,8 @@ if (cfg.fourier_sigma_x is None) != (cfg.fourier_sigma_z is None):
         "--fourier_sigma_x and --fourier_sigma_z must be set together "
         f"(got x={cfg.fourier_sigma_x!r}, z={cfg.fourier_sigma_z!r})"
     )
+if cfg.per_block_fourier and cfg.fourier_features == "none":
+    raise ValueError("--per_block_fourier requires --fourier_features != 'none'")
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
@@ -534,7 +579,12 @@ elif per_coord:
                    f"σ_x={cfg.fourier_sigma_x}, σ_z={cfg.fourier_sigma_z})")
 else:
     fourier_str = f"{cfg.fourier_features} (m={cfg.fourier_m}, σ={cfg.fourier_sigma})"
-print(f"Fourier: {fourier_str}  swiglu={cfg.swiglu}  seed={cfg.seed}")
+pbf_str = (
+    f"per_block_fourier={cfg.per_block_fourier}"
+    + (f" (shared={cfg.fourier_proj_shared})" if cfg.per_block_fourier else "")
+)
+print(f"Fourier: {fourier_str}  swiglu={cfg.swiglu}  {pbf_str}  "
+      f"mlp_ratio={cfg.mlp_ratio}  seed={cfg.seed}")
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -577,10 +627,13 @@ model_config = dict(
     n_layers=5,
     n_head=4,
     slice_num=64,
-    mlp_ratio=2,
+    mlp_ratio=cfg.mlp_ratio,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
     swiglu=cfg.swiglu,
+    per_block_fourier=cfg.per_block_fourier,
+    fourier_proj_shared=cfg.fourier_proj_shared,
+    fourier_m=cfg.fourier_m,
 )
 
 model = Transolver(**model_config).to(device)
@@ -632,6 +685,32 @@ model_dir.mkdir(parents=True, exist_ok=True)
 model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
+
+# Zero-init sanity: when per_block_fourier is enabled, both weight and bias of
+# every fourier projector must be exactly 0 at step 0 so the model reproduces the
+# no-injection baseline. Also run a forward on a zeros probe and check the
+# projector output magnitude is 0 (ReZero/Fixup-style residual branch).
+if cfg.per_block_fourier:
+    projs = [model.fourier_proj] if cfg.fourier_proj_shared else list(model.fourier_projs)
+    w_absmax = max(p.weight.detach().abs().max().item() for p in projs)
+    b_absmax = max(p.bias.detach().abs().max().item() for p in projs)
+    probe_pe = torch.zeros(1, 4, model.fourier_dim, device=device)
+    out_absmax = max(p(probe_pe).detach().abs().max().item() for p in projs)
+    print(f"[zero-init] fourier_proj weight|bias|output absmax = "
+          f"{w_absmax:.3e} | {b_absmax:.3e} | {out_absmax:.3e}")
+    assert w_absmax == 0.0 and b_absmax == 0.0, (
+        f"Expected zero-init, got weight absmax={w_absmax}, bias absmax={b_absmax}"
+    )
+    wandb.summary.update({
+        "fourier_proj_step0_weight_absmax": w_absmax,
+        "fourier_proj_step0_bias_absmax": b_absmax,
+        "fourier_proj_step0_output_absmax": out_absmax,
+        "fourier_proj_step0_abs_max": max(w_absmax, b_absmax, out_absmax),
+        "fourier_proj_n_projectors": len(projs),
+        "fourier_proj_n_params_added": sum(
+            p.weight.numel() + p.bias.numel() for p in projs
+        ),
+    })
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
