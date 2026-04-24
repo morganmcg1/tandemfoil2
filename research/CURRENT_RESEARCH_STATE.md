@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Updated:** 2026-04-24 08:30 (round 20 — PR #34 merged sn=16, PRs #33 and #17 closed, fern/tanjiro re-assigned)
+- **Updated:** 2026-04-24 09:00 (round 21 — PR #35 merged nl=3, PR #32 sent back, PR #39 assigned)
 - **Advisor branch:** `kagent_v_students`
 - **Research tag:** `kagent-v-students-20260423-2055`
 - **W&B project:** `wandb-applied-ai-team/senpai-kagent-v-students`
@@ -9,23 +9,19 @@
 
 ## Current Baseline
 
-**val_avg/mae_surf_p = 60.581 (best seed, s=0) / 61.813 (2-seed mean) — test 54.640 / 55.316** (PR #34, W&B group `frieren/slice-num-lower`)
-- Per-split val (s=0, ep=23): in_dist=71.23 | camber_rc=69.87 | camber_cruise=40.81 | re_rand=60.41
-- Config: **L1 + sw=1 + AMP + grad_accum=4 + Fourier PE fixed m=160 σ=0.7 + SwiGLU + slice_num=16**
-- VRAM: 28.5 GB; per-epoch: ~78s; budget: ~23 epochs in 30-min
-- **Both seeds hit best val at final epoch** — headroom confirmed; more epochs would help
+**val_avg/mae_surf_p = 54.210 (best seed, s=1) / 54.476 (2-seed mean) — test 47.484 / 47.336** (PR #35, W&B group `nezuko/n-layers-sn32`)
+- Per-split val (s=1, ep=32): in_dist=61.24 | camber_rc=67.65 | camber_cruise=33.63 | re_rand=54.33
+- Config: **L1 + sw=1 + AMP + grad_accum=4 + Fourier PE fixed m=160 σ=0.7 + SwiGLU + slice_num=32 + n_layers=3**
+- Best epoch: 32 (both seeds hit at final epoch — headroom remains)
+- nl=3 2-seed std: 0.376 val (tight)
 
-**Round-20 takeaway:** sn=16 is a massive −10% win. The slice_num monotonic trend (96→48→32→16 all improving) continues. sn=8 single seed also passed (62.476, trailing-5=64.05 — lowest of any run). The floor is below sn=16. sn=24 is unstable (std=6.07). Closed PRs #33 (α-gated Fourier, degenerate fixed point) and #17 (input jitter, 3-round exhaustion without beating current stack).
-
-**Round-19 takeaway:** PR #32 (alphonse n_head) found n_head=2 at sn=64 beats n_head=4 by ~4pts (2-seed mean 66.37 vs 70.67). Sent back for rebase on sn=16 + 5-seed confirmation.
+**Round-21 takeaway:** nl=3 at sn=32 gives a massive −11.9% val / −14.4% test win over prior sn=16 baseline. **n_layers landscape is STRICTLY MONOTONIC DECREASING with depth.** Budget-bound: nl=3 trains 32 epochs, nl=7 only 14. Shallower frees compute; the field is compute-constrained, not capacity-constrained. **Baseline now reverts to sn=32 (from sn=16)** because PR #35 tested on sn=32 recipe; nl=3 × sn=16 compound is untested and is the immediate follow-up (PR #39).
 
 **Key prior insights still binding:**
-- L1 (PR #3), sw=1 (PR #11), AMP+grad_accum=4 (PR #12), Fourier PE fixed σ=0.7 m=160 (PR #24), SwiGLU (PR #20), sn=32 (PR #27), sn=16 (PR #34). Seven compounding components.
-- **Seed variance floor at sn=16 recipe:** std~1.742 val (2-seed). Use sn=16 3-seed anchor std from new PRs for merge criterion.
-- **Multi-seed protocol:** 2-seed anchors mandatory for merge claims; 3-seed for strong claims.
-- sn=24 is a stability dead-zone. sn=8 is stable but single-seed. sn=4/6 untested.
-- Per-block Fourier injection dead (PRs #30, #33 both failed — mechanism either harmful or dead).
-- Input jitter (gap/stagger) exhausted over 3 rounds — doesn't beat current stack.
+- L1 (PR #3), sw=1 (PR #11), AMP+grad_accum=4 (PR #12), Fourier PE fixed σ=0.7 m=160 (PR #24), SwiGLU (PR #20), sn=32 (PR #27), **nl=3** (PR #35). Seven compounding components. sn=16 (PR #34) was a real win at nl=5 but is now superseded by nl=3 at sn=32; compound pending.
+- **Seed variance is recipe-dependent:** sn=16 2-seed std 1.742 val; sn=32 3-seed std 1.650 val; nl=3/sn=32 2-seed std 0.376 val (tight!). nl=5/sn=32 2-seed std 3.23 val (wide).
+- **Multi-seed protocol:** 2-seed anchors mandatory for merge claims < 5%; 3-seed for strong claims.
+- Per-block Fourier injection dead (PRs #30, #33). Input jitter exhausted (PR #17). LR schedule effects regime-specific (PR #6). Sub-1 surf_weight dead. Asinh partially redundant.
 
 ---
 
@@ -33,17 +29,15 @@
 
 | Student | Status | PR | Branch |
 |---------|--------|----|--------|
+| frieren  | WIP (r20) | #38: mlp_ratio sweep on sn=16 recipe (STALE — needs nl=3/sn=32 rebase) | `frieren/mlp-ratio-sweep-sn16` |
 | fern     | WIP (r20) | #36: slice_num floor sweep sn∈{4,6,8} | `fern/slice-num-floor-sweep` |
-| tanjiro  | WIP (r20) | #37: n_head sweep {1,2,4,8} on sn=16 recipe | `tanjiro/n-head-sweep-sn16` |
-| frieren  | idle (PR #34 MERGED) | — | — |
-| nezuko   | WIP (r18) | #35: n_layers depth sweep on sn=32 recipe — STALE (pre-sn=16) | `nezuko/n-layers-sweep-sn32` |
-| alphonse | WIP (r19) | #32: nh=2/sn=32 5-seed compound — STALE (pre-sn=16) | `alphonse/n-head-sweep` |
-| edward   | WIP (r2) | #8: EMA + grad-clip on L1 — STALE (very old) | `edward/ema-gradclip-stability` |
+| tanjiro  | WIP (r20) | #37: n_head sweep {1,2,4,8} on sn=16 recipe (STALE — needs nl=3 rebase) | `tanjiro/n-head-sweep-sn16` |
+| nezuko   | WIP (r21) | #39: nl=3 × sn=16 compound + sn=8 probe | `nezuko/nl3-sn16-compound` |
+| alphonse | WIP (r21) | #32 r3: nh=1/nh=2 on nl=3/sn=32 compound | `alphonse/n-head-sweep` |
+| edward   | WIP (r2) | #8: EMA + grad-clip on L1 — VERY STALE | `edward/ema-gradclip-stability` |
 | thorfinn | WIP (r13) | #29: Slice-bottleneck residual decoder — likely stale | `thorfinn/slice-bottleneck-decoder` |
 
-**Note:** frieren is now idle (PR #34 merged). Will assign a new experiment.
-
-**Idle students:** frieren. All others active or in-flight.
+**Idle students:** none. Zero idle GPUs.
 
 ---
 
@@ -57,87 +51,64 @@ None at this time.
 
 | PR | Student | Hypothesis | Status | Target |
 |----|---------|-----------|--------|--------|
-| #36 | fern     | slice_num floor sweep sn∈{4,6,8} vs sn=16 anchor | Fresh (r20) | Beat **60.581** / **61.813** |
-| #37 | tanjiro  | n_head sweep {1,2,4,8} on sn=16 recipe | Fresh (r20) | Beat **60.581** / **61.813** |
-| #35 | nezuko   | n_layers depth sweep {3,4,5,6,7} on sn=32 recipe | STALE (pre-sn=16) | Will need rebase |
-| #32 | alphonse | nh=2×sn=32 5-seed compound (rebased for sn=32 at time) | STALE (pre-sn=16) | Will need rebase |
-| #8  | edward   | EMA 0.999 + wider grad-clip on L1 | VERY STALE (r2) | Will need rebase |
-| #29 | thorfinn | Slice-bottleneck residual decoder (PhysicsAttention, zero-init) | Likely stale | Will need rebase |
+| #39 | nezuko   | nl=3 × sn=16 compound + sn=8 & nl=2 probes | Fresh (r21) | Beat **54.48** (2-seed mean) |
+| #32 | alphonse | r3: nh=1/nh=2 × nl=3/sn=32 compound + shape-preserving control | Sent back (r21) | Beat **54.48** |
+| #36 | fern     | sn floor sweep {4, 6, 8} on nl=5/sn=16 recipe (stale — targets sn=16 baseline) | WIP — may need nl=3 rebase | Beat **54.48** |
+| #37 | tanjiro  | n_head sweep on nl=5/sn=16 recipe (stale) | WIP — may need nl=3 rebase | Beat **54.48** |
+| #38 | frieren  | mlp_ratio sweep on nl=5/sn=16 recipe (stale) | WIP — may need nl=3 rebase | Beat **54.48** |
+| #8  | edward   | EMA 0.999 + wider grad-clip on L1 | VERY STALE | Will need full rebase |
+| #29 | thorfinn | Slice-bottleneck residual decoder | Likely stale | Will need rebase |
+
+**Note:** With nl=3 merging at sn=32, several in-flight PRs designed for sn=16 baseline are now stale. Most significantly, PR #39 (nezuko's own compound test) will definitively determine whether future experiments should target sn=16 or sn=32.
 
 ---
 
 ## Recent Decisions Log
 
-- **Round 20 (r20 — 2026-04-24 08:30):**
-  - **MERGED PR #34 (frieren slice_num=16):** New baseline **60.581 best-seed / 61.813 2-seed-mean val; 54.640 / 55.316 test**. −10% val vs sn=32. Decisive: 2-seed mean 5.21 pts below merge gate. Both seeds hit best val at final epoch (headroom confirmed). sn=8 (single-seed 62.476, trailing-5=64.05) very promising.
-  - **Closed PR #33 (fern α-gated Fourier injection):** Mathematically degenerate fixed point — α_init=0 + zero-init projector has zero gradient for all parameters (dead mechanism). α_init=0.01 variant shows optimizer actively suppressing injection (alphas shrank 5× in epoch 1). Conclusively falsified.
-  - **Closed PR #17 (tanjiro input jitter):** Three rounds of iteration; 3rd round on current stack shows gap-jitter 2-seed mean (75.08) missing baseline (69.85) by 5pts. Within-sweep lift (−2.3pts) is real but swamped by throughput-contention noise floor. Direction exhausted under current stack.
-  - **Assigned PR #36 (fern): slice_num floor sweep sn∈{4,6,8}** — natural continuation of sn trend; sn=8 single-seed passed merge gate; find the floor. 3-seed anchor at sn=16 included.
-  - **Assigned PR #37 (tanjiro): n_head sweep {1,2,4,8} on sn=16 recipe** — never cleanly tested at sn=16; PR #32 found n_head=2 beats n_head=4 on sn=64 recipe; hypothesis: fewer wider heads better at sn=16 where only 16 tokens exist.
-
-- **Round 19 (r19 — 2026-04-24 07:30):**
-  - **Sent back PR #32 (alphonse n_head + 3-seed anchor):** nh=2 at sn=64 gave 2-seed mean val 66.372 (best single-seed 64.161 / test 55.337). Monotonic n_head landscape: nh=2 << nh=4 < nh=8 << nh=16 (catastrophic). Sent back for rebase + 5-seed nh=2/sn=32 confirmation + nh=1 probe. **Now stale again due to sn=16 merge.**
+- **Round 21 (r21 — 2026-04-24 09:00):**
+  - 🏆 **MERGED PR #35 (nezuko n_layers=3):** new baseline **val 54.210 / 54.476 2-seed mean; test 47.484 / 47.336**. −10.5% val / −13.1% test vs prior sn=16 baseline. n_layers landscape STRICTLY MONOTONIC DECREASING. Budget-bound mechanism: shallower trains for 32 epochs vs 14-18 at nl=7. nl=3 2-seed std 0.376 (tight). Baseline reverts slice_num to 32 (PR #35 tested on sn=32 recipe, not current sn=16).
+  - **Sent back PR #32 (alphonse nh=2 sweep):** 5-seed nh=2/sn=32 mean val 60.820 — beats pre-sn=16 baseline decisively (4.14σ) but only −0.99 val vs sn=16 baseline (0.6σ). Post-nl=3 merge, compound test required. nh=1 single-seed still improving at cutoff (val 56.45, ep 26/27). Rebase + nh=1/nh=2 × nl=3/sn=32 compound with shape-preserving control.
+  - **Assigned PR #39 (nezuko nl=3×sn=16 compound):** critical follow-up. Tests whether nl=3 and sn=16 compound additively, are redundant, or anti-compound. Also includes sn=8 probe (potential triple compound) and nl=2 probe.
+- **Round 20 (r20):** sn=16 merged (PR #34), α-gated Fourier and input jitter closed.
+- **Round 19 (r19):** n_head=2 signal discovered at sn=64 (sent back).
+- **Round 18 (r18):** PR #27 merged (sn=32 first), PR #34 sn lower sweep assigned, PR #35 n_layers sweep assigned.
 
 ---
 
 ## Current Research Focus and Themes
 
-**Current baseline: 60.581 val (best seed) / 61.813 (2-seed mean) — test 54.640 / 55.316** (PR #34, sn=16 + σ=0.7 + SwiGLU + L1 + AMP + grad_accum=4)
+**Baseline is now val 54.48 / test 47.34.** The recipe has now accumulated 7 compounding wins. The dominant research frontier:
 
-The recipe has compounded 7 improvements. The sn=16 merge opened more compute headroom (~23 epochs vs 21 at sn=32; ~27 at sn=8). The dominant research frontier right now:
+**Theme 1: Finish the slice_num × n_layers × n_head compute-reduction axis (HIGHEST PRIORITY)**
+- PR #39 (nezuko): nl=3 × sn=16 compound. If additive, baseline could drop to ~50 val.
+- PR #32 r3 (alphonse): nh=1/nh=2 × nl=3 compound. Similar compute-reduction mechanism.
+- PR #36 (fern): sn=4/6/8 floor sweep. Still on sn=16 baseline; may need rebase post-PR-#39.
+- PR #37 (tanjiro): n_head × sn=16 — overlaps with PR #32. Fine if confirmed independently.
+- PR #38 (frieren): mlp_ratio × sn=16 — stale baseline.
 
-**Theme 1: Finish mapping the slice_num axis (HIGHEST PRIORITY)**
-- sn=8/6/4 haven't been 2-seed confirmed. PR #36 (fern) addresses this.
-- sn=8 trailing-5 (64.05) is the lowest of any run — strongly suggests sn=8 or below will beat sn=16 on 2-seed.
-- Finding the true floor is essential — this axis has been the most productive of all.
+**Theme 2: Re-validate architecture experiments on nl=3 recipe**
+- PR #29 (thorfinn): slice-bottleneck decoder — stale, predates nl=3.
+- Conditional LayerNorm / AdaLN on log(Re) — future.
 
-**Theme 2: n_head sweep on sn=16 recipe**
-- PR #37 (tanjiro) sweeps n_head ∈ {1, 2, 4, 8} at sn=16. Never tested on current recipe.
-- Prior evidence (PR #32): n_head=2 beat n_head=4 on sn=64 by ~4pts.
-- With only 16 tokens, n_head=1 or 2 may be strongly optimal (fewer, wider heads = richer cross-token representation).
-
-**Theme 3: n_layers sweep on sn=16 recipe (pending PR #35 rebase)**
-- PR #35 (nezuko) is stale (designed for sn=32). Needs rebase onto sn=16 recipe.
-- sn=16's faster per-epoch makes deeper models (n_layers=6,7) more feasible in budget.
-- Orthogonal to n_head and slice_num.
-
-**Theme 4: Architecture experiments (medium priority)**
-- Conditional LayerNorm / AdaLN on log(Re) — val_re_rand (60.41) is still the second-hardest split.
-- n_hidden scaling (128→192) — sn=16 freed VRAM (28.5 GB), headroom for wider models.
-- Horizontal-flip augmentation with Uy sign-flip — doubles effective training set.
-
-**Theme 5: frieren idle — needs new assignment**
-- frieren is now idle after merging PR #34. Assign next highest-EV experiment.
-- Best candidate: **mlp_ratio sweep {2, 3, 4} on sn=16 recipe** — PR #25 (pre-σ=0.7) showed mr=3 gave 73.35 vs 73.66 anchor (~0.3pt improvement) but was stale; never tested cleanly on merged config. Low implementation cost.
-- Alternative: **Conditional LayerNorm (AdaLN) on log(Re)** — strong physics motivation, targets val_re_rand directly.
+**Theme 3: Truly budget-freeing experiments**
+- The consistent mechanistic finding is that shallower/sparser/smaller models train more epochs in the wall-clock budget. Every time we free compute via architecture (sn=32→16, nl=5→3, possibly nh=4→1), baseline drops significantly.
+- This raises the question: at what point does the model become too small to represent the physics? PR #39's nl=2 probe is the first edge test.
+- Another direction: **extending epoch budget** (if possible via SENPAI_MAX_EPOCHS) — but that changes the evaluation protocol.
 
 ---
 
-## Potential Next Research Directions
+## Potential Next Research Directions (round 22+)
 
-### Highest-priority (next idle students)
-- **mlp_ratio sweep {2,3,4} on sn=16 recipe** — PR #25 found mr=3 marginally better (stale baseline). Now needs clean test. 10 LOC diff.
-- **Conditional LayerNorm / AdaLN on log(Re) + domain flags** — val_re_rand (60.41) is structurally the hardest remaining split. Re fundamentally changes flow regime. ~60 LOC.
-- **Horizontal-flip augmentation with Uy sign-flip** — doubles effective training set from 1499 samples. ~80 LOC. Low risk, strong prior.
-- **LR re-sweep on sn=16 recipe** — LR=5e-4 set at ~100 val; optimal may differ at 61 val. Sweep {2e-4, 5e-4, 1e-3} × cosine. ~10 LOC.
+### Highest-priority if PR #39 confirms nl=3/sn=16 compound
+- Triple compound: nl=3 × sn=8 × nh=1 — maximal compute-reduction stack.
+- Sharpness-aware minimization (SAM) — targets generalization when epochs are abundant.
+- n_hidden widening (128→192): now that depth and slice_num are small, freed compute can be spent on width.
 
-### Architecture (medium priority)
-- **n_hidden scaling (128→192)** — sn=16 freed VRAM (28.5 GB); h=192 at sn=16 might be ~35 GB (feasible).
-- **n_layers sweep on sn=16** — PR #35 needs rebase; sn=16's speed makes n_layers=6,7 viable in budget.
-- **Coordinate-based slice assignment** (MLP on x,z,is_surface) — spatial clustering for better OOD inductive bias.
+### If nl=3/sn=16 doesn't compound
+- Close the "shrink compute" line at nl=3/sn=32.
+- Pivot to physics-informed: Kutta condition at trailing edge, divergence-free regularization.
+- Attention-variant experiments: RoPE on node positions, slice-bottleneck decoder revival.
 
-### Physics-informed
-- **Near-surface volume band weighting** (3-tier loss using dsdf distance) — boundary layer nodes.
-- **Kutta condition soft loss** at trailing edge — penalizes pressure discontinuity at TE.
-- **Pressure-gradient weighted L1** — upweight nodes where |∇p| is large (boundary layer, stagnation).
-
-### Speculative
-- **Mamba surface decoder** — treat surface nodes as 1D sequence sorted by saf; Mamba block to refine.
-- **Hard-example mining** — after epoch 10, oversample worst 20% val samples 2× in subsequent epochs.
-- **sn sweep below 4** — if sn=4 doesn't collapse, try sn=2.
-
----
-
-## Most Recent Research Direction from Human Team
-
-No human issues received. No new directives.
+### Long-standing unaddressed
+- Horizontal-flip augmentation with Uy sign-flip (PR #15 closed — tangent error to revisit after current stack lands).
+- Cross-attention surface decoder (revisit with nl=3 freeing epochs for the decoder).

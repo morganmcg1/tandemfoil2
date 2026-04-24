@@ -1327,3 +1327,37 @@ Alphonse reassigned to PR #32: n_head sweep + 3-seed anchor recalibration to upd
 ### Decision: **SENT BACK.**
 
 Rebase + focused 5-seed nh=2 × sn=32 confirmation + nh=1 probe. If nh=2 × sn=32 5-seed mean lands ≤ ~67.0 val (1σ below sn=32 baseline 68.687), big compound merge. If 66–68, may merge depending on test improvement. If >68, compound anti-correlation and close.
+
+---
+
+## 2026-04-24 — PR #35: nezuko n_layers=3 sweep — MERGED 🏆
+
+- **Branch:** `nezuko/n-layers-sweep-sn32` (at sn=32 — tested on PR #27 recipe, pre-PR-#34 sn=16)
+- **W&B group:** `nezuko/n-layers-sn32`
+- **Hypothesis:** Sweep n_layers ∈ {3, 4, 5, 6, 7} on sn=32 recipe. Test whether deeper models converge in budget.
+
+### Results (sorted by val_avg)
+
+| Rank | Config (nl/seed) | val_avg | test_avg | best_ep |
+|------|------------------|---------|----------|---------|
+| 1 | nl=3/s1 | **54.210** | **47.484** | 32 |
+| 2 | nl=3/s0 | 54.742 | 47.187 | 32 |
+| 3 | nl=4/s0 | 59.037 | 51.462 | 25 |
+| 4 | nl=5/s42 | 65.891 | 57.946 | 21 |
+| 5 | nl=5/s0 | 70.454 | 63.318 | 18 |
+| 6 | nl=6/s1 | 69.878 | 62.107 | 18 |
+| 7 | nl=6/s0 | 71.166 | 61.892 | 18 |
+| 8 | nl=7/s0 | 72.417 | 64.618 | 14 |
+
+### Analysis
+
+- **MASSIVE WIN: nl=3 2-seed mean val 54.476 / test 47.336.** Beats current sn=16 baseline (61.813/55.316) by −7.34 val (−11.9%) / −7.98 test (−14.5%) — **~4.2σ decisive** using sn=16 anchor std (1.742).
+- **n_layers landscape is STRICTLY MONOTONIC DECREASING with depth:** nl=3 < nl=4 < nl=5 < nl=6 < nl=7. Opposite of "deeper = better" intuition.
+- **Mechanism: budget-bound, not capacity-bound.** nl=3 trains for 32 epochs in 30-min budget; nl=7 only reaches 14 epochs. Depth's representational gains don't compensate for epoch loss.
+- **Uniform split win:** all 4 val splits improved. Largest lift on `val_geom_camber_cruise` (−32.4%).
+- **Cross-recipe compound UNTESTED:** winner tested at sn=32, not current sn=16 recipe. Immediate follow-up PR #39 (nezuko) probes nl=3 × sn=16.
+- nl=3 2-seed std: 0.376 val (astonishingly tight — tightest observed on this track).
+
+### Decision: **MERGED** into `kagent_v_students`. New baseline = 54.48 val / 47.34 test (2-seed mean). Default recipe updates to `--n_layers 3 --slice_num 32` (reverted from 16 pending compound test).
+
+This is the 2nd massive architectural win from the "shrink compute → train longer" mechanism (after PR #12 AMP, PR #27 sn=32, PR #34 sn=16). The compute-constrained regime continues to reward shallower/sparser models.
