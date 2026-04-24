@@ -488,6 +488,7 @@ class Config:
     swiglu: bool = False            # replace GELU-MLP with SwiGLU in each TransolverBlock
     slice_num: int = 64             # number of slice tokens in PhysicsAttention softmax-over-nodes
     n_layers: int = 5               # number of TransolverBlock layers (depth sweep, PR #35)
+    n_head: int = 4                 # attention heads per TransolverBlock; must divide n_hidden
     seed: int = 0                   # RNG seed for torch / numpy / python random
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -512,6 +513,13 @@ if (cfg.fourier_sigma_x is None) != (cfg.fourier_sigma_z is None):
     raise ValueError(
         "--fourier_sigma_x and --fourier_sigma_z must be set together "
         f"(got x={cfg.fourier_sigma_x!r}, z={cfg.fourier_sigma_z!r})"
+    )
+# n_head constraint: must divide n_hidden so that dim_head = n_hidden // n_head is integer.
+# n_hidden is fixed at 128 (model_config below), so valid n_head ∈ divisors of 128.
+if 128 % cfg.n_head != 0:
+    raise ValueError(
+        f"--n_head must divide n_hidden=128, got n_head={cfg.n_head} "
+        f"(valid: 1, 2, 4, 8, 16, 32, 64, 128)"
     )
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
@@ -580,7 +588,7 @@ model_config = dict(
     out_dim=3,
     n_hidden=128,
     n_layers=cfg.n_layers,
-    n_head=4,
+    n_head=cfg.n_head,
     slice_num=cfg.slice_num,
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
