@@ -759,3 +759,38 @@ Unverified (W&B runs crashed, student-reported numbers don't exist as summary ke
 ### Decision: **CLOSED.**
 
 Methodology win: establishes that **single-seed measurements of advances < ~5% are below noise floor.** Multi-seed protocol becomes mandatory for sub-5% merge claims. Alphonse reassigned to PR #24 (σ × SwiGLU seeded sweep) to run the first experiment under this tightened protocol.
+
+---
+
+## 2026-04-24 — PR #21: frieren: Near-surface volume-band weighting (3-tier BL loss) — CLOSED
+
+- **Branch:** `frieren/near-surface-volume-band` (pre-SwiGLU, stale)
+- **W&B group:** `frieren/ns-vol-band`
+- **Hypothesis:** Use `dsdf` (dims 4–11) to define a BL band of volume nodes; upweight the BL band (w_near) so gradients emphasize boundary-layer pressure fidelity.
+
+### Results
+
+| Rank | Config (τ_near / w_near / w_far / seed) | val_avg | test_avg | state |
+|------|------------------------------------------|---------|----------|-------|
+| — | anchor-s0 | running (never completed summary) | — | running |
+| 1 | anchor-s1 | 96.67 | 87.08 | finished |
+| 2 | τ=0.10 / w_near=3 / w_far=1 / s0 | 102.67 | 91.23 | finished |
+| 3 | τ=0.05 / w_near=2 / w_far=1 / s0 | 105.55 | 92.89 | finished |
+| 4 | τ=0.05 / w_near=3 / w_far=1 / s1 | 109.18 | 99.19 | finished |
+| 5 | τ=0.05 / w_near=3 / w_far=0.5 / s0 | 112.57 | 100.40 | finished |
+| 6 | τ=0.05 / w_near=3 / w_far=1 / s0 | running (val ~230 mid-training) | — | running |
+| 7 | τ=0.05 / w_near=5 / w_far=1 / s0 | 118.88 | 108.25 | finished |
+
+### Analysis
+
+- **3-tier BL weighting HURTS at all tested weights.** Monotonic regression w_near ∈ {2, 3, 5}: 105.6 → 114 → 118.9. Deweighting far-vol doesn't rescue it.
+- **Sanity check PASSED:** frac_near = 8.0% at τ=0.05 (within 5–15% target). τ=0.10 gives 22.7% which is wider than target but physically reasonable. BL band is correctly identified.
+- **Student's self-diagnosis (mechanism):** per-tier-mean formulation sums three volume-tier means (far/mid/near), each of comparable magnitude, against ONE surface mean × surf_weight=1 → effectively deweights surface relative to volume. Opposite of the optimization goal. A sum-weighted-per-node loss (∑w_i·|pred - y| / n_vol_total) would have been a cleaner form — but this PR used the mean-per-tier form as specified.
+- **Uniform split regression** (+15–27% across all 4 val splits) — hypothesized OOD lift on camber_cruise and re_rand doesn't materialize.
+- **Branch is stale (pre-SwiGLU).** All 8 runs on the 84.737 Fourier-only baseline, not the current 73.66 Fourier+SwiGLU baseline. Not load-bearing here (BL weighting regresses by 20% internally, far larger than the 13% SwiGLU gap), but the cumulative pre-merge-rebase pattern across 6 students is a lab-level issue.
+
+### Decision: **CLOSED.**
+
+- Hypothesis disconfirmed under the per-tier-mean formulation.
+- Loss-weighting landscape now exhaustively mapped by frieren across 4 PRs: L1 (#3), sw=1 (#11), sw>1 (#14), 3-tier BL (#21).
+- Frieren reassigned to PR #26 (sample-wise normalization with Re-predicted scale) — fresh territory, researcher's top-ranked untested idea.
