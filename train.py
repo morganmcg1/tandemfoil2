@@ -448,6 +448,12 @@ class Config:
     fourier_features: str = "none"  # "none" | "fixed" | "learnable"
     fourier_m: int = 10             # number of frequency bands (output dim = 2m)
     fourier_sigma: float = 1.0      # bandwidth for random B ~ N(0, σ²)
+    # Near-surface volume-band (3-tier) loss weighting. Defaults bypass tiering.
+    # `dist_to_surf = min_k |x[..., 4+k]|` (pre-norm) ≈ chord-length distance to foil.
+    tier_tau_near: float = 0.05     # ≤τ_near → boundary-layer band (upweighted by w_near_surf)
+    tier_tau_far: float = 0.5       # >τ_far  → far-field wake (scaled by w_far_vol)
+    w_near_surf: float = 1.0        # multiplier on the near-surface BL band
+    w_far_vol: float = 1.0          # multiplier on the far-field volume
     seed: int = 0                   # RNG seed for torch / numpy / python random
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -487,6 +493,17 @@ print(f"Fourier: {cfg.fourier_features}"
       + (f" (m={cfg.fourier_m}, σ={cfg.fourier_sigma})"
          if cfg.fourier_features != "none" else "")
       + f"  seed={cfg.seed}")
+
+# 3-tier loss active only when at least one weight departs from 1.0. Otherwise we
+# preserve the baseline single-vol-mean path so anchor runs reproduce PR #7 exactly.
+tier_enabled = (cfg.w_near_surf != 1.0) or (cfg.w_far_vol != 1.0)
+if tier_enabled:
+    print(
+        f"Tiered vol loss: τ_near={cfg.tier_tau_near} τ_far={cfg.tier_tau_far}"
+        f"  w_near_surf={cfg.w_near_surf}  w_far_vol={cfg.w_far_vol}"
+    )
+else:
+    print("Tiered vol loss: OFF (baseline single-vol-mean path)")
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -598,6 +615,8 @@ for epoch in range(MAX_EPOCHS):
     n_micro = n_opt = 0
     # Accumulators for one optimizer step (average across micro-batches at log time).
     accum_vol = accum_surf = accum_loss = 0.0
+    # Per-epoch tier fractions (averaged across micro-batches for wandb logging).
+    epoch_frac_near = epoch_frac_mid = epoch_frac_far = epoch_frac_surf = 0.0
     optimizer.zero_grad(set_to_none=True)
 
     for micro_idx, (x, y, is_surface, mask) in enumerate(
@@ -607,6 +626,22 @@ for epoch in range(MAX_EPOCHS):
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
+
+        # Tier masks use the un-normalized dsdf (x dims 4..11 — chord-length units).
+        # `dist_to_surf` ≈ geometric distance of each node to the nearest foil surface.
+        vol_mask = mask & ~is_surface
+        surf_mask = mask & is_surface
+        if tier_enabled:
+            dist_to_surf = x[..., 4:12].abs().min(dim=-1).values  # [B, N]
+            near_surf_mask = vol_mask & (dist_to_surf <= cfg.tier_tau_near)
+            far_vol_mask = vol_mask & (dist_to_surf > cfg.tier_tau_far)
+            mid_vol_mask = vol_mask & ~near_surf_mask & ~far_vol_mask
+            # Per-batch fractions of the total (mask) population — sanity probe.
+            total = mask.sum().clamp(min=1).float()
+            epoch_frac_near += (near_surf_mask.sum().float() / total).item()
+            epoch_frac_mid += (mid_vol_mask.sum().float() / total).item()
+            epoch_frac_far += (far_vol_mask.sum().float() / total).item()
+            epoch_frac_surf += (surf_mask.sum().float() / total).item()
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         x_aug = apply_fourier_pe(x_norm, fourier_enc)
@@ -619,10 +654,20 @@ for epoch in range(MAX_EPOCHS):
             pred = model({"x": x_aug})["preds"]
             per_elem = elementwise_loss(pred, y_norm, cfg.loss_type, cfg.huber_delta)
 
-            vol_mask = mask & ~is_surface
-            surf_mask = mask & is_surface
-            vol_loss = (per_elem * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
             surf_loss = (per_elem * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            if tier_enabled:
+                # 3-tier per-tier-mean: each tier contributes its own mean; `mid`
+                # (τ_near < dist ≤ τ_far) stays at weight 1.0 as a neutral anchor.
+                near_surf_loss = (per_elem * near_surf_mask.unsqueeze(-1)).sum() / near_surf_mask.sum().clamp(min=1)
+                mid_vol_loss = (per_elem * mid_vol_mask.unsqueeze(-1)).sum() / mid_vol_mask.sum().clamp(min=1)
+                far_vol_loss = (per_elem * far_vol_mask.unsqueeze(-1)).sum() / far_vol_mask.sum().clamp(min=1)
+                vol_loss = (
+                    cfg.w_near_surf * near_surf_loss
+                    + mid_vol_loss
+                    + cfg.w_far_vol * far_vol_loss
+                )
+            else:
+                vol_loss = (per_elem * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
             loss = vol_loss + cfg.surf_weight * surf_loss
 
         # Scale by 1/grad_accum so accumulated gradient == mean-of-minibatches
@@ -656,6 +701,11 @@ for epoch in range(MAX_EPOCHS):
 
     epoch_vol /= max(n_micro, 1)
     epoch_surf /= max(n_micro, 1)
+    if tier_enabled and n_micro > 0:
+        epoch_frac_near /= n_micro
+        epoch_frac_mid /= n_micro
+        epoch_frac_far /= n_micro
+        epoch_frac_surf /= n_micro
 
     # --- Validate ---
     model.eval()
@@ -677,6 +727,13 @@ for epoch in range(MAX_EPOCHS):
         "epoch_time_s": dt,
         "global_step": global_step,
     }
+    if tier_enabled:
+        log_metrics.update({
+            "train/frac_near_surf": epoch_frac_near,
+            "train/frac_mid_vol": epoch_frac_mid,
+            "train/frac_far_vol": epoch_frac_far,
+            "train/frac_surf": epoch_frac_surf,
+        })
     for split_name, m in split_metrics.items():
         for k, v in m.items():
             log_metrics[f"{split_name}/{k}"] = v
@@ -701,6 +758,12 @@ for epoch in range(MAX_EPOCHS):
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
     )
+    if tier_enabled:
+        print(
+            f"    tier_frac: near={epoch_frac_near:.3f} "
+            f"mid={epoch_frac_mid:.3f} far={epoch_frac_far:.3f} "
+            f"surf={epoch_frac_surf:.3f} (sum={epoch_frac_near+epoch_frac_mid+epoch_frac_far+epoch_frac_surf:.3f})"
+        )
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
 
