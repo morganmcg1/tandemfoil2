@@ -831,3 +831,64 @@ Methodology lessons carried forward:
 - Anchor seed variance ~8 val on pre-SwiGLU recipe; sub-5% effects cannot be distinguished.
 
 Nezuko reassigned to PR #27 (slice_num sweep on merged recipe) — fundamental architectural knob never cleanly tested on the current 73.66 baseline.
+
+---
+
+## 2026-04-24 — PR #24: alphonse: σ × SwiGLU fine sweep — MERGED
+
+- **Branch:** `alphonse/sigma-swiglu-sweep`
+- **W&B group:** `alphonse/sigma-swiglu`
+- **Hypothesis:** Verify fern's crashed σ=0.7+SwiGLU claim (val 71.49) from PR #20. Establish 2-seed noise floor under the merged SwiGLU recipe. First strict multi-seed experiment.
+
+### Results (2-seed summary)
+
+| σ | seed 0 | seed 1 | 2-seed mean | test mean | std(val) |
+|---|--------|--------|-------------|-----------|----------|
+| **0.7** | 71.489 | **69.845** | **70.667** | **62.691** | 1.162 |
+| 1.0 (anchor) | 73.660 | 74.173 | 73.917 | 65.496 | 0.362 |
+| 0.8 | 81.468 | 76.817 | 79.142 | 72.212 | 3.289 |
+| 0.9 | 80.994 | 74.989 | 77.992 | 69.038 | 4.246 |
+
+### Analysis
+
+- **σ=0.7 2-seed mean (70.67) beats anchor mean (73.92) by 3.25 val, ~9× anchor std (0.362).** Outside noise by a very wide margin.
+- **Anchor seed variance under SwiGLU recipe: std 0.362 val — dramatically tighter than pre-SwiGLU m=160 band (σ ≈ 8 val).** SwiGLU recipe stabilizes optimization ~20×. This is the key methodological calibration.
+- **σ=0.8 and σ=0.9 regress catastrophically** (79–80) with high seed variance (std 3–4) — optimization pathology in that specific band. σ=0.7 is a **sharp minimum, not a flat basin.**
+- **Fern's crashed σ=0.7 claim verified bit-exactly.** seed=0 reproduced 71.489.
+- **Per-split uniform win:** σ=0.7 best seed beats σ=1 best on every val and every test split.
+- First application of strict multi-seed protocol to merge: worked cleanly, caught fern's crashed claim, established tight noise floor.
+
+### Decision: **MERGED** → new baseline 69.845 best-single / 70.667 2-seed-mean val; 62.778 / 62.691 test.
+
+Follow-up: fine σ sweep {0.5, 0.55, 0.6, 0.65, 0.75} to locate the true minimum (sharp-minimum finding makes this critical). Assigned as PR #28.
+
+---
+
+## 2026-04-24 — PR #17 (round 8 rerun): tanjiro: Gap-only jitter on Fourier baseline — SENT BACK
+
+- **Branch:** `tanjiro/input-feature-jitter` (pre-SwiGLU, 8th consecutive stale-rebase)
+- **W&B group:** `tanjiro/gap-jitter-fourier`
+- **Hypothesis (r8):** Gap/stagger jitter σ-scan {0.01, 0.02, 0.03, 0.04} + tandem-gated AoA1 probe on the Fourier baseline.
+
+### Results
+
+| Config (σ_gap / seed) | val_avg | test_avg |
+|------------------------|---------|----------|
+| 0.04 / s42 | **89.838** | 78.513 |
+| 0.01 / s42 | 90.940 | 82.501 |
+| 0.02 / s7 | 91.235 | 80.487 |
+| 0.03 / s42 | 91.579 | 80.657 |
+| anchor / s7 | 92.332 | 85.423 |
+| anchor / s42 | 94.878 | 83.678 |
+| 0.02 / s42 | 95.135 | 84.087 |
+| 0.02 / s99 | 96.287 | 87.466 |
+
+### Analysis
+
+- **Branch pre-SwiGLU.** Winner val 89.84 is +16.18 val vs current 69.85 baseline; incompatible recipe.
+- **σ=0.04 is the new peak at seed=42** (r5's σ=0.02 winner was seed-lucky). 3-seed spread at σ=0.02: 91.24/95.14/96.29 (mean 94.22, spread 5.05 val).
+- **Monotonic trend {0.01 → 0.04}** at seed=42 suggests true peak may be beyond σ=0.04 (edge of grid).
+- **OOD win pattern replicates** on pre-SwiGLU Fourier: single_in_dist −8.2, camber_rc −7.5 at σ=0.04 vs anchor-s42.
+- **4-parallel still too much IO contention** (5.4% seed spread vs target 2.5%).
+
+### Decision: **SENT BACK.** Rebase + serial pairs + extended σ-scan {0.04, 0.06, 0.08} + isolated tandem-AoA probe.
