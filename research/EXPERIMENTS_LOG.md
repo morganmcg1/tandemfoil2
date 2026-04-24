@@ -1,5 +1,75 @@
 # SENPAI Research Results
 
+## 2026-04-24 08:00 — PR #33: fern: α-gated per-block Fourier injection (magnitude-constrained, zero-init α)
+
+- **Branch:** `fern/alpha-gated-pbf`
+- **Hypothesis:** Per-block Fourier re-injection (PR #30) catastrophically regressed (+47%) because zero-init projector grew harmfully post-step-0. Adding a per-block learnable scalar α_i (init=0) to gate the projector output — ControlNet/zero-init-gate pattern — should prevent harmful growth while allowing beneficial injection if the optimizer finds it useful.
+
+### Results
+
+| GPU | Variant | α_init | Seed | val_avg/mae_surf_p | test_avg/mae_surf_p | Final α (max\|·\|) | W&B |
+|----:|:--------|:------:|:----:|-------------------:|--------------------:|--------------------|:----|
+| 0 | anchor | — | 0 | 71.489 | 62.603 | — | `ko9iufzq` |
+| 1 | anchor | — | 1 | 69.845 | 62.778 | — | `58kwdfo2` |
+| 2-6 | PBF (various) | 0.0 | 0-2 | 74.2–78.1 | 65.6–70.9 | 0.0000 (dead) | various |
+| 7 | PBF all | **0.01** | 0 | 78.422 | 69.207 | 0.0021 | `l50z7uie` |
+
+**Anchor 2-seed mean: val 70.667 / test 62.691 (reproduces BASELINE.md exactly)**
+
+### Analysis and Conclusions
+
+**Hypothesis: conclusively falsified.** Two distinct failure modes:
+
+1. **α_init=0 variants are mathematically dead:** ∂L/∂α_i = g · fourier_proj(pe_code) = g · **0** = 0 (projector weight is zero-init). ∂L/∂W = g · α_i · pe_code = g · **0** · pe_code = 0. No gradient flows to any parameter; mechanism frozen forever. Confirmed empirically: alphas stayed at exact 0.0 across all 5 layers throughout training.
+
+2. **α_init=0.01 variant shows active suppression:** Alphas dropped 5× in epoch 1 (0.01→0.002), oscillated near 0 for 22 epochs. max|α| = 0.0021 at final epoch (vs 0.01 at init). The optimizer is actively closing the gate. If per-block Fourier info helped, α would grow — it shrank.
+
+**Key insight:** The degenerate fixed-point (α_init=0 + zero-init projector) is not ControlNet-equivalent. ControlNet zero-inits the conv/linear weight **without** an α gate, so ∂L/∂W = g·pe_code ≠ 0 and gradients flow. Adding α on top creates a product of zeros with no escape. The correct ControlNet implementation would zero-init W alone (no α gate), which was effectively tested in PR #30 (catastrophic regression) — confirming the trunk already captures what this injection attempts to add.
+
+### Decision: **CLOSED** (dead end)
+
+---
+
+## 2026-04-24 08:00 — PR #17: tanjiro: In-distribution input jitter (AoA + log(Re) + feature noise)
+
+- **Branch:** `tanjiro/input-feature-jitter`
+- **Hypothesis:** Small Gaussian noise on continuous input features (AoA, log(Re), gap, stagger) keeps samples in-distribution while augmenting the conditioning signal, improving generalization on camber/Re OOD splits.
+
+### Results (Round 3 — on current Fourier+SwiGLU+sn=32 recipe)
+
+| Variant | σ_gap | σ_aoa | Seed | val_avg/mae_surf_p | test_avg/mae_surf_p | W&B |
+|---------|-------|-------|------|-------------------|---------------------|:----|
+| anchor | 0.00 | 0 | 0 | 76.1987 | 68.7743 | `4maayf7o` |
+| anchor | 0.00 | 0 | 1 | 78.5126 | 71.9150 | `yy31yxt2` |
+| **gap-jitter** | **0.04** | 0 | 0 | **71.7905** | **63.4824** | `5uh500fl` |
+| gap-jitter | 0.04 | 0 | 1 | 78.3616 | 71.3244 | `u9szc5nj` |
+| gap-jitter | 0.06 | 0 | 0 | 75.2962 | 69.1912 | `8ldbzb8n` |
+| gap-jitter | 0.08 | 0 | 0 | 73.4633 | 66.3532 | `j8q00s67` |
+| aoa-only | 0 | 0.01 | 0 | 72.2909 | 63.9503 | `cj9xxait` |
+| compound | 0.04 | 0.01 | 0 | 75.1954 | 67.9401 | `vjlmwlrg` |
+
+**Baseline to beat:** val 67.186 best / 68.687 3-seed mean | **Within-sweep anchor 2-seed mean: 77.36 (throughput-contention-inflated)**
+
+### Analysis and Conclusions
+
+**Hypothesis not confirmed under current stack.** Three rounds of iteration across different baseline checkpoints:
+
+- **R1 (pre-Fourier):** gap=0.02 at 89.88 — promising, but on stale baseline.
+- **R2 (Fourier+σ=1.0):** gap=0.04 at 89.84 — non-monotone σ landscape, anchor contention-inflated (94.88 vs clean 84.74).
+- **R3 (Fourier+SwiGLU+σ=0.7):** gap=0.04 2-seed mean = 75.08 vs anchor 2-seed mean = 77.36 (Δ=−2.28 val). Merge criterion (beat 69.845) missed by >5pts in absolute terms.
+
+**Root cause: throughput contention dominates noise floor.** Within-sweep anchor (77.36) is 7.51pts above clean baseline (69.845). Even serial 2-parallel execution gives std=1.64 val (4.5× the PR #24 clean std of 0.36). The gap-jitter effect (~2.3pts within-sweep) is smaller than the throughput-contention noise.
+
+**Additional findings:**
+- σ landscape is **non-monotone** under Fourier+SwiGLU (contrary to R2's apparent monotone trend)
+- Compound (gap+AoA) hurts vs either alone — no additive stacking
+- AoA-only at σ=0.01 with tandem-gating is nearly as strong as gap-only at seed-0 (72.29 vs 71.79) — but single seed, unconfirmed
+- Tandem-gating correctly implemented and verified; should be preserved if jitter is revisited on future stacks
+
+### Decision: **CLOSED** (direction not confirmed after 3 rounds under current stack; gap-jitter effect may resurface on different architecture)
+
+---
+
 ## 2026-04-23 21:40 — PR #3: frieren: Huber/L1 loss reformulation to close MSE-vs-MAE gap
 
 - **Branch:** `frieren/loss-reformulation-v2`

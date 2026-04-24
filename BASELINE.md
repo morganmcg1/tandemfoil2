@@ -8,39 +8,41 @@
 
 ## Current best
 
-**PR #27 — nezuko: slice_num=32 sweep on σ=0.7 + SwiGLU recipe**
+**PR #34 — frieren: slice_num=16 sweep (sn∈{8,16,24} vs sn=32 anchor)**
 
-- **val_avg/mae_surf_p: 67.186** (best single-seed, run `nrba5yg8`, seed=2); 3-seed mean **68.687**
-- **test_avg/mae_surf_p: 58.358** (best single-seed, seed=2); 3-seed mean **60.680**
-- W&B runs: `szq21j7r` (s=0), `cmmj8l21` (s=1), `nrba5yg8` (s=2) — group `nezuko/slice-num-sigma07`
-- Best epoch: 18 (s=0), 19 (s=1), 20 (s=2)
+- **val_avg/mae_surf_p: 60.581** (best single-seed, run `moydqx8l`, seed=0, ep=23); 2-seed mean **61.813**
+- **test_avg/mae_surf_p: 54.640** (best single-seed, seed=0); 2-seed mean **55.316**
+- W&B runs: `moydqx8l` (s=0), `tkfnon33` (s=1) — group `frieren/slice-num-lower`
+- Best epoch: 23 (both seeds hit best val at final epoch — headroom remains)
 
-### Per-split val surface-p MAE (best single-seed `nrba5yg8`, s=2)
+### Per-split val surface-p MAE (best single-seed `moydqx8l`, s=0, ep=23)
 
-| Split | val mae_surf_p | vs PR #24 |
-|-------|----------------|-----------|
-| val_single_in_dist | 77.43 | −3.6% |
-| val_geom_camber_rc | 76.45 | −7.3% |
-| val_geom_camber_cruise | 49.72 | +1.9% |
-| val_re_rand | 65.14 | −4.8% |
-| **val_avg** | **67.186** | **−3.8%** |
+| Split | val mae_surf_p | vs PR #27 (sn=32) |
+|-------|----------------|-------------------|
+| val_single_in_dist | 71.23 | −8.0% |
+| val_geom_camber_rc | 69.87 | −8.6% |
+| val_geom_camber_cruise | 40.81 | −17.9% |
+| val_re_rand | 60.41 | −7.3% |
+| **val_avg** | **60.581** | **−9.8%** |
 
-### Per-split test surface-p MAE (3-seed mean, best-val checkpoint)
+### Per-split test surface-p MAE (best single-seed `moydqx8l`, s=0, best-val checkpoint)
 
-| Split | test mae_surf_p (3-seed mean) | vs PR #24 |
-|-------|-------------------------------|-----------|
-| test_single_in_dist | 70.14 | −5.7% |
-| test_geom_camber_rc | 70.97 | −2.6% |
-| test_geom_camber_cruise | 42.89 | −0.4% |
-| test_re_rand | 58.72 | −3.1% |
-| **test_avg** | **60.680** | **−3.2%** |
+| Split | test mae_surf_p | vs PR #27 3-seed mean |
+|-------|-----------------|----------------------|
+| test_single_in_dist | 64.43 | −8.1% |
+| test_geom_camber_rc | 64.58 | −9.0% |
+| test_geom_camber_cruise | 35.41 | −17.4% |
+| test_re_rand | 54.14 | −7.8% |
+| **test_avg** | **54.640** | **−10.0%** |
 
-### Noise calibration (from PR #27)
+### Noise calibration (from PR #34)
 
-- Anchor (sn=64, σ=0.7, SwiGLU) 2-seed std (ddof=1): **1.162 val** (wider than PR #24's 0.362 — recipe-dependent).
-- Winner (sn=32) 3-seed std: **1.650 val**. Multi-seed (≥3) protocol important for sn=32.
-- 2-seed merge criterion: winner 2-seed mean ≤ **69.345 val** (68.687 − 1.162 × 3-seed std caveat: use anchor std).
-  - All three 2-seed subsets of sn=32 pass (min: 67.803, max: 69.437).
+- Anchor (sn=32, σ=0.7, SwiGLU) 3-seed std (ddof=1): **1.650 val** (reproduces PR #27 baseline exactly).
+- Winner (sn=16) 2-seed std: **1.742 val** (comparable to anchor std — win is structural, not a lucky snapshot).
+- 2-seed merge criterion: winner 2-seed mean ≤ **67.025 val** (68.687 − 1× anchor std 1.650).
+  - sn=16 2-seed mean **61.813** passes (5.21 pts below gate — decisive).
+- sn=8 single-seed: 62.476 val / 54.677 test; trailing-5 mean **64.05** (lowest of any run). Follow-up needed with 2 seeds.
+- sn=24 is UNSTABLE: 2-seed std 6.066 (3.7× anchor std). Not a candidate.
 
 ### Current default config (post-merge)
 
@@ -56,7 +58,7 @@
 | n_hidden | 128 |
 | n_layers | 5 |
 | n_head | 4 |
-| **slice_num** | **32** ← new (PR #27) |
+| **slice_num** | **16** ← new (PR #34) |
 | mlp_ratio | 2 |
 | optimizer | AdamW |
 | scheduler | CosineAnnealingLR(T_max=total_optimizer_steps) |
@@ -66,9 +68,9 @@
 | fourier_sigma | 0.7 |
 | ffn | SwiGLU |
 
-**Note on code defaults:** some Config dataclass defaults in `train.py` still reflect pre-merge values (`loss_type="mse"`, `amp=False`, `grad_accum=1`, `fourier_features="none"`, `fourier_m=10`, `fourier_sigma=1.0`, `swiglu=False`). The current merged recipe requires explicit flags — always pass the full flag list below. Verification via `--debug` run + W&B config inspection is **mandatory** before committing to full sweeps.
+**Note on code defaults:** some Config dataclass defaults in `train.py` still reflect pre-merge values (`loss_type="mse"`, `amp=False`, `grad_accum=1`, `fourier_features="none"`, `fourier_m=10`, `fourier_sigma=1.0`, `swiglu=False`). The current merged recipe requires explicit flags. Verification via `--debug` run + W&B config inspection is **mandatory** before committing to full sweeps.
 
-**Note on slice_num:** sn=32 gives −16% VRAM vs sn=64 (31.6 GB vs 37.8 GB) and ~20% faster per epoch (~89s vs ~111s), enabling 21 epochs in the 30-min budget vs 17 for sn=64. The per-epoch speed gain is a real throughput advantage.
+**Note on slice_num:** sn=16 gives 28.5 GB VRAM (vs sn=32's 31.6 GB) and ~78 s/epoch (vs ~89 s), enabling ~23 epochs in 30-min budget. Both sn=16 seeds hit best val at the final epoch — more epochs would likely improve further. The floor is not yet found; sn=8 (trailing-5 64.05) has the lowest loss surface of any run tested.
 
 Reproduce (best single-seed winner):
 ```bash
@@ -83,14 +85,26 @@ cd target && python train.py \
     --fourier_m 160 \
     --fourier_sigma 0.7 \
     --swiglu \
-    --slice_num 32 \
-    --seed 2 \
+    --slice_num 16 \
+    --seed 0 \
     --wandb_name "<student>/<experiment>"
 ```
 
 ---
 
 ## Baseline history
+
+### 2026-04-24 — PR #34: frieren slice_num=16 sweep (sn∈{8,16,24} vs sn=32 anchor)
+
+- **val_avg/mae_surf_p: 60.581 (best seed, s=0) / 61.813 (2-seed mean)** (previous: 67.186 / 68.687, PR #27)
+- **test_avg/mae_surf_p: 54.640 (best seed) / 55.316 (2-seed mean)** (previous: 58.358 / 60.680, PR #27)
+- W&B runs: `moydqx8l` (s=0), `tkfnon33` (s=1) — group `frieren/slice-num-lower`
+- Change: `--slice_num 16` (was 32). σ=0.7, SwiGLU, AMP, grad_accum=4, L1, sw=1, Fourier-m=160 unchanged.
+- Delta: −9.8% val / −6.5% test (best seed vs prior best seed); 2-seed mean −10.0% val / −8.8% test.
+- Decisive pass: 2-seed mean 61.813 is 5.21 pts below merge gate (67.025). sn=16 2-seed std (1.742) matches anchor std (1.650) — structural win, not a lucky snapshot.
+- Gain uniform across all splits; largest on `val_geom_camber_cruise` (−17.9%) — consistent with stronger pooling regularization hypothesis.
+- VRAM: 28.5 GB (−9.8% vs sn=32); per-epoch: ~78s (−12%); budget: ~23 epochs vs 21. Both seeds still improving at final epoch.
+- sn=8 (trailing-5=64.05) is intriguing — floor not yet found. Follow-up needed.
 
 ### 2026-04-24 — PR #27: nezuko slice_num=32 sweep (σ=0.7 + SwiGLU + sn=32)
 
