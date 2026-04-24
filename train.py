@@ -489,6 +489,7 @@ class Config:
     mlp_ratio: int = 2              # TransolverBlock MLP hidden = n_hidden * mlp_ratio (SwiGLU: 2/3-corrected)
     slice_num: int = 64             # number of slice tokens in PhysicsAttention softmax-over-nodes
     n_layers: int = 5               # number of TransolverBlock layers (depth sweep, PR #35)
+    n_hidden: int = 128             # TransolverBlock hidden dim (n_head=4 must divide n_hidden)
     seed: int = 0                   # RNG seed for torch / numpy / python random
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -505,6 +506,8 @@ if cfg.grad_accum < 1:
     raise ValueError(f"--grad_accum must be >=1, got {cfg.grad_accum}")
 if cfg.n_layers < 1:
     raise ValueError(f"--n_layers must be >=1, got {cfg.n_layers}")
+if cfg.n_hidden % 4 != 0:
+    raise ValueError(f"--n_hidden must be divisible by n_head=4, got {cfg.n_hidden}")
 if cfg.fourier_features not in ("none", "fixed", "learnable"):
     raise ValueError(
         f"--fourier_features must be one of none|fixed|learnable, got {cfg.fourier_features!r}"
@@ -540,7 +543,7 @@ elif per_coord:
 else:
     fourier_str = f"{cfg.fourier_features} (m={cfg.fourier_m}, σ={cfg.fourier_sigma})"
 print(f"Fourier: {fourier_str}  swiglu={cfg.swiglu}  slice_num={cfg.slice_num}  "
-      f"n_layers={cfg.n_layers}  seed={cfg.seed}")
+      f"n_layers={cfg.n_layers}  n_hidden={cfg.n_hidden}  seed={cfg.seed}")
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -579,7 +582,7 @@ model_config = dict(
     space_dim=space_dim,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=128,
+    n_hidden=cfg.n_hidden,
     n_layers=cfg.n_layers,
     n_head=4,
     slice_num=cfg.slice_num,
