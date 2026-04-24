@@ -1022,3 +1022,48 @@ Architectural-decoder direction NOT closed entirely — student's own follow-up 
 ### Decision: **SENT BACK** with focused re-sweep on σ=0.7: sn={32, 48, 96} + 2-seed at sn=64 anchor + 3-seed at sn=32 (the candidate winner). sn≥128 dropped.
 
 **Lab-wide process note:** round-11 advisor assignment body specified a value that later became stale when PR #24 merged mid-assignment-cycle. Going forward, when a merge lands during an in-flight assignment, the advisor must either retroactively update open-assignment bodies OR explicitly tell students to use their assignment-time baseline. Didn't catch this.
+
+---
+
+## 2026-04-24 — PR #28 (round 12): alphonse: Fine σ sweep {0.5, 0.55, 0.6, 0.65, 0.75} — CLOSED
+
+- **Branch:** `alphonse/sigma-fine-sweep`
+- **W&B group:** `alphonse/sigma-fine-v2`
+- **Hypothesis:** PR #24 established σ=0.70 as a sharp minimum. Locate true optimum by sweeping below and just above σ=0.70.
+
+### Results (all σ=0.7-anchor + fine sweep values, verified)
+
+| Rank | σ / seed | val_avg | test_avg | best_ep |
+|------|----------|---------|----------|---------|
+| 1 | 0.70 / s1 | **69.8450** | 62.7778 | 17 (reproduces PR #24) |
+| 2 | 0.70 / s0 | 71.4886 | 62.6032 | 16 (reproduces PR #24) |
+| 3 | 0.60 / s1 | 71.6626 | 63.6972 | 17 |
+| 4 | 0.50 / s0 | 71.7951 | 63.8430 | 17 |
+| 5 | 0.60 / s0 | 72.6044 | 64.1273 | 16 |
+| 6 | 0.55 / s0 | 75.5400 | 66.6460 | 16 |
+| 7 | 0.75 / s0 | 79.3338 | 69.0930 | 16 |
+| 8 | 0.65 / s0 | 82.3795 | 75.1967 | **11** (pathology) |
+
+### Per-σ 2-seed summary
+
+| σ | mean (val) | std | mean (test) |
+|---|-----------|-----|-------------|
+| 0.50 (1-seed) | 71.80 | — | 63.84 |
+| 0.55 (1-seed) | 75.54 | — | 66.65 |
+| **0.60 (2-seed)** | **72.13** | **0.666** | 63.91 |
+| 0.65 (1-seed) | 82.38 | — | 75.20 |
+| **0.70 (2-seed)** | **70.67** | **1.162** | 62.69 |
+| 0.75 (1-seed) | 79.33 | — | 69.09 |
+
+### Analysis
+
+- **σ=0.70 is confirmed optimum** across now-9 σ values mapped. No better basin below 0.70.
+- **Pathology band extends on BOTH sides of σ=0.70:** σ=0.65 joins σ=0.80, σ=0.90 with best_epoch=11 and val >80. The σ=0.70 well is **narrower** than PR #24 framed it — sharp optimum flanked immediately by instability both ways.
+- **Secondary basin at σ=0.60** (2-seed mean 72.13, std 0.666) — viable fallback but clearly worse.
+- **CRITICAL: 2-seed variance at σ=0.70 is std 1.162 val** — ~3.2× the 0.362 anchor std used in current merge thresholds (which was measured at σ=1 in PR #24). **Noise floor is σ-dependent; merge threshold is too tight for σ=0.7 decisions.** Lab-wide implication.
+- σ=0.70 seed=1 bit-exact reproduces PR #24 winner (69.845, run `3veglthd` same as `flgrjmte` structurally — same seed, same recipe).
+- Config check PASS — pure CLI sweep, no code changes. Student execution flawless.
+
+### Decision: **CLOSED** as clean negative result. σ axis exhausted.
+
+Alphonse reassigned to PR #32: n_head sweep + 3-seed anchor recalibration to update the merge threshold.

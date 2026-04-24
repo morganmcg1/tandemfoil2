@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Updated:** 2026-04-24 05:00 (round 15 — PR #27 sent back, PR #31 unblocked)
+- **Updated:** 2026-04-24 05:30 (round 16 — PR #28 closed, σ axis exhausted)
 - **Advisor branch:** `kagent_v_students`
 - **Research tag:** `kagent-v-students-20260423-2055`
 - **W&B project:** `wandb-applied-ai-team/senpai-kagent-v-students`
@@ -34,7 +34,7 @@
 | fern     | WIP (r14) | #30: Per-block Fourier re-injection (zero-init) | `fern/per-block-fourier` |
 | tanjiro  | WIP (r12) | #17 r3: Gap σ-scan on SwiGLU baseline + tandem-gated AoA | `tanjiro/input-feature-jitter` |
 | nezuko   | WIP (r15) | #27 r2: slice_num refined {32, 48, 96} on σ=0.7 recipe (2-seed) | `nezuko/slice-num-sweep` |
-| alphonse | WIP (r12) | #28: Fine σ sweep {0.5, 0.55, 0.6, 0.65, 0.7, 0.75} + 2-seed | `alphonse/sigma-fine-sweep` |
+| alphonse | WIP (r16) | #32: n_head sweep + 3-seed anchor recalibration | `alphonse/n-head-sweep` |
 | edward   | WIP (r2) | #8: EMA + grad-clip on L1 | `edward/ema-gradclip-stability` |
 | thorfinn | WIP (r13) | #29: Slice-bottleneck residual decoder (PhysicsAttention) | `thorfinn/slice-bottleneck-decoder` |
 
@@ -56,7 +56,7 @@ None at this time.
 | #30 | fern     | Per-block Fourier re-injection (zero-init, shared projector) | Beat **70.67** |
 | #17 | tanjiro  | r3: Gap σ-scan on SwiGLU baseline + tandem-gated AoA | Beat **70.67** |
 | #27 | nezuko   | r2: slice_num {32, 48, 96} on σ=0.7 recipe + 3-seed at sn=32 | Beat **70.67** |
-| #28 | alphonse | Fine σ sweep {0.5, 0.55, 0.6, 0.65, 0.75} + 2-seed at winner | Beat **70.67** |
+| #32 | alphonse | n_head sweep {2, 4, 8, 16} + 3-seed anchor recalibration | Beat **70.67** (threshold to be recalibrated this PR) |
 | #8  | edward   | EMA 0.999 + wider grad-clip on L1 | Beat **70.67** |
 | #29 | thorfinn | Slice-bottleneck residual decoder (PhysicsAttention, zero-init) | Beat **70.67** |
 
@@ -67,6 +67,13 @@ None at this time.
 - **Round 1–6:** L1 (PR #3), sw=1 (#11), AMP+grad_accum=4 (#12), Fourier PE m=160 σ=1 (#7) merged — compound 84.737 baseline.
 - **Round 7 (r7):** Closed PR #14 (sw>1 exhausted). Seed floor on seeded serial: 2.5%.
 - **Round 8 (r8):** Closed PR #6 (LR schedule 3-round exhaustion — regime-specific artefacts). Sent back #17 (gap-only jitter signal real). Assigned #22 (temp annealing).
+- **Round 16 (r16 — 2026-04-24 05:30):**
+  - **Closed PR #28 (alphonse fine σ sweep):** σ=0.7 confirmed robust optimum. σ axis now fully mapped across 9 values {0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.9, 1.0}. **Important landscape findings:**
+    - Pathology band (divergence + best_ep=11) extends on BOTH sides of σ=0.7 — σ=0.65 joins σ=0.8/0.9 in the unstable band. σ=0.7 is a narrow well.
+    - Secondary basin at σ=0.60 (2-seed mean 72.13, std 0.666) — viable fallback but clearly worse than σ=0.7.
+    - **Variance at σ=0.7 is σ-dependent:** 2-seed std is **1.162 val**, ~3.2× the 0.362 anchor std measured at σ=1 in PR #24. **Current merge threshold (0.362) is too tight for σ=0.7 decisions.**
+  - **Assigned PR #32 (alphonse n_head sweep + 3-seed anchor recalibration):** dual-purpose sweep. Recalibrate noise floor with 3-seed anchor (updates merge threshold lab-wide). Sweep untested n_head knob {2, 4, 8, 16} with 2-seed at candidates.
+
 - **Round 15 (r15 — 2026-04-24 05:00):**
   - **Sent back PR #27 (nezuko slice_num):** advisor-side error — my assignment body specified `--fourier_sigma 1.0` because PR #24 (σ=0.7) hadn't merged yet at round 11. Nezuko ran faithfully to spec. Their results are directionally real: sn=32 2-seed mean 71.996 beats σ=1 anchor by 1.92 val on both seeds (4/4 seed-paired comparisons favor sn=32). But against the current σ=0.7 baseline (70.667), sn=32 is +1.33 val above — not merge-eligible. Sent back with focused re-run on σ=0.7: sn={32, 48, 96} + 3-seed at sn=32 candidate. Cliff at sn≥128 dropped (epoch-budget-bound at current wall-clock).
   - **PR #31 (frieren post-hoc rescale):** student preemptively marked ready to ask a clarification question. Review agent answered (option b for 1ch: preserve per-channel ratios via multiplicative correction `pred * y_std_global * (y_std_pred / y_std_global_geomean)`) and sent back to WIP. Student now unblocked.
