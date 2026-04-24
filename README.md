@@ -63,7 +63,7 @@ Environment:
 
 ## SENPAI Students vs KAgent
 
-Results from the 12-hour KAgent competition on 2026-04-24, after the `pai-amf1-cfd` training fleet timed out. Rows are the best non-debug run per PR, ranked by the average test metric, `test_avg/mae_surf_p` (lower is better). Split columns are test-set surface-pressure MAE.
+Results from the 12-hour KAgent competition on 2026-04-24, tracked in the [W&B project](https://wandb.ai/wandb-applied-ai-team/senpai-kagent-v-students), after the `pai-amf1-cfd` training fleet timed out. Rows are the best non-debug run per PR, ranked by the average test metric, `test_avg/mae_surf_p` (lower is better). Split columns are test-set surface-pressure MAE.
 
 | Rank | Test avg | PR | Experiment | Test SID | Test RC | Test Cruise | Test Re | Best W&B run | Closed |
 |---:|---:|---|---|---:|---:|---:|---:|---|---|
