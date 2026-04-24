@@ -1,9 +1,7 @@
 # TandemFoilSet-Balanced
 
-**[TandemFoilSet Paper](https://openreview.net/forum?id=4Z0P4Nbosn)**
-
 This repo contains:
-1) a custom TandemFoilSet dataset split called `TandemFoilSet-Balanced`
+1) a custom TandemFoilSet dataset split called `TandemFoilSet-Balanced` based on the **[TandemFoilSet Paper](https://openreview.net/forum?id=4Z0P4Nbosn)**
 2) a base set of data and training files that the [senpai](https://github.com/wandb/senpai) autoresearch harness can use as a baseline to try and improve performance on this dataset.
 
 ## Citation
@@ -23,25 +21,11 @@ If you use this balanced split design or benchmark package, please cite:
 }
 ```
 
-For the underlying dataset, cite the original TandemFoilSet paper:
-
-### BibTeX for the original TandemFoilSet paper
-
-```bibtex
-@inproceedings{lim2026tandemfoilset,
-  title     = {{TandemFoilSet}: Datasets for Flow Field Prediction of Tandem-Airfoil Through the Reuse of Single Airfoils},
-  author    = {Lim, Wei Xian and Loh, Sher En Jessica and Li, Zenong and Oo, Thant Zin and Chan, Wai Lee and Kong, Adams Wai-Kin},
-  booktitle = {The Fourteenth International Conference on Learning Representations},
-  year      = {2026},
-  url       = {https://openreview.net/forum?id=4Z0P4Nbosn}
-}
-```
-
 ## Splits
 The goal behind the split is to be able to say:
 - The model is good/bad at generalizing to unseen geometries (train on low + high camber, val/test on moderate)
 - The same model works across different Reynolds numbers for both race car and cruise (train on low, med, high Re, val/test on low, moderate, high) - random split across all Re numbers
-- General single-foil random split as a sanity check
+- The model performs well on a single-foil random split as a sanity check
 
 See **[SPLITS.md](data/SPLITS.md)** for a full description of the dataset splits.
 
@@ -134,3 +118,20 @@ Run accounting uses W&B `state=finished`, not finite test score. The competition
 | 30 | 89.344 | [#15](https://github.com/morganmcg1/tandemfoil2/pull/15) | horizontal flip augmentation | 107.680 | 106.061 | 59.338 | 84.296 | [wvpwgjvs](https://wandb.ai/wandb-applied-ai-team/senpai-kagent-v-students/runs/wvpwgjvs) | 2026-04-23 23:43 UTC |
 
 PRs without a finite W&B `test_avg/mae_surf_p` at this snapshot: [#1](https://github.com/morganmcg1/tandemfoil2/pull/1), [#2](https://github.com/morganmcg1/tandemfoil2/pull/2), [#3](https://github.com/morganmcg1/tandemfoil2/pull/3), [#4](https://github.com/morganmcg1/tandemfoil2/pull/4), [#5](https://github.com/morganmcg1/tandemfoil2/pull/5), [#8](https://github.com/morganmcg1/tandemfoil2/pull/8), [#11](https://github.com/morganmcg1/tandemfoil2/pull/11), [#29](https://github.com/morganmcg1/tandemfoil2/pull/29), [#40](https://github.com/morganmcg1/tandemfoil2/pull/40), [#42](https://github.com/morganmcg1/tandemfoil2/pull/42), [#43](https://github.com/morganmcg1/tandemfoil2/pull/43).
+
+
+
+
+### BibTeX for the original TandemFoilSet paper
+
+For the underlying dataset, cite the original TandemFoilSet paper:
+
+```bibtex
+@inproceedings{lim2026tandemfoilset,
+  title     = {{TandemFoilSet}: Datasets for Flow Field Prediction of Tandem-Airfoil Through the Reuse of Single Airfoils},
+  author    = {Lim, Wei Xian and Loh, Sher En Jessica and Li, Zenong and Oo, Thant Zin and Chan, Wai Lee and Kong, Adams Wai-Kin},
+  booktitle = {The Fourteenth International Conference on Learning Representations},
+  year      = {2026},
+  url       = {https://openreview.net/forum?id=4Z0P4Nbosn}
+}
+```
