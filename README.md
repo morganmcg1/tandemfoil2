@@ -51,6 +51,8 @@ Environment:
 
 Results from the 12-hour KAgent competition on 2026-04-24, tracked in the [W&B project](https://wandb.ai/wandb-applied-ai-team/senpai-kagent-v-students), after the `pai-amf1-cfd` training fleet timed out. Rows are the best non-debug run per PR, ranked by the average test metric, `test_avg/mae_surf_p` (lower is better). Split columns are test-set surface-pressure MAE.
 
+Run accounting uses W&B `state=finished`, not finite test score. The competition produced 544 total W&B runs: 450 finished, 77 crashed, and 17 failed. Of the 450 finished runs, 360 had finite `test_avg/mae_surf_p` and 90 finished without a finite `test_avg/mae_surf_p`. GitHub has 41 actual PRs in the competition range (`#1`-`#43`, with no `#10` or `#13`); excluding debug/smoke-check runs gives 417 completed non-debug W&B runs.
+
 | Rank | Test avg | PR | Experiment | Test SID | Test RC | Test Cruise | Test Re | Best W&B run | Closed |
 |---:|---:|---|---|---:|---:|---:|---:|---|---|
 | 1 | 40.927 | [#32](https://github.com/morganmcg1/tandemfoil2/pull/32) | Single-head nl3/sn16 triple compound | 46.569 | 52.859 | 24.717 | 39.561 | [ip8hn4tx](https://wandb.ai/wandb-applied-ai-team/senpai-kagent-v-students/runs/ip8hn4tx) | OPEN |
