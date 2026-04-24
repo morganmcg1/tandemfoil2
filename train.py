@@ -88,14 +88,23 @@ class MLP(nn.Module):
 class FourierEncoder(nn.Module):
     """Random Fourier Features (Tancik et al. 2020) for (x, z) coordinates.
 
-    Produces [sin(2π xy·Bᵀ), cos(2π xy·Bᵀ)] with B ∈ R^{m×2} drawn from
-    N(0, σ²). Output dim = 2m. When ``learnable=True``, B is an
-    ``nn.Parameter``; otherwise a fixed buffer.
+    Produces [sin(2π xy·Bᵀ), cos(2π xy·Bᵀ)] with B ∈ R^{m×2}. Output dim = 2m.
+    When ``learnable=True``, B is an ``nn.Parameter``; otherwise a fixed buffer.
+
+    Isotropic case: both columns of B share bandwidth σ (``sigma``).
+    Per-coordinate case: when ``sigma_x`` and ``sigma_z`` are both supplied,
+    column 0 of B is scaled by σ_x and column 1 by σ_z.
     """
 
-    def __init__(self, m: int = 10, sigma: float = 1.0, learnable: bool = False):
+    def __init__(self, m: int = 10, sigma: float = 1.0, learnable: bool = False,
+                 sigma_x: float | None = None, sigma_z: float | None = None):
         super().__init__()
-        B_init = torch.randn(m, 2) * sigma
+        B_init = torch.randn(m, 2)
+        if sigma_x is not None and sigma_z is not None:
+            B_init[:, 0] *= sigma_x
+            B_init[:, 1] *= sigma_z
+        else:
+            B_init *= sigma
         if learnable:
             self.B = nn.Parameter(B_init)
         else:
@@ -105,6 +114,26 @@ class FourierEncoder(nn.Module):
     def forward(self, xy: torch.Tensor) -> torch.Tensor:
         proj = 2 * math.pi * (xy @ self.B.T)  # [B, N, m]
         return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
+
+
+class SwiGLUMLP(nn.Module):
+    """SwiGLU feedforward (Shazeer 2020, LLaMA). Replaces Linear→GELU→Linear.
+
+    ``SwiGLU(x) = (silu(W₁x) ⊙ W₂x) W₃``. With ``gate_hidden = 2/3 × (d·mlp_ratio)``
+    the parameter count matches a standard 2-layer GELU MLP of the same
+    mlp_ratio (three d×gate_hidden projections instead of two d×hidden).
+    """
+
+    def __init__(self, d_model: int, mlp_ratio: int = 2):
+        super().__init__()
+        hidden = int(d_model * mlp_ratio)
+        gate_hidden = int(hidden * 2 / 3)
+        self.w1 = nn.Linear(d_model, gate_hidden)
+        self.w2 = nn.Linear(d_model, gate_hidden)
+        self.w3 = nn.Linear(gate_hidden, d_model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.w3(F.silu(self.w1(x)) * self.w2(x))
 
 
 def apply_fourier_pe(x_norm: torch.Tensor, enc: "FourierEncoder | None") -> torch.Tensor:
@@ -176,7 +205,8 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 swiglu=False):
         super().__init__()
         self.last_layer = last_layer
         self.ln_1 = nn.LayerNorm(hidden_dim)
@@ -185,8 +215,11 @@ class TransolverBlock(nn.Module):
             dropout=dropout, slice_num=slice_num,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
-        self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
-                       n_layers=0, res=False, act=act)
+        if swiglu:
+            self.mlp = SwiGLUMLP(hidden_dim, mlp_ratio=mlp_ratio)
+        else:
+            self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
+                           n_layers=0, res=False, act=act)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
@@ -207,7 +240,8 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 swiglu: bool = False):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -228,6 +262,7 @@ class Transolver(nn.Module):
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                swiglu=swiglu,
             )
             for i in range(n_layers)
         ])
@@ -447,7 +482,10 @@ class Config:
     # Fourier positional encoding of (x, z) coords (Tancik 2020).
     fourier_features: str = "none"  # "none" | "fixed" | "learnable"
     fourier_m: int = 10             # number of frequency bands (output dim = 2m)
-    fourier_sigma: float = 1.0      # bandwidth for random B ~ N(0, σ²)
+    fourier_sigma: float = 1.0      # isotropic bandwidth (ignored if per-coord σ set)
+    fourier_sigma_x: float | None = None  # per-coord σ for x; both x & z must be set
+    fourier_sigma_z: float | None = None  # per-coord σ for z; both x & z must be set
+    swiglu: bool = False            # replace GELU-MLP with SwiGLU in each TransolverBlock
     seed: int = 0                   # RNG seed for torch / numpy / python random
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -466,6 +504,11 @@ if cfg.fourier_features not in ("none", "fixed", "learnable"):
     raise ValueError(
         f"--fourier_features must be one of none|fixed|learnable, got {cfg.fourier_features!r}"
     )
+if (cfg.fourier_sigma_x is None) != (cfg.fourier_sigma_z is None):
+    raise ValueError(
+        "--fourier_sigma_x and --fourier_sigma_z must be set together "
+        f"(got x={cfg.fourier_sigma_x!r}, z={cfg.fourier_sigma_z!r})"
+    )
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
@@ -483,10 +526,15 @@ print(f"Loss: {cfg.loss_type}"
       + f"  surf_weight={cfg.surf_weight}")
 print(f"AMP (bf16): {cfg.amp}  |  grad_accum: {cfg.grad_accum}  "
       f"|  effective batch: {cfg.batch_size * cfg.grad_accum}")
-print(f"Fourier: {cfg.fourier_features}"
-      + (f" (m={cfg.fourier_m}, σ={cfg.fourier_sigma})"
-         if cfg.fourier_features != "none" else "")
-      + f"  seed={cfg.seed}")
+per_coord = cfg.fourier_sigma_x is not None and cfg.fourier_sigma_z is not None
+if cfg.fourier_features == "none":
+    fourier_str = "none"
+elif per_coord:
+    fourier_str = (f"{cfg.fourier_features} (m={cfg.fourier_m}, "
+                   f"σ_x={cfg.fourier_sigma_x}, σ_z={cfg.fourier_sigma_z})")
+else:
+    fourier_str = f"{cfg.fourier_features} (m={cfg.fourier_m}, σ={cfg.fourier_sigma})"
+print(f"Fourier: {fourier_str}  swiglu={cfg.swiglu}  seed={cfg.seed}")
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -513,6 +561,8 @@ if cfg.fourier_features != "none":
         m=cfg.fourier_m,
         sigma=cfg.fourier_sigma,
         learnable=(cfg.fourier_features == "learnable"),
+        sigma_x=cfg.fourier_sigma_x,
+        sigma_z=cfg.fourier_sigma_z,
     ).to(device)
 
 # Fourier PE *appends* 2m features alongside the raw (x, z) coords, so
@@ -530,6 +580,7 @@ model_config = dict(
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
+    swiglu=cfg.swiglu,
 )
 
 model = Transolver(**model_config).to(device)
