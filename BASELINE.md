@@ -8,41 +8,38 @@
 
 ## Current best
 
-**PR #34 — frieren: slice_num=16 sweep (sn∈{8,16,24} vs sn=32 anchor)**
+**PR #35 — nezuko: n_layers=3 sweep (sn=32 recipe, nl ∈ {3,4,5,6,7})**
 
-- **val_avg/mae_surf_p: 60.581** (best single-seed, run `moydqx8l`, seed=0, ep=23); 2-seed mean **61.813**
-- **test_avg/mae_surf_p: 54.640** (best single-seed, seed=0); 2-seed mean **55.316**
-- W&B runs: `moydqx8l` (s=0), `tkfnon33` (s=1) — group `frieren/slice-num-lower`
-- Best epoch: 23 (both seeds hit best val at final epoch — headroom remains)
+- **val_avg/mae_surf_p: 54.210** (best single-seed, run `jv54vc7o`, seed=1, ep=32); 2-seed mean **54.476**
+- **test_avg/mae_surf_p: 47.484** (best single-seed, seed=1); 2-seed mean **47.336**
+- W&B runs: `rze3vuj0` (s=0), `jv54vc7o` (s=1) — group `nezuko/n-layers-sn32`
+- Best epoch: 32 (both seeds hit best val at final epoch; nl=3 trains for 32 epochs in budget vs 14-18 at nl=7)
 
-### Per-split val surface-p MAE (best single-seed `moydqx8l`, s=0, ep=23)
+### Per-split val surface-p MAE (best single-seed `jv54vc7o`, s=1, ep=32)
 
-| Split | val mae_surf_p | vs PR #27 (sn=32) |
-|-------|----------------|-------------------|
-| val_single_in_dist | 71.23 | −8.0% |
-| val_geom_camber_rc | 69.87 | −8.6% |
-| val_geom_camber_cruise | 40.81 | −17.9% |
-| val_re_rand | 60.41 | −7.3% |
-| **val_avg** | **60.581** | **−9.8%** |
+| Split | val mae_surf_p | vs PR #34 (nl=5/sn=16) |
+|-------|----------------|-------------------------|
+| val_single_in_dist | 61.24 | −14.0% |
+| val_geom_camber_rc | 67.65 | −3.2% |
+| val_geom_camber_cruise | 33.63 | −17.6% |
+| val_re_rand | 54.33 | −10.1% |
+| **val_avg** | **54.210** | **−10.5%** |
 
-### Per-split test surface-p MAE (best single-seed `moydqx8l`, s=0, best-val checkpoint)
+### Per-split test surface-p MAE (best single-seed `jv54vc7o`, best-val checkpoint)
 
-| Split | test mae_surf_p | vs PR #27 3-seed mean |
-|-------|-----------------|----------------------|
-| test_single_in_dist | 64.43 | −8.1% |
-| test_geom_camber_rc | 64.58 | −9.0% |
-| test_geom_camber_cruise | 35.41 | −17.4% |
-| test_re_rand | 54.14 | −7.8% |
-| **test_avg** | **54.640** | **−10.0%** |
+| Split | test mae_surf_p | vs PR #34 |
+|-------|-----------------|-----------|
+| test_single_in_dist | ~55 | ≈−15% |
+| test_geom_camber_rc | ~57 | ≈−12% |
+| test_geom_camber_cruise | ~29 | ≈−18% |
+| test_re_rand | ~48 | ≈−11% |
+| **test_avg** | **47.484** | **−13.1%** |
 
-### Noise calibration (from PR #34)
+### Noise calibration (from PR #35)
 
-- Anchor (sn=32, σ=0.7, SwiGLU) 3-seed std (ddof=1): **1.650 val** (reproduces PR #27 baseline exactly).
-- Winner (sn=16) 2-seed std: **1.742 val** (comparable to anchor std — win is structural, not a lucky snapshot).
-- 2-seed merge criterion: winner 2-seed mean ≤ **67.025 val** (68.687 − 1× anchor std 1.650).
-  - sn=16 2-seed mean **61.813** passes (5.21 pts below gate — decisive).
-- sn=8 single-seed: 62.476 val / 54.677 test; trailing-5 mean **64.05** (lowest of any run). Follow-up needed with 2 seeds.
-- sn=24 is UNSTABLE: 2-seed std 6.066 (3.7× anchor std). Not a candidate.
+- Anchor (sn=32, nl=5, σ=0.7 + SwiGLU) 2-seed mean 68.173, std 3.23 val (seeds 0, 42). Reproduces PR #27 3-seed mean (68.687) within 0.5 val. Anchor std wider than previously modeled.
+- Winner (nl=3, sn=32) 2-seed std: **0.376 val** — tightest observed at σ=0.7 recipes. Win is deeply structural.
+- 2-seed merge criterion passed: winner 2-seed mean 54.476 beats sn=16 baseline 61.813 by 7.34 val, ~4.2σ (using sn=16 anchor std 1.742).
 
 ### Current default config (post-merge)
 
@@ -56,9 +53,9 @@
 | surf_weight | 1.0 |
 | epochs | 50 |
 | n_hidden | 128 |
-| n_layers | 5 |
+| **n_layers** | **3** ← new (PR #35) |
 | n_head | 4 |
-| **slice_num** | **16** ← new (PR #34) |
+| **slice_num** | **32** ← reverted from 16 (PR #35 tested at sn=32) |
 | mlp_ratio | 2 |
 | optimizer | AdamW |
 | scheduler | CosineAnnealingLR(T_max=total_optimizer_steps) |
@@ -68,9 +65,9 @@
 | fourier_sigma | 0.7 |
 | ffn | SwiGLU |
 
-**Note on code defaults:** some Config dataclass defaults in `train.py` still reflect pre-merge values (`loss_type="mse"`, `amp=False`, `grad_accum=1`, `fourier_features="none"`, `fourier_m=10`, `fourier_sigma=1.0`, `swiglu=False`). The current merged recipe requires explicit flags. Verification via `--debug` run + W&B config inspection is **mandatory** before committing to full sweeps.
+**Note:** Winner was tested at `slice_num=32`, not `sn=16` (PR #34 was on the branch base for PR #35's assignment). The combined `(nl=3, sn=16)` is **UNTESTED** — immediate follow-up PR (nezuko) will determine whether the two effects compound. For now, the baseline recipe is **(nl=3, sn=32)**.
 
-**Note on slice_num:** sn=16 gives 28.5 GB VRAM (vs sn=32's 31.6 GB) and ~78 s/epoch (vs ~89 s), enabling ~23 epochs in 30-min budget. Both sn=16 seeds hit best val at the final epoch — more epochs would likely improve further. The floor is not yet found; sn=8 (trailing-5 64.05) has the lowest loss surface of any run tested.
+**Note on code defaults:** some Config dataclass defaults in `train.py` still reflect pre-merge values (`loss_type="mse"`, `amp=False`, `grad_accum=1`, `fourier_features="none"`, `fourier_m=10`, `fourier_sigma=1.0`, `swiglu=False`). Always pass the full flag list below. `--debug` verification mandatory.
 
 Reproduce (best single-seed winner):
 ```bash
@@ -85,8 +82,9 @@ cd target && python train.py \
     --fourier_m 160 \
     --fourier_sigma 0.7 \
     --swiglu \
-    --slice_num 16 \
-    --seed 0 \
+    --slice_num 32 \
+    --n_layers 3 \
+    --seed 1 \
     --wandb_name "<student>/<experiment>"
 ```
 
@@ -94,73 +92,61 @@ cd target && python train.py \
 
 ## Baseline history
 
+### 2026-04-24 — PR #35: nezuko n_layers=3 sweep (sn=32 + σ=0.7 + SwiGLU)
+
+- **val_avg/mae_surf_p: 54.210 (best seed, s=1) / 54.476 (2-seed mean)** (previous: 60.581 / 61.813, PR #34)
+- **test_avg/mae_surf_p: 47.484 (best seed) / 47.336 (2-seed mean)** (previous: 54.640 / 55.316, PR #34)
+- W&B runs: `rze3vuj0` (s=0), `jv54vc7o` (s=1) — group `nezuko/n-layers-sn32`
+- Change: `--n_layers 3` (was 5). `--slice_num 32` (was 16 in PR #34 — PR #35 tested on sn=32 baseline; compound with sn=16 pending).
+- Delta: −10.5% val / −13.1% test (best seed vs prior best seed); 2-seed mean −11.9% val / −14.4% test.
+- Decisive pass: 2-seed mean 54.476 beats sn=16 baseline 61.813 by 7.34 val — 4.2σ.
+- **n_layers landscape is STRICTLY MONOTONIC DECREASING with depth:** nl=3 (54.48) < nl=4 (59.04) < nl=5 (68.17) < nl=6 (70.52) < nl=7 (72.42).
+- **Mechanism: budget-bound.** nl=3 trains for 32 epochs in 30-min budget; nl=7 only reaches 14 epochs. Depth's representational gains don't compensate for epoch loss.
+- Uniform split win; largest on `val_geom_camber_cruise` (−32.4%).
+- Combined (nl=3, sn=16) is **untested**; immediate follow-up PR (nezuko) resolves this.
+
 ### 2026-04-24 — PR #34: frieren slice_num=16 sweep (sn∈{8,16,24} vs sn=32 anchor)
 
 - **val_avg/mae_surf_p: 60.581 (best seed, s=0) / 61.813 (2-seed mean)** (previous: 67.186 / 68.687, PR #27)
 - **test_avg/mae_surf_p: 54.640 (best seed) / 55.316 (2-seed mean)** (previous: 58.358 / 60.680, PR #27)
 - W&B runs: `moydqx8l` (s=0), `tkfnon33` (s=1) — group `frieren/slice-num-lower`
-- Change: `--slice_num 16` (was 32). σ=0.7, SwiGLU, AMP, grad_accum=4, L1, sw=1, Fourier-m=160 unchanged.
-- Delta: −9.8% val / −6.5% test (best seed vs prior best seed); 2-seed mean −10.0% val / −8.8% test.
-- Decisive pass: 2-seed mean 61.813 is 5.21 pts below merge gate (67.025). sn=16 2-seed std (1.742) matches anchor std (1.650) — structural win, not a lucky snapshot.
-- Gain uniform across all splits; largest on `val_geom_camber_cruise` (−17.9%) — consistent with stronger pooling regularization hypothesis.
-- VRAM: 28.5 GB (−9.8% vs sn=32); per-epoch: ~78s (−12%); budget: ~23 epochs vs 21. Both seeds still improving at final epoch.
-- sn=8 (trailing-5=64.05) is intriguing — floor not yet found. Follow-up needed.
+- Change: `--slice_num 16` (was 32). Both seeds hit best val at final epoch (headroom).
 
 ### 2026-04-24 — PR #27: nezuko slice_num=32 sweep (σ=0.7 + SwiGLU + sn=32)
 
 - **val_avg/mae_surf_p: 67.186 (best seed, s=2) / 68.687 (3-seed mean)** (previous: 69.845 / 70.667, PR #24)
 - **test_avg/mae_surf_p: 58.358 (best seed) / 60.680 (3-seed mean)** (previous: 62.778 / 62.691, PR #24)
-- W&B runs: `szq21j7r` (s=0), `cmmj8l21` (s=1), `nrba5yg8` (s=2) — group `nezuko/slice-num-sigma07`
-- Change: `--slice_num 32` (was 64). σ=0.7, SwiGLU, AMP, grad_accum=4, L1, sw=1, Fourier-m=160 unchanged.
-- Delta: −3.8% val / −3.2% test (best seed vs prior); 3-seed mean −2.7% val / −3.2% test.
-- All three 2-seed sub-selections of sn=32 pass merge criterion vs anchor 2-seed mean (70.667 − 1.162 std).
-- Trailing-5 epoch mean also favors sn=32 by ~8 val pts — win is structural, not just a snapshot artifact.
-- Gain concentrated on `val_geom_camber_rc` (−7.3%), `val_re_rand` (−4.8%), `val_single_in_dist` (−3.6%); slight regression on `cruise` (+1.9%).
-- VRAM: 31.6 GB vs anchor 37.8 GB (−16%); per-epoch: ~89s vs ~111s (−20%); budget: 21 epochs vs 17.
 
 ### 2026-04-24 — PR #24: alphonse σ × SwiGLU sweep (σ=0.7 + SwiGLU)
 
 - **val_avg/mae_surf_p: 69.845 (best seed) / 70.667 (2-seed mean)** (previous: 73.660, PR #20)
-- **test_avg/mae_surf_p: 62.778 (best seed) / 62.691 (2-seed mean)** (previous: 63.983, PR #20)
-- W&B runs: `flgrjmte` (s=1), `j12mrpeb` (s=0) — both in `alphonse/sigma-swiglu`
-- Change: `--fourier_sigma 0.7` (was 1.0 in PR #20). SwiGLU, AMP, grad_accum=4, L1, sw=1, Fourier-m=160 all unchanged.
-- Delta: −5.2% val / −2.0% test (best seed vs prior).
-- **First merge under strict 2-seed multi-seed protocol.** 2-seed mean 70.67 vs 2-seed anchor mean 73.92 = 3.25 pts gap, ~9× anchor std (0.362). Decisively outside noise.
-- Independently verified fern's crashed σ=0.7 compound claim from PR #20: seed=0 reproduced 71.489 bit-exactly.
-- **σ landscape is SHARP at 0.7, not a flat basin.** σ=0.8 (79.14) and σ=0.9 (77.99) regress to far worse than σ=1.0. Follow-up needed: sweep {0.5, 0.55, 0.6, 0.65, 0.75} to find true minimum.
 
 ### 2026-04-24 — PR #20: fern Fourier σ=1 + SwiGLU feedforward
 
-- **val_avg/mae_surf_p: 73.660** (previous: 84.737, PR #7); test: 63.983.
-- W&B run: `eg6i88yf`. Change: SwiGLU FFN replaces GELU-MLP in every TransolverBlock.
-- Delta: −13.1 % val / −15.0 % test. Huge architectural jump.
+- **val_avg/mae_surf_p: 73.660** (previous: 84.737, PR #7). −13.1% val.
 
 ### 2026-04-23 — PR #7: alphonse Fourier PE fixed σ=1 m=160
 
-- **val_avg/mae_surf_p: 84.737** (previous: 88.268, PR #12); test: 75.244.
-- W&B run: `91z1948k`. Change: Random Fourier Features on (x,z) coords.
+- **val_avg/mae_surf_p: 84.737** (previous: 88.268, PR #12).
 
 ### 2026-04-23 — PR #12: fern AMP + grad_accum=4
 
-- **val_avg/mae_surf_p: 88.268** (previous: 93.127, PR #11); test: 79.733.
-- W&B run: `n68w9q7o`. Change: bf16 autocast + grad_accum=4. +5 epochs per 30-min budget.
+- **val_avg/mae_surf_p: 88.268** (previous: 93.127, PR #11).
 
 ### 2026-04-23 — PR #11: frieren surf_weight=1 on L1
 
 - **val_avg/mae_surf_p: 93.127** (previous: 103.036, PR #3).
-- W&B run: `yt7eup38`. Change: sw=10 → sw=1 under L1.
 
 ### 2026-04-23 — PR #3: frieren L1 loss
 
 - **val_avg/mae_surf_p: 103.036** (previous: no baseline).
-- W&B run: `w2jsabii`. Change: MSE → L1.
 
 ---
 
 ## Primary metric
 
 - **Validation (checkpoint selection):** `val_avg/mae_surf_p` — equal-weight mean across four val splits. Lower is better.
-- **Test (paper-facing):** `test_avg/mae_surf_p` — best-val checkpoint on four test splits. Scoring patch (commit 7d71abd) excludes `test_geom_camber_cruise/000020.pt`'s +Inf sample.
+- **Test (paper-facing):** `test_avg/mae_surf_p` — best-val checkpoint on four test splits.
 
 ## Update protocol
 
@@ -170,4 +156,4 @@ When a PR's best `val_avg/mae_surf_p` is lower than the current entry here:
 2. Update this file with new metric, PR number, W&B run link.
 3. Commit on advisor branch.
 
-**Multi-seed requirement (from round 9):** merge claims < 5% require 2-seed anchors. Winner 2-seed mean must beat current 2-seed anchor mean by > 1σ of anchor spread.
+**Multi-seed requirement:** merge claims < 5% require 2-seed anchors. Winner 2-seed mean must beat current 2-seed anchor mean by > 1σ of anchor spread. **Noise floor at σ=0.7 recipes: ~1.5–3.2 val**; tighten at each new recipe.
