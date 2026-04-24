@@ -487,6 +487,7 @@ class Config:
     fourier_sigma_z: float | None = None  # per-coord σ for z; both x & z must be set
     swiglu: bool = False            # replace GELU-MLP with SwiGLU in each TransolverBlock
     slice_num: int = 64             # number of slice tokens in PhysicsAttention softmax-over-nodes
+    n_layers: int = 5               # number of TransolverBlock layers (depth sweep, PR #35)
     seed: int = 0                   # RNG seed for torch / numpy / python random
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -501,6 +502,8 @@ if cfg.loss_type not in LOSS_TYPES:
     raise ValueError(f"--loss_type must be one of {LOSS_TYPES}, got {cfg.loss_type!r}")
 if cfg.grad_accum < 1:
     raise ValueError(f"--grad_accum must be >=1, got {cfg.grad_accum}")
+if cfg.n_layers < 1:
+    raise ValueError(f"--n_layers must be >=1, got {cfg.n_layers}")
 if cfg.fourier_features not in ("none", "fixed", "learnable"):
     raise ValueError(
         f"--fourier_features must be one of none|fixed|learnable, got {cfg.fourier_features!r}"
@@ -535,7 +538,8 @@ elif per_coord:
                    f"σ_x={cfg.fourier_sigma_x}, σ_z={cfg.fourier_sigma_z})")
 else:
     fourier_str = f"{cfg.fourier_features} (m={cfg.fourier_m}, σ={cfg.fourier_sigma})"
-print(f"Fourier: {fourier_str}  swiglu={cfg.swiglu}  slice_num={cfg.slice_num}  seed={cfg.seed}")
+print(f"Fourier: {fourier_str}  swiglu={cfg.swiglu}  slice_num={cfg.slice_num}  "
+      f"n_layers={cfg.n_layers}  seed={cfg.seed}")
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -575,7 +579,7 @@ model_config = dict(
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
-    n_layers=5,
+    n_layers=cfg.n_layers,
     n_head=4,
     slice_num=cfg.slice_num,
     mlp_ratio=2,
