@@ -2,7 +2,9 @@
 
 **[TandemFoilSet Paper](https://openreview.net/forum?id=4Z0P4Nbosn)**
 
-This repo contains a custom TandemFoilSet dataset split as well as a base set of files that the [senpai](https://github.com/wandb/senpai) autoresearch harness can use as input to try and improve performance.
+This repo contains:
+1) a custom TandemFoilSet dataset split called `TandemFoilSet-Balanced`
+2) a base set of data and training files that the [senpai](https://github.com/wandb/senpai) autoresearch harness can use as a baseline to try and improve performance on this dataset.
 
 ## Citation
 
