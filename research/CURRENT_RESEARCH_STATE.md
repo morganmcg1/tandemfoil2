@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Updated:** 2026-04-23 (round 6 — post PR #7 merge, PR #16 close)
+- **Updated:** 2026-04-24 (round 7 — post PR #14 close)
 - **Advisor branch:** `kagent_v_students`
 - **Research tag:** `kagent-v-students-20260423-2055`
 - **W&B project:** `wandb-applied-ai-team/senpai-kagent-v-students`
@@ -22,7 +22,7 @@
 - **σ=1 is the robust sweet spot:** σ=10 harmful, σ=1.5 marginal at m=80.
 - **FiLM (per-block log(Re) conditioning) consistently net-negative at 17–18 epoch budget.** Dropped.
 - **Capacity scaling is epoch-budget bound:** PR #4 and PR #16 both confirm — negative correlation r<−0.95 between n_params and epochs completed at 30-min budget.
-- **Seed noise floor:** ~5 pts on test for single-seed runs. Multi-seed required for claims <5%.
+- **Seed noise floor on seeded AMP+accum=4 (round-7 measurement):** 2-seed spread at sw=1 is **2.38 val (2.5%), 1.86 test (2.2%)** — much tighter than the ~9% pre-seed floor. Multi-seed mandatory for claims under ~5%.
 
 ---
 
@@ -30,15 +30,15 @@
 
 | Student | Status | PR | Branch |
 |---------|--------|----|--------|
-| frieren  | WIP   | #14: sw>1 sweep {1, 1.5, 2, 3, 5, 10} × AMP + grad_accum=4 + 2-seed anchor | `frieren/surf-weight-subunit-plus-amp` |
-| fern     | **IDLE** | last PR #16 closed (capacity scaling dead end) | — |
-| tanjiro  | WIP   | #17: In-distribution input jitter (AoA/logRe/gap) | `tanjiro/input-feature-jitter` |
-| nezuko   | WIP   | #6: AMP rebase + fixed WSD stack test + cosine@1e-3 control | `nezuko/lr-schedule-sweep` |
-| alphonse | **IDLE** | last PR #7 merged (Fourier PE winner) | — |
-| edward   | WIP   | #8: EMA + grad-clip on L1 | `edward/ema-gradclip-stability` |
-| thorfinn | WIP   | #18: Cross-attention surface decoder head | `thorfinn/cross-attn-surface-decoder` |
+| frieren  | WIP (r7) | #21: Near-surface volume-band weighting (3-tier loss) | `frieren/near-surface-volume-band` |
+| fern     | WIP (r6) | #20: Fourier σ fine-sweep at m=160 + SwiGLU FFN | `fern/fourier-sigma-fine-swiglu` |
+| tanjiro  | WIP (r5) | #17: In-distribution input jitter (AoA/logRe/gap) | `tanjiro/input-feature-jitter` |
+| nezuko   | WIP (r5) | #6: AMP rebase + fixed WSD stack + cosine@1e-3 control | `nezuko/lr-schedule-sweep` |
+| alphonse | WIP (r6) | #19: Fourier m-extension {160, 320, 640} + learnable B + multi-seed | `alphonse/fourier-m-extension-learnable` |
+| edward   | WIP (r2) | #8: EMA + grad-clip on L1 | `edward/ema-gradclip-stability` |
+| thorfinn | WIP (r5) | #18: Cross-attention surface decoder head | `thorfinn/cross-attn-surface-decoder` |
 
-**Idle students needing new assignments: fern, alphonse**
+**Idle students needing new assignments:** none. Zero idle GPUs.
 
 ---
 
@@ -52,7 +52,9 @@ None at this time.
 
 | PR | Student | Hypothesis | Target |
 |----|---------|-----------|--------|
-| #14 | frieren  | sw>1 sweep {1, 1.5, 2, 3, 5, 10} × AMP + grad_accum=4 | Beat **84.737** |
+| #21 | frieren  | Near-surface volume-band 3-tier loss weighting | Beat **84.737** |
+| #20 | fern     | Fourier σ fine-sweep + SwiGLU feedforward | Beat **84.737** |
+| #19 | alphonse | Fourier m-extension {160, 320, 640} + learnable B | Beat **84.737** |
 | #17 | tanjiro  | In-distribution input jitter (AoA/logRe/gap) on AMP + sw=1 | Beat **84.737** |
 | #6  | nezuko   | AMP rebase + fixed WSD + cosine@1e-3 control | Beat **84.737** |
 | #8  | edward   | EMA 0.999 + wider grad-clip ({1, 5, 10, 50}) on L1 sw=1 | Beat **84.737** |
@@ -64,6 +66,8 @@ None at this time.
 
 - **2026-04-23 (r6):** Merged PR #7 (alphonse Fourier PE m=160): **new baseline 84.737 val / 75.244 test** (−4.0% val, −5.6% test vs prior 88.268).
 - **2026-04-23 (r6):** Closed PR #16 (fern capacity scaling): dead end confirmed second time. Capacity scaling is epoch-budget bound. All scaled-up variants underperformed baseline anchor; peak at h384-l5-s64 = 65.4% worse. VRAM was never the constraint.
+- **2026-04-24 (r7):** Closed PR #14 (frieren sw>1 at eff_bs=16). sw=2's round-4 win compressed from −11.8% at eff_bs=8 to −1.0% sub-1σ at eff_bs=16 — **grad-accum-specific effect, not loss-specific**. sw direction exhausted across 2 rounds. Noise floor on seeded AMP+accum=4: **2.5% val, 2.2% test** (multi-seed threshold for significance). Branch was pre-Fourier — any post-Fourier sw sweep would be a new hypothesis.
+- **2026-04-24 (r7):** Assigned frieren PR #21 (near-surface volume-band weighting) — 3-tier loss using dsdf to define BL band; orthogonal to all current improvements.
 - **Prior rounds:** See EXPERIMENTS_LOG.md for full history.
 
 ---

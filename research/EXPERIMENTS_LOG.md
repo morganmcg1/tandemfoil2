@@ -549,3 +549,37 @@ All three round-4 rerun submissions ran on **stale pre-AMP recipe** (branch fork
 ### Decision: **MERGED** into `kagent_v_students`. New baseline = **84.737 val / 75.244 test** (PR #7).
 - W&B run: `91z1948k` (alphonse/sw1-fr-s1-m160)
 - Fourier PE (fixed B, σ=1, m=160) added as new default config in BASELINE.md.
+
+---
+
+## 2026-04-24 — PR #14 (round 5 rerun): frieren: sw>1 sweep at eff_bs=16 — CLOSED
+
+- **Branch:** `frieren/surf-weight-subunit-plus-amp` (pre-Fourier, stale)
+- **W&B group:** `frieren/sw-over-1`
+- **Hypothesis:** sw=2's win at grad_accum=2 should replicate at grad_accum=4 (eff_bs=16).
+
+### Results (seeded, 8 runs)
+
+| Rank | Config (sw / seed) | val_avg/mae_surf_p | test_avg |
+|------|--------------------|---------------------|----------|
+| 1 | sw=2.0 / seed=2 | **92.398** | 83.265 |
+| 2 | sw=1.0 / seed=1 | 94.046 | 84.066 |
+| 3 | sw=3.0 / seed=1 | 94.262 | 85.453 |
+| 4 | sw=1.5 / seed=1 | 94.941 | 85.448 |
+| 5 | sw=10 / seed=1 | 96.004 | 87.158 |
+| 6 | sw=2.0 / seed=1 | 96.144 | 87.035 |
+| 7 | sw=1.0 / seed=2 | 96.427 | 85.930 |
+| 8 | sw=5.0 / seed=1 | ~98.4 | — |
+
+### Analysis
+
+- **Winner (sw=2 s=2) is +9.05 % worse than current 84.737 baseline** (branch is pre-Fourier; runs on 88.268 recipe).
+- **sw=2 effect collapses at eff_bs=16.** sw=2 2-seed mean (94.27) vs sw=1 2-seed mean (95.24) = +1.0% sub-1σ. The round-4 sw=2 win (−11.8% at eff_bs=8) was grad-accum-specific — eff_bs=16 averaging dissolves the surface-upweight benefit.
+- **Flat basin in sw ∈ [1, 3]**; sw ≥ 5 regresses. Optimum did NOT shift back to MSE-era sw=10.
+- **Noise floor finding (load-bearing for future rounds):** seeded 2-seed spread at sw=1 under AMP+grad_accum=4 is 2.38 val / 1.86 test — MUCH tighter than the ~9% pre-seed floor. Multi-seed now mandatory for claims under 5%.
+- **Seeding infrastructure:** frieren added `--seed` flag independently in fa577eb — already present in advisor branch from alphonse's PR #7 (`seed: int = 0` in Config). Cherry-pick skipped.
+
+### Decision: **CLOSED.** Sw direction exhausted across 2 rounds on pre-Fourier code.
+
+- Any future sw work would need to be *post-Fourier* (Fourier PE rebalances surface/volume gradient flow), but that's a new hypothesis (sw × Fourier interaction), not a continuation of this PR.
+- Frieren reassigned to PR #21 (near-surface volume-band weighting) — a fresh loss-weighting direction using dsdf features to tier volume loss by proximity to surface.
