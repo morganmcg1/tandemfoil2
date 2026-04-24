@@ -164,17 +164,108 @@ class TransolverBlock(nn.Module):
         return fx
 
 
+class SurfaceDecoderLayer(nn.Module):
+    """Pre-LN cross-attention block: [LN -> Attn -> +] then [LN -> FFN -> +].
+
+    Uses F.scaled_dot_product_attention directly so the memory-efficient
+    kernel is selected deterministically (no mask shape gotchas).
+    """
+
+    def __init__(self, dim: int, heads: int = 4, mlp_ratio: int = 2):
+        super().__init__()
+        assert dim % heads == 0, f"dim={dim} must be divisible by heads={heads}"
+        self.heads = heads
+        self.head_dim = dim // heads
+        self.ln_q = nn.LayerNorm(dim)
+        self.ln_kv = nn.LayerNorm(dim)
+        self.q_proj = nn.Linear(dim, dim, bias=False)
+        self.kv_proj = nn.Linear(dim, 2 * dim, bias=False)
+        self.out_proj = nn.Linear(dim, dim, bias=False)
+        self.ln_ffn = nn.LayerNorm(dim)
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, dim * mlp_ratio),
+            nn.GELU(),
+            nn.Linear(dim * mlp_ratio, dim),
+        )
+
+    def forward(self, q: torch.Tensor, kv: torch.Tensor) -> torch.Tensor:
+        B, Nq, D = q.shape
+        Nk = kv.shape[1]
+        qh = self.q_proj(self.ln_q(q)).view(B, Nq, self.heads, self.head_dim).transpose(1, 2)
+        k, v = self.kv_proj(self.ln_kv(kv)).chunk(2, dim=-1)
+        k = k.view(B, Nk, self.heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, Nk, self.heads, self.head_dim).transpose(1, 2)
+        attn = F.scaled_dot_product_attention(qh, k, v)
+        attn = attn.transpose(1, 2).contiguous().view(B, Nq, D)
+        q = q + self.out_proj(attn)
+        q = q + self.ffn(self.ln_ffn(q))
+        return q
+
+
+class SurfaceDecoder(nn.Module):
+    """Perceiver-style cross-attention read-out for surface nodes.
+
+    Surface-node queries (gathered from trunk features at is_surface=True) attend
+    to the full real-node trunk hidden state. Volume positions in the output
+    tensor are zero-filled; the caller gates by ``is_surface`` so only surface
+    rows consume these predictions.
+    """
+
+    def __init__(self, dim: int, heads: int = 4, n_layers: int = 2,
+                 out_dim: int = 3, mlp_ratio: int = 2):
+        super().__init__()
+        self.out_dim = out_dim
+        self.layers = nn.ModuleList([
+            SurfaceDecoderLayer(dim, heads, mlp_ratio) for _ in range(n_layers)
+        ])
+        self.ln_out = nn.LayerNorm(dim)
+        self.head = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.GELU(),
+            nn.Linear(dim, out_dim),
+        )
+
+    def forward(self, trunk_h: torch.Tensor, is_surface: torch.Tensor,
+                mask: torch.Tensor) -> torch.Tensor:
+        B, N, _ = trunk_h.shape
+        # Allocate ``out`` in the autocast-aware dtype. Under bf16 autocast the
+        # head's Linears emit bf16; trunk_h.new_zeros defaults to fp32 (since
+        # the preprocess + residual path keeps the trunk as fp32), which would
+        # break the index-assign below. Probe is under no_grad to skip a needless
+        # autograd edge.
+        with torch.no_grad():
+            probe_dtype = self.head(trunk_h[:1, :1]).dtype
+        out = torch.zeros(B, N, self.out_dim, dtype=probe_dtype, device=trunk_h.device)
+        # Per-sample gather keeps the attention-kernel shape predictable and
+        # avoids O(N_pad^2) attention on 242K-node meshes. B is small (<=4).
+        for b in range(B):
+            s_idx = is_surface[b].nonzero(as_tuple=True)[0]
+            if s_idx.numel() == 0:
+                continue
+            m_idx = mask[b].nonzero(as_tuple=True)[0]
+            q = trunk_h[b:b + 1, s_idx]
+            kv = trunk_h[b:b + 1, m_idx]
+            for layer in self.layers:
+                q = layer(q, kv)
+            out[b, s_idx] = self.head(self.ln_out(q[0]))
+        return out
+
+
 class Transolver(nn.Module):
     def __init__(self, space_dim=1, n_layers=5, n_hidden=256, dropout=0.0,
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 use_surface_decoder: bool = False,
+                 decoder_n_layers: int = 2,
+                 decoder_n_heads: int = 4):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
+        self.use_surface_decoder = use_surface_decoder
 
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
@@ -185,14 +276,27 @@ class Transolver(nn.Module):
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
+        # When the surface decoder is enabled, the trunk must expose hidden-dim
+        # features (not collapsed predictions) so both heads can consume them.
         self.blocks = nn.ModuleList([
             TransolverBlock(
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
-                slice_num=slice_num, last_layer=(i == n_layers - 1),
+                slice_num=slice_num,
+                last_layer=((i == n_layers - 1) and not use_surface_decoder),
             )
             for i in range(n_layers)
         ])
+        if use_surface_decoder:
+            self.ln_final = nn.LayerNorm(n_hidden)
+            self.mlp2 = nn.Sequential(
+                nn.Linear(n_hidden, n_hidden), nn.GELU(),
+                nn.Linear(n_hidden, out_dim),
+            )
+            self.surface_decoder = SurfaceDecoder(
+                dim=n_hidden, heads=decoder_n_heads, n_layers=decoder_n_layers,
+                out_dim=out_dim, mlp_ratio=mlp_ratio,
+            )
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
 
@@ -210,6 +314,14 @@ class Transolver(nn.Module):
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         for block in self.blocks:
             fx = block(fx)
+        if self.use_surface_decoder:
+            is_surface = data["is_surface"]
+            mask = data["mask"]
+            h = self.ln_final(fx)
+            vol_preds = self.mlp2(h)
+            surf_preds = self.surface_decoder(fx, is_surface, mask)
+            preds = torch.where(is_surface.unsqueeze(-1), surf_preds, vol_preds)
+            return {"preds": preds}
         return {"preds": fx}
 
 
@@ -258,7 +370,7 @@ def evaluate_split(model, loader, stats, surf_weight, device,
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            pred = model({"x": x_norm, "is_surface": is_surface, "mask": mask})["preds"]
 
             per_elem = elementwise_loss(pred, y_norm, loss_type, huber_delta)
             vol_mask = mask & ~is_surface
@@ -404,6 +516,10 @@ class Config:
     huber_delta: float = 1.0  # Huber transition point (normalized units)
     amp: bool = False  # bf16 autocast on training forward/backward (val/test stay fp32)
     grad_accum: int = 1  # accumulate gradients over N micro-batches before optimizer step
+    use_surface_decoder: bool = False  # dedicated cross-attention head for surface nodes
+    decoder_n_layers: int = 2  # number of cross-attention blocks in the surface decoder
+    decoder_n_heads: int = 4  # heads per cross-attention block
+    seed: int = 42
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -420,6 +536,9 @@ if cfg.grad_accum < 1:
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
+torch.manual_seed(cfg.seed)
+torch.cuda.manual_seed_all(cfg.seed)
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
 print(f"Loss: {cfg.loss_type}"
@@ -427,6 +546,10 @@ print(f"Loss: {cfg.loss_type}"
       + f"  surf_weight={cfg.surf_weight}")
 print(f"AMP (bf16): {cfg.amp}  |  grad_accum: {cfg.grad_accum}  "
       f"|  effective batch: {cfg.batch_size * cfg.grad_accum}")
+print(f"Surface decoder: {cfg.use_surface_decoder}"
+      + (f" (n_layers={cfg.decoder_n_layers}, n_heads={cfg.decoder_n_heads})"
+         if cfg.use_surface_decoder else "")
+      + f"  seed={cfg.seed}")
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -458,6 +581,9 @@ model_config = dict(
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
+    use_surface_decoder=cfg.use_surface_decoder,
+    decoder_n_layers=cfg.decoder_n_layers,
+    decoder_n_heads=cfg.decoder_n_heads,
 )
 
 model = Transolver(**model_config).to(device)
@@ -536,7 +662,7 @@ for epoch in range(MAX_EPOCHS):
         # the autograd graph. No GradScaler needed for bf16 (full fp32 exponent
         # range, so no underflow — GradScaler is only required for fp16).
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=cfg.amp):
-            pred = model({"x": x_norm})["preds"]
+            pred = model({"x": x_norm, "is_surface": is_surface, "mask": mask})["preds"]
             per_elem = elementwise_loss(pred, y_norm, cfg.loss_type, cfg.huber_delta)
 
             vol_mask = mask & ~is_surface
