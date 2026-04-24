@@ -8,31 +8,38 @@
 
 ## Current best
 
-**PR #20 — fern: Fourier σ=1.0 + SwiGLU feedforward**
-- **val_avg/mae_surf_p: 73.660** (lower is better)
-- W&B run: `eg6i88yf` (`fern/sigma1-swiglu`)
-- Best epoch: 17 (timeout-bounded at ~31 min)
-- test_avg/mae_surf_p: **63.983**
+**PR #24 — alphonse: σ × SwiGLU fine sweep (σ=0.7 + SwiGLU winner)**
 
-### Per-split val surface-p MAE (best checkpoint, epoch 17)
+- **val_avg/mae_surf_p: 69.845** (best single-seed, run `flgrjmte`); 2-seed mean **70.667**
+- **test_avg/mae_surf_p: 62.778** (best single-seed); 2-seed mean **62.691**
+- W&B runs: `flgrjmte` (seed=1), `j12mrpeb` (seed=0)
+- Best epoch: 17 (both seeds)
+- **First strict multi-seed merge on this track.**
 
-| Split | mae_surf_p | vs PR #7 |
-|-------|-----------|----------|
-| val_single_in_dist | 81.39 | −21.7% |
-| val_geom_camber_rc | 92.45 | −1.7% |
-| val_geom_camber_cruise | 50.31 | −18.3% |
-| val_re_rand | 70.50 | −11.2% |
-| **val_avg** | **73.660** | **−13.1%** |
+### Per-split val surface-p MAE (best single-seed `flgrjmte`)
 
-### Per-split test surface-p MAE (best checkpoint)
+| Split | val mae_surf_p | vs PR #20 |
+|-------|----------------|-----------|
+| val_single_in_dist | 80.3 | −1.3% |
+| val_geom_camber_rc | 82.5 | −10.7% |
+| val_geom_camber_cruise | 48.8 | −3.0% |
+| val_re_rand | 67.8 | −3.8% |
+| **val_avg** | **69.845** | **−5.2%** |
 
-| Split | mae_surf_p | vs PR #7 |
-|-------|-----------|----------|
-| test_single_in_dist | 73.20 | −19.2% |
-| test_geom_camber_rc | 76.82 | −7.9% |
-| test_geom_camber_cruise | 44.04 | −19.0% |
-| test_re_rand | 61.87 | −14.8% |
-| **test_avg** | **63.983** | **−15.0%** |
+### Per-split test surface-p MAE (best single-seed)
+
+| Split | test mae_surf_p |
+|-------|-----------------|
+| test_single_in_dist | ≈72 |
+| test_geom_camber_rc | ≈73 |
+| test_geom_camber_cruise | ≈43 |
+| test_re_rand | ≈62 |
+| **test_avg** | **62.778** |
+
+### Noise calibration (from PR #24)
+
+- Anchor (σ=1, SwiGLU) 2-seed std (ddof=1): **0.362 val** — ~20× tighter than pre-SwiGLU m=160 band (σ ≈ 8 pts).
+- The SwiGLU recipe stabilizes seed variance dramatically. Multi-seed protocol remains mandatory (noise is σ-dependent: σ=0.8/0.9 show std 3-4 val, suggesting optimization pathology in that band).
 
 ### Current default config (post-merge)
 
@@ -52,11 +59,13 @@
 | mlp_ratio | 2 |
 | optimizer | AdamW |
 | scheduler | CosineAnnealingLR(T_max=total_optimizer_steps) |
-| loss | L1 (abs, vol + surf_weight × surf) in normalized space |
+| loss | L1 |
 | fourier_features | fixed |
 | fourier_m | 160 |
-| fourier_sigma | 1.0 |
-| **ffn** | **SwiGLU** (replaces standard MLP in TransolverBlock) |
+| **fourier_sigma** | **0.7** ← new (PR #24) |
+| ffn | SwiGLU |
+
+**Note on code defaults:** some Config dataclass defaults in `train.py` still reflect pre-merge values (`loss_type="mse"`, `amp=False`, `grad_accum=1`, `fourier_features="none"`, `fourier_m=10`, `fourier_sigma=1.0`, `swiglu=False`). The current merged recipe requires explicit flags — always pass the full flag list below. This footgun has hit 8 consecutive students; verification via `--debug` run + W&B config inspection is now mandatory before committing to full sweeps.
 
 Reproduce:
 ```bash
@@ -69,8 +78,8 @@ cd target && python train.py \
     --batch_size 4 \
     --fourier_features fixed \
     --fourier_m 160 \
-    --fourier_sigma 1.0 \
-    --use_swiglu \
+    --fourier_sigma 0.7 \
+    --swiglu \
     --wandb_name "<student>/<experiment>"
 ```
 
@@ -78,57 +87,56 @@ cd target && python train.py \
 
 ## Baseline history
 
-### 2026-04-24 — PR #20: fern SwiGLU feedforward + Fourier σ=1.0 (σ fine-sweep)
+### 2026-04-24 — PR #24: alphonse σ × SwiGLU sweep (σ=0.7 + SwiGLU)
 
-- **val_avg/mae_surf_p: 73.660** (previous: 84.737, PR #7)
-- W&B run: `eg6i88yf` (group: `fern/fourier-sigma-swiglu`)
-- Change: Replaced standard GELU MLP in every TransolverBlock with SwiGLU (SiLU-gated, three projections, 2/3 hidden-width to match param count). σ fine-sweep confirmed σ=1.0 remains the optimum among completed runs; per-coordinate anisotropic σ regresses.
-- Delta: **−13.1% val / −15.0% test** vs PR #7 baseline (84.737 / 75.244).
-- Wins uniformly across all 4 val splits and all 4 test splits. Biggest lift on `val_single_in_dist` (−21.7%) and `val_geom_camber_cruise` (−18.3%).
-- Peak VRAM: 37.8 GB (+2.9 GB vs PR #7), well within 96 GB headroom.
-- Best epoch 17 vs 18 baseline — negligible wall-clock cost.
-- Note: student's compound claim σ=0.7+SwiGLU at 71.49 was based on crashed W&B runs. Only the verified σ=1.0+SwiGLU result was merged; the σ×SwiGLU interaction requires a verified re-run.
+- **val_avg/mae_surf_p: 69.845 (best seed) / 70.667 (2-seed mean)** (previous: 73.660, PR #20)
+- **test_avg/mae_surf_p: 62.778 (best seed) / 62.691 (2-seed mean)** (previous: 63.983, PR #20)
+- W&B runs: `flgrjmte` (s=1), `j12mrpeb` (s=0) — both in `alphonse/sigma-swiglu`
+- Change: `--fourier_sigma 0.7` (was 1.0 in PR #20). SwiGLU, AMP, grad_accum=4, L1, sw=1, Fourier-m=160 all unchanged.
+- Delta: −5.2% val / −2.0% test (best seed vs prior).
+- **First merge under strict 2-seed multi-seed protocol.** 2-seed mean 70.67 vs 2-seed anchor mean 73.92 = 3.25 pts gap, ~9× anchor std (0.362). Decisively outside noise.
+- Independently verified fern's crashed σ=0.7 compound claim from PR #20: seed=0 reproduced 71.489 bit-exactly.
+- **σ landscape is SHARP at 0.7, not a flat basin.** σ=0.8 (79.14) and σ=0.9 (77.99) regress to far worse than σ=1.0. Follow-up needed: sweep {0.5, 0.55, 0.6, 0.65, 0.75} to find true minimum.
 
-### 2026-04-23 — PR #7: alphonse Fourier PE on (x,z) — fixed σ=1 m=160
+### 2026-04-24 — PR #20: fern Fourier σ=1 + SwiGLU feedforward
 
-- **val_avg/mae_surf_p: 84.737** (previous: 88.268, PR #12)
-- W&B run: `91z1948k` (group: `alphonse/fourier-sw1`)
-- Change: Random Fourier Features on (x,z) coordinates: `γ(p) = [sin(2πBp), cos(2πBp)]` with B∈R^{m×2} from N(0,σ²=1), m=160 frequencies.
-- Delta: −4.0% val / −5.6% test vs PR #12.
-- Note (from later PR #19 multi-seed follow-up): the m=160 seed distribution has σ ≈ 8 pts; this 84.737 baseline sits ~1σ below the config's seed-mean. Still a valid pinned-seed reference.
+- **val_avg/mae_surf_p: 73.660** (previous: 84.737, PR #7); test: 63.983.
+- W&B run: `eg6i88yf`. Change: SwiGLU FFN replaces GELU-MLP in every TransolverBlock.
+- Delta: −13.1 % val / −15.0 % test. Huge architectural jump.
 
-### 2026-04-23 — PR #12: fern throughput scaling (AMP bf16 + grad_accum=4)
+### 2026-04-23 — PR #7: alphonse Fourier PE fixed σ=1 m=160
 
-- **val_avg/mae_surf_p: 88.268** (previous: 93.127, PR #11)
-- W&B run: `n68w9q7o` (group: `fern/throughput-amp-sw1`)
-- Change: AMP (bf16) + grad_accum=4 (eff_bs=16). +28% throughput, +5 epochs in 30-min budget.
-- Delta: −5.2% val / −13.2% test.
+- **val_avg/mae_surf_p: 84.737** (previous: 88.268, PR #12); test: 75.244.
+- W&B run: `91z1948k`. Change: Random Fourier Features on (x,z) coords.
 
-### 2026-04-23 — PR #11: frieren fine surf_weight sweep on L1 (surf_weight=1)
+### 2026-04-23 — PR #12: fern AMP + grad_accum=4
 
-- **val_avg/mae_surf_p: 93.127** (previous: 103.036, PR #3)
-- W&B run: `yt7eup38` (group: `frieren/l1-surf-weight-sweep`)
-- Change: surf_weight reduced from 10 → 1 under L1 loss.
-- Delta: −9.62%.
+- **val_avg/mae_surf_p: 88.268** (previous: 93.127, PR #11); test: 79.733.
+- W&B run: `n68w9q7o`. Change: bf16 autocast + grad_accum=4. +5 epochs per 30-min budget.
 
-### 2026-04-23 21:40 — PR #3: frieren Huber/L1 loss reformulation
+### 2026-04-23 — PR #11: frieren surf_weight=1 on L1
 
-- **val_avg/mae_surf_p: 103.036** (previous: no baseline on this track)
-- W&B run: `w2jsabii` (group: `frieren/loss-reformulation-v2`)
-- Change: L1 loss in normalized space instead of MSE.
-- Delta: −21.9% vs MSE baseline.
+- **val_avg/mae_surf_p: 93.127** (previous: 103.036, PR #3).
+- W&B run: `yt7eup38`. Change: sw=10 → sw=1 under L1.
+
+### 2026-04-23 — PR #3: frieren L1 loss
+
+- **val_avg/mae_surf_p: 103.036** (previous: no baseline).
+- W&B run: `w2jsabii`. Change: MSE → L1.
 
 ---
 
 ## Primary metric
 
-- **Validation (checkpoint selection):** `val_avg/mae_surf_p` — equal-weight mean across four validation splits. Lower is better.
-- **Test (paper-facing):** `test_avg/mae_surf_p` — same quantity, computed from the best-val checkpoint on the four held-out test splits. Patched scoring.py excludes the one non-finite sample in `test_geom_camber_cruise`.
+- **Validation (checkpoint selection):** `val_avg/mae_surf_p` — equal-weight mean across four val splits. Lower is better.
+- **Test (paper-facing):** `test_avg/mae_surf_p` — best-val checkpoint on four test splits. Scoring patch (commit 7d71abd) excludes `test_geom_camber_cruise/000020.pt`'s +Inf sample.
 
 ## Update protocol
 
-When a PR's best `val_avg/mae_surf_p` is lower than the current entry here, the advisor:
+When a PR's best `val_avg/mae_surf_p` is lower than the current entry here:
 
-1. Squash-merges the winning PR into `kagent_v_students`.
-2. Updates this file with the new metric, PR number, and W&B run link.
-3. Commits the update on the advisor branch.
+1. Squash-merge the winning PR into `kagent_v_students`.
+2. Update this file with new metric, PR number, W&B run link.
+3. Commit on advisor branch.
+
+**Multi-seed requirement (from round 9):** merge claims < 5% require 2-seed anchors. Winner 2-seed mean must beat current 2-seed anchor mean by > 1σ of anchor spread.
