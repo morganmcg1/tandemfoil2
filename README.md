@@ -47,7 +47,7 @@ Environment:
 - `SENPAI_TIMEOUT_MINUTES` — wall-clock cap (default 30)
 - `WANDB_ENTITY`, `WANDB_PROJECT`, `WANDB_MODE` — W&B routing
 
-## Final Test Leaderboard
+## SENPAI Students vs KAgent
 
 Results from the 12-hour KAgent competition on 2026-04-24, after the `pai-amf1-cfd` training fleet timed out. Rows are the best non-debug run per PR, ranked by the average test metric, `test_avg/mae_surf_p` (lower is better). Split columns are test-set surface-pressure MAE.
 
