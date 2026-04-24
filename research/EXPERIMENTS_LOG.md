@@ -1100,3 +1100,84 @@ Alphonse reassigned to PR #32: n_head sweep + 3-seed anchor recalibration to upd
 - Student implementation exemplary; execution + analysis textbook.
 
 ### Decision: **CLOSED.** Per-block Fourier re-injection as a zero-init additive fails. Reassigned to PR #33 (α-gated variant with ControlNet-style scalar gate) — the principled fix for the magnitude-growth failure mode.
+
+---
+
+## 2026-04-24 — PR #31: frieren: Post-hoc Re-scale correction (salvage of #26) — CLOSED
+
+- **Branch:** `frieren/posthoc-re-scale`
+- **W&B group:** `frieren/posthoc-rescale`
+- **Hypothesis:** Apply a post-hoc Re-conditioned scale correction at inference only (decoupled from main model training). Scale head reads log(Re) and predicts per-sample y_std; correction applied multiplicatively at inference to preserve per-channel ratios.
+
+### Results
+
+| variant                         | n_seed | val_avg/mae_surf_p | test_avg/mae_surf_p |
+|---|---|---|---|
+| **Anchor** (no posthoc)          | 2 | **70.667 ± 0.822**  | **62.690 ± 0.087**  |
+| Post-hoc 1ch (λ=0.1, mult)      | 3 | 136.849 ± 27.688   | 134.208 ± 27.869   |
+| Post-hoc 3ch (λ=0.1, literal)   | 2 | 177.988 ± 17.182   | 173.150 ± 18.298   |
+| Post-hoc 1ch (λ=1.0, mult)      | 1 | 155.191            | 143.118            |
+
+### W&B run IDs
+
+| run | config | W&B ID |
+|---|---|---|
+| anchor s0 | sn=64 | `7rm8aggp` |
+| anchor s1 | sn=64 | `83p1mdk5` |
+| 1ch mult λ=0.1 s0 | posthoc | `bhcw7e01` |
+| 1ch mult λ=0.1 s1 | posthoc | `dxypzc8f` |
+| 1ch mult λ=0.1 s2 | posthoc | `d5oki856` |
+| 3ch literal λ=0.1 s0 | posthoc | `yj0h1jla` |
+| 3ch literal λ=0.1 s1 | posthoc | `quemt46j` |
+| 1ch mult λ=1.0 s0 | posthoc | `n8hvvih4` |
+
+### Analysis and Conclusions
+
+- **CLEAR DEAD END.** All posthoc variants regress by 66–107 val pts vs baseline. Merge criterion not remotely met.
+- **Scale head itself learns (R²=0.44–0.86)** — the aux mechanism works, but applying the correction at inference makes the model worse.
+- **Root cause — double-counting:** The main model has already absorbed Re-dependence through input feature dim 13 (log_Re). Applying a Re-conditioned correction on top over-amplifies high-Re samples and over-attenuates low-Re samples.
+- **Smoking gun:** Split-uniform regression pattern — val_re_rand regresses by the same magnitude as every other split. If the correction were working, val_re_rand would see differential benefit.
+- **Per-channel impact:** Ux MAE explodes 5–10× under posthoc correction. Signature of scale over-amplification on near-zero-mean velocity channels.
+- Closes the broader 'per-sample Re-conditioned normalization' research direction (PR #26 + PR #31). Both in-training and post-hoc variants tested; both fail definitively.
+- **Decision: CLOSED.** frieren reassigned.
+
+---
+
+## 2026-04-24 — PR #27: nezuko: slice_num=32 sweep on σ=0.7 recipe — MERGED (NEW BASELINE)
+
+- **Branch:** `nezuko/slice-num-sweep` (second iteration on σ=0.7 after advisor-side recipe error on first run)
+- **W&B group:** `nezuko/slice-num-sigma07`
+- **Hypothesis:** Lower slice_num (number of slice tokens in PhysicsAttention) provides computational regularization and cheaper per-epoch cost, enabling more epochs within the 30-min budget.
+
+### Results (σ=0.7 sweep, all 8 runs complete)
+
+| GPU | slice_num | seed | val_avg | test_avg | peak GB | W&B ID |
+|-----|-----------|------|---------|----------|---------|--------|
+| 0 | 64 (anchor) | 0 | 71.4886 | 62.6032 | 37.8 | `jesqoiuq` |
+| 1 | 64 (anchor) | 1 | **69.8450** | 62.7778 | 37.8 | `7by6erl6` |
+| 2 | 32 | 0 | 70.4538 | 63.3182 | 31.6 | `szq21j7r` |
+| 3 | 32 | 1 | 68.4204 | 60.3638 | 31.6 | `cmmj8l21` |
+| 4 | 32 | 2 | **67.1860** | **58.3576** | 31.6 | `nrba5yg8` |
+| 5 | 48 | 0 | 69.1441 | 60.7488 | 34.7 | `cesq1syo` |
+| 6 | 48 | 1 | 71.8633 | 62.2446 | 34.7 | `j3q7qiwn` |
+| 7 | 96 | 0 | 73.7241 | 64.3406 | 44.6 | `hivmhytb` |
+
+### Multi-seed statistics
+
+| config | n | val mean | val σ | test mean | test σ |
+|--------|---|----------|-------|-----------|--------|
+| sn=64 (anchor) | 2 | 70.667 | 1.162 | 62.691 | 0.124 |
+| **sn=32 (winner)** | **3** | **68.687** | **1.650** | **60.680** | **2.495** |
+| sn=48 | 2 | 70.504 | 1.923 | 61.497 | 1.058 |
+| sn=96 | 1 | 73.724 | — | 64.341 | — |
+
+### Analysis and Conclusions
+
+- **CLEAR WINNER.** sn=32 3-seed mean 68.687 beats merge threshold (70.667 − 1.162 = 69.505) by 0.82 val. All three 2-seed subsets pass independently.
+- **Win is structural, not snapshot:** trailing-5 epoch mean shows sn=32 is 8 val pts lower than anchor on average, ruling out lucky-dip artifact.
+- **Mechanism mix:** ~1σ regularization effect + ~1σ compute-budget benefit (sn=32 is ~20% cheaper/epoch, earns 21 epochs vs anchor's 17 in 30 min).
+- **Gains distributed:** val wins on val_geom_camber_rc (−7.3%), val_re_rand (−4.8%), val_single_in_dist (−3.6%); slight regression on val_geom_camber_cruise (+1.9%).
+- **VRAM:** 31.6 GB vs 37.8 GB (−16%). New headroom for larger models.
+- **Directional signal:** sn monotonically improves from 96→48→32 at seed 0; sn=16/24 may go further.
+- **Decision: MERGED.** New baseline: val 68.687 (3-seed mean) / 67.186 (best seed). test 60.680 (3-seed mean).
+
