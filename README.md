@@ -27,11 +27,13 @@ The goal behind the split is to be able to say:
 
 See **[SPLITS.md](data/SPLITS.md)** for a full description of the dataset splits.
 
-## Targets
+## Training Files
+
+### Targets
 
 CFD surrogate research target: predict the full velocity `(Ux, Uy)` and pressure `p` field on tandem-airfoil meshes from TandemFoilSet.
 
-## Layout
+### Layout
 
 ```
 .
@@ -51,7 +53,7 @@ CFD surrogate research target: predict the full velocity `(Ux, Uy)` and pressure
     └── SPLITS.md              # split design, holdout reasons, per-file counts
 ```
 
-## Data
+### Data
 
 Pre-processed samples live on the PVC at `/mnt/new-pvc/datasets/tandemfoil/splits_v2/`. Materialize them once from the manifest:
 
@@ -63,7 +65,7 @@ After that, `train.py` streams `.pt` samples directly — no re-preprocessing pe
 
 See `program.md` for feature layout (24 input dims), target channels, split design, and the full metric contract.
 
-## Training
+### Training
 
 ```
 python train.py [--debug] [--epochs 50] [--agent <name>] [--wandb_name <name>]
@@ -76,11 +78,11 @@ Environment:
 - `SENPAI_TIMEOUT_MINUTES` — wall-clock cap (default 30)
 - `WANDB_ENTITY`, `WANDB_PROJECT`, `WANDB_MODE` — W&B routing
 
-## SENPAI Students vs KAgent
+## Investigation: SENPAI Students vs KAgent Competition
 
-Results from the 12-hour KAgent competition on 2026-04-24, tracked in the [W&B project](https://wandb.ai/wandb-applied-ai-team/senpai-kagent-v-students), after the `pai-amf1-cfd` training fleet timed out. Rows are the best non-debug run per PR, ranked by the average test metric, `test_avg/mae_surf_p` (lower is better). Split columns are test-set surface-pressure MAE.
+Results from the 12-hour [KAgent](https://github.com/tcapelle/kagent) vs [senpai](https://github.com/wandb/senpai) autoresearch head-to-head on 2026-04-24. Senpai results are documented here and tracked in the [W&B project](https://wandb.ai/wandb-applied-ai-team/senpai-kagent-v-students). Rows are the best non-debug run per PR, ranked by the average test metric, `test_avg/mae_surf_p` (lower is better). Split columns are test-set surface-pressure MAE. The KAgent results for this competition can be found here: 
 
-Run accounting uses W&B `state=finished`, not finite test score. The competition produced 544 total W&B runs: 450 finished, 77 crashed, and 17 failed. Of the 450 finished runs, 360 had finite `test_avg/mae_surf_p` and 90 finished without a finite `test_avg/mae_surf_p`. GitHub has 41 actual PRs in the competition range (`#1`-`#43`, with no `#10` or `#13`); excluding debug/smoke-check runs gives 417 completed non-debug W&B runs.
+Note: wandb run accounting uses W&B `state=finished`, not finite test score. The competition produced 544 total W&B runs: 450 finished, 77 crashed, and 17 failed. Of the 450 finished runs, 360 had finite `test_avg/mae_surf_p` and 90 finished without a finite `test_avg/mae_surf_p`. GitHub has 41 actual PRs in the competition range (`#1`-`#43`, with no `#10` or `#13`); excluding debug/smoke-check runs gives 417 completed non-debug W&B runs.
 
 | Rank | Test avg | PR | Experiment | Test SID | Test RC | Test Cruise | Test Re | Best W&B run | Closed |
 |---:|---:|---|---|---:|---:|---:|---:|---|---|
