@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Updated:** 2026-04-24 03:30 (round 12 — post PR #24 merge)
+- **Updated:** 2026-04-24 04:00 (round 13 — post PR #23 close)
 - **Advisor branch:** `kagent_v_students`
 - **Research tag:** `kagent-v-students-20260423-2055`
 - **W&B project:** `wandb-applied-ai-team/senpai-kagent-v-students`
@@ -36,7 +36,7 @@
 | nezuko   | WIP (r11) | #27: slice_num sweep on merged recipe | `nezuko/slice-num-sweep` |
 | alphonse | WIP (r12) | #28: Fine σ sweep {0.5, 0.55, 0.6, 0.65, 0.7, 0.75} + 2-seed | `alphonse/sigma-fine-sweep` |
 | edward   | WIP (r2) | #8: EMA + grad-clip on L1 | `edward/ema-gradclip-stability` |
-| thorfinn | WIP (r9) | #23: Zero-init residual surface decoder | `thorfinn/zeroinit-residual-decoder` |
+| thorfinn | WIP (r13) | #29: Slice-bottleneck residual decoder (PhysicsAttention) | `thorfinn/slice-bottleneck-decoder` |
 
 **Idle students:** none. Zero idle GPUs.
 
@@ -58,7 +58,7 @@ None at this time.
 | #27 | nezuko   | slice_num sweep {32, 48, 64, 96, 128, 192} + 2-seed anchor | Beat **70.67** |
 | #28 | alphonse | Fine σ sweep {0.5, 0.55, 0.6, 0.65, 0.75} + 2-seed at winner | Beat **70.67** |
 | #8  | edward   | EMA 0.999 + wider grad-clip on L1 | Beat **70.67** |
-| #23 | thorfinn | Zero-init residual surface decoder | Beat **70.67** |
+| #29 | thorfinn | Slice-bottleneck residual decoder (PhysicsAttention, zero-init) | Beat **70.67** |
 
 ---
 
@@ -67,6 +67,10 @@ None at this time.
 - **Round 1–6:** L1 (PR #3), sw=1 (#11), AMP+grad_accum=4 (#12), Fourier PE m=160 σ=1 (#7) merged — compound 84.737 baseline.
 - **Round 7 (r7):** Closed PR #14 (sw>1 exhausted). Seed floor on seeded serial: 2.5%.
 - **Round 8 (r8):** Closed PR #6 (LR schedule 3-round exhaustion — regime-specific artefacts). Sent back #17 (gap-only jitter signal real). Assigned #22 (temp annealing).
+- **Round 13 (r13 — 2026-04-24 04:00):**
+  - **Closed PR #23 (thorfinn zero-init residual decoder):** mechanism verified (surf_delta_step0=0 confirmed) but **budget-bound** — decoder ~2× slower than trunk, only reaches ep 6–9 vs anchor ep 17. ControlNet analogy fails when trunk is still training. Branch pre-PR #24 (9th stale-rebase). Student implementation textbook-correct (re-zero after `apply(_init_weights)` to defend against trunc_normal). Reassigned to PR #29 (slice-bottleneck decoder using `PhysicsAttention` — O(N·G·D) complexity matches trunk iter-speed).
+  - **Insight:** zero-init residual salvages the "fresh head can't catch trunk" failure mode at init, but requires the refiner to not exceed the compute budget. Vanilla cross-attention on N=150K+ nodes is structurally too expensive; slice-bottleneck PhysicsAttention is the principled fix.
+
 - **Round 12 (r12 — 2026-04-24 03:30):**
   - 🏆 **MERGED PR #24 (alphonse σ × SwiGLU):** new baseline **69.845 best-seed / 70.667 2-seed-mean val; 62.778 / 62.691 test**. −5.2% val vs PR #20 under strict multi-seed protocol (first merge under the new rule). 2-seed anchor std only 0.362 val — SwiGLU recipe stabilizes seed variance ~20× vs pre-SwiGLU. Winner is ~9 σ_anchor outside noise. Verified fern's crashed σ=0.7 claim bit-exactly at seed=0 (71.489).
   - **σ landscape finding:** σ=0.7 is a SHARP minimum. σ=0.8 (79.14) and σ=0.9 (77.99) regress with high seed variance (std 3–4 val) — optimization pathology in that band.

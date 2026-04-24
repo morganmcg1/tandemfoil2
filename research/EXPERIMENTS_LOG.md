@@ -892,3 +892,36 @@ Follow-up: fine σ sweep {0.5, 0.55, 0.6, 0.65, 0.75} to locate the true minimum
 - **4-parallel still too much IO contention** (5.4% seed spread vs target 2.5%).
 
 ### Decision: **SENT BACK.** Rebase + serial pairs + extended σ-scan {0.04, 0.06, 0.08} + isolated tandem-AoA probe.
+
+---
+
+## 2026-04-24 — PR #23: thorfinn: Zero-init residual surface decoder — CLOSED
+
+- **Branch:** `thorfinn/zeroinit-residual-decoder` (pre-PR #24; fourier_sigma=1.0 on all runs — 9th consecutive stale-rebase)
+- **W&B group:** `thorfinn/residual-decoder`
+- **Hypothesis:** ControlNet-style zero-init residual decoder (`preds = vol_preds + is_surface * surf_delta` with surf_delta output Linear zero-initialized) salvages the PR #18 catastrophic failure mode by starting invisible and only improving.
+
+### Results
+
+| Rank | Config (L/h/seed) | val_avg | test_avg | best_ep |
+|------|-------------------|---------|----------|---------|
+| 1 | anchor (no decoder) / s0 | **73.660** | 63.983 | 17 |
+| 2 | anchor (no decoder) / s1 | 74.173 | 67.009 | 17 |
+| 3 | L1/h4/s0 | 88.348 | 80.588 | 9 |
+| 4 | L2/h4/s2 | 99.588 | 95.068 | 7 |
+| 5 | L2/h4/s1 | 103.016 | 92.502 | 7 |
+| 6 | L3/h4/s0 | 110.270 | 99.106 | 6 |
+| 7 | L2/h4/s0 | 112.289 | 95.127 | 8 |
+| 8 | L2/h8/s0 | 123.279 | 107.423 | 6 |
+
+### Analysis
+
+- **Zero-init verified correctly:** `surf_delta_step0_abs_max = 0.0` on all 6 decoder runs. The student's careful re-zero AFTER `apply(_init_weights)` (to defend against trunc_normal overwrite) is exemplary.
+- **Hypothesis falsified by budget, not mechanism.** Decoder is ~2× slower per-iter than trunk even after student's 40× speedup (full-N MHA → surface-only Q). Anchor reaches ep 17; decoders only ep 6–9.
+- **ControlNet analogy fails when trunk is still training.** The premise (refiner adds tiny adjustments to a converged base) doesn't hold here: at epochs 1-8 both decoder and anchor are noisy (±13 val), then anchor converges 89→73.66 at ep 9-17 while decoder is cut off. No "track-anchor-then-diverge-downward" pattern.
+- **3-seed L2/h4 std: 6.57 val — 18× anchor std (0.36).** Decoder head never converges to stable regime.
+- Monotone regression with depth (L1→L2→L3) driven entirely by epoch budget (ep 9→8→6), not architectural capacity.
+
+### Decision: **CLOSED.**
+
+Architectural-decoder direction NOT closed entirely — student's own follow-up #1 (slice-bottleneck decoder using `PhysicsAttention`) is the principled complexity fix. Reassigned as PR #29: slice-bottleneck matches trunk iter-speed at O(N·G·D).
