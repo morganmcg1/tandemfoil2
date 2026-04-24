@@ -1067,3 +1067,36 @@ Architectural-decoder direction NOT closed entirely — student's own follow-up 
 ### Decision: **CLOSED** as clean negative result. σ axis exhausted.
 
 Alphonse reassigned to PR #32: n_head sweep + 3-seed anchor recalibration to update the merge threshold.
+
+---
+
+## 2026-04-24 — PR #30: fern: Per-block Fourier re-injection — CLOSED
+
+- **Branch:** `fern/per-block-fourier`
+- **W&B group:** `fern/per-block-fourier`
+- **Hypothesis:** Re-inject input Fourier features at every TransolverBlock's input via zero-init projector. Decoder is invisible at step 0, should "only improve" from there.
+
+### Results (W&B verified)
+
+| Rank | Config (shared / seed / mr) | val_avg | test_avg | best_ep | Δn_params |
+|------|------------------------------|---------|----------|---------|-----------|
+| 1 | anchor (s1) | **69.845** | 62.778 | 17 | 0 |
+| 2 | anchor (s0) | 71.489 | 62.603 | 16 | 0 |
+| 3 | shared / s0 | 103.543 | 93.079 | 16 | +41,088 |
+| 4 | shared / s1 | 104.319 | 94.566 | 16 | +41,088 |
+| 5 | shared / s2 | 105.619 | 93.636 | 16 | +41,088 |
+| 6 | perblock / s0 | 107.424 | 96.884 | 16 | +205,440 |
+| 7 | shared+mr3 / s0 | 107.424 | 95.302 | 15 | +41,088 |
+| 8 | perblock / s1 | 108.667 | 98.264 | 16 | +205,440 |
+
+### Analysis
+
+- **CATASTROPHIC REGRESSION (+47% val) despite textbook zero-init.** Best PBF variant 103.54 vs baseline 69.85 — 34 val points above, ~30σ_anchor gap.
+- **Zero-init verified correct.** `fourier_proj_step0_abs_max = 0` across all 6 PBF runs. Weight AND bias both zeroed. Thorfinn-trap (re-zero after `apply(_init_weights)`) avoided. The failure is NOT an init bug.
+- **Key mechanistic finding:** post-step-0 learning dynamics grow `fourier_proj` magnitude in a direction that adds noise to hidden state rather than enriching it. **Zero-init guarantees initial identity but does NOT bound subsequent growth.** This invalidates "zero-init = can only help" as a universal trick.
+- **Shared > per-block** (103.93 vs 108.05 2-seed, ~5σ separation). Reversed from NeRF/FiLM intuition. Consistent with "more projector capacity = more room for greedy degradation."
+- **Largest regression on `val_single_in_dist` (+68%)**, not OOD splits — core representation disrupted, not just generalization.
+- **mlp_ratio=3 doesn't rescue** (107.42 vs shared 103.54) — replicates PR #25's mr=3 plateau. mr=3 doesn't stack.
+- Student implementation exemplary; execution + analysis textbook.
+
+### Decision: **CLOSED.** Per-block Fourier re-injection as a zero-init additive fails. Reassigned to PR #33 (α-gated variant with ControlNet-style scalar gate) — the principled fix for the magnitude-growth failure mode.

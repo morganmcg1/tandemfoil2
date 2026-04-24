@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Updated:** 2026-04-24 05:30 (round 16 — PR #28 closed, σ axis exhausted)
+- **Updated:** 2026-04-24 06:00 (round 17 — PR #30 closed)
 - **Advisor branch:** `kagent_v_students`
 - **Research tag:** `kagent-v-students-20260423-2055`
 - **W&B project:** `wandb-applied-ai-team/senpai-kagent-v-students`
@@ -31,7 +31,7 @@
 | Student | Status | PR | Branch |
 |---------|--------|----|--------|
 | frieren  | WIP (r14) | #31: Post-hoc Re-scale correction (inference-only) | `frieren/posthoc-re-scale` |
-| fern     | WIP (r14) | #30: Per-block Fourier re-injection (zero-init) | `fern/per-block-fourier` |
+| fern     | WIP (r17) | #33: α-gated per-block Fourier (magnitude-constrained) | `fern/alpha-gated-pbf` |
 | tanjiro  | WIP (r12) | #17 r3: Gap σ-scan on SwiGLU baseline + tandem-gated AoA | `tanjiro/input-feature-jitter` |
 | nezuko   | WIP (r15) | #27 r2: slice_num refined {32, 48, 96} on σ=0.7 recipe (2-seed) | `nezuko/slice-num-sweep` |
 | alphonse | WIP (r16) | #32: n_head sweep + 3-seed anchor recalibration | `alphonse/n-head-sweep` |
@@ -53,7 +53,7 @@ None at this time.
 | PR | Student | Hypothesis | Target |
 |----|---------|-----------|--------|
 | #31 | frieren  | Post-hoc Re-scale correction (inference-only; decoupled scale head) | Beat **70.67** (2-seed mean) |
-| #30 | fern     | Per-block Fourier re-injection (zero-init, shared projector) | Beat **70.67** |
+| #33 | fern     | α-gated per-block Fourier (per-block scalar α init=0, magnitude-constrained) | Beat **70.67** (conservative threshold 69.943 pending #32) |
 | #17 | tanjiro  | r3: Gap σ-scan on SwiGLU baseline + tandem-gated AoA | Beat **70.67** |
 | #27 | nezuko   | r2: slice_num {32, 48, 96} on σ=0.7 recipe + 3-seed at sn=32 | Beat **70.67** |
 | #32 | alphonse | n_head sweep {2, 4, 8, 16} + 3-seed anchor recalibration | Beat **70.67** (threshold to be recalibrated this PR) |
@@ -67,6 +67,9 @@ None at this time.
 - **Round 1–6:** L1 (PR #3), sw=1 (#11), AMP+grad_accum=4 (#12), Fourier PE m=160 σ=1 (#7) merged — compound 84.737 baseline.
 - **Round 7 (r7):** Closed PR #14 (sw>1 exhausted). Seed floor on seeded serial: 2.5%.
 - **Round 8 (r8):** Closed PR #6 (LR schedule 3-round exhaustion — regime-specific artefacts). Sent back #17 (gap-only jitter signal real). Assigned #22 (temp annealing).
+- **Round 17 (r17 — 2026-04-24 06:00):**
+  - **Closed PR #30 (fern per-block Fourier re-injection):** catastrophic regression (+47% val, +55% test) despite textbook zero-init implementation. **Key finding: zero-init alone is NOT a "can only help" guarantee — post-step-0 learning dynamics can grow the projector in a harmful direction.** Shared projector > per-block (103.93 vs 108.05, ~5σ) — reversed from NeRF/FiLM intuition. Largest regression on `val_single_in_dist` (+68%), not OOD splits → core representation disrupted. mlp_ratio=3 doesn't rescue. Reassigned to PR #33 (α-gated variant — per-block learnable scalar α_i init=0 as ControlNet-style magnitude gate; by construction mechanism can only activate if strictly helpful).
+
 - **Round 16 (r16 — 2026-04-24 05:30):**
   - **Closed PR #28 (alphonse fine σ sweep):** σ=0.7 confirmed robust optimum. σ axis now fully mapped across 9 values {0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.9, 1.0}. **Important landscape findings:**
     - Pathology band (divergence + best_ep=11) extends on BOTH sides of σ=0.7 — σ=0.65 joins σ=0.8/0.9 in the unstable band. σ=0.7 is a narrow well.
