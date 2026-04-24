@@ -794,3 +794,40 @@ Methodology win: establishes that **single-seed measurements of advances < ~5% a
 - Hypothesis disconfirmed under the per-tier-mean formulation.
 - Loss-weighting landscape now exhaustively mapped by frieren across 4 PRs: L1 (#3), sw=1 (#11), sw>1 (#14), 3-tier BL (#21).
 - Frieren reassigned to PR #26 (sample-wise normalization with Re-predicted scale) — fresh territory, researcher's top-ranked untested idea.
+
+---
+
+## 2026-04-24 — PR #22: nezuko: Attention temperature annealing — CLOSED
+
+- **Branch:** `nezuko/attn-temperature-annealing` (pre-SwiGLU, stale — 7th consecutive)
+- **W&B group:** `nezuko/attn-temp-anneal`
+- **Hypothesis:** Fixed `self.temperature = 0.5` at init makes slice-assignment softmax sharp from step 0. Anneal from T₀ ∈ {1.5, 2.0} → 0.5 over first 3–5 epochs to let attention explore before hardening.
+
+### Results (ranked by best_val_avg/mae_surf_p, W&B verified)
+
+| Rank | Config (T₀ / anneal / seed) | val_avg | test_avg | state |
+|------|------------------------------|---------|----------|-------|
+| 1 | 0.5 / 0 / s7 (anchor) | **86.268** | 76.284 | finished |
+| 2 | 2.0 / 5 / s42 | 88.085 | 79.010 | finished |
+| 3 | 1.5 / 5 / s42 | 90.948 | 83.606 | finished |
+| 4 | 2.0 / 0 / s42 | 91.147 | 83.230 | finished |
+| 5 | 1.5 / 5 / s7 | 91.164 | 82.958 | finished |
+| 6 | 1.5 / 3 / s42 | 94.030 | 85.335 | running (orphan) |
+| 7 | 0.5 / 0 / s42 (anchor) | 94.458 | 84.221 | finished |
+| 8 | 1.5 / 0 / s42 | 95.099 | 84.953 | finished |
+
+### Analysis
+
+- **Hypothesis rejected at 2-seed significance.** Anneal 2-seed mean at winning config (T=1.5 an=5): 91.056 vs anchor 2-seed mean: 90.363 → **annealing is +0.7 val WORSE on average**. Anchor spread is 8.19 val — effect buried in noise. The raw "winner" (86.268) is the seed=7 ANCHOR, not any anneal variant.
+- **Post-release temperatures drift to [0.3, 0.7]** around original 0.5 init — 0.5 was already a good basin. No head diverged to extremes.
+- **Trend direction informative despite insignificance:** on s42, longer anneal > shorter anneal > init-only > anchor (94.46 → 95.10 → 94.03 → 90.95 → 88.09). Higher T₀ (2.0 > 1.5) wins by 2.9 val on s42. Directional signal is sensible but inside noise.
+- **Student implementation was exemplary:** grad-freeze during anneal (freezes `temperature.requires_grad` during schedule, snaps to 0.5 and re-enables at release) was a smart principled deviation from spec — avoids stale AdamW momentum against overwritten params. Temperature traces verified step-for-step schedule execution.
+- **Branch is stale pre-SwiGLU.** All runs on pre-PR #20 recipe (84.737 baseline). Even a real win couldn't be merged without regressing SwiGLU gains.
+
+### Decision: **CLOSED.**
+
+Methodology lessons carried forward:
+- 2-seed protocol correctly rejects the hypothesis. First clean use of the multi-seed protocol established round 9.
+- Anchor seed variance ~8 val on pre-SwiGLU recipe; sub-5% effects cannot be distinguished.
+
+Nezuko reassigned to PR #27 (slice_num sweep on merged recipe) — fundamental architectural knob never cleanly tested on the current 73.66 baseline.
