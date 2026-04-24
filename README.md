@@ -4,13 +4,47 @@
 
 This repo contains a custom TandemFoilSet dataset split as well as a base set of files that the [senpai](https://github.com/wandb/senpai) autoresearch harness can use as input to try and improve performance.
 
+## Authors
+
+TandemFoilSet-Balanced was created by:
+
+- Morgan McGuire
+- Thomas Capelle ([@tcapelle](https://github.com/tcapelle))
+
+## Citation
+
+If you use this balanced split design or benchmark package, please cite:
+
+```bibtex
+@misc{mcguire2026tandemfoilsetbalanced,
+  title        = {{TandemFoilSet-Balanced}: Balanced Split Design and CFD Surrogate Benchmark Package},
+  author       = {McGuire, Morgan and Capelle, Thomas},
+  year         = {2026},
+  howpublished = {GitHub repository},
+  url          = {https://github.com/morganmcg1/TandemFoilSet-Balanced},
+  note         = {Accessed 2026-04-24}
+}
+```
+
+For the underlying dataset, cite the original TandemFoilSet paper:
+
+```bibtex
+@inproceedings{lim2026tandemfoilset,
+  title     = {{TandemFoilSet}: Datasets for Flow Field Prediction of Tandem-Airfoil Through the Reuse of Single Airfoils},
+  author    = {Lim, Wei Xian and Loh, Sher En Jessica and Li, Zenong and Oo, Thant Zin and Chan, Wai Lee and Kong, Adams Wai-Kin},
+  booktitle = {The Fourteenth International Conference on Learning Representations},
+  year      = {2026},
+  url       = {https://openreview.net/forum?id=4Z0P4Nbosn}
+}
+```
+
 ## Splits
 The goal behind the split is to be able to say:
 - The model is good/bad at generalizing to unseen geometries (train on low + high camber, val/test on moderate)
 - The same model works across different Reynolds numbers for both race car and cruise (train on low, med, high Re, val/test on low, moderate, high) - random split across all Re numbers
 - General single-foil random split as a sanity check
 
-See **[SPLITS.MD](https://github.com/morganmcg1/tandemfoil2/blob/main/data/SPLITS.md)** for a full description of the dataset splits
+See **[SPLITS.md](data/SPLITS.md)** for a full description of the dataset splits.
 
 ## Targets
 
