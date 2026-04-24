@@ -228,11 +228,117 @@ class TransolverBlock(nn.Module):
             )
 
     def forward(self, fx):
+        # Always returns the post-residual hidden state (the parent Transolver
+        # applies ln_3 + mlp2 of the last block externally so a residual
+        # SurfaceDecoder can hook the same pre-projection features).
         fx = self.attn(self.ln_1(fx)) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
-        if self.last_layer:
-            return self.mlp2(self.ln_3(fx))
         return fx
+
+
+class SurfaceDecoder(nn.Module):
+    """Zero-init residual cross-attention decoder (ControlNet-style).
+
+    Produces a small [B, N, out_dim] delta on top of the baseline mlp2
+    prediction. The final projection head is zero-initialised, so at step 0
+    the delta is exactly 0 and the model matches the baseline output. The
+    delta learns via gradients routed through the head, which are nonzero
+    even when ``head.weight == 0`` (dL/dW = dL/dy ⊗ pre-head features).
+
+    Architecture (DETR/Flamingo evolving-Q pattern):
+        h = fx
+        for layer in blocks:
+            h = h + xattn(LN_q(h), LN_kv(fx), LN_kv(fx))   # K/V stay fixed at encoder output
+        h = h + ffn(LN_ffn(h))
+        delta = head(LN_out(h))                            # head zero-init
+    """
+
+    def __init__(self, dim: int, heads: int = 4, n_layers: int = 2,
+                 out_dim: int = 3, mlp_ratio: int = 2):
+        super().__init__()
+        self.n_layers = n_layers
+        self.blocks = nn.ModuleList([
+            nn.MultiheadAttention(dim, heads, batch_first=True)
+            for _ in range(n_layers)
+        ])
+        self.lns_q = nn.ModuleList([nn.LayerNorm(dim) for _ in range(n_layers)])
+        self.lns_kv = nn.ModuleList([nn.LayerNorm(dim) for _ in range(n_layers)])
+        self.ln_ffn = nn.LayerNorm(dim)
+        self.ffn = SwiGLUMLP(dim, mlp_ratio=mlp_ratio)
+        self.ln_out = nn.LayerNorm(dim)
+        self.head = nn.Linear(dim, out_dim)
+        # Zero both weight AND bias so surf_delta == 0 exactly at step 0.
+        nn.init.zeros_(self.head.weight)
+        nn.init.zeros_(self.head.bias)
+
+    def forward(self, fx: torch.Tensor, is_surface: torch.Tensor,
+                mask: torch.Tensor) -> torch.Tensor:
+        # fx: [B, N, D] encoder hidden states.
+        # mask: [B, N] bool, True = valid (not padded).
+        # is_surface: [B, N] bool, True = surface node.
+        #
+        # On TandemFoilSet N≈86k but N_surf≈1.6k (~1.8% of N). Running
+        # cross-attention with Q on all N nodes is O(N²·D) which makes the
+        # decoder ~50× slower than the trunk — verified empirically. We
+        # instead gather surface queries only (O(N_surf·N·D)), and scatter
+        # the delta back to a full [B, N, out_dim] tensor with zeros at
+        # non-surface nodes. The parent `torch.where(is_surface, ...)` keeps
+        # the exact same semantics as a full-N forward.
+        B, N, D = fx.shape
+        device = fx.device
+        out_dim = self.head.out_features
+
+        surf_counts = is_surface.sum(dim=1)  # [B]
+        max_surf = int(surf_counts.max().item())
+        if max_surf == 0:
+            return torch.zeros(B, N, out_dim, device=device, dtype=fx.dtype)
+
+        # Per-sample: indices of surface nodes padded with 0 up to max_surf.
+        # query_valid_mask marks real (non-padded) slots so we can zero-out
+        # padded outputs before scattering — preventing padded slots (whose
+        # gather_idx defaults to 0, a real node position) from overwriting
+        # a valid surface delta at position 0.
+        gather_idx = torch.zeros(B, max_surf, dtype=torch.long, device=device)
+        query_valid_mask = torch.zeros(B, max_surf, dtype=torch.bool, device=device)
+        for b in range(B):
+            idx = is_surface[b].nonzero(as_tuple=True)[0]
+            n = idx.numel()
+            if n > 0:
+                gather_idx[b, :n] = idx
+                query_valid_mask[b, :n] = True
+
+        # Gather surface queries [B, max_surf, D].
+        fx_surf = torch.gather(
+            fx, dim=1,
+            index=gather_idx.unsqueeze(-1).expand(-1, -1, D),
+        )
+
+        # Cross-attention: Q = surface nodes, K/V = all valid nodes.
+        key_padding_mask = ~mask  # [B, N], True = ignore
+        h = fx_surf
+        for i in range(self.n_layers):
+            q = self.lns_q[i](h)
+            kv = self.lns_kv[i](fx)
+            attn_out, _ = self.blocks[i](
+                q, kv, kv,
+                key_padding_mask=key_padding_mask,
+                need_weights=False,
+            )
+            h = h + attn_out
+        h = h + self.ffn(self.ln_ffn(h))
+        delta_surf = self.head(self.ln_out(h))  # [B, max_surf, out_dim]
+
+        # Zero-out padded slots before scatter so they don't overwrite real
+        # values at index 0.
+        delta_surf = delta_surf * query_valid_mask.unsqueeze(-1).to(delta_surf.dtype)
+
+        delta_full = torch.zeros(B, N, out_dim, device=device, dtype=delta_surf.dtype)
+        delta_full.scatter_(
+            dim=1,
+            index=gather_idx.unsqueeze(-1).expand(-1, -1, out_dim),
+            src=delta_surf,
+        )
+        return delta_full
 
 
 class Transolver(nn.Module):
@@ -241,7 +347,10 @@ class Transolver(nn.Module):
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None,
-                 swiglu: bool = False):
+                 swiglu: bool = False,
+                 use_surface_decoder: bool = False,
+                 decoder_n_layers: int = 2,
+                 decoder_n_heads: int = 4):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -269,6 +378,24 @@ class Transolver(nn.Module):
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
 
+        # Instantiate the surface decoder AFTER the trunk is fully initialised
+        # so its RNG consumption doesn't shift the trunk's init, keeping the
+        # no-decoder and with-decoder runs bit-identical up to the trunk.
+        self.use_surface_decoder = use_surface_decoder
+        if use_surface_decoder:
+            self.surface_decoder = SurfaceDecoder(
+                dim=n_hidden,
+                heads=decoder_n_heads,
+                n_layers=decoder_n_layers,
+                out_dim=out_dim,
+                mlp_ratio=mlp_ratio,
+            )
+            # Overwrite default init with the trunk's trunc_normal convention,
+            # then re-zero the head (apply() would have undone the zero-init).
+            self.surface_decoder.apply(self._init_weights)
+            nn.init.zeros_(self.surface_decoder.head.weight)
+            nn.init.zeros_(self.surface_decoder.head.bias)
+
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=0.02)
@@ -278,12 +405,23 @@ class Transolver(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def forward(self, data, **kwargs):
+    def forward(self, data, is_surface=None, mask=None, **kwargs):
         x = data["x"]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         for block in self.blocks:
-            fx = block(fx)
-        return {"preds": fx}
+            fx = block(fx)  # now returns hidden state even for the last block
+
+        last = self.blocks[-1]
+        vol_preds = last.mlp2(last.ln_3(fx))
+
+        if self.use_surface_decoder:
+            surf_delta = self.surface_decoder(fx, is_surface, mask)
+            preds = torch.where(is_surface.unsqueeze(-1),
+                                vol_preds + surf_delta,
+                                vol_preds)
+            return {"preds": preds, "surf_delta": surf_delta}
+
+        return {"preds": vol_preds}
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +471,7 @@ def evaluate_split(model, loader, stats, surf_weight, device,
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             x_aug = apply_fourier_pe(x_norm, fourier_enc)
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_aug})["preds"]
+            pred = model({"x": x_aug}, is_surface=is_surface, mask=mask)["preds"]
 
             per_elem = elementwise_loss(pred, y_norm, loss_type, huber_delta)
             vol_mask = mask & ~is_surface
@@ -486,6 +624,10 @@ class Config:
     fourier_sigma_x: float | None = None  # per-coord σ for x; both x & z must be set
     fourier_sigma_z: float | None = None  # per-coord σ for z; both x & z must be set
     swiglu: bool = False            # replace GELU-MLP with SwiGLU in each TransolverBlock
+    # Zero-init residual cross-attention surface decoder (ControlNet-style).
+    use_surface_decoder: bool = False  # add a residual delta head for surface nodes
+    decoder_n_layers: int = 2          # cross-attention layers in the decoder
+    decoder_n_heads: int = 4           # attention heads in the decoder
     seed: int = 0                   # RNG seed for torch / numpy / python random
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -581,6 +723,9 @@ model_config = dict(
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
     swiglu=cfg.swiglu,
+    use_surface_decoder=cfg.use_surface_decoder,
+    decoder_n_layers=cfg.decoder_n_layers,
+    decoder_n_heads=cfg.decoder_n_heads,
 )
 
 model = Transolver(**model_config).to(device)
@@ -667,7 +812,8 @@ for epoch in range(MAX_EPOCHS):
         # the autograd graph. No GradScaler needed for bf16 (full fp32 exponent
         # range, so no underflow — GradScaler is only required for fp16).
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=cfg.amp):
-            pred = model({"x": x_aug})["preds"]
+            out = model({"x": x_aug}, is_surface=is_surface, mask=mask)
+            pred = out["preds"]
             per_elem = elementwise_loss(pred, y_norm, cfg.loss_type, cfg.huber_delta)
 
             vol_mask = mask & ~is_surface
@@ -675,6 +821,19 @@ for epoch in range(MAX_EPOCHS):
             vol_loss = (per_elem * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
             surf_loss = (per_elem * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
             loss = vol_loss + cfg.surf_weight * surf_loss
+
+        # Zero-init sanity check: on the very first forward pass, the decoder's
+        # head is zeroed so surf_delta must be *exactly* 0. If it isn't, init
+        # is broken and there's no point running the rest of the sweep.
+        if epoch == 0 and micro_idx == 0 and cfg.use_surface_decoder:
+            delta_max = out["surf_delta"].detach().float().abs().max().item()
+            print(f"[zero-init check] surf_delta.abs().max() at step 0 = {delta_max:.3e}")
+            wandb.summary["surf_delta_step0_abs_max"] = delta_max
+            if delta_max > 0:
+                raise RuntimeError(
+                    f"Zero-init residual decoder failed: surf_delta.abs().max() = {delta_max} "
+                    "at step 0. Check SurfaceDecoder.head init."
+                )
 
         # Scale by 1/grad_accum so accumulated gradient == mean-of-minibatches
         # gradient (what you'd get at effective batch = batch_size * grad_accum).
