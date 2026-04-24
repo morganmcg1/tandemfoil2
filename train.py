@@ -136,16 +136,21 @@ class SwiGLUMLP(nn.Module):
         return self.w3(F.silu(self.w1(x)) * self.w2(x))
 
 
-def apply_fourier_pe(x_norm: torch.Tensor, enc: "FourierEncoder | None") -> torch.Tensor:
+def apply_fourier_pe(
+    x_norm: torch.Tensor, enc: "FourierEncoder | None"
+) -> "tuple[torch.Tensor, torch.Tensor | None]":
     """Append Fourier PE of the leading (x, z) coords to the input features.
 
-    Returns x_norm unchanged when enc is None, else concat(x_norm, pe) so the
-    spatial signal survives alongside the original (mean-0, std-1) coordinates.
+    Returns ``(x_aug, pe)`` where ``x_aug`` is ``x_norm`` unchanged when enc is
+    None, else concat(x_norm, pe) so the spatial signal survives alongside the
+    original (mean-0, std-1) coordinates. ``pe`` is also returned separately so
+    the same tensor can be fed into α-gated per-block Fourier injection without
+    recomputing the encoder.
     """
     if enc is None:
-        return x_norm
+        return x_norm, None
     pe = enc(x_norm[..., :2])
-    return torch.cat([x_norm, pe], dim=-1)
+    return torch.cat([x_norm, pe], dim=-1), pe
 
 
 class PhysicsAttention(nn.Module):
@@ -241,7 +246,11 @@ class Transolver(nn.Module):
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None,
-                 swiglu: bool = False):
+                 swiglu: bool = False,
+                 per_block_fourier_gated: bool = False,
+                 pbf_fourier_dim: int = 0,
+                 pbf_injection_layers: list[int] | None = None,
+                 pbf_alpha_init: float = 0.0):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -257,6 +266,7 @@ class Transolver(nn.Module):
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
+        self.n_layers = n_layers
         self.blocks = nn.ModuleList([
             TransolverBlock(
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
@@ -267,7 +277,35 @@ class Transolver(nn.Module):
             for i in range(n_layers)
         ])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
+
+        # α-gated per-block Fourier injection (ControlNet-style zero-init gate).
+        # A shared small projector maps pe_code (dim 2m) → n_hidden, modulated by
+        # a per-layer learnable scalar α_i (init 0 by default). At init, injection
+        # is identically zero; α_i can only grow if gradient strictly helps.
+        self.per_block_fourier_gated = per_block_fourier_gated
+        if per_block_fourier_gated:
+            if pbf_fourier_dim <= 0:
+                raise ValueError("per_block_fourier_gated requires pbf_fourier_dim > 0")
+            self.fourier_proj = nn.Linear(pbf_fourier_dim, n_hidden)
+            self.pbf_alphas = nn.Parameter(torch.full((n_layers,), float(pbf_alpha_init)))
+            layers = list(range(n_layers)) if pbf_injection_layers is None else list(pbf_injection_layers)
+            bad = [i for i in layers if not (0 <= i < n_layers)]
+            if bad:
+                raise ValueError(f"pbf_injection_layers out of range [0,{n_layers}): {bad}")
+            self.pbf_injection_set = set(layers)
+        else:
+            self.fourier_proj = None
+            self.pbf_alphas = None
+            self.pbf_injection_set = set()
+
         self.apply(self._init_weights)
+
+        # Re-zero the α-gated projector AFTER trunc_normal_ pass in _init_weights.
+        # Without this, the step-0 identity property (injection output == 0) would
+        # be silently violated and PR #30's failure mode would return.
+        if self.fourier_proj is not None:
+            nn.init.zeros_(self.fourier_proj.weight)
+            nn.init.zeros_(self.fourier_proj.bias)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -281,7 +319,17 @@ class Transolver(nn.Module):
     def forward(self, data, **kwargs):
         x = data["x"]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        for block in self.blocks:
+
+        proj_pe = None
+        if self.fourier_proj is not None:
+            pe_code = data.get("pe_code", None)
+            if pe_code is None:
+                raise ValueError("per_block_fourier_gated enabled but 'pe_code' missing from data")
+            proj_pe = self.fourier_proj(pe_code)
+
+        for i, block in enumerate(self.blocks):
+            if proj_pe is not None and i in self.pbf_injection_set:
+                fx = fx + self.pbf_alphas[i] * proj_pe
             fx = block(fx)
         return {"preds": fx}
 
@@ -331,9 +379,9 @@ def evaluate_split(model, loader, stats, surf_weight, device,
             mask = mask.to(device, non_blocking=True)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
-            x_aug = apply_fourier_pe(x_norm, fourier_enc)
+            x_aug, pe_code = apply_fourier_pe(x_norm, fourier_enc)
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_aug})["preds"]
+            pred = model({"x": x_aug, "pe_code": pe_code})["preds"]
 
             per_elem = elementwise_loss(pred, y_norm, loss_type, huber_delta)
             vol_mask = mask & ~is_surface
@@ -486,6 +534,10 @@ class Config:
     fourier_sigma_x: float | None = None  # per-coord σ for x; both x & z must be set
     fourier_sigma_z: float | None = None  # per-coord σ for z; both x & z must be set
     swiglu: bool = False            # replace GELU-MLP with SwiGLU in each TransolverBlock
+    # α-gated per-block Fourier injection (ControlNet-style zero-init gate, PR #33).
+    per_block_fourier_gated: bool = False  # enable α-gated PBF injection
+    pbf_injection_layers: str = "all"      # "all" | "last-only" | "first-2" | comma-sep 1-indexed list
+    pbf_alpha_init: float = 0.0            # initial α value; 0.0 = strict ControlNet, 0.01 = small bias
     seed: int = 0                   # RNG seed for torch / numpy / python random
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -508,6 +560,41 @@ if (cfg.fourier_sigma_x is None) != (cfg.fourier_sigma_z is None):
     raise ValueError(
         "--fourier_sigma_x and --fourier_sigma_z must be set together "
         f"(got x={cfg.fourier_sigma_x!r}, z={cfg.fourier_sigma_z!r})"
+    )
+
+
+def parse_pbf_injection_layers(spec: str, n_layers: int) -> list[int]:
+    """Parse --pbf_injection_layers into a list of 0-indexed block indices.
+
+    Accepts preset strings ("all", "last-only"/"last", "first-2") or a
+    comma-separated list of 1-indexed layer numbers (e.g. "1,3,5").
+    """
+    s = spec.strip().lower()
+    if s == "all":
+        return list(range(n_layers))
+    if s in ("last", "last-only"):
+        return [n_layers - 1]
+    if s == "first-2":
+        if n_layers < 2:
+            raise ValueError(f"first-2 requires n_layers >= 2, got {n_layers}")
+        return [0, 1]
+    try:
+        idxs = [int(tok.strip()) - 1 for tok in s.split(",") if tok.strip()]
+    except ValueError as e:
+        raise ValueError(
+            f"--pbf_injection_layers must be 'all'|'last-only'|'first-2' or "
+            f"comma-sep 1-indexed integers, got {spec!r}"
+        ) from e
+    if any(not (0 <= i < n_layers) for i in idxs):
+        raise ValueError(
+            f"--pbf_injection_layers contains indices outside [1,{n_layers}]: {spec!r}"
+        )
+    return idxs
+
+
+if cfg.per_block_fourier_gated and cfg.fourier_features == "none":
+    raise ValueError(
+        "--per_block_fourier_gated requires a Fourier encoder (set --fourier_features fixed|learnable)"
     )
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
@@ -569,12 +656,14 @@ if cfg.fourier_features != "none":
 # space_dim = 2 (raw) + (2*m if fourier enabled else 0).
 space_dim = 2 + (fourier_enc.out_dim if fourier_enc is not None else 0)
 
+N_LAYERS = 5
+
 model_config = dict(
     space_dim=space_dim,
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
-    n_layers=5,
+    n_layers=N_LAYERS,
     n_head=4,
     slice_num=64,
     mlp_ratio=2,
@@ -582,6 +671,21 @@ model_config = dict(
     output_dims=[1, 1, 1],
     swiglu=cfg.swiglu,
 )
+
+pbf_injection_idxs: list[int] = []
+if cfg.per_block_fourier_gated:
+    pbf_injection_idxs = parse_pbf_injection_layers(cfg.pbf_injection_layers, N_LAYERS)
+    pbf_fourier_dim = fourier_enc.out_dim  # 2 * fourier_m
+    model_config.update(
+        per_block_fourier_gated=True,
+        pbf_fourier_dim=pbf_fourier_dim,
+        pbf_injection_layers=pbf_injection_idxs,
+        pbf_alpha_init=cfg.pbf_alpha_init,
+    )
+    print(
+        f"α-gated PBF: enabled  inject_blocks={pbf_injection_idxs} "
+        f"(1-idx={[i+1 for i in pbf_injection_idxs]})  α_init={cfg.pbf_alpha_init}"
+    )
 
 model = Transolver(**model_config).to(device)
 
@@ -636,6 +740,72 @@ with open(model_dir / "config.yaml", "w") as f:
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
 global_step = 0
+
+
+def log_pbf_alphas(step: int, tag: str = "pbf") -> None:
+    """Log per-block α values to wandb. Key diagnostic for ControlNet-style gate."""
+    if model.pbf_alphas is None:
+        return
+    alphas = model.pbf_alphas.detach().float().cpu()
+    payload: dict = {
+        f"{tag}/alphas_abs_max": float(alphas.abs().max().item()),
+        f"{tag}/alphas_abs_mean": float(alphas.abs().mean().item()),
+        "global_step": step,
+    }
+    for i, a in enumerate(alphas.tolist()):
+        payload[f"{tag}/alpha_{i}"] = a
+    # Projector magnitude tells us whether the "direction" is growing at all
+    # (independent of α magnitude); useful for diagnosing gate vs. projector dynamics.
+    payload[f"{tag}/fourier_proj_weight_abs_max"] = (
+        float(model.fourier_proj.weight.detach().abs().max().item())
+    )
+    payload[f"{tag}/fourier_proj_bias_abs_max"] = (
+        float(model.fourier_proj.bias.detach().abs().max().item())
+    )
+    wandb.log(payload)
+
+
+# --- Step-0 PBF identity assertions (mechanism MUST be exactly zero at init) ---
+if cfg.per_block_fourier_gated:
+    with torch.no_grad():
+        w_max = model.fourier_proj.weight.abs().max().item()
+        b_max = model.fourier_proj.bias.abs().max().item()
+        a_max = model.pbf_alphas.abs().max().item()
+    # α_init can be 0.0 (strict ControlNet) or a small positive constant (e.g. 0.01).
+    expected_a_max = abs(float(cfg.pbf_alpha_init))
+    assert w_max == 0.0, f"PBF step-0 violated: fourier_proj.weight |max|={w_max}"
+    assert b_max == 0.0, f"PBF step-0 violated: fourier_proj.bias |max|={b_max}"
+    assert abs(a_max - expected_a_max) < 1e-9, (
+        f"PBF step-0 violated: pbf_alphas |max|={a_max}, expected {expected_a_max}"
+    )
+    # End-to-end injection check using a real training batch: run forward, then
+    # confirm the injection term (α_i · proj(pe_code)) matches α_init · 0 = 0.
+    probe_batch = next(iter(train_loader))
+    with torch.no_grad():
+        x_p, _, _, _ = probe_batch
+        x_p = x_p.to(device, non_blocking=True)
+        x_norm_p = (x_p - stats["x_mean"]) / stats["x_std"]
+        _, pe_p = apply_fourier_pe(x_norm_p, fourier_enc)
+        inject = model.pbf_alphas[0] * model.fourier_proj(pe_p)
+        injection_abs_max = float(inject.abs().max().item())
+    # With weight=bias=0, projector output is identically 0 regardless of α.
+    assert injection_abs_max == 0.0, (
+        f"PBF step-0 violated: α · proj(pe) |max|={injection_abs_max}"
+    )
+    print(
+        f"[PBF step-0 checks passed] "
+        f"|W|_max={w_max}  |b|_max={b_max}  |α|_max={a_max}  "
+        f"|α·proj|_max={injection_abs_max}"
+    )
+    wandb.log({
+        "pbf_step0/fourier_proj_weight_abs_max": w_max,
+        "pbf_step0/fourier_proj_bias_abs_max": b_max,
+        "pbf_step0/pbf_alphas_abs_max": a_max,
+        "pbf_step0/injection_abs_max": injection_abs_max,
+        "global_step": 0,
+    })
+    log_pbf_alphas(step=0, tag="pbf")
+
 train_start = time.time()
 
 for epoch in range(MAX_EPOCHS):
@@ -660,14 +830,14 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
-        x_aug = apply_fourier_pe(x_norm, fourier_enc)
+        x_aug, pe_code = apply_fourier_pe(x_norm, fourier_enc)
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
 
         # bf16 autocast wraps forward + loss; backward inherits the cast through
         # the autograd graph. No GradScaler needed for bf16 (full fp32 exponent
         # range, so no underflow — GradScaler is only required for fp16).
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=cfg.amp):
-            pred = model({"x": x_aug})["preds"]
+            pred = model({"x": x_aug, "pe_code": pe_code})["preds"]
             per_elem = elementwise_loss(pred, y_norm, cfg.loss_type, cfg.huber_delta)
 
             vol_mask = mask & ~is_surface
@@ -754,9 +924,32 @@ for epoch in range(MAX_EPOCHS):
     )
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
+    if cfg.per_block_fourier_gated:
+        log_pbf_alphas(step=global_step, tag="pbf")
+        alpha_list = model.pbf_alphas.detach().float().cpu().tolist()
+        alpha_str = ", ".join(f"{a:+.4f}" for a in alpha_list)
+        print(f"    pbf_alphas = [{alpha_str}]")
 
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
+
+# End-of-training α diagnostic: the key signal for whether PBF activated.
+if cfg.per_block_fourier_gated:
+    alphas_final = model.pbf_alphas.detach().float().cpu().tolist()
+    proj_w_max = float(model.fourier_proj.weight.detach().abs().max().item())
+    proj_b_max = float(model.fourier_proj.bias.detach().abs().max().item())
+    summary_payload: dict = {
+        "pbf_final/alphas_abs_max": float(max(abs(a) for a in alphas_final)),
+        "pbf_final/alphas_abs_mean": float(sum(abs(a) for a in alphas_final) / len(alphas_final)),
+        "pbf_final/fourier_proj_weight_abs_max": proj_w_max,
+        "pbf_final/fourier_proj_bias_abs_max": proj_b_max,
+    }
+    for i, a in enumerate(alphas_final):
+        summary_payload[f"pbf_final/alpha_{i}"] = a
+    wandb.summary.update(summary_payload)
+    alpha_str = ", ".join(f"{a:+.6f}" for a in alphas_final)
+    print(f"\n[PBF diagnostic] Final pbf_alphas = [{alpha_str}]")
+    print(f"[PBF diagnostic] fourier_proj |W|_max={proj_w_max:.4e}  |b|_max={proj_b_max:.4e}")
 
 # --- Test evaluation + artifact upload ---
 if best_metrics:
