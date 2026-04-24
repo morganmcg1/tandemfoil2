@@ -487,6 +487,14 @@ class Config:
     fourier_sigma_z: float | None = None  # per-coord σ for z; both x & z must be set
     swiglu: bool = False            # replace GELU-MLP with SwiGLU in each TransolverBlock
     seed: int = 0                   # RNG seed for torch / numpy / python random
+    # In-distribution input jitter (per-sample scalar noise, broadcast across nodes,
+    # applied pre-normalization during training only). Off when values are 0.
+    # Dims 18/22/23 are exactly zero on single-foil samples; jitter on those dims
+    # is gated on a tandem mask so we never push single-foil samples off the zero-axis.
+    jitter_aoa: float = 0.0  # σ on AoA foil1 (dim 14, all samples) and AoA foil2 (dim 18, tandem-only), radians
+    jitter_logRe: float = 0.0  # σ on log(Re) (dim 13, all samples)
+    jitter_gap_stagger: float = 0.0  # σ on gap (dim 22) and stagger (dim 23), tandem-only
+    jitter_prob: float = 1.0  # probability of applying jitter to a given batch
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -535,6 +543,8 @@ elif per_coord:
 else:
     fourier_str = f"{cfg.fourier_features} (m={cfg.fourier_m}, σ={cfg.fourier_sigma})"
 print(f"Fourier: {fourier_str}  swiglu={cfg.swiglu}  seed={cfg.seed}")
+print(f"jitter[aoa={cfg.jitter_aoa} logRe={cfg.jitter_logRe} "
+      f"gap_stagger={cfg.jitter_gap_stagger} prob={cfg.jitter_prob}]")
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -658,6 +668,31 @@ for epoch in range(MAX_EPOCHS):
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
+
+        # In-distribution input jitter — per-sample scalar Gaussian noise on
+        # continuous conditioning features, broadcast across all nodes in the
+        # sample so mesh geometry stays coherent. Applied pre-normalization.
+        if model.training and cfg.jitter_prob > 0 and torch.rand(1).item() < cfg.jitter_prob:
+            B = x.shape[0]
+            # AoA foil 2 is exactly 0 on single-foil samples; use it to detect
+            # tandem samples per-row. Gate dims 18/22/23 jitter on this mask so
+            # we never push single-foil samples off the zero-axis (mild OOD).
+            tandem_mask = (x[:, 0, 18] != 0).view(B, 1, 1).to(x.dtype)
+            if cfg.jitter_aoa > 0:
+                aoa_noise = torch.randn(B, 1, 2, device=x.device) * cfg.jitter_aoa
+                # AoA foil 1 (dim 14) is meaningful for both single and tandem — apply globally.
+                x[:, :, 14:15] += aoa_noise[:, :, 0:1]
+                # AoA foil 2 (dim 18) is tandem-only.
+                x[:, :, 18:19] += aoa_noise[:, :, 1:2] * tandem_mask
+            if cfg.jitter_logRe > 0:
+                # log(Re) (dim 13) is meaningful for all samples — no gating.
+                re_noise = torch.randn(B, 1, 1, device=x.device) * cfg.jitter_logRe
+                x[:, :, 13:14] += re_noise
+            if cfg.jitter_gap_stagger > 0:
+                # gap (dim 22) and stagger (dim 23) are tandem-only.
+                gs_noise = torch.randn(B, 1, 2, device=x.device) * cfg.jitter_gap_stagger
+                x[:, :, 22:23] += gs_noise[:, :, 0:1] * tandem_mask
+                x[:, :, 23:24] += gs_noise[:, :, 1:2] * tandem_mask
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         x_aug = apply_fourier_pe(x_norm, fourier_enc)
