@@ -136,6 +136,52 @@ class SwiGLUMLP(nn.Module):
         return self.w3(F.silu(self.w1(x)) * self.w2(x))
 
 
+class ScaleHead(nn.Module):
+    """Tiny MLP predicting log(per-sample y_std) from log(Re).
+
+    Used for post-hoc inference-time rescale correction (PR #31). Trained in
+    parallel with an auxiliary MSE loss on detached targets; gradients do not
+    flow into the main model because the scale head is a disjoint module and
+    its input (log_Re from the raw data) is detached.
+    """
+
+    def __init__(self, hidden: int = 32, out_dim: int = 1):
+        super().__init__()
+        self.out_dim = out_dim
+        self.mlp = nn.Sequential(
+            nn.Linear(1, hidden), nn.GELU(),
+            nn.Linear(hidden, hidden), nn.GELU(),
+            nn.Linear(hidden, out_dim),
+        )
+
+    def forward(self, log_re: torch.Tensor) -> torch.Tensor:
+        return self.mlp(log_re.unsqueeze(-1))  # [B] -> [B, out_dim]
+
+
+def compute_log_y_std_target(y: torch.Tensor, mask: torch.Tensor, out_dim: int) -> torch.Tensor:
+    """log of per-sample y_std in a form matching ScaleHead's output.
+
+    out_dim=3: per-channel log(std).                    [B, 3]
+    out_dim=1: geometric-mean reduction across channels [B, 1]
+               = mean of per-channel log(std).
+    Padding nodes are masked before computing per-sample mean/var.
+    """
+    mask_f = mask.unsqueeze(-1).float()                          # [B, N, 1]
+    y = y.float()
+    y_masked = y * mask_f
+    n_valid = mask.sum(dim=1).clamp(min=1).unsqueeze(-1).float()  # [B, 1]
+    y_mean_s = y_masked.sum(dim=1) / n_valid                      # [B, 3]
+    sq_diff = (y - y_mean_s.unsqueeze(1)) ** 2                    # [B, N, 3]
+    y_var_s = (sq_diff * mask_f).sum(dim=1) / n_valid             # [B, 3]
+    y_std_s = (y_var_s + 1e-6).sqrt()                             # [B, 3]
+    log_y_std_3 = torch.log(y_std_s.clamp(min=1e-3))              # [B, 3]
+    if out_dim == 3:
+        return log_y_std_3
+    if out_dim == 1:
+        return log_y_std_3.mean(dim=1, keepdim=True)
+    raise ValueError(f"compute_log_y_std_target out_dim must be 1 or 3, got {out_dim}")
+
+
 def apply_fourier_pe(x_norm: torch.Tensor, enc: "FourierEncoder | None") -> torch.Tensor:
     """Append Fourier PE of the leading (x, z) coords to the input features.
 
@@ -311,17 +357,34 @@ def elementwise_loss(pred: torch.Tensor, target: torch.Tensor, loss_type: str,
 
 def evaluate_split(model, loader, stats, surf_weight, device,
                    loss_type: str, huber_delta: float,
-                   fourier_enc: "FourierEncoder | None" = None) -> dict[str, float]:
+                   fourier_enc: "FourierEncoder | None" = None,
+                   scale_head: "ScaleHead | None" = None,
+                   posthoc_rescale: bool = False,
+                   posthoc_scale_out_dim: int = 1,
+                   posthoc_mode: str = "multiplicative",
+                   y_std_global_geomean: float | None = None,
+                   ) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
     ``score.py`` (float64, non-finite samples skipped).
+
+    When ``posthoc_rescale`` is True, the denormalization replaces the baseline
+    ``y_std_global`` with the scale head's prediction. Two forms:
+      - ``posthoc_mode="literal"``: ``pred_norm * y_std_pred + y_mean``
+          (per-channel sensible only when out_dim=3).
+      - ``posthoc_mode="multiplicative"``: ``pred_norm * y_std_global *
+          (y_std_pred / y_std_global_ref)`` — preserves per-channel magnitudes
+          for out_dim=1.
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
     n_surf = n_vol = n_batches = 0
+
+    scale_pred_log_list: list[torch.Tensor] = []
+    scale_true_log_list: list[torch.Tensor] = []
 
     with torch.no_grad():
         for x, y, is_surface, mask in loader:
@@ -348,7 +411,36 @@ def evaluate_split(model, loader, stats, surf_weight, device,
             ).item()
             n_batches += 1
 
-            pred_orig = pred * stats["y_std"] + stats["y_mean"]
+            if posthoc_rescale and scale_head is not None:
+                log_re = x[:, 0, 13]  # [B]
+                log_y_std_pred = scale_head(log_re)  # [B, out_dim]
+                y_std_pred = torch.exp(log_y_std_pred)
+                if posthoc_mode == "literal":
+                    # Literal replacement: pred_norm * y_std_pred.
+                    # For out_dim=1 this broadcasts a scalar across channels,
+                    # destroying per-channel magnitude ratios.
+                    pred_orig = pred * y_std_pred.unsqueeze(1) + stats["y_mean"]
+                elif posthoc_mode == "multiplicative":
+                    # Preserve per-channel baseline denorm; apply a per-sample
+                    # scalar (or per-channel) correction factor y_std_pred/ref.
+                    # ref = geometric mean of y_std_global for out_dim=1, or
+                    # y_std_global itself for out_dim=3.
+                    if log_y_std_pred.shape[-1] == 1:
+                        assert y_std_global_geomean is not None
+                        correction = y_std_pred / y_std_global_geomean  # [B, 1]
+                    else:
+                        correction = y_std_pred / stats["y_std"]  # [B, 3]
+                    pred_orig = (pred * stats["y_std"]) * correction.unsqueeze(1) + stats["y_mean"]
+                else:
+                    raise ValueError(f"unknown posthoc_mode={posthoc_mode!r}")
+
+                # Scale-head diagnostics (collect log-space pred/true per sample).
+                log_y_std_true = compute_log_y_std_target(y, mask, posthoc_scale_out_dim)
+                scale_pred_log_list.append(log_y_std_pred.detach().cpu())
+                scale_true_log_list.append(log_y_std_true.detach().cpu())
+            else:
+                pred_orig = pred * stats["y_std"] + stats["y_mean"]
+
             ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
@@ -358,6 +450,21 @@ def evaluate_split(model, loader, stats, surf_weight, device,
     out = {"vol_loss": vol_loss, "surf_loss": surf_loss,
            "loss": vol_loss + surf_weight * surf_loss}
     out.update(finalize_split(mae_surf, mae_vol, n_surf, n_vol))
+
+    if posthoc_rescale and scale_pred_log_list:
+        log_pred = torch.cat(scale_pred_log_list, dim=0).double()
+        log_true = torch.cat(scale_true_log_list, dim=0).double()
+        # Flatten across (sample, channel) — R²/RMSE are symmetric across both.
+        diff = log_pred - log_true
+        rmse = diff.pow(2).mean().sqrt().item()
+        ss_res = diff.pow(2).sum().item()
+        ss_tot = (log_true - log_true.mean()).pow(2).sum().item()
+        r2 = 1.0 - ss_res / max(ss_tot, 1e-10)
+        out["scale_log_rmse"] = rmse
+        out["scale_log_r2"] = r2
+        out["scale_pred_mean"] = torch.exp(log_pred).mean().item()
+        out["scale_true_mean"] = torch.exp(log_true).mean().item()
+
     return out
 
 
@@ -486,6 +593,14 @@ class Config:
     fourier_sigma_x: float | None = None  # per-coord σ for x; both x & z must be set
     fourier_sigma_z: float | None = None  # per-coord σ for z; both x & z must be set
     swiglu: bool = False            # replace GELU-MLP with SwiGLU in each TransolverBlock
+    # Post-hoc Re-scale correction (PR #31). Main model training is UNCHANGED;
+    # a parallel ScaleHead learns log(Re) -> log(y_std_per_sample) from an aux
+    # MSE loss (detached from main model), and the prediction replaces/augments
+    # y_std_global at inference.
+    posthoc_rescale: bool = False
+    posthoc_scale_out_dim: int = 1          # 1 (shared scalar) or 3 (per-channel)
+    posthoc_lambda_scale: float = 0.1       # aux-loss weight
+    posthoc_mode: str = "multiplicative"     # "literal" | "multiplicative" (see evaluate_split)
     seed: int = 0                   # RNG seed for torch / numpy / python random
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -508,6 +623,12 @@ if (cfg.fourier_sigma_x is None) != (cfg.fourier_sigma_z is None):
     raise ValueError(
         "--fourier_sigma_x and --fourier_sigma_z must be set together "
         f"(got x={cfg.fourier_sigma_x!r}, z={cfg.fourier_sigma_z!r})"
+    )
+if cfg.posthoc_scale_out_dim not in (1, 3):
+    raise ValueError(f"--posthoc_scale_out_dim must be 1 or 3, got {cfg.posthoc_scale_out_dim}")
+if cfg.posthoc_mode not in ("literal", "multiplicative"):
+    raise ValueError(
+        f"--posthoc_mode must be 'literal' or 'multiplicative', got {cfg.posthoc_mode!r}"
     )
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
@@ -585,11 +706,28 @@ model_config = dict(
 
 model = Transolver(**model_config).to(device)
 
+# Post-hoc rescale (PR #31): optional ScaleHead + baseline reference scalar
+# for the multiplicative denorm variant. Only constructed when
+# --posthoc_rescale is set, so with the flag off the parameter count, RNG
+# draws, and code paths are byte-identical to the baseline.
+scale_head: ScaleHead | None = None
+y_std_global_geomean: float | None = None
+if cfg.posthoc_rescale:
+    scale_head = ScaleHead(hidden=32, out_dim=cfg.posthoc_scale_out_dim).to(device)
+    y_std_global_geomean = torch.exp(torch.log(stats["y_std"]).mean()).item()
+    print(
+        f"Posthoc rescale: ON  out_dim={cfg.posthoc_scale_out_dim}  "
+        f"λ_scale={cfg.posthoc_lambda_scale}  mode={cfg.posthoc_mode}  "
+        f"y_std_global_geomean={y_std_global_geomean:.3f}"
+    )
+
 # Include learnable Fourier B in the parameter list so AdamW + cosine schedule
 # see it. Fixed Fourier B is a buffer and has no gradient, so nothing to add.
 trainable_params = list(model.parameters())
 if fourier_enc is not None and cfg.fourier_features == "learnable":
     trainable_params += list(fourier_enc.parameters())
+if scale_head is not None:
+    trainable_params += list(scale_head.parameters())
 n_params = sum(p.numel() for p in trainable_params)
 print(f"Model: Transolver ({n_params/1e6:.2f}M params, "
       f"space_dim={space_dim}, fourier={cfg.fourier_features})")
@@ -645,10 +783,12 @@ for epoch in range(MAX_EPOCHS):
 
     t0 = time.time()
     model.train()
-    epoch_vol = epoch_surf = 0.0
+    if scale_head is not None:
+        scale_head.train()
+    epoch_vol = epoch_surf = epoch_aux = 0.0
     n_micro = n_opt = 0
     # Accumulators for one optimizer step (average across micro-batches at log time).
-    accum_vol = accum_surf = accum_loss = 0.0
+    accum_vol = accum_surf = accum_loss = accum_aux = 0.0
     optimizer.zero_grad(set_to_none=True)
 
     for micro_idx, (x, y, is_surface, mask) in enumerate(
@@ -674,7 +814,23 @@ for epoch in range(MAX_EPOCHS):
             surf_mask = mask & is_surface
             vol_loss = (per_elem * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
             surf_loss = (per_elem * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-            loss = vol_loss + cfg.surf_weight * surf_loss
+            main_loss = vol_loss + cfg.surf_weight * surf_loss
+
+        # Scale head aux loss (fp32, outside autocast for numerical stability of
+        # per-sample std / log). Disjoint from main model params: log_re is a
+        # raw data input, and scale_head is an independent module.
+        aux_loss_val: float | None = None
+        if scale_head is not None:
+            log_re = x[:, 0, 13].detach()  # [B]
+            log_y_std_target = compute_log_y_std_target(
+                y, mask, cfg.posthoc_scale_out_dim
+            ).detach()
+            log_y_std_pred = scale_head(log_re)
+            aux_loss = F.mse_loss(log_y_std_pred, log_y_std_target)
+            loss = main_loss + cfg.posthoc_lambda_scale * aux_loss
+            aux_loss_val = aux_loss.item()
+        else:
+            loss = main_loss
 
         # Scale by 1/grad_accum so accumulated gradient == mean-of-minibatches
         # gradient (what you'd get at effective batch = batch_size * grad_accum).
@@ -682,7 +838,9 @@ for epoch in range(MAX_EPOCHS):
 
         accum_vol += vol_loss.item()
         accum_surf += surf_loss.item()
-        accum_loss += loss.item()
+        accum_loss += main_loss.item()
+        if aux_loss_val is not None:
+            accum_aux += aux_loss_val
         n_micro += 1
 
         is_last_micro = (micro_idx + 1) == len(train_loader)
@@ -694,25 +852,39 @@ for epoch in range(MAX_EPOCHS):
             n_opt += 1
 
             denom = cfg.grad_accum if not is_last_micro else ((micro_idx % cfg.grad_accum) + 1)
-            wandb.log({
+            log_payload = {
                 "train/loss": accum_loss / denom,
                 "train/vol_loss_step": accum_vol / denom,
                 "train/surf_loss_step": accum_surf / denom,
                 "lr_step": scheduler.get_last_lr()[0],
                 "global_step": global_step,
-            })
+            }
+            if scale_head is not None:
+                log_payload["train/aux_loss_step"] = accum_aux / denom
+            wandb.log(log_payload)
             epoch_vol += accum_vol
             epoch_surf += accum_surf
-            accum_vol = accum_surf = accum_loss = 0.0
+            epoch_aux += accum_aux
+            accum_vol = accum_surf = accum_loss = accum_aux = 0.0
 
     epoch_vol /= max(n_micro, 1)
     epoch_surf /= max(n_micro, 1)
+    epoch_aux /= max(n_micro, 1)
 
     # --- Validate ---
     model.eval()
+    if scale_head is not None:
+        scale_head.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
-                             cfg.loss_type, cfg.huber_delta, fourier_enc=fourier_enc)
+        name: evaluate_split(
+            model, loader, stats, cfg.surf_weight, device,
+            cfg.loss_type, cfg.huber_delta, fourier_enc=fourier_enc,
+            scale_head=scale_head,
+            posthoc_rescale=cfg.posthoc_rescale,
+            posthoc_scale_out_dim=cfg.posthoc_scale_out_dim,
+            posthoc_mode=cfg.posthoc_mode,
+            y_std_global_geomean=y_std_global_geomean,
+        )
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -728,11 +900,20 @@ for epoch in range(MAX_EPOCHS):
         "epoch_time_s": dt,
         "global_step": global_step,
     }
+    if scale_head is not None:
+        log_metrics["train/aux_loss"] = epoch_aux
     for split_name, m in split_metrics.items():
         for k, v in m.items():
             log_metrics[f"{split_name}/{k}"] = v
     for k, v in val_avg.items():
         log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
+    # Aggregate scale-head diagnostics across splits.
+    if scale_head is not None:
+        for diag_key in ("scale_log_rmse", "scale_log_r2",
+                         "scale_pred_mean", "scale_true_mean"):
+            vals = [m[diag_key] for m in split_metrics.values() if diag_key in m]
+            if vals:
+                log_metrics[f"val_avg/{diag_key}"] = sum(vals) / len(vals)
     wandb.log(log_metrics)
 
     tag = ""
@@ -743,7 +924,13 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        if scale_head is not None:
+            torch.save(
+                {"model": model.state_dict(), "scale_head": scale_head.state_dict()},
+                model_path,
+            )
+        else:
+            torch.save(model.state_dict(), model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
@@ -767,7 +954,13 @@ if best_metrics:
         "total_train_minutes": total_time,
     })
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    ckpt = torch.load(model_path, map_location=device, weights_only=True)
+    if scale_head is not None:
+        model.load_state_dict(ckpt["model"])
+        scale_head.load_state_dict(ckpt["scale_head"])
+        scale_head.eval()
+    else:
+        model.load_state_dict(ckpt)
     model.eval()
 
     test_metrics = None
@@ -780,8 +973,15 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
-                                 cfg.loss_type, cfg.huber_delta, fourier_enc=fourier_enc)
+            name: evaluate_split(
+                model, loader, stats, cfg.surf_weight, device,
+                cfg.loss_type, cfg.huber_delta, fourier_enc=fourier_enc,
+                scale_head=scale_head,
+                posthoc_rescale=cfg.posthoc_rescale,
+                posthoc_scale_out_dim=cfg.posthoc_scale_out_dim,
+                posthoc_mode=cfg.posthoc_mode,
+                y_std_global_geomean=y_std_global_geomean,
+            )
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
