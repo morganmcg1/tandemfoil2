@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -236,6 +237,15 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Drop samples with any non-finite y from both loss and MAE.
+            # data/scoring.py's per-sample skip would otherwise be defeated by
+            # NaN*0 = NaN propagating through its accumulator (e.g. one
+            # test_geom_camber_cruise sample has NaN only in the p channel).
+            B = y.shape[0]
+            y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)  # [B]
+            mask = mask & y_finite[:, None]
+            y = torch.where(y_finite[:, None, None], y, torch.zeros_like(y))
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
@@ -296,6 +306,9 @@ def write_experiment_summary(
     test_avg: dict | None,
     n_params: int,
     model_config: dict,
+    ema_decay: float | None = None,
+    best_raw_avg_surf_p: float | None = None,
+    best_raw_epoch: int | None = None,
 ) -> None:
     """Write a local summary next to the best checkpoint."""
     summary: dict = {
@@ -313,10 +326,21 @@ def write_experiment_summary(
         "surf_weight": cfg.surf_weight,
         "epochs_configured": cfg.epochs,
     }
+    if ema_decay is not None:
+        summary["ema_decay"] = ema_decay
+    if best_raw_avg_surf_p is not None:
+        summary["best_raw_val_avg/mae_surf_p"] = best_raw_avg_surf_p
+        summary["best_raw_epoch"] = best_raw_epoch
+    if "raw_val_avg/mae_surf_p" in best_metrics:
+        summary["raw_val_avg_at_best_ema_epoch/mae_surf_p"] = best_metrics["raw_val_avg/mae_surf_p"]
 
     for split_name, m in best_metrics["per_split"].items():
         for k, v in m.items():
             summary[f"best_val/{split_name}/{k}"] = v
+    if "raw_per_split" in best_metrics:
+        for split_name, m in best_metrics["raw_per_split"].items():
+            for k, v in m.items():
+                summary[f"best_val_raw_at_best_ema_epoch/{split_name}/{k}"] = v
     if test_avg is not None and "avg/mae_surf_p" in test_avg:
         summary["test_avg/mae_surf_p"] = test_avg["avg/mae_surf_p"]
         if test_metrics is not None:
@@ -403,6 +427,12 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
+ema_decay = 0.999
+ema_model = copy.deepcopy(model).eval()
+for p in ema_model.parameters():
+    p.requires_grad_(False)
+print(f"EMA shadow built (decay={ema_decay})")
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
@@ -423,6 +453,8 @@ with open(model_dir / "config.yaml", "w") as f:
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
+best_raw_avg_surf_p = float("inf")
+best_raw_epoch = 0
 train_start = time.time()
 
 for epoch in range(MAX_EPOCHS):
@@ -456,6 +488,12 @@ for epoch in range(MAX_EPOCHS):
         loss.backward()
         optimizer.step()
 
+        with torch.no_grad():
+            for p_ema, p in zip(ema_model.parameters(), model.parameters()):
+                p_ema.mul_(ema_decay).add_(p.detach(), alpha=1 - ema_decay)
+            for b_ema, b in zip(ema_model.buffers(), model.buffers()):
+                b_ema.copy_(b)
+
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
         n_batches += 1
@@ -464,14 +502,27 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
-    # --- Validate ---
-    model.eval()
+    # --- Validate (EMA shadow drives best-checkpoint selection) ---
+    ema_model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
     avg_surf_p = val_avg["avg/mae_surf_p"]
+
+    # Companion raw-model eval for free-lunch comparison (does not affect checkpoint selection).
+    model.eval()
+    raw_split_metrics = {
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        for name, loader in val_loaders.items()
+    }
+    raw_val_avg = aggregate_splits(raw_split_metrics)
+    raw_avg_surf_p = raw_val_avg["avg/mae_surf_p"]
+    if raw_avg_surf_p < best_raw_avg_surf_p:
+        best_raw_avg_surf_p = raw_avg_surf_p
+        best_raw_epoch = epoch + 1
+
     dt = time.time() - t0
 
     tag = ""
@@ -481,8 +532,10 @@ for epoch in range(MAX_EPOCHS):
             "epoch": epoch + 1,
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
+            "raw_val_avg/mae_surf_p": raw_avg_surf_p,
+            "raw_per_split": raw_split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        torch.save(ema_model.state_dict(), model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
@@ -495,12 +548,15 @@ for epoch in range(MAX_EPOCHS):
         "train/surf_loss": epoch_surf,
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
+        "raw_val_avg/mae_surf_p": raw_avg_surf_p,
+        "raw_val_splits": raw_split_metrics,
         "is_best": tag == " *",
+        "ema_decay": ema_decay,
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
-        f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
+        f"val_avg_surf_p[ema={avg_surf_p:.4f}{tag} raw={raw_avg_surf_p:.4f}]"
     )
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
@@ -510,8 +566,15 @@ print(f"\nTraining done in {total_time:.1f} min")
 
 # --- Test evaluation + local summary ---
 if best_metrics:
-    print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
+    print(
+        f"\nBest val: epoch {best_metrics['epoch']}, "
+        f"val_avg/mae_surf_p (EMA) = {best_avg_surf_p:.4f}  "
+        f"(raw at same epoch = {best_metrics.get('raw_val_avg/mae_surf_p', float('nan')):.4f}; "
+        f"best raw was epoch {best_raw_epoch} at {best_raw_avg_surf_p:.4f})"
+    )
 
+    # Saved checkpoint contains EMA weights -> loading into the live model object
+    # gives us the EMA-evaluated test numbers per the PR.
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
 
@@ -549,6 +612,9 @@ if best_metrics:
         test_avg=test_avg,
         n_params=n_params,
         model_config=model_config,
+        ema_decay=ema_decay,
+        best_raw_avg_surf_p=best_raw_avg_surf_p,
+        best_raw_epoch=best_raw_epoch,
     )
 else:
     print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping test evaluation.")
