@@ -1,61 +1,62 @@
 # SENPAI Research State — icml-appendix-charlie-pai2c-r2
 
-- **Date**: 2026-04-27 (last update: 19:55 UTC)
-- **Most recent human researcher direction**: None on this branch yet (no `for:advisor` issues; the only open issue from a sibling branch is #13 on the data-bug topic).
-- **Empirical baseline**: `val_avg/mae_surf_p = 130.0568` set by PR #216 (wider-shallower-arch, charliepai2c2-tanjiro). Training timed out at epoch 11/50 — still improving; subsequent runs should consider matching `T_max` to realistic wall-clock budget.
+- **Date**: 2026-04-27 (last update: 20:35 UTC)
+- **Most recent human researcher direction**: None on this branch yet. Issue #257 (cross-track GitHub label-index regression) is informational; humans aware via 36+ comments, system gradually self-healing.
+- **Empirical baseline**: `val_avg/mae_surf_p = 102.71` (PR #213 merged, commit efa6e3c). 21% improvement over the previous baseline (130.06, PR #216) — physical-space L1 surface loss with all 4 val splits improving 18–23%.
 
 ## Current research focus
 
-Round 1 is in flight. The first merged PR (#216) established the floor at `val_avg/mae_surf_p = 130.06` with the wider-shallower architecture (`n_hidden=192, n_layers=4, n_head=6`, ~1.18M params). Every subsequent PR is judged against this floor — even small improvements should be merged because they compound across rounds.
+Round 1 has produced **two merged winners** so far:
+- **PR #216** (tanjiro, wider-shallower-arch): `n_hidden=192, n_layers=4, n_head=6` — set the floor at 130.06.
+- **PR #213** (nezuko, surface-pressure-l1-loss): physical-space L1 on surface term — drove the floor to 102.71. Single largest improvement of Round 1.
+
+The L1-vs-MSE alignment was the dominant misalignment in the training recipe. Future PRs branch from this combined state (wider-shallower architecture + L1 surface loss).
 
 ### Round 1 status by student
 
 | Student | PR | Hypothesis | Status |
 |---------|----|------------|--------|
 | alphonse | #190 | surf-weight 10→30 | wip (training) |
-| askeladd | #202 | asinh pressure target | wip (idle, label-index lag) |
+| askeladd | #202 | asinh pressure target | wip (training) |
 | edward | #206 | EMA-of-weights | wip (training) |
 | fern | #208 | LR warmup + cosine floor + peak 1e-3 | wip (training) |
 | frieren | #210 | LayerScale + DropPath | wip (training) |
-| nezuko | #213 | physical-space L1 surface loss | wip (training) |
-| tanjiro | #216 → MERGED → #258 | (#216 wider-shallower-arch merged) → slice-num-doubled | wip (new) |
-| thorfinn | #218 | Fourier-encoded position features | wip (idle, label-index lag) |
+| nezuko | #213 → MERGED → #262 | (#213 L1 surface loss merged) → pressure-weighted-l1 | wip (new) |
+| tanjiro | #216 → MERGED → #258 | (#216 wider-shallower merged) → slice-num-doubled | wip (training in background) |
+| thorfinn | #218 | Fourier-encoded position features | wip (training, just picked up at iter 8) |
 
-## Themes the round is meant to test
+All 8 GPUs in use. No idle students.
 
-1. **Loss/metric alignment** — training MSE in normalized space ranks differently from
-   physical-space L1 surface MAE. Tested by `surface-pressure-l1-loss` (#213) and
-   `asinh-pressure-target` (#202).
-2. **Surface-vs-volume balance** — does pushing `surf_weight` up move the right metric? `surf-weight-aggressive` (#190).
-3. **Small-batch training noise** — batch_size=4 means high gradient variance; `ema-evaluation` (#206) and `lr-warmup-cosine-floor` (#208).
-4. **Capacity allocation** — depth/width/slice trade-off. `wider-shallower-arch` (#216 merged) and now `slice-num-doubled` (#258, building on the new base).
-5. **Geometry-interpolation generalization** — `val_geom_camber_*` punishes overfitting. `relative-position-features` (#218) and `layerscale-stochastic-depth` (#210).
+## Themes the round is testing
+
+1. **Loss/metric alignment** — `surface-pressure-l1-loss` (#213) **WIN**: –21% on val_avg by aligning gradient direction with the physical-space L1 metric. `asinh-pressure-target` (#202) tests an orthogonal recipe (target reshaping). Following up with `pressure-weighted-l1` (#262, channel-2 weighted 2× in L1).
+2. **Surface-vs-volume balance** — `surf-weight-aggressive` (#190).
+3. **Small-batch training noise** — `ema-evaluation` (#206), `lr-warmup-cosine-floor` (#208).
+4. **Capacity allocation** — `wider-shallower-arch` (#216) **WIN**: established baseline. Following up with `slice-num-doubled` (#258, slice_num 64→128 on the wider base).
+5. **Geometry-interpolation generalization** — `relative-position-features` (#218), `layerscale-stochastic-depth` (#210).
+
+## Per-split observations (after PR #213 merge)
+
+The per-split structure remained consistent: cruise tandem geom-holdout is *easiest* (`mae_surf_p = 80.47`), single-foil in-dist is *hardest* (`125.02`). The L1 transition closed about 30% of the single-foil disadvantage but the gap is still there. Single-foil samples have the largest pressure dynamic range (per program.md: y range up to ±29K vs cruise ±7.6K), so even L1-aligned gradient may be insufficient — the ratio of single-foil to cruise pressure-MAE is now ~1.55x (vs 1.64x at the previous baseline).
+
+This per-split asymmetry strengthens the case for Round 2 candidates: domain-id conditioning, per-Re-bin scaling, or single-foil-specific decoder heads.
 
 ## Open issues for the human team
 
-- **`data/scoring.py` NaN bug** — `inf * 0 → NaN` in `accumulate_batch` silently NaN-contaminates `test_avg/mae_surf_p` whenever a single test sample has Inf GT. Affects `test_geom_camber_cruise/000020.pt` (761 Inf pressure values). One-line fix needed in the read-only `data/scoring.py`. Already documented for sibling branches in issue #13 and elsewhere; humans aware. **Until patched, rank PRs on `val_avg/mae_surf_p` only.**
-- **GitHub label search index lag** — newly-created advisor-branch and student labels can take 30+ min to enter the search index, causing student pods to report "no work" and idle. Already documented in issue #257. System self-heals as the index settles.
-
-## Per-split observations from the first baseline (PR #216)
-
-The cruise tandem geometry-holdout split is the *easiest* (`mae_surf_p = 98.28`); single-foil in-distribution is *hardest* (`mae_surf_p = 161.15`). This is counterintuitive — the in-distribution sanity-check should be easiest. Hypothesized causes:
-- Single-foil samples have larger pressure dynamic range (per program.md: y range up to ±29K vs cruise ±7.6K).
-- Balanced sampler equally weights the three domains, so single-foil gets ~33% of training samples but is the highest-variance domain.
-
-This per-split structure should inform Round 2 hypotheses — domain-id conditioning, per-Re-bin scaling, or single-foil-specific decoder heads may pay off. Also, the single-foil domain dominates pressure-MAE error magnitude in the val_avg, so any technique that disproportionately helps single-foil predictions should move the primary metric a lot.
+- **`data/scoring.py` NaN bug** — `NaN * 0 → NaN` in `accumulate_batch` (PyTorch semantics) silently NaN-contaminates `test_avg/mae_surf_p` whenever a single test sample has Inf/NaN GT. Affects `test_geom_camber_cruise/000020.pt` (761 Inf pressure values). One-line fix needed in the read-only `data/scoring.py`. Confirmed independently by tanjiro (#216) and nezuko (#213). Already documented in cross-track issue #13. **Until patched, rank PRs on `val_avg/mae_surf_p` only;** test numbers require manual NaN-safe re-eval (nezuko's #213 NaN-safe `test_avg = 91.52`).
+- **GitHub label search index lag** — issue #257, system gradually self-healing.
 
 ## Potential next research directions (Round 2 candidates)
 
-These are held until Round 1 results reveal whether to escalate or pivot.
+After Round 1 settles, the strong signal from #213 (L1-on-surface) suggests these directions:
 
-- **Architecture replacement** (after first plateau): GINO/GeoFNO-style Fourier neural operator on irregular meshes; Set Transformer / Perceiver IO; GNN with kNN edges; OFormer with cross-attention.
-- **Surface-pressure-specific decoder head**: split the final MLP into a surface decoder (surface-only context) and a volume decoder.
-- **Re-conditioned normalization**: learnable per-Re-bin scaling of targets (FiLM, AdaIN).
-- **Auxiliary physical losses**: divergence-free `(Ux, Uy)`, pressure-Laplacian smoothness, surface-tangent pressure-gradient consistency.
+- **Aggressive pressure-only loss**: `mae_surf_p` is the only metric, and #262 will test channel-2 weighting. The next step might be replacing the velocity surface terms entirely with their L2 to keep them mild but not load-bearing — or even a channel-2-only surface loss (with velocity supervised only via volume term).
+- **Re-conditioned normalization**: learnable per-Re-bin scaling of targets (FiLM, AdaIN). The per-split observation that single-foil (largest Re range) is hardest strongly motivates this.
+- **Single-foil-specific decoder head**: split the final MLP — surface decoder gets surface-only context with extra capacity; volume decoder gets the rest. Could disproportionately help single-foil where pressure dynamics are extreme.
+- **Auxiliary physical losses**: divergence-free `(Ux, Uy)`, pressure-Laplacian smoothness, surface-tangent pressure-gradient consistency. Cheap to implement; may help geometry holdouts.
+- **Budget-matched cosine schedule**: every #213/#216 result was timed out before LR decay. `T_max ≈ 12–14` would let the schedule actually anneal. (PR #208 partially addresses this with the 1e-5 floor.)
 - **Mesh-aware features**: kNN-based neighborhood features (mean/std of nearby x), computed online inside `train.py`.
-- **Asymmetric checkpoint selection**: pick best-checkpoint based on geometry-holdout splits alone — biases optimization toward the generalization metrics that the paper cares about.
-- **Mixed-precision throughput** (bf16): frees VRAM for larger batches or longer slice attention; may also help fit more epochs in the wall-clock budget.
-- **Budget-matched cosine schedule**: `T_max` = realistic epoch count, not 50. Should help every PR that's currently leaving LR on the table.
+- **Architecture replacement** (after first plateau): GINO/GeoFNO, Set Transformer / Perceiver IO, GNN with kNN edges, OFormer.
 
 ## What we are NOT doing on this branch
 
