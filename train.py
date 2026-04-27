@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -236,6 +237,18 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Drop entire samples whose ground-truth has any non-finite value.
+            # `accumulate_batch` marks those samples' masks as zero, but its
+            # `err * mask` step still propagates NaN via Inf*0=NaN. Filtering
+            # here keeps the metric finite (e.g. test_geom_camber_cruise has
+            # one sample with an Inf pressure value).
+            y_finite = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)
+            if not y_finite.all():
+                keep = y_finite.nonzero(as_tuple=True)[0]
+                if keep.numel() == 0:
+                    continue
+                x, y, is_surface, mask = x[keep], y[keep], is_surface[keep], mask[keep]
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
@@ -403,6 +416,21 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
+# EMA of model weights — used for validation, checkpoint, and test eval.
+ema_decay = 0.999
+grad_clip_max_norm = 1.0
+ema_model = copy.deepcopy(model)
+for p in ema_model.parameters():
+    p.requires_grad_(False)
+ema_model.eval()
+
+
+@torch.no_grad()
+def update_ema() -> None:
+    for ep, mp in zip(ema_model.parameters(), model.parameters()):
+        ep.mul_(ema_decay).add_(mp.detach(), alpha=1.0 - ema_decay)
+
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
@@ -433,6 +461,9 @@ for epoch in range(MAX_EPOCHS):
     t0 = time.time()
     model.train()
     epoch_vol = epoch_surf = 0.0
+    grad_norm_sum = 0.0
+    grad_norm_max = 0.0
+    n_clipped = 0
     n_batches = 0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
@@ -454,24 +485,45 @@ for epoch in range(MAX_EPOCHS):
 
         optimizer.zero_grad()
         loss.backward()
+        pre_clip_norm = torch.nn.utils.clip_grad_norm_(
+            model.parameters(), max_norm=grad_clip_max_norm
+        ).item()
         optimizer.step()
+        update_ema()
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
+        grad_norm_sum += pre_clip_norm
+        if pre_clip_norm > grad_norm_max:
+            grad_norm_max = pre_clip_norm
+        if pre_clip_norm > grad_clip_max_norm:
+            n_clipped += 1
         n_batches += 1
 
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
+    grad_norm_mean = grad_norm_sum / max(n_batches, 1)
+    grad_clipped_frac = n_clipped / max(n_batches, 1)
 
     # --- Validate ---
+    # EMA is the primary metric (used for checkpoint selection & JSONL key);
+    # the online model is evaluated alongside for divergence analysis.
     model.eval()
+    ema_model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
     avg_surf_p = val_avg["avg/mae_surf_p"]
+
+    online_split_metrics = {
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        for name, loader in val_loaders.items()
+    }
+    online_val_avg = aggregate_splits(online_split_metrics)
+    online_avg_surf_p = online_val_avg["avg/mae_surf_p"]
     dt = time.time() - t0
 
     tag = ""
@@ -482,7 +534,7 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        torch.save(ema_model.state_dict(), model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
@@ -493,14 +545,20 @@ for epoch in range(MAX_EPOCHS):
         "peak_memory_gb": peak_gb,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/grad_norm_mean": grad_norm_mean,
+        "train/grad_norm_max": grad_norm_max,
+        "train/grad_clipped_frac": grad_clipped_frac,
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
+        "online_val_avg/mae_surf_p": online_avg_surf_p,
+        "online_val_splits": online_split_metrics,
         "is_best": tag == " *",
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
-        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
-        f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
+        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f} "
+        f"gn_mean={grad_norm_mean:.3f} gn_max={grad_norm_max:.2f} clip%={grad_clipped_frac*100:.1f}]  "
+        f"val_avg_surf_p[ema={avg_surf_p:.4f} online={online_avg_surf_p:.4f}]{tag}"
     )
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
@@ -512,8 +570,10 @@ print(f"\nTraining done in {total_time:.1f} min")
 if best_metrics:
     print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-    model.eval()
+    # Checkpoint at `model_path` is the EMA's state_dict; load it into ema_model
+    # for test evaluation.
+    ema_model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    ema_model.eval()
 
     test_metrics = None
     test_avg = None
@@ -525,7 +585,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
