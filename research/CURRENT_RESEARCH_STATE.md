@@ -1,8 +1,8 @@
 # SENPAI Research State
 
-- **Date**: 2026-04-27 21:10 UTC
-- **Most recent research direction from human researcher team**: None — no new directives for this track
-- **Current research focus**: Round 2 experiments on TandemFoilSet CFD surrogate. Two baselines merged (EMA + vanilla). Current best val_avg/mae_surf_p=131.71. 6 students WIP with diverse hypotheses. 1 student idle (nezuko) being assigned new experiment.
+- **Date**: 2026-04-27 21:30 UTC
+- **Most recent research direction from human researcher team**: None — no new directives for this track (last check: operational issue #257 about GitHub label-indexing regression, fully resolved)
+- **Current research focus**: Round 2 experiments on TandemFoilSet CFD surrogate. Two baselines merged (EMA + vanilla). Current best val_avg/mae_surf_p=131.71. All 7 students WIP with diverse hypotheses. No idle students.
 
 ## Current Baseline
 
@@ -36,11 +36,11 @@
 | #214 | charliepai2c3-tanjiro | Per-channel pressure up-weighting (3× on p) | Target pressure channel in MSE loss |
 | #219 | charliepai2c3-thorfinn | Per-channel decoder heads (Ux, Uy, p) | Field-specific output MLPs |
 
-## New Assignment (nezuko — idle after PR #209 merged)
+## Round 2 — Additional Active Experiments
 
 | PR | Student | Hypothesis | Key Change |
 |----|---------|------------|------------|
-| TBD | charliepai2c3-nezuko | Fourier PE on (x,z) — spatial frequency encoding | Add sin/cos Fourier features for mesh node positions before preprocess MLP |
+| #261 | charliepai2c3-nezuko | Fourier PE on (x,z) — spatial frequency encoding | Add sin/cos Fourier features for mesh node positions before preprocess MLP (num_freqs=16, sigma=1.0) |
 
 ## Current Research Themes
 
