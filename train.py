@@ -255,7 +255,13 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
             pred_orig = torch.nan_to_num(pred_orig, nan=0.0, posinf=2e4, neginf=-2e4)
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            B = y.shape[0]
+            y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            y_safe = torch.where(
+                y_finite.view(B, *([1] * (y.dim() - 1))), y, torch.zeros_like(y)
+            )
+            mask_safe = mask & y_finite.unsqueeze(-1).expand(-1, mask.shape[-1])
+            ds, dv = accumulate_batch(pred_orig, y_safe, is_surface, mask_safe, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
 
