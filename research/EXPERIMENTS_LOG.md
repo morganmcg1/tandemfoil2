@@ -68,3 +68,59 @@ Sent PR back (status:wip) with refined re-run spec:
 - **Merged.** BASELINE.md updated to `val_avg/mae_surf_p = 112.1574`.
 - **Nezuko reassigned** to PR #259: pure L1 on surface (loss-form sweep, β=∞ limit) to isolate tail-damping vs smooth-near-zero mechanism.
 - **Askeladd**: fresh PR #260 created (closed stuck PR #221 which failed label indexing for 2+ hours).
+
+## 2026-04-27 20:33 — PR #228: Larger batch + sqrt LR (bs 4→8, lr 7.07e-4) → CLOSED
+- **Student:** willowpai2c5-tanjiro
+- **Branch:** `willowpai2c5-tanjiro/larger-batch-8-sqrt-lr` (deleted)
+- **Hypothesis:** bs=8 + sqrt-LR scaling improves gradient quality and throughput.
+- **W&B run:** [`33ltg5ro`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-r5/runs/33ltg5ro)
+
+### Results
+| Metric | Value |
+|---|---|
+| `val_avg/mae_surf_p` (best @ epoch 9) | **149.5436** (vs baseline 112.16 = 33% worse) |
+| Per-epoch wall time | ~130 s (essentially identical to bs=4's ~133 s) |
+| Peak VRAM | 84.2 GB (bs=4 was ~95 GB on alphonse — bs=8 actually slightly less because batched mesh-padding more efficient) |
+| `test_avg/mae_surf_p` | NaN (cruise — pre-existing) |
+
+### Analysis
+- **Hypothesis falsified by direct throughput data.** bs=8 took 130 s/epoch vs bs=4's 133 s — Transolver's attention is mesh-size-dominated (slice tokens × max-mesh-N), NOT batch-dominated. Batch-scaling buys no wall-clock budget under the 30-min cap.
+- 33% regression past 5% close threshold; closed as clear dead end.
+- Tanjiro's analysis was the basis of the close — she correctly identified the throughput-vs-gradient-noise tradeoff. Excellent negative-result reporting.
+
+### Action
+- **Closed.** Tanjiro reassigned to **PR #263 (bf16 autocast)** — proper way to buy throughput here, predicted 1.5–2× speedup on attention-heavy Transolver, doubles effective epoch budget.
+
+## 2026-04-27 20:37 — PR #184: Baseline anchor (default Transolver, MSE) → CLOSED
+- **Student:** willowpai2c5-alphonse
+- **Branch:** `willowpai2c5-alphonse/baseline-anchor-default-config` (deleted)
+- **Hypothesis:** Establish reference metric for the track using the unmodified default Transolver config.
+- **W&B run:** [`c9g7dxst`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-r5/runs/c9g7dxst)
+
+### Results (best epoch = 13)
+| Metric | Value |
+|---|---|
+| **`val_avg/mae_surf_p`** | **134.0906** |
+| `val_single_in_dist/mae_surf_p` | 155.2003 |
+| `val_geom_camber_rc/mae_surf_p` | 146.9435 |
+| `val_geom_camber_cruise/mae_surf_p` | 110.5492 |
+| `val_re_rand/mae_surf_p` | 123.6694 |
+| `test_avg/mae_surf_p` | NaN (cruise inf — same pattern) |
+| Peak GPU | ~95 GB / 96 GB (very tight) |
+| Epochs | 14 of 50 (30-min timeout) |
+
+### Analysis
+- **Now provides clean attribution for the merged Huber win:** PR #227 (Huber surface) at 112.16 vs alphonse's MSE 134.09 = **clean 16.4% improvement, no confound** — same arch/schedule/budget, only loss form differs.
+- **Warmup actually HURT under timeout:** PR #224 v1 (5-epoch warmup, MSE preserved) at 140.22 vs alphonse 134.09 = **4.5% regression**. The 5-epoch warmup ate too much of the 14-epoch budget. fern's v2 with 2-epoch warmup + `--epochs 13` will test whether shorter warmup + aligned schedule rescues it.
+- VRAM at 95/96 GB on default config means any architectural growth (more hidden, layers, slices) needs compensating cuts elsewhere (e.g. `batch_size`).
+- Cruise test NaN: same single-sample pressure-blow-up pattern as fern, nezuko, tanjiro. Confirmed pre-existing scoring fragility, not config-specific.
+
+### Action
+- **Closed as completed reference run.** Logged for the team; not merging because superseded by PR #227 (and its job was to anchor, not to win).
+- **Alphonse reassigned to PR #264 (EMA weight averaging, decay=0.999)** — directly addresses the late-epoch bounce-back she observed (134.09 @ ep13 → 174.38 @ ep14, 30% one-step degradation). EMA smooths exactly that kind of noise.
+
+### Cross-track learnings reinforced
+- **Schedule must be aligned to ~13 achievable epochs** (T_max=epochs_actual, not configured 50) — confirmed from 3 independent runs (alphonse, fern, nezuko, tanjiro) that 14 epochs is the wall-clock ceiling at fp32.
+- **NaN-guard in evaluate_split is mandatory** — every PR seeing the same cruise blow-up. `torch.nan_to_num(pred_orig, nan=0.0, posinf=2e4, neginf=-2e4)` after denormalization.
+- **Warmup is bad under tight timeout** unless schedule fully aligned (fern v2 will confirm).
+- **Batch-scaling is a dead end** for throughput gains on Transolver under our setup (mesh-size-dominated attention).
