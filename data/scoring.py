@@ -40,10 +40,16 @@ def accumulate_batch(
     if not y_finite.any():
         return 0, 0
 
-    sample_mask = y_finite.unsqueeze(-1).expand(-1, mask.shape[-1])  # [B, N]
-    effective = mask & sample_mask
-    surf_mask = effective & is_surface
-    vol_mask = effective & ~is_surface
+    # Filter the batch to finite-y samples *before* computing |err|, so a
+    # non-finite y never reaches the multiplication. The previous mask-by-zero
+    # approach hit `0.0 * inf = NaN` in IEEE-754 and poisoned the accumulators.
+    keep = y_finite.nonzero(as_tuple=True)[0]
+    y = y[keep]
+    pred_orig = pred_orig[keep]
+    mask = mask[keep]
+    is_surface = is_surface[keep]
+    surf_mask = mask & is_surface
+    vol_mask = mask & ~is_surface
 
     err = (pred_orig.double() - y.double()).abs()
     mae_surf += (err * surf_mask.unsqueeze(-1).double()).sum(dim=(0, 1))
