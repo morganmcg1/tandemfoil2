@@ -386,6 +386,12 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    # H9: OneCycleLR + gradient clipping
+    max_lr: float = 1e-3            # OneCycleLR peak lr
+    pct_start: float = 0.10         # warmup fraction of total steps
+    div_factor: float = 10.0        # initial_lr = max_lr / div_factor
+    final_div_factor: float = 1e4   # final_lr = max_lr / final_div_factor
+    grad_clip_norm: float = 1.0     # max grad norm (<=0 disables clipping)
 
 
 cfg = sp.parse(Config)
@@ -432,7 +438,16 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+total_steps = MAX_EPOCHS * len(train_loader)
+scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    optimizer,
+    max_lr=cfg.max_lr,
+    total_steps=total_steps,
+    pct_start=cfg.pct_start,
+    anneal_strategy="cos",
+    div_factor=cfg.div_factor,
+    final_div_factor=cfg.final_div_factor,
+)
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -497,15 +512,28 @@ for epoch in range(MAX_EPOCHS):
 
         optimizer.zero_grad()
         loss.backward()
+        if cfg.grad_clip_norm > 0:
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(), max_norm=cfg.grad_clip_norm
+            )
+        else:
+            grad_norm = None
         optimizer.step()
+        scheduler.step()
         global_step += 1
-        wandb.log({"train/loss": loss.item(), "global_step": global_step})
+        step_log = {
+            "train/loss": loss.item(),
+            "train/lr": scheduler.get_last_lr()[0],
+            "global_step": global_step,
+        }
+        if grad_norm is not None:
+            step_log["train/grad_norm"] = grad_norm.item()
+        wandb.log(step_log)
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
