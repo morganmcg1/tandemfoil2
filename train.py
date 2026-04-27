@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import time
@@ -61,6 +62,27 @@ ACTIVATION = {
     "ELU": nn.ELU,
     "silu": nn.SiLU,
 }
+
+
+class FourierEmbedding(nn.Module):
+    """Random Fourier features for 2D spatial coordinates (Tancik et al. 2020).
+
+    Maps coords [B, N, 2] -> [B, N, 2*num_freqs] using fixed Gaussian random
+    frequencies (non-trainable buffer). Output is the concatenation of
+    sin(2*pi*x @ B) and cos(2*pi*x @ B).
+    """
+
+    def __init__(self, num_freqs: int = 16, sigma: float = 1.0):
+        super().__init__()
+        B = torch.randn(2, num_freqs) * sigma
+        self.register_buffer("B", B)
+        self.out_dim = 2 * num_freqs
+
+    def forward(self, coords):
+        x = coords @ self.B
+        return torch.cat(
+            [torch.sin(2 * math.pi * x), torch.cos(2 * math.pi * x)], dim=-1
+        )
 
 
 class MLP(nn.Module):
@@ -170,19 +192,28 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 num_fourier_freqs: int = 0,
+                 fourier_sigma: float = 1.0):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
+        self.num_fourier_freqs = num_fourier_freqs
 
-        if self.unified_pos:
-            self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
-                                  n_layers=0, res=False, act=act)
+        if num_fourier_freqs > 0:
+            self.fourier_emb = FourierEmbedding(num_fourier_freqs, sigma=fourier_sigma)
+            preprocess_in_dim = fun_dim + self.fourier_emb.out_dim
         else:
-            self.preprocess = MLP(fun_dim + space_dim, n_hidden * 2, n_hidden,
-                                  n_layers=0, res=False, act=act)
+            self.fourier_emb = None
+            if self.unified_pos:
+                preprocess_in_dim = fun_dim + ref ** 3
+            else:
+                preprocess_in_dim = fun_dim + space_dim
+
+        self.preprocess = MLP(preprocess_in_dim, n_hidden * 2, n_hidden,
+                              n_layers=0, res=False, act=act)
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
@@ -208,7 +239,14 @@ class Transolver(nn.Module):
 
     def forward(self, data, **kwargs):
         x = data["x"]
-        fx = self.preprocess(x) + self.placeholder[None, None, :]
+        if self.fourier_emb is not None:
+            coords = x[..., :2]
+            fourier_feats = self.fourier_emb(coords)
+            rest = x[..., 2:]
+            fx_input = torch.cat([fourier_feats, rest], dim=-1)
+        else:
+            fx_input = x
+        fx = self.preprocess(fx_input) + self.placeholder[None, None, :]
         for block in self.blocks:
             fx = block(fx)
         return {"preds": fx}
@@ -408,6 +446,8 @@ model_config = dict(
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
+    num_fourier_freqs=16,
+    fourier_sigma=1.0,
 )
 
 model = Transolver(**model_config).to(device)
