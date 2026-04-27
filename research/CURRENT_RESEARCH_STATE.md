@@ -1,28 +1,30 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-27
+- **Date:** 2026-04-27 (updated ~21:00 UTC)
 - **Advisor branch:** icml-appendix-willow-pai2c-r2
 - **W&B project:** wandb-applied-ai-team/senpai-charlie-wilson-willow-r2
 - **Human researcher directives:** None received so far.
 
 ## Current Research Focus
 
-**Round 2 — fresh launch.** All 8 students have been assigned first-round experiments covering 7 orthogonal improvement axes. No baseline has been established yet on this branch; PR #185 (alphonse) will produce the anchor.
+**Round 1 — all 8 students running.** All 8 students have been assigned first-round experiments covering 7 orthogonal improvement axes. No baseline has been established yet on this branch; PR #185 (alphonse) will produce the anchor. Awaiting results.
+
+Note: `list_idle_students` reports frieren and nezuko as idle due to GH search API indexing lag (~30-90 min), but both have confirmed `status:wip` PRs (#189, #191) verified via REST API and kubectl shows all 8 student pods READY.
 
 The primary metric is `val_avg/mae_surf_p` (equal-weight mean surface-pressure MAE across 4 val splits). Lower is better.
 
 ### Active Round-1 PRs
 
-| PR | Student | Hypothesis | Key Change |
-|----|---------|------------|------------|
-| #185 | alphonse | Baseline anchor (3-seed control) | No code change; seed the RNG; run 3 seeds to measure variance |
-| #186 | askeladd | Capacity: n_hidden=192, n_layers=7, n_head=8 | Wider + deeper Transolver |
-| #187 | edward | surf_weight sweep: 5, 20, 50 | Loss weight on surface vs volume nodes |
-| #188 | fern | Signed-log pressure transform (asinh-style) | Equalize Re-range gradients on heavy-tailed pressure |
-| #189 | frieren | lr=1e-3 with 5-ep warmup + cosine | Optimizer schedule |
-| #191 | nezuko | FiLM conditioning on log(Re)+NACA per block | Re-aware hidden state scaling |
-| #192 | tanjiro | Weight EMA (decay=0.999) for checkpoint selection | Smoother model averaging |
-| #194 | thorfinn | Huber loss (delta=1.0, 0.5) vs MSE | Robust regression for heavy-tailed p |
+| PR | Student | Hypothesis | Key Change | Status |
+|----|---------|------------|------------|--------|
+| #185 | alphonse | Baseline anchor (3-seed control) | No code change; seed the RNG; run 3 seeds to measure variance | WIP |
+| #186 | askeladd | Capacity: n_hidden=192, n_layers=7, n_head=8 | Wider + deeper Transolver | WIP |
+| #187 | edward | surf_weight sweep: 5, 20, 50 | Loss weight on surface vs volume nodes | WIP |
+| #188 | fern | Signed-log pressure transform (asinh-style) | Equalize Re-range gradients on heavy-tailed pressure | WIP |
+| #189 | frieren | lr=1e-3 with 5-ep warmup + cosine | Optimizer schedule | WIP |
+| #191 | nezuko | FiLM conditioning on log(Re)+NACA per block | Re-aware hidden state scaling | WIP |
+| #192 | tanjiro | Weight EMA (decay=0.999) for checkpoint selection | Smoother model averaging | WIP |
+| #194 | thorfinn | Huber loss (delta=1.0, 0.5) vs MSE | Robust regression for heavy-tailed p | WIP |
 
 ## Current Best Baseline
 
