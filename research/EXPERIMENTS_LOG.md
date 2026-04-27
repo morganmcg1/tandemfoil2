@@ -1,5 +1,37 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 00:05 — PR #310: Per-channel surface loss weights: 3x weight on surface pressure
+- Branch: `charliepai2d4-thorfinn/per-channel-surf-weights` (deleted on close)
+- Student: charliepai2d4-thorfinn
+- **Outcome: CLOSED** (+13.0% regression on val_avg/mae_surf_p).
+- Hypothesis: weight surface-p 3× over surface-Ux/Uy in the loss to bias optimization toward the metric. Predicted Δ -3% to -8%.
+
+### Headline metrics (epoch 13/14, both runs timeout-capped at 14 epochs)
+| Metric | thorfinn baseline-ref (sw=10, p_w=1) | thorfinn 3x p (sw=10, p_w=3) | Δ |
+|---|---|---|---|
+| `val_avg/mae_surf_p` | 130.54 (epoch 12) | **147.56** (epoch 13) | **+13.0% worse** |
+| `val_avg/mae_surf_Ux` | 2.13 | 2.88 | +35.2% |
+| `val_avg/mae_surf_Uy` | 0.92 | 1.09 | +18.7% |
+| `val_avg/mae_vol_p` | 131.24 | 153.05 | +16.6% |
+| `test_avg/mae_surf_p` | NaN¹ | NaN¹ | — |
+
+¹ Branch predates PR #358 scoring fix; same inf-y sample 20 in test_geom_camber_cruise.
+
+### Per-split val (3x − baseline)
+| split | mae_surf_p Δ |
+|---|---|
+| val_single_in_dist | +7.0% |
+| val_geom_camber_rc | +36.9% |
+| val_geom_camber_cruise | -1.5% |
+| val_re_rand | +8.0% |
+
+### Analysis
+- **Hypothesis cleanly disproved**: 3 of 4 val splits regressed materially, only `val_geom_camber_cruise` saw a tiny improvement (-1.5%). Surface velocities also degraded — the gradient-mass-starvation story (heavy weight on p starves Ux/Uy learning, which feeds back into pressure via Navier-Stokes coupling) is the most plausible explanation.
+- **Useful side data:** thorfinn's own baseline-ref run (surf_weight=10, p_weight=1) gave val_avg=130.54 at epoch 12, **independently confirming** that alphonse's PR #287 (val_avg=126.67 at surf_weight=25) is a ~3% improvement over surf_weight=10 at the same wall-clock.
+- **Lesson:** with the existing 10× surf_weight, layering more p-specific weight on top dominates the gradient signal too aggressively in a 14-epoch budget regime. If revisited, try `surf_weight=5, surf_p_weight=2` so total surface-p effective weight matches baseline.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=310 records, 15 lines).
+
 ## 2026-04-27 23:55 — PR #309: More slice tokens: slice_num 64->128, n_head 4->8
 - Branch: `charliepai2d4-tanjiro/more-slices` (deleted on close)
 - Student: charliepai2d4-tanjiro
