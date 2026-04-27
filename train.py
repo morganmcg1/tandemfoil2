@@ -247,9 +247,10 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
                 (sq_err * vol_mask.unsqueeze(-1)).sum()
                 / vol_mask.sum().clamp(min=1)
             ).item()
+            surf_per_node = sq_err * surf_mask.unsqueeze(-1) * SURF_CHANNEL_W
             surf_loss_sum += (
-                (sq_err * surf_mask.unsqueeze(-1)).sum()
-                / surf_mask.sum().clamp(min=1)
+                surf_per_node.sum()
+                / (surf_mask.sum().clamp(min=1) * SURF_CHANNEL_W.sum())
             ).item()
             n_batches += 1
 
@@ -365,6 +366,7 @@ MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+SURF_CHANNEL_W = torch.tensor([1.0, 1.0, 2.5], device=device)  # Ux, Uy, p
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
@@ -449,7 +451,8 @@ for epoch in range(MAX_EPOCHS):
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        surf_per_node = sq_err * surf_mask.unsqueeze(-1) * SURF_CHANNEL_W
+        surf_loss = surf_per_node.sum() / (surf_mask.sum().clamp(min=1) * SURF_CHANNEL_W.sum())
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
