@@ -217,7 +217,7 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, surf_p_weight, device) -> dict[str, float]:
     """Evaluate a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -228,6 +228,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
     n_surf = n_vol = n_batches = 0
+    surf_ch_weights = torch.tensor([1.0, 1.0, surf_p_weight], device=device)
 
     with torch.no_grad():
         for x, y, is_surface, mask in loader:
@@ -247,10 +248,11 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
                 (sq_err * vol_mask.unsqueeze(-1)).sum()
                 / vol_mask.sum().clamp(min=1)
             ).item()
-            surf_loss_sum += (
-                (sq_err * surf_mask.unsqueeze(-1)).sum()
+            surf_per_ch = (
+                (sq_err * surf_mask.unsqueeze(-1)).sum(dim=(0, 1))
                 / surf_mask.sum().clamp(min=1)
-            ).item()
+            )
+            surf_loss_sum += (surf_per_ch * surf_ch_weights).sum().item()
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
@@ -352,6 +354,7 @@ class Config:
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 10.0
+    surf_p_weight: float = 1.0
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
@@ -406,6 +409,8 @@ print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
+surf_ch_weights = torch.tensor([1.0, 1.0, cfg.surf_p_weight], device=device)
+
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
 model_dir = Path("models") / f"model-{_sanitize_path_token(experiment_label)}-{experiment_stamp}"
@@ -449,7 +454,8 @@ for epoch in range(MAX_EPOCHS):
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        surf_per_ch = (sq_err * surf_mask.unsqueeze(-1)).sum(dim=(0, 1)) / surf_mask.sum().clamp(min=1)
+        surf_loss = (surf_per_ch * surf_ch_weights).sum()
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
@@ -467,7 +473,7 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, cfg.surf_p_weight, device)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -525,7 +531,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, cfg.surf_p_weight, device)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
