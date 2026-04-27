@@ -18,12 +18,15 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 import os
+import random
 import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import numpy as np
 import simple_parsing as sp
 import torch
 import torch.nn as nn
@@ -60,6 +63,32 @@ ACTIVATION = {
     "ELU": nn.ELU,
     "silu": nn.SiLU,
 }
+
+
+class FourierFeatures(nn.Module):
+    """Random Fourier positional encoding on (x, z) coordinates."""
+
+    def __init__(self, m: int = 160, sigma: float = 1.0):
+        super().__init__()
+        self.register_buffer("B", torch.randn(2, m) * sigma)
+
+    def forward(self, xy: torch.Tensor) -> torch.Tensor:  # xy: [B, N, 2]
+        proj = 2 * math.pi * (xy @ self.B)
+        return torch.cat([torch.cos(proj), torch.sin(proj)], dim=-1)
+
+
+class SwiGLU(nn.Module):
+    """SwiGLU feedforward (Llama-style) replacing GELU MLP in TransolverBlock."""
+
+    def __init__(self, dim: int, hidden_dim: int):
+        super().__init__()
+        g = int(hidden_dim * 2 / 3)
+        self.w1 = nn.Linear(dim, g)
+        self.w2 = nn.Linear(dim, g)
+        self.w3 = nn.Linear(g, dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.w3(F.silu(self.w1(x)) * self.w2(x))
 
 
 class MLP(nn.Module):
@@ -147,8 +176,11 @@ class TransolverBlock(nn.Module):
             dropout=dropout, slice_num=slice_num,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
-        self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
-                       n_layers=0, res=False, act=act)
+        if act == "swiglu":
+            self.mlp = SwiGLU(hidden_dim, hidden_dim * mlp_ratio)
+        else:
+            self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
+                           n_layers=0, res=False, act=act)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
@@ -176,12 +208,16 @@ class Transolver(nn.Module):
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
 
+        # When act="swiglu" we keep the preprocess MLP using GELU (the swiglu
+        # change targets the per-block FFN, not preprocess).
+        pre_act = "gelu" if act == "swiglu" else act
+
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
-                                  n_layers=0, res=False, act=act)
+                                  n_layers=0, res=False, act=pre_act)
         else:
             self.preprocess = MLP(fun_dim + space_dim, n_hidden * 2, n_hidden,
-                                  n_layers=0, res=False, act=act)
+                                  n_layers=0, res=False, act=pre_act)
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
@@ -217,7 +253,23 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def _apply_fourier(x_norm: torch.Tensor, fourier: "FourierFeatures | None") -> torch.Tensor:
+    """Replace the (x, z) position channels with Fourier features, keep the rest."""
+    if fourier is None:
+        return x_norm
+    return torch.cat([fourier(x_norm[..., :2]), x_norm[..., 2:]], dim=-1)
+
+
+def evaluate_split(
+    model,
+    loader,
+    stats,
+    surf_weight: float,
+    device,
+    fourier: "FourierFeatures | None" = None,
+    loss_type: str = "mse",
+    amp: bool = False,
+) -> dict[str, float]:
     """Evaluate a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -229,6 +281,11 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
     n_surf = n_vol = n_batches = 0
 
+    autocast_ctx = (
+        torch.amp.autocast("cuda", enabled=amp, dtype=torch.bfloat16)
+        if amp else torch.amp.autocast("cuda", enabled=False)
+    )
+
     with torch.no_grad():
         for x, y, is_surface, mask in loader:
             x = x.to(device, non_blocking=True)
@@ -238,22 +295,33 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            with autocast_ctx:
+                pred = model({"x": _apply_fourier(x_norm, fourier)})["preds"]
+            pred = pred.float()
 
-            sq_err = (pred - y_norm) ** 2
+            if loss_type == "l1":
+                err = (pred - y_norm).abs()
+            else:
+                err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
-                (sq_err * vol_mask.unsqueeze(-1)).sum()
+                (err * vol_mask.unsqueeze(-1)).sum()
                 / vol_mask.sum().clamp(min=1)
             ).item()
             surf_loss_sum += (
-                (sq_err * surf_mask.unsqueeze(-1)).sum()
+                (err * surf_mask.unsqueeze(-1)).sum()
                 / surf_mask.sum().clamp(min=1)
             ).item()
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
+            # Padding nodes can carry NaN/Inf (e.g. AMP/bf16 overflow).
+            # accumulate_batch multiplies by 0/1 masks and 0*Inf=NaN poisons
+            # the entire channel sum. Zero padding positions before scoring.
+            pred_orig = torch.where(
+                mask.unsqueeze(-1), pred_orig, torch.zeros_like(pred_orig)
+            )
             ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
@@ -351,18 +419,41 @@ class Config:
     lr: float = 5e-4
     weight_decay: float = 1e-4
     batch_size: int = 4
-    surf_weight: float = 10.0
-    epochs: int = 50
+    surf_weight: float = 1.0
+    epochs: int = int(os.environ.get("SENPAI_MAX_EPOCHS", "999"))
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip final test evaluation
 
+    # Recipe knobs
+    loss_type: str = "l1"           # "l1" or "mse"
+    amp: bool = True
+    grad_accum: int = 4
+    fourier_m: int = 160
+    fourier_sigma: float = 0.7
+    n_layers: int = 3
+    n_head: int = 1
+    slice_num: int = 16
+    n_hidden: int = 128
+    mlp_ratio: int = 2
+    swiglu: bool = True
+    seed: int = 0
+    wandb_group: str | None = None
+    wandb_name: str | None = None
+
 
 cfg = sp.parse(Config)
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
+
+# Seed for reproducibility
+torch.manual_seed(cfg.seed)
+random.seed(cfg.seed)
+np.random.seed(cfg.seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(cfg.seed)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
@@ -386,15 +477,23 @@ val_loaders = {
     for name, ds in val_splits.items()
 }
 
+# Fourier features on (x, z) coordinates only (channels 0:2). After the
+# Fourier transform we replace those two channels with 2*m features and keep
+# channels 2:24 unchanged → input dim becomes 2*m + (X_DIM - 2).
+fourier = FourierFeatures(m=cfg.fourier_m, sigma=cfg.fourier_sigma).to(device) if cfg.fourier_m > 0 else None
+input_fun_dim = (2 * cfg.fourier_m + (X_DIM - 2)) if cfg.fourier_m > 0 else X_DIM
+input_space_dim = 0 if cfg.fourier_m > 0 else 2
+
 model_config = dict(
-    space_dim=2,
-    fun_dim=X_DIM - 2,
+    space_dim=input_space_dim,
+    fun_dim=input_fun_dim,
     out_dim=3,
-    n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
-    mlp_ratio=2,
+    n_hidden=cfg.n_hidden,
+    n_layers=cfg.n_layers,
+    n_head=cfg.n_head,
+    slice_num=cfg.slice_num,
+    mlp_ratio=cfg.mlp_ratio,
+    act="swiglu" if cfg.swiglu else "gelu",
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
@@ -405,6 +504,22 @@ print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp)
+
+# --- W&B logging ---
+wandb_run = None
+try:
+    import wandb
+    wandb_run = wandb.init(
+        project="senpai-charlie-wilson-charlie-r5",
+        entity="wandb-applied-ai-team",
+        group=cfg.wandb_group or "default",
+        name=cfg.wandb_name or cfg.experiment_name or cfg.agent or "tandemfoil",
+        config={**asdict(cfg), "model_config": model_config, "n_params": n_params},
+    )
+except Exception as e:
+    print(f"W&B init failed (continuing without it): {e}")
+    wandb_run = None
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -419,11 +534,21 @@ with open(model_dir / "config.yaml", "w") as f:
         "n_params": n_params,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
+        "wandb_mode": "online" if wandb_run is not None else "disabled",
     }, f, sort_keys=True)
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
 train_start = time.time()
+
+
+def _flatten_split_metrics(metrics_per_split: dict[str, dict[str, float]], prefix: str) -> dict:
+    out: dict = {}
+    for split_name, m in metrics_per_split.items():
+        for k, v in m.items():
+            out[f"{prefix}/{split_name}/{k}"] = v
+    return out
+
 
 for epoch in range(MAX_EPOCHS):
     if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
@@ -435,7 +560,11 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
 
-    for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
+    optimizer.zero_grad()
+    n_steps = len(train_loader)
+    for step, (x, y, is_surface, mask) in enumerate(
+        tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False)
+    ):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
@@ -443,18 +572,27 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
 
-        vol_mask = mask & ~is_surface
-        surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+        with torch.amp.autocast("cuda", enabled=cfg.amp, dtype=torch.bfloat16):
+            pred = model({"x": _apply_fourier(x_norm, fourier)})["preds"]
+            pred_f = pred.float()
+            if cfg.loss_type == "l1":
+                err = (pred_f - y_norm).abs()
+            else:
+                err = (pred_f - y_norm) ** 2
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            vol_mask = mask & ~is_surface
+            surf_mask = mask & is_surface
+            vol_loss = (err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+            surf_loss = (err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            loss = vol_loss + cfg.surf_weight * surf_loss
+
+        scaler.scale(loss / cfg.grad_accum).backward()
+
+        if (step + 1) % cfg.grad_accum == 0 or (step + 1) == n_steps:
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
@@ -467,7 +605,10 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(
+            model, loader, stats, cfg.surf_weight, device,
+            fourier=fourier, loss_type=cfg.loss_type, amp=cfg.amp,
+        )
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -505,6 +646,19 @@ for epoch in range(MAX_EPOCHS):
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
 
+    if wandb_run is not None:
+        wandb_log = {
+            "epoch": epoch + 1,
+            "seconds_per_epoch": dt,
+            "peak_memory_gb": peak_gb,
+            "train/vol_loss": epoch_vol,
+            "train/surf_loss": epoch_surf,
+            "val_avg/mae_surf_p": avg_surf_p,
+            "lr": optimizer.param_groups[0]["lr"],
+        }
+        wandb_log.update(_flatten_split_metrics(split_metrics, "val"))
+        wandb_run.log(wandb_log)
+
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
 
@@ -525,7 +679,10 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(
+                model, loader, stats, cfg.surf_weight, device,
+                fourier=fourier, loss_type=cfg.loss_type, amp=cfg.amp,
+            )
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
@@ -538,6 +695,10 @@ if best_metrics:
             "test_avg": test_avg,
             "test_splits": test_metrics,
         })
+        if wandb_run is not None:
+            test_log = {"test_avg/mae_surf_p": test_avg["avg/mae_surf_p"]}
+            test_log.update(_flatten_split_metrics(test_metrics, "test"))
+            wandb_run.log(test_log)
 
     write_experiment_summary(
         model_path=model_path,
@@ -552,3 +713,6 @@ if best_metrics:
     )
 else:
     print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping test evaluation.")
+
+if wandb_run is not None:
+    wandb_run.finish()
