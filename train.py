@@ -84,11 +84,13 @@ class MLP(nn.Module):
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
-    def __init__(self, dim, heads=8, dim_head=64, dropout=0.0, slice_num=64):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.0, slice_num=64,
+                 surf_bias: bool = False):
         super().__init__()
         inner_dim = dim_head * heads
         self.dim_head = dim_head
         self.heads = heads
+        self.slice_num = slice_num
         self.softmax = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(dropout)
         self.temperature = nn.Parameter(torch.ones([1, heads, 1, 1]) * 0.5)
@@ -102,7 +104,16 @@ class PhysicsAttention(nn.Module):
         self.to_v = nn.Linear(dim_head, dim_head, bias=False)
         self.to_out = nn.Sequential(nn.Linear(inner_dim, dim), nn.Dropout(dropout))
 
-    def forward(self, x):
+        # Surface-aware routing bias (H12). Per-head learned [1, H, 1, G] bias
+        # added to the post-temperature slice logits when a node is on the foil
+        # surface. Zero-init keeps the seeded baseline behaviour at step 0.
+        self.use_surf_bias = surf_bias
+        if surf_bias:
+            self.surf_bias = nn.Parameter(torch.zeros(1, heads, 1, slice_num))
+        else:
+            self.register_parameter("surf_bias", None)
+
+    def forward(self, x, surface_mask=None):
         B, N, _ = x.shape
 
         fx_mid = (
@@ -117,7 +128,11 @@ class PhysicsAttention(nn.Module):
             .permute(0, 2, 1, 3)
             .contiguous()
         )
-        slice_weights = self.softmax(self.in_project_slice(x_mid) / self.temperature)
+        logits = self.in_project_slice(x_mid) / self.temperature  # [B, H, N, G]
+        if self.use_surf_bias and surface_mask is not None:
+            s = surface_mask.to(logits.dtype).unsqueeze(1).unsqueeze(-1)  # [B, 1, N, 1]
+            logits = logits + s * self.surf_bias  # broadcast per-head bias
+        slice_weights = self.softmax(logits)
         slice_norm = slice_weights.sum(2)
         slice_token = torch.einsum("bhnc,bhng->bhgc", fx_mid, slice_weights)
         slice_token = slice_token / ((slice_norm + 1e-5)[:, :, :, None].repeat(1, 1, 1, self.dim_head))
@@ -133,18 +148,22 @@ class PhysicsAttention(nn.Module):
 
         out_x = torch.einsum("bhgc,bhng->bhnc", out_slice, slice_weights)
         out_x = rearrange(out_x, "b h n d -> b n (h d)")
+        # Stash routing weights in eval mode for diagnostic logging only
+        if not self.training and getattr(self, "_capture_routing", False):
+            self._last_slice_weights = slice_weights.detach()
         return self.to_out(out_x)
 
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 surf_bias: bool = False):
         super().__init__()
         self.last_layer = last_layer
         self.ln_1 = nn.LayerNorm(hidden_dim)
         self.attn = PhysicsAttention(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
-            dropout=dropout, slice_num=slice_num,
+            dropout=dropout, slice_num=slice_num, surf_bias=surf_bias,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
         self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
@@ -156,8 +175,8 @@ class TransolverBlock(nn.Module):
                 nn.Linear(hidden_dim, out_dim),
             )
 
-    def forward(self, fx):
-        fx = self.attn(self.ln_1(fx)) + fx
+    def forward(self, fx, surface_mask=None):
+        fx = self.attn(self.ln_1(fx), surface_mask=surface_mask) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
@@ -169,7 +188,8 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 surf_bias: bool = False):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -190,11 +210,17 @@ class Transolver(nn.Module):
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                surf_bias=surf_bias,
             )
             for i in range(n_layers)
         ])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
+        # Re-zero surf_bias parameters: _init_weights doesn't touch raw
+        # nn.Parameter, but be defensive in case of future changes.
+        for blk in self.blocks:
+            if blk.attn.surf_bias is not None:
+                nn.init.zeros_(blk.attn.surf_bias)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -207,9 +233,10 @@ class Transolver(nn.Module):
 
     def forward(self, data, **kwargs):
         x = data["x"]
+        surface_mask = data.get("is_surface", None)
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         for block in self.blocks:
-            fx = block(fx)
+            fx = block(fx, surface_mask=surface_mask)
         return {"preds": fx}
 
 
@@ -238,7 +265,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            pred = model({"x": x_norm, "is_surface": is_surface})["preds"]
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -263,6 +290,80 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     out = {"vol_loss": vol_loss, "surf_loss": surf_loss,
            "loss": vol_loss + surf_weight * surf_loss}
     out.update(finalize_split(mae_surf, mae_vol, n_surf, n_vol))
+    return out
+
+
+@torch.no_grad()
+def routing_diagnostics(model, loader, stats, device) -> dict[str, float]:
+    """Capture per-block surface vs volume slice routing on one val batch.
+
+    Returns a flat dict suitable for ``wandb.log``. Quantities reported:
+      - surf_bias_norm/block_{i}        L2 norm of the learned [H, G] bias
+      - surf_bias_max_abs/block_{i}     max abs of the bias
+      - routing_kl_surf_vs_vol/block_{i}  KL(surface_routing || volume_routing)
+      - surf_routing_entropy/block_{i}    H[surface routing] (nats)
+      - vol_routing_entropy/block_{i}     H[volume routing] (nats)
+
+    Uses the first batch in ``loader``. KL is averaged over heads.
+    """
+    out: dict[str, float] = {}
+    # Surface bias norms (cheap, no forward pass needed)
+    for i, block in enumerate(model.blocks):
+        bias = block.attn.surf_bias
+        if bias is not None:
+            out[f"surf_bias_norm/block_{i}"] = bias.detach().norm().item()
+            out[f"surf_bias_max_abs/block_{i}"] = bias.detach().abs().max().item()
+
+    try:
+        x, y, is_surface, mask = next(iter(loader))
+    except StopIteration:
+        return out
+    x = x.to(device, non_blocking=True)
+    is_surface = is_surface.to(device, non_blocking=True)
+    mask = mask.to(device, non_blocking=True)
+    x_norm = (x - stats["x_mean"]) / stats["x_std"]
+
+    # Enable routing capture on every PhysicsAttention block
+    for block in model.blocks:
+        block.attn._capture_routing = True
+        block.attn._last_slice_weights = None
+    try:
+        was_training = model.training
+        model.eval()
+        _ = model({"x": x_norm, "is_surface": is_surface})
+        if was_training:
+            model.train()
+    finally:
+        for block in model.blocks:
+            block.attn._capture_routing = False
+
+    surf_full = mask & is_surface          # [B, N]
+    vol_full = mask & ~is_surface
+    surf_count = surf_full.sum().clamp(min=1).float()
+    vol_count = vol_full.sum().clamp(min=1).float()
+
+    for i, block in enumerate(model.blocks):
+        sw = block.attn._last_slice_weights  # [B, H, N, G]
+        if sw is None:
+            continue
+        # Mean routing distribution averaged over batch+nodes for each (head, slice)
+        # weight by surface_mask / volume_mask
+        sm = surf_full.unsqueeze(1).unsqueeze(-1).to(sw.dtype)  # [B,1,N,1]
+        vm = vol_full.unsqueeze(1).unsqueeze(-1).to(sw.dtype)
+        surf_route = (sw * sm).sum(dim=(0, 2)) / surf_count  # [H, G]
+        vol_route = (sw * vm).sum(dim=(0, 2)) / vol_count    # [H, G]
+        # Renormalize each head's distribution defensively
+        surf_route = surf_route / surf_route.sum(-1, keepdim=True).clamp(min=1e-8)
+        vol_route = vol_route / vol_route.sum(-1, keepdim=True).clamp(min=1e-8)
+        eps = 1e-8
+        surf_ent = -(surf_route * (surf_route + eps).log()).sum(-1).mean().item()
+        vol_ent = -(vol_route * (vol_route + eps).log()).sum(-1).mean().item()
+        kl = (surf_route * ((surf_route + eps).log() - (vol_route + eps).log())).sum(-1).mean().item()
+        out[f"surf_routing_entropy/block_{i}"] = surf_ent
+        out[f"vol_routing_entropy/block_{i}"] = vol_ent
+        out[f"routing_kl_surf_vs_vol/block_{i}"] = kl
+        # Free memory
+        block.attn._last_slice_weights = None
     return out
 
 
@@ -386,6 +487,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    surf_bias: bool = False  # H12: surface-aware per-head additive bias on slice logits
 
 
 cfg = sp.parse(Config)
@@ -425,6 +527,7 @@ model_config = dict(
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
+    surf_bias=cfg.surf_bias,
 )
 
 model = Transolver(**model_config).to(device)
@@ -486,7 +589,7 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
+        pred = model({"x": x_norm, "is_surface": is_surface})["preds"]
         sq_err = (pred - y_norm) ** 2
 
         vol_mask = mask & ~is_surface
@@ -528,6 +631,13 @@ for epoch in range(MAX_EPOCHS):
         "epoch_time_s": dt,
         "global_step": global_step,
     }
+    # H12: log surface-routing diagnostics (cheap; one batch from val)
+    if cfg.surf_bias and val_loaders:
+        try:
+            diag_loader = next(iter(val_loaders.values()))
+            log_metrics.update(routing_diagnostics(model, diag_loader, stats, device))
+        except Exception as e:
+            print(f"[warn] routing_diagnostics failed: {e}")
     for split_name, m in split_metrics.items():
         for k, v in m.items():
             log_metrics[f"{split_name}/{k}"] = v
