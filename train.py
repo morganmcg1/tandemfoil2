@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import time
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -236,18 +237,19 @@ def evaluate_split(model, loader, stats, surf_weight, channel_weights, device) -
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
-            # scoring.py skips samples whose ground truth is non-finite. Without
-            # also sanitizing here, ``inf * 0`` from masked positions poisons the
-            # downstream sums with NaN. Replace non-finite y with 0 and zero the
-            # mask for those samples so loss and MAE both stay finite.
-            y_finite = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)  # [B]
-            if not y_finite.all():
-                y = torch.where(y_finite[:, None, None], y, torch.zeros_like(y))
-                mask = mask & y_finite.unsqueeze(-1)
-
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            # Drop samples whose ground-truth has any non-finite value (held-out test
+            # data has a sample with NaNs in pressure GT). scoring.py masks these out
+            # but NaN*0=NaN in IEEE arithmetic still poisons the accumulator sum.
+            y_finite_per_sample = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)
+            sample_keep = y_finite_per_sample.unsqueeze(-1).expand_as(mask)
+            mask = mask & sample_keep
+            y = torch.where(torch.isfinite(y), y, torch.zeros_like(y))
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+            # Zero out predictions at padding positions to avoid Inf*0=NaN propagation
+            # downstream (the model is unconstrained at padding nodes).
+            pred = pred.masked_fill(~mask.unsqueeze(-1), 0.0)
 
             sq_err = (pred - y_norm) ** 2
             sq_err_weighted = sq_err * channel_weights[None, None, :]
@@ -418,6 +420,18 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
+ema_model = deepcopy(model)
+ema_model.eval()
+for p in ema_model.parameters():
+    p.requires_grad_(False)
+ema_decay = 0.999
+
+
+def update_ema(ema_model, model, decay):
+    with torch.no_grad():
+        for ema_param, param in zip(ema_model.parameters(), model.parameters()):
+            ema_param.data.mul_(decay).add_(param.data, alpha=1 - decay)
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
@@ -471,6 +485,7 @@ for epoch in range(MAX_EPOCHS):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        update_ema(ema_model, model, ema_decay)
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
@@ -480,10 +495,9 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
-    # --- Validate ---
-    model.eval()
+    # --- Validate (EMA weights) ---
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, channel_weights, device)
+        name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, channel_weights, device)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -498,7 +512,7 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        torch.save(ema_model.state_dict(), model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
@@ -528,8 +542,8 @@ print(f"\nTraining done in {total_time:.1f} min")
 if best_metrics:
     print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-    model.eval()
+    ema_model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    ema_model.eval()
 
     test_metrics = None
     test_avg = None
@@ -541,7 +555,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, channel_weights, device)
+            name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, channel_weights, device)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
