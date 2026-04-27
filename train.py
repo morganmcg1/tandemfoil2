@@ -444,12 +444,19 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+        sq_err = (pred - y_norm) ** 2  # for volume (stays MSE in normalized space)
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+
+        # Surface: L1 in physical space, scaled by 1/y_std.mean() so the
+        # magnitude is comparable to the normalized-MSE volume loss term.
+        pred_phys = pred * stats["y_std"] + stats["y_mean"]
+        abs_err_phys = (pred_phys - y).abs()
+        surf_l1 = (abs_err_phys * surf_mask.unsqueeze(-1)).sum() / (surf_mask.sum() * 3).clamp(min=1)
+        surf_loss = surf_l1 / stats["y_std"].mean()
+
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
