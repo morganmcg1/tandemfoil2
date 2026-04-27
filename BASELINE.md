@@ -2,42 +2,54 @@
 
 ## Current best
 
-**`val_avg/mae_surf_p = 130.0568`** (epoch 11/50; training timed out at 30 min wall clock)
+**`val_avg/mae_surf_p = 102.71`** (epoch 12; training cut by 30-min wall clock at epoch 14)
 
-- **PR**: #216 — Wider-shallower Transolver (`n_hidden=192, n_layers=4, n_head=6`)
-- **Student**: charliepai2c2-tanjiro
-- **Merged**: 2026-04-27 (commit d354f0a)
-- **Param count**: 1.18M
-- **Peak VRAM**: 51.79 GB
-- **Wall-clock**: 30.3 min (hit timeout — training was still improving ~5%/epoch when it stopped)
+- **PR**: #213 — Physical-space L1 surface loss (volume stays MSE)
+- **Student**: charliepai2c2-nezuko
+- **Merged**: 2026-04-27 (commit efa6e3c)
+- **Param count**: ~1.18M (same arch as the previous baseline; loss-only change)
+- **Peak VRAM**: 42.13 GB
+- **Wall-clock**: 30.6 min (hit timeout; val curve was still trending down)
 
-### Per-split val (best epoch 11)
+### Per-split val (best epoch 12)
 
-| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy | mae_vol_p | mae_vol_Ux | mae_vol_Uy |
-|---|---:|---:|---:|---:|---:|---:|
-| val_single_in_dist | 161.146 | 1.946 | 0.855 | 166.393 | 5.524 | 2.370 |
-| val_geom_camber_rc | 142.415 | 2.640 | 1.129 | 138.864 | 5.511 | 2.862 |
-| val_geom_camber_cruise | 98.282 | 1.608 | 0.637 | 99.226 | 4.110 | 1.427 |
-| val_re_rand | 118.383 | 2.113 | 0.882 | 118.886 | 4.769 | 2.092 |
-| **val_avg** | **130.057** | 2.077 | 0.876 | 130.842 | 4.978 | 2.188 |
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy | mae_vol_p |
+|---|---:|---:|---:|---:|
+| val_single_in_dist | 125.02 | 2.27 | 1.27 | 130.67 |
+| val_geom_camber_rc | 109.49 | 3.29 | 1.72 | 114.21 |
+| val_geom_camber_cruise | 80.47 | 1.63 | 1.06 | 74.28 |
+| val_re_rand | 95.85 | 2.45 | 1.31 | 91.05 |
+| **val_avg** | **102.71** | | | |
 
 ### Per-split test (best checkpoint)
 
-| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy | mae_vol_p | mae_vol_Ux | mae_vol_Uy |
-|---|---:|---:|---:|---:|---:|---:|
-| test_single_in_dist | 144.256 | 1.860 | 0.804 | 146.616 | 5.047 | 2.135 |
-| test_geom_camber_rc | 127.587 | 2.601 | 1.035 | 127.743 | 5.440 | 2.696 |
-| test_geom_camber_cruise | NaN ⚠️ | 1.529 | 0.591 | NaN ⚠️ | 3.895 | 1.318 |
-| test_re_rand | 115.976 | 1.999 | 0.841 | 115.300 | 4.649 | 1.943 |
-| **test_avg** | **NaN** ⚠️ | 1.997 | 0.818 | **NaN** ⚠️ | 4.758 | 2.023 |
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---:|---:|---:|
+| test_single_in_dist | 108.28 | 2.15 | 1.19 |
+| test_geom_camber_rc | 99.19 | 3.20 | 1.64 |
+| test_geom_camber_cruise | NaN ⚠️ (logged) / **67.62** (NaN-safe, 199/200) | 1.59 | 1.01 |
+| test_re_rand | 90.99 | 2.27 | 1.36 |
+| **test_avg** | **NaN ⚠️ (logged) / 91.52 (NaN-safe)** | | |
 
-`test_avg/mae_surf_p` is NaN-contaminated by a single bad sample (`test_geom_camber_cruise/000020.pt` — 761 Inf pressure values), not a model failure. Mean over the 3 finite test splits: `mae_surf_p ≈ 129.27`. **Rank PRs on `val_avg/mae_surf_p` until the scoring bug is patched in `data/scoring.py` (read-only — needs human team).**
+`test_avg/mae_surf_p` is logged as NaN due to the same `data/scoring.py::accumulate_batch` bug both #216 and #213 identified (`NaN * 0 = NaN` in PyTorch, contaminates the masked-out entries before reduction). Manual NaN-safe re-evaluation gives `test_avg ≈ 91.52`. **Rank PRs on `val_avg/mae_surf_p` until human team patches the read-only `data/scoring.py`.**
+
+### Improvement vs. previous baseline (PR #216, val_avg = 130.057)
+
+| Split | Previous | Current | Δ |
+|---|---:|---:|---:|
+| val_single_in_dist | 161.146 | 125.02 | **–22.4%** |
+| val_geom_camber_rc | 142.415 | 109.49 | **–23.1%** |
+| val_geom_camber_cruise | 98.282 | 80.47 | **–18.1%** |
+| val_re_rand | 118.383 | 95.85 | **–19.0%** |
+| **val_avg** | **130.057** | **102.71** | **–21.0%** |
+
+Consistent gains across all four val splits — exactly the cross-split robustness we want from a Round-1 result.
 
 ### Metrics references
 
-- Local summary: `models/model-wider-shallower-arch-20260427-191514/metrics.yaml`
-- JSONL: `models/model-wider-shallower-arch-20260427-191514/metrics.jsonl`
-- Centralized: `research/EXPERIMENT_METRICS.jsonl` (all-experiments rollup)
+- Local summary: `models/model-charliepai2c2-nezuko-surface-pressure-l1-loss-20260427-195051/metrics.yaml`
+- JSONL: `models/model-charliepai2c2-nezuko-surface-pressure-l1-loss-20260427-195051/metrics.jsonl`
+- Centralized: `research/EXPERIMENT_METRICS.jsonl`
 
 ### Reproduce command
 
@@ -45,9 +57,11 @@
 cd target && python train.py \
     --epochs 50 --lr 5e-4 --weight_decay 1e-4 \
     --batch_size 4 --surf_weight 10.0 \
-    --experiment_name wider-shallower-arch \
-    --agent charliepai2c2-tanjiro
+    --experiment_name surface-pressure-l1-loss \
+    --agent charliepai2c2-nezuko
 ```
+
+(The merged advisor branch already includes the wider-shallower architecture from #216 plus the L1-surface-loss change from #213.)
 
 ## Primary ranking metric
 
@@ -57,17 +71,10 @@ cd target && python train.py \
 - `val_geom_camber_cruise` (M=2–4 holdout)
 - `val_re_rand` (stratified Re holdout)
 
-Test counterpart: `test_avg/mae_surf_p` — paper-facing number from best validation checkpoint. Currently NaN-contaminated; see note above.
-
-## Update protocol
-
-When a PR beats the current `val_avg/mae_surf_p`, update this file with:
-- PR number and merge date
-- New best `val_avg/mae_surf_p` and `test_avg/mae_surf_p`
-- Per-split `mae_surf_p` for diagnostics
-- Path to metrics summary (`models/<experiment>/metrics.yaml`)
+Test counterpart: `test_avg/mae_surf_p` — paper-facing number from best validation checkpoint. Currently NaN-contaminated by `data/scoring.py` bug; use NaN-safe manual re-evaluation for paper numbers until patched.
 
 ## History
 
 - _2026-04-27_: Branch opened. Round 1 in flight.
-- _2026-04-27 19:52 UTC_: PR #216 merged — first empirical baseline. `val_avg/mae_surf_p = 130.0568`. Run timed out at epoch 11/50; subsequent runs should consider matching `T_max` to the realistic wall-clock budget.
+- _2026-04-27 19:52 UTC_: PR #216 merged — first empirical baseline. `val_avg/mae_surf_p = 130.0568` (wider-shallower architecture). Run timed out at epoch 11/50; baseline-establisher.
+- _2026-04-27 20:30 UTC_: PR #213 merged — physical-space L1 surface loss (volume stays MSE). New best: `val_avg/mae_surf_p = 102.71` (–21.0% vs prior baseline). Consistent across all 4 splits.
