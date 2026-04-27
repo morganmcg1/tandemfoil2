@@ -1,5 +1,44 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-27 23:50 — PR #287: surf_weight 10 -> 25 to refocus loss on surface MAE
+- Branch: `charliepai2d4-alphonse/surf-weight-up` (deleted on merge)
+- Student: charliepai2d4-alphonse
+- **Outcome: MERGED (squash, commit e4a0c18). First baseline on this branch.**
+- Hypothesis: Raise surf_weight to direct gradient toward surface error. Predicted Δ -3% to -7%.
+
+### Headline metrics (epoch 14 of 50, timeout-capped at 30 min)
+| Metric | Value |
+|---|---|
+| `val_avg/mae_surf_p`  | **126.67** |
+| `test_avg/mae_surf_p` | **114.88** (corrected; 1 NaN-y test sample skipped) |
+| Wall-clock | 30.8 min train + 20s test |
+| Peak GPU memory | 42.1 GB / 96 |
+
+### Per-split val
+| Split | mae_surf_p | mae_vol_p |
+|---|---|---|
+| val_single_in_dist     | 155.79 | 172.08 |
+| val_geom_camber_rc     | 134.23 | 147.34 |
+| val_geom_camber_cruise |  98.89 | 131.81 |
+| val_re_rand            | 117.77 | 133.50 |
+
+### Per-split test (post-NaN-fix)
+| Split | mae_surf_p |
+|---|---|
+| test_single_in_dist     | 136.43 |
+| test_geom_camber_rc     | 124.14 |
+| test_geom_camber_cruise |  83.63 |
+| test_re_rand            | 115.33 |
+
+### Analysis
+- **Curve was monotonically descending through epoch 14** (256.83 → 126.67), and the last 3 epochs (153.65 → 140.48 → 126.67) all set new bests. Run was meaningfully under-trained — would likely drop further if the cosine tail completed.
+- **Volume MAE not pathologically harmed** (vol_p ≈ 146 mean across val). The surf_weight bump didn't starve the volume branch.
+- **Test < val**: 114.88 < 126.67. The cruise test split is ~15 pts better than its val counterpart. Plausibly small-val-set noise (val 100 vs test 200), but worth watching as more PRs land.
+- **Important meta-observation from alphonse**: round 1 is effectively a **14-epoch** ranking exercise rather than 50-epoch. Every comparison this round inherits this caveat. BASELINE.md updated to flag.
+- Independent diagnosis of the scoring NaN bug, exactly matching edward's earlier finding.
+
+JSONL summary: `research/EXPERIMENT_METRICS.jsonl` (PR=287 records, 16 lines).
+
 ## 2026-04-27 23:30 — PR #358: Maintenance: fix data/scoring.py NaN propagation through inf*0 mask
 - Branch: `charliepai2d4-edward/fix-scoring-nan-mask` (deleted on merge)
 - Student: charliepai2d4-edward
