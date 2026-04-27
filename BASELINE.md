@@ -3,18 +3,39 @@
 ## Current Best
 
 - **Branch**: icml-appendix-charlie-pai2c-r3
-- **PR**: #209 — EMA weight averaging (decay=0.999) — charliepai2c3-nezuko
-- **val_avg/mae_surf_p**: 133.66 (epoch 14/50 — run was timeout-limited, still improving)
-- **test_avg/mae_surf_p**: 119.58 (corrected, NaN-safe GT masking applied)
+- **PR**: #193 — Vanilla baseline anchor — charliepai2c3-alphonse
+- **val_avg/mae_surf_p**: 131.71 (best epoch 11 of 14 completed, timeout-limited at 30 min)
+- **test_avg/mae_surf_p**: NaN (test_geom_camber_cruise affected by NaN-GT bug, pre-fix run)
 
-**Note:** This is the first experiment on this track. The EMA model includes a critical
-bug fix for a NaN-poisoning issue in `evaluate_split` affecting `test_geom_camber_cruise`
-(1 sample with 761 NaN GT pressure values). The fix is now part of `train.py` on the advisor
-branch and all future experiments will inherit it.
+**Note:** This beats the previous EMA baseline (PR #209, val=133.66) by showing the vanilla
+model, with no EMA, reaches 131.71 val MAE at epoch 11. Both runs were timeout-limited at 14
+epochs — neither had converged. The NaN bug fix (from PR #209) is in train.py on the advisor
+branch and all future experiments will inherit it. The vanilla baseline run predates the fix so
+its test_avg is NaN; val metrics are unaffected (the fix is a no-op on val splits).
 
-**Note:** The run timed out after 14/50 epochs (~30 min wall clock, ~132 s/epoch) with
-val_avg/mae_surf_p still monotonically decreasing. The model had not converged. Comparison
-against a vanilla baseline without EMA is not yet available.
+**Note:** Best epoch was 11 of 14, with cosine schedule configured for 50 epochs — far from
+convergence. Validation was still noisy (epochs 12–14 bounced to 140–163) but the best checkpoint
+at epoch 11 is the definitive reference point.
+
+All students must beat **val_avg/mae_surf_p = 131.71** to be considered a winner.
+
+## 2026-04-27 19:00 — PR #193: Vanilla baseline anchor
+
+- **Surface MAE (val, best checkpoint epoch 11):**
+  - Ux=2.39, Uy=0.91, p=131.71 (avg across 4 val splits)
+- **Surface MAE (test):** NaN (pre-NaN-fix run; test_geom_camber_cruise pressure NaN)
+- **Per-split val breakdown (epoch 11):**
+
+| split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---:|---:|---:|
+| val_single_in_dist     | 162.74 | 2.39 | 0.91 |
+| val_geom_camber_rc     | 141.71 | 2.95 | 1.20 |
+| val_geom_camber_cruise | 107.43 | 1.67 | 0.66 |
+| val_re_rand            | 114.97 | 2.20 | 0.93 |
+| **val avg**            | **131.71** | 2.30 | 0.92 |
+
+- **Metric summary:** `models/model-vanilla-baseline-anchor-20260427-194339/metrics.jsonl`
+- **Reproduce:** `cd target/ && python train.py --agent charliepai2c3-alphonse --experiment_name vanilla-baseline-anchor`
 
 ## 2026-04-27 18:20 — PR #209: EMA weight averaging (decay=0.999)
 
@@ -85,4 +106,4 @@ handles the single NaN-GT sample in `test_geom_camber_cruise` by sanitizing GT a
 masking predictions at padding positions before accumulating losses. This fix is a
 no-op on all val splits and 3 of 4 test splits.
 
-All students must beat **val_avg/mae_surf_p = 133.66** to be considered a winner.
+All students must beat **val_avg/mae_surf_p = 131.71** to be considered a winner.
