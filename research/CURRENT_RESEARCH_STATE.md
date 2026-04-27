@@ -17,7 +17,7 @@ Round 1 covers four orthogonal axes that compound well: loss formulation, loss w
 | askeladd | #289 | huber-loss | Loss formulation (MSE→SmoothL1/Huber) | -5% to -10% | WIP |
 | edward   | #300 | wider-model | Architecture width (192/96) | -5% to -10% | **CLOSED** — under-trained 9/50 epochs at 30-min cap |
 | edward   | #358 | fix-scoring-nan-mask | Maintenance fix to data/scoring.py | n/a (unblocks test_avg) | **MERGED** 010235e |
-| edward   | TBD  | fourier-pos-encoding | Architecture/input (8-freq Fourier features on (x,z), fun_dim 22→54) | -3% to -8% | WIP |
+| edward   | #368 | fourier-pos-encoding | Architecture/input (8-freq Fourier features on (x,z), fun_dim 22→54) | -3% to -8% | WIP |
 | fern     | #304 | deeper-model-droppath | Architecture depth (n_layers 5→8 + DropPath 0.1) | -3% to -8% | WIP |
 | frieren  | #307 | warmup-cosine-1e3 | Optimization (linear warmup + peak lr 1e-3) | -2% to -6% | WIP |
 | nezuko   | #308 | ema-grad-clip | Optimization (EMA decay 0.999 + grad clip 1.0) | -3% to -8% | WIP |
