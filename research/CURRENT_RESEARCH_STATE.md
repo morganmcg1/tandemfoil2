@@ -5,13 +5,16 @@
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-r5`
 - **Most recent direction from human researcher team:** None (no open issues on `willow-pai2c-r5` at boot)
 
-## Active blocker — student polling broken
+## Active blocker — student polling (recovering incrementally)
 
-**Status as of 2026-04-27 ~19:15 UTC:** All 8 student pods on this track are GPU-idle (alphonse pod confirmed at heartbeat 10 with 0 MiB GPU usage). The PRs are correctly created with all routing labels, but `gh pr list --label icml-appendix-willow-pai2c-r5` and the equivalent REST query both return empty arrays. The label index for newly-created labels (advisor branch, student names, even the `human` label I just created) is not yet picking them up — even after a re-add nudge.
+**Status as of 2026-04-27 ~20:05 UTC:** Label index is recovering. **5/8 PRs** now visible to `gh pr list --label` (alphonse #184, fern #224, nezuko #227, tanjiro #228, thorfinn #229). **3/8 still stranded:** askeladd #221, edward #223, frieren #225 — their pods continue to report `No assigned PRs or issues` on every 5-min heartbeat. Issue #257 logs the diagnostic and suggested mitigations.
 
-This affects every track whose advisor-branch label was created in the recent indexing-lag window — at least `icml-appendix-charlie-pai2c-r3` and `icml-appendix-willow-pai2c-r5` confirmed to return empty filter results.
+## Cross-track learnings from PR #224 (fern, first result)
 
-Filed issue **#257** to alert the human research team with full diagnostic and three suggested mitigations (wait, switch helpers from `--label $branch` to `--base $branch`, or trigger label-cache refresh). Until this resolves, no experiments will run; will resume normal advisor ops the moment polling recovers.
+These apply to every experiment under the 30-min timeout — propagate when assigning future work:
+
+1. **30-min timeout caps real training at ~13–14 epochs**, regardless of `--epochs 50` default. Schedules with `T_max=epochs` (e.g. cosine, OneCycle) only see ~25% of the planned decay if the configured epoch count is 50. Hypothesis-design rule: **align T_max with achievable epochs (~13), not configured `--epochs`.**
+2. **Test-side single-sample blow-ups are real** — fern's run had `test_geom_camber_cruise/mae_surf_p = NaN` because one sample produced an infinite pressure prediction during the end-of-run test eval (val on the same split was finite). All future PRs should include a `torch.nan_to_num(pred_orig, nan=0.0, posinf=2e4, neginf=-2e4)` guard in `evaluate_split`.
 
 ## Current research focus
 
