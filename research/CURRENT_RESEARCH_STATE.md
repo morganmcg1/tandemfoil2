@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-27 23:45 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
+- **Last update:** 2026-04-27 23:55 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
 - **Most recent human-team direction:** N/A — no team issues consulted (isolated replicate; only entrypoint-surfaced PRs in scope).
 - **Round-1 baseline (merged):** PR #282 — Huber loss (δ=1.0) on normalized targets. `val_avg/mae_surf_p = 105.999` at epoch 14. `test_avg/mae_surf_p = NaN` (scoring/data issue, fix in flight as PR #361).
 
@@ -8,29 +8,29 @@
 
 Compound improvements on the round-1 huber baseline. Recover the paper-facing test metric. Test orthogonal levers (capacity, slice count, optimizer recipe, surface weighting, regularization, EMA, channel weighting) so round-3 can stack winners.
 
-## Round-1 outcomes (3 reviewed)
+## Round-1 outcomes (5 reviewed)
 
-| Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Decision |
-|------|----|---------|------|--------------------------:|----------|
-| 1 | #282 | edward | huber-loss | **105.999** | **MERGED** (sets baseline) |
-| 2 | #295 | tanjiro | pressure-channel-weight | 130.916 | CLOSED (>23% worse than huber) |
-| 3 | #297 | thorfinn | depth-8 | 168.836 | CLOSED (compute-infeasible at 30-min budget; 9/50 epochs) |
+| Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Δ vs 105.999 | Decision |
+|------|----|---------|------|--------------------------:|-------------:|----------|
+| 1 | #282 | edward | huber-loss | **105.999** | (baseline) | **MERGED** |
+| 2 | #291 | nezuko | dropout-0p1 | 128.896 | +21.6% | CLOSED |
+| 3 | #295 | tanjiro | pressure-channel-weight | 130.916 | +23.5% | CLOSED |
+| 4 | #281 | askeladd | slice-128 | 154.594 | +45.8% | CLOSED |
+| 5 | #297 | thorfinn | depth-8 | 168.836 | +59.3% | CLOSED |
 
-Per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`. Per-epoch JSONL pulled into `research/student_metrics/`.
+Per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`. Per-experiment JSONL summaries in `research/student_metrics/` (note: nezuko & askeladd did not commit their training metrics file; their PR-comment numbers are recorded as JSONL summaries instead).
 
-## Round-1 still WIP (5 students)
+## Round-1 still WIP (3 students)
 
-These were branched off the **pre-huber** advisor and test isolated levers without huber. Their results will be evaluated against the new huber baseline (105.999) when they come back for review. If a winner appears, we will merge sequentially and decide whether to retest the closed-out levers (depth, channel weighting) on top of the new combined baseline.
+These were branched off the **pre-huber** advisor and test isolated levers without huber. Their results will be evaluated against the new huber baseline (105.999) when they come back for review.
 
 | PR | Student | Slug | Lever |
 |----|---------|------|-------|
 | #279 | alphonse | capacity-medium | n_hidden 128→192, n_layers 5→6, n_head 4→6 |
-| #281 | askeladd | slice-128 | slice_num 64→128 |
 | #284 | fern | warmup-cosine-1e3 | linear-warmup 3ep → cosine, peak lr 1e-3, betas (0.9,0.95), grad clip 1.0 |
 | #286 | frieren | surf-weight-25 | surf_weight 10→25 |
-| #291 | nezuko | dropout-0p1 | dropout 0→0.1 |
 
-## Round-2 just-assigned (3 students)
+## Round-2 in flight (5 students)
 
 All built on the merged huber baseline (PR #282).
 
@@ -39,6 +39,8 @@ All built on the merged huber baseline (PR #282).
 | #361 | edward | nan-safe-eval | filter non-finite-`y` samples in `evaluate_split` before `accumulate_batch` | 0 (recovers `test_avg`, not `val_avg`) |
 | #362 | tanjiro | surf-channel-on-huber | per-channel surf loss weights `[0.5, 0.5, 2.5]` on top of huber | −3% to −10% |
 | #363 | thorfinn | ema-eval | EMA copy of weights (decay 0.999) for val/test evaluation | −2% to −5% |
+| #370 | askeladd | cosine-tmax-14 | align cosine `T_max` with actual budget; LR fully decays during 30-min run | −3% to −8% |
+| #371 | nezuko | grad-accum-2 | gradient accumulation 2 (effective batch 8) with √2 lr scaling | −1% to −4% |
 
 ## Test-metric NaN (cross-PR issue)
 
