@@ -3,21 +3,48 @@
 ## Current Best
 
 - **Branch**: icml-appendix-charlie-pai2c-r3
-- **PR**: #193 — Vanilla baseline anchor — charliepai2c3-alphonse
-- **val_avg/mae_surf_p**: 131.71 (best epoch 11 of 14 completed, timeout-limited at 30 min)
-- **test_avg/mae_surf_p**: NaN (test_geom_camber_cruise affected by NaN-GT bug, pre-fix run)
+- **PR**: #261 — Fourier PE on (x,z): spatial frequency encoding for mesh nodes — charliepai2c3-nezuko
+- **val_avg/mae_surf_p**: 115.02 (best epoch 14 of 14 completed, timeout-limited at 30 min, still improving)
+- **test_avg/mae_surf_p**: 104.32
 
-**Note:** This beats the previous EMA baseline (PR #209, val=133.66) by showing the vanilla
-model, with no EMA, reaches 131.71 val MAE at epoch 11. Both runs were timeout-limited at 14
-epochs — neither had converged. The NaN bug fix (from PR #209) is in train.py on the advisor
-branch and all future experiments will inherit it. The vanilla baseline run predates the fix so
-its test_avg is NaN; val metrics are unaffected (the fix is a no-op on val splits).
+**Note:** Fourier PE (Tancik et al. 2020 random Fourier features) on (x,z) node coordinates gives a
+12.7% improvement in val_avg/mae_surf_p over the vanilla MSE baseline (131.71 → 115.02). Best epoch
+was 14/14 — the model was still improving monotonically when the timeout hit. Future experiments
+can expect even larger gains if this improvement compounds with longer training or combined changes.
 
-**Note:** Best epoch was 11 of 14, with cosine schedule configured for 50 epochs — far from
-convergence. Validation was still noisy (epochs 12–14 bounced to 140–163) but the best checkpoint
-at epoch 11 is the definitive reference point.
+All students must beat **val_avg/mae_surf_p = 115.02** to be considered a winner.
 
-All students must beat **val_avg/mae_surf_p = 131.71** to be considered a winner.
+## 2026-04-27 21:21 — PR #261: Fourier PE on (x,z): spatial frequency encoding for mesh nodes
+
+- **Surface MAE (val, best checkpoint epoch 14):**
+  - Ux=1.88, Uy=0.79, p=115.02 (avg across 4 val splits)
+- **Surface MAE (test):**
+  - Ux=1.76, Uy=0.74, p=104.32 (avg across 4 test splits)
+- **Per-split val breakdown (epoch 14):**
+
+| split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---:|---:|---:|
+| val_single_in_dist     | 129.62 | 1.79 | 0.77 |
+| val_geom_camber_rc     | 124.19 | 2.58 | 0.96 |
+| val_geom_camber_cruise |  94.50 | 1.29 | 0.62 |
+| val_re_rand            | 111.77 | 1.87 | 0.80 |
+| **val avg**            | **115.02** | **1.88** | **0.79** |
+
+- **Per-split test breakdown:**
+
+| split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---:|---:|---:|
+| test_single_in_dist     | 115.05 | 1.60 | 0.72 |
+| test_geom_camber_rc     | 115.02 | 2.48 | 0.89 |
+| test_geom_camber_cruise |  77.89 | 1.23 | 0.57 |
+| test_re_rand            | 109.33 | 1.71 | 0.79 |
+| **test avg**            | **104.32** | **1.76** | **0.74** |
+
+- **Metric summary:** `models/model-fourier-pe-spatial-encoding-20260427-203909/metrics.jsonl`
+- **Reproduce:** `cd target/ && python train.py --agent charliepai2c3-nezuko --experiment_name fourier-pe-spatial-encoding`
+- **Model config:** num_fourier_freqs=16, fourier_sigma=1.0, n_hidden=128, n_layers=5, n_head=4, slice_num=64
+- **Best epoch:** 14/14 (still improving at timeout — model not converged)
+- **Peak VRAM:** 42.32 GB | **Params:** 670,039 (+7.7K vs vanilla)
 
 ## 2026-04-27 19:00 — PR #193: Vanilla baseline anchor
 
