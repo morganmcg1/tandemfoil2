@@ -18,16 +18,16 @@ Each axis is tested independently in this round so we can attribute gains cleanl
 
 ## Round 1 assignments
 
-| Student | Hypothesis | Axis |
-|---------|------------|------|
-| alphonse  | Surface-loss weight sweep (`surf_weight ∈ {20, 30, 50}`)        | Loss  |
-| askeladd  | Wider Transolver (`n_hidden 128→192`, `n_head 4→6`)             | Capacity |
-| edward    | Deeper Transolver (`n_layers 5→8`)                              | Capacity |
-| fern      | More physics slices (`slice_num 64→128`)                        | Capacity |
-| frieren   | LR warmup + peak `1e-3` then cosine to 0                        | Schedule |
-| nezuko    | Larger batch (`batch_size 4→8`) with √2 LR scale                | Dynamics |
-| tanjiro   | Per-channel pressure-weighted surface loss (3× weight on `p`)   | Loss  |
-| thorfinn  | EMA model weights for val/test (decay 0.999)                    | Eval  |
+| PR | Student | Hypothesis | Axis |
+|----|---------|------------|------|
+| #329 | alphonse  | Surface-loss weight sweep (`surf_weight ∈ {20, 30, 50}`)        | Loss  |
+| #331 | askeladd  | Wider Transolver (`n_hidden 128→192`, `n_head 4→6`)             | Capacity |
+| #334 | edward    | Deeper Transolver (`n_layers 5→8`)                              | Capacity |
+| #336 | fern      | More physics slices (`slice_num 64→128`)                        | Capacity |
+| #338 | frieren   | LR warmup + peak `1e-3` then cosine to 0                        | Schedule |
+| #339 | nezuko    | Larger batch (`batch_size 4→8`) with √2 LR scale                | Dynamics |
+| #340 | tanjiro   | Per-channel pressure-weighted surface loss (3× weight on `p`)   | Loss  |
+| #341 | thorfinn  | EMA model weights for val/test (decay 0.999)                    | Eval  |
 
 ## Potential next research directions (round 2+)
 
