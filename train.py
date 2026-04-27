@@ -206,12 +206,13 @@ class PhysicsAttention(nn.Module):
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
                  mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
-                 swiglu=False):
+                 swiglu=False, dim_head: int | None = None):
         super().__init__()
         self.last_layer = last_layer
         self.ln_1 = nn.LayerNorm(hidden_dim)
+        effective_dim_head = dim_head if dim_head is not None else hidden_dim // num_heads
         self.attn = PhysicsAttention(
-            hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
+            hidden_dim, heads=num_heads, dim_head=effective_dim_head,
             dropout=dropout, slice_num=slice_num,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
@@ -241,7 +242,8 @@ class Transolver(nn.Module):
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None,
-                 swiglu: bool = False):
+                 swiglu: bool = False,
+                 dim_head: int | None = None):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -262,7 +264,7 @@ class Transolver(nn.Module):
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
-                swiglu=swiglu,
+                swiglu=swiglu, dim_head=dim_head,
             )
             for i in range(n_layers)
         ])
@@ -489,6 +491,8 @@ class Config:
     mlp_ratio: int = 2              # TransolverBlock MLP hidden = n_hidden * mlp_ratio (SwiGLU: 2/3-corrected)
     slice_num: int = 64             # number of slice tokens in PhysicsAttention softmax-over-nodes
     n_layers: int = 5               # number of TransolverBlock layers (depth sweep, PR #35)
+    n_head: int = 4                 # attention heads per TransolverBlock; must divide n_hidden when dim_head is None
+    dim_head: int | None = None     # override per-head attention dim (default: n_hidden // n_head); use for shape-preserving controls
     seed: int = 0                   # RNG seed for torch / numpy / python random
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -514,6 +518,17 @@ if (cfg.fourier_sigma_x is None) != (cfg.fourier_sigma_z is None):
         "--fourier_sigma_x and --fourier_sigma_z must be set together "
         f"(got x={cfg.fourier_sigma_x!r}, z={cfg.fourier_sigma_z!r})"
     )
+# n_head constraint: when --dim_head is not set, n_head must divide n_hidden
+# so that dim_head = n_hidden // n_head is integer. n_hidden is fixed at 128
+# (model_config below). When --dim_head is set explicitly, we use it directly
+# and inner_dim = n_head * dim_head may differ from n_hidden (to_out projects back).
+if cfg.dim_head is None and 128 % cfg.n_head != 0:
+    raise ValueError(
+        f"--n_head must divide n_hidden=128 when --dim_head is unset, got n_head={cfg.n_head} "
+        f"(valid: 1, 2, 4, 8, 16, 32, 64, 128)"
+    )
+if cfg.dim_head is not None and cfg.dim_head < 1:
+    raise ValueError(f"--dim_head must be >=1, got {cfg.dim_head}")
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
@@ -540,7 +555,7 @@ elif per_coord:
 else:
     fourier_str = f"{cfg.fourier_features} (m={cfg.fourier_m}, σ={cfg.fourier_sigma})"
 print(f"Fourier: {fourier_str}  swiglu={cfg.swiglu}  slice_num={cfg.slice_num}  "
-      f"n_layers={cfg.n_layers}  seed={cfg.seed}")
+      f"n_layers={cfg.n_layers}  n_head={cfg.n_head}  dim_head={cfg.dim_head}  seed={cfg.seed}")
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -581,12 +596,13 @@ model_config = dict(
     out_dim=3,
     n_hidden=128,
     n_layers=cfg.n_layers,
-    n_head=4,
+    n_head=cfg.n_head,
     slice_num=cfg.slice_num,
     mlp_ratio=cfg.mlp_ratio,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
     swiglu=cfg.swiglu,
+    dim_head=cfg.dim_head,
 )
 
 model = Transolver(**model_config).to(device)
