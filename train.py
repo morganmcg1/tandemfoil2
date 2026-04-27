@@ -47,6 +47,32 @@ from data import (
 )
 
 # ---------------------------------------------------------------------------
+# Pressure target transform (signed log1p)
+# ---------------------------------------------------------------------------
+
+# expm1(30) ≈ 1.07e13, well beyond any physical pressure (max ~3e4),
+# so the inverse clamp never bites valid predictions but prevents fp32 inf/nan
+# on a divergent head early in training.
+_SIGNED_LOG1P_INV_CLAMP = 30.0
+
+
+def signed_log1p(x: torch.Tensor) -> torch.Tensor:
+    """sign(x) * log(1 + |x|), C^1 at 0, monotone bijection."""
+    return torch.sign(x) * torch.log1p(x.abs())
+
+
+def signed_log1p_inv(x: torch.Tensor) -> torch.Tensor:
+    """Inverse of signed_log1p: sign(x) * (exp(|x|) - 1)."""
+    return torch.sign(x) * torch.expm1(x.abs())
+
+
+def signed_log1p_inv_safe(x: torch.Tensor) -> torch.Tensor:
+    """Inverse with magnitude clamp to keep MAE finite on divergent predictions."""
+    x_clamped = x.clamp(min=-_SIGNED_LOG1P_INV_CLAMP, max=_SIGNED_LOG1P_INV_CLAMP)
+    return torch.sign(x_clamped) * torch.expm1(x_clamped.abs())
+
+
+# ---------------------------------------------------------------------------
 # Transolver model
 # ---------------------------------------------------------------------------
 
@@ -217,12 +243,17 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device, use_log_p: bool = False) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
     ``score.py`` (float64, non-finite samples skipped).
+
+    When ``use_log_p`` is True, the pressure channel is signed_log1p-transformed
+    before normalization, and predictions are inverse-transformed back to
+    physical pressure before MAE accumulation. ``stats["y_mean"][2]`` and
+    ``stats["y_std"][2]`` are expected to already be the log-space stats.
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
@@ -236,8 +267,22 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Sanitize NaN-in-y samples (pre-existing scoring bug: NaN*0=NaN
+            # leaks through ``data/scoring.py:accumulate_batch``'s sample mask).
+            # Drop whole samples with any non-finite y by AND-ing the mask, and
+            # replace NaN values with 0 so loss/err arithmetic stays finite.
+            y_finite_per_sample = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)
+            if not y_finite_per_sample.all():
+                y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+                mask = mask & y_finite_per_sample.view(-1, 1)
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
-            y_norm = (y - stats["y_mean"]) / stats["y_std"]
+            if use_log_p:
+                y_t = y.clone()
+                y_t[..., 2] = signed_log1p(y[..., 2])
+                y_norm = (y_t - stats["y_mean"]) / stats["y_std"]
+            else:
+                y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
             sq_err = (pred - y_norm) ** 2
@@ -254,6 +299,9 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
+            if use_log_p:
+                pred_orig = pred_orig.clone()
+                pred_orig[..., 2] = signed_log1p_inv_safe(pred_orig[..., 2])
             ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
@@ -386,6 +434,10 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    # Apply signed_log1p to pressure (channel 2) before normalization to
+    # equalize MSE gradients across the heavy-tailed Re range. Stats for the
+    # pressure channel are recomputed in log-space at startup.
+    use_signed_log_p: bool = True
 
 
 cfg = sp.parse(Config)
@@ -413,6 +465,43 @@ val_loaders = {
     name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
     for name, ds in val_splits.items()
 }
+
+# --- Pressure log-stats: replace channel 2 of stats so loss runs in
+# signed_log1p-transformed normalized space (Re-balanced gradients).
+y_p_mean_orig = stats["y_mean"][2].item()
+y_p_std_orig = stats["y_std"][2].item()
+y_p_mean_log: float | None = None
+y_p_std_log: float | None = None
+
+if cfg.use_signed_log_p:
+    print("Computing signed_log1p pressure stats over training set...")
+    stats_loader = DataLoader(
+        train_ds, batch_size=cfg.batch_size, shuffle=False,
+        collate_fn=pad_collate, num_workers=4,
+    )
+    sum_p = 0.0
+    sum_sq_p = 0.0
+    n_p = 0
+    for _, _y, _, _m in tqdm(stats_loader, desc="log-p stats", leave=False):
+        p_log = signed_log1p(_y[..., 2])
+        valid = _m
+        p_log_valid = p_log[valid].double()
+        sum_p += p_log_valid.sum().item()
+        sum_sq_p += (p_log_valid * p_log_valid).sum().item()
+        n_p += int(valid.sum().item())
+    y_p_mean_log = sum_p / max(n_p, 1)
+    y_p_var_log = max(sum_sq_p / max(n_p, 1) - y_p_mean_log ** 2, 1e-12)
+    y_p_std_log = y_p_var_log ** 0.5
+    print(
+        f"  log-pressure stats over {n_p:_d} nodes: "
+        f"mean={y_p_mean_log:.4f}, std={y_p_std_log:.4f}  "
+        f"(orig p mean={y_p_mean_orig:.2f}, std={y_p_std_orig:.2f})"
+    )
+    stats["y_mean"] = stats["y_mean"].clone()
+    stats["y_std"] = stats["y_std"].clone()
+    stats["y_mean"][2] = y_p_mean_log
+    stats["y_std"][2] = y_p_std_log
+    del stats_loader
 
 model_config = dict(
     space_dim=2,
@@ -446,6 +535,10 @@ run = wandb.init(
         "n_params": n_params,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
+        "y_p_mean_orig": y_p_mean_orig,
+        "y_p_std_orig": y_p_std_orig,
+        "y_p_mean_log": y_p_mean_log,
+        "y_p_std_log": y_p_std_log,
     },
     mode=os.environ.get("WANDB_MODE", "online"),
 )
@@ -485,7 +578,12 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
-        y_norm = (y - stats["y_mean"]) / stats["y_std"]
+        if cfg.use_signed_log_p:
+            y_t = y.clone()
+            y_t[..., 2] = signed_log1p(y[..., 2])
+            y_norm = (y_t - stats["y_mean"]) / stats["y_std"]
+        else:
+            y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
         sq_err = (pred - y_norm) ** 2
 
@@ -512,7 +610,8 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                              use_log_p=cfg.use_signed_log_p)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -580,7 +679,8 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                                  use_log_p=cfg.use_signed_log_p)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
