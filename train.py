@@ -12,11 +12,12 @@ target space. Train/val/test MAE all flow through ``data.scoring`` so the
 numbers are produced identically.
 
 Usage:
-  python train.py [--debug] [--epochs 50] [--agent <name>] [--run_name <name>]
+  python train.py [--debug] [--epochs 50] [--agent <name>] [--experiment_name <name>]
 """
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -217,7 +218,7 @@ class Transolver(nn.Module):
 # ---------------------------------------------------------------------------
 
 def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
-    """Run inference over a split and return metrics matching the organizer scorer.
+    """Evaluate a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
@@ -267,7 +268,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
 def _sanitize_path_token(s: str) -> str:
     out = "".join(c if c.isalnum() or c in "-_." else "-" for c in s)
-    return out.strip("-_.") or "run"
+    return out.strip("-_.") or "experiment"
 
 
 def _git_commit_short() -> str:
@@ -280,7 +281,12 @@ def _git_commit_short() -> str:
         return "unknown"
 
 
-def write_run_summary(
+def append_metrics_jsonl(metrics_path: Path, record: dict) -> None:
+    with open(metrics_path, "a") as f:
+        f.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def write_experiment_summary(
     model_path: Path,
     model_dir: Path,
     cfg: "Config",
@@ -294,7 +300,7 @@ def write_run_summary(
     """Write a local summary next to the best checkpoint."""
     summary: dict = {
         "agent": cfg.agent,
-        "run_name": cfg.run_name,
+        "experiment_name": cfg.experiment_name,
         "git_commit": _git_commit_short(),
         "n_params": n_params,
         "model_config": model_config,
@@ -321,7 +327,7 @@ def write_run_summary(
     summary_path = model_dir / "metrics.yaml"
     with open(summary_path, "w") as f:
         yaml.safe_dump(summary, f, sort_keys=True)
-    print(f"\nSaved run summary to {summary_path}")
+    print(f"\nSaved experiment summary to {summary_path}")
 
 
 def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
@@ -348,10 +354,10 @@ class Config:
     surf_weight: float = 10.0
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
-    run_name: str | None = None
+    experiment_name: str | None = None
     agent: str | None = None
     debug: bool = False
-    skip_test: bool = False  # skip end-of-run test evaluation
+    skip_test: bool = False  # skip final test evaluation
 
 
 cfg = sp.parse(Config)
@@ -400,11 +406,12 @@ print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
-run_label = cfg.run_name or cfg.agent or "tandemfoil"
-run_stamp = time.strftime("%Y%m%d-%H%M%S")
-model_dir = Path("models") / f"model-{_sanitize_path_token(run_label)}-{run_stamp}"
+experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
+experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
+model_dir = Path("models") / f"model-{_sanitize_path_token(experiment_label)}-{experiment_stamp}"
 model_dir.mkdir(parents=True, exist_ok=True)
 model_path = model_dir / "checkpoint.pt"
+metrics_jsonl_path = model_dir / "metrics.jsonl"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.safe_dump({
         **asdict(cfg),
@@ -479,6 +486,17 @@ for epoch in range(MAX_EPOCHS):
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+    append_metrics_jsonl(metrics_jsonl_path, {
+        "event": "epoch",
+        "epoch": epoch + 1,
+        "seconds": dt,
+        "peak_memory_gb": peak_gb,
+        "train/vol_loss": epoch_vol,
+        "train/surf_loss": epoch_surf,
+        "val_avg/mae_surf_p": avg_surf_p,
+        "val_splits": split_metrics,
+        "is_best": tag == " *",
+    })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
@@ -514,8 +532,14 @@ if best_metrics:
         print(f"\n  TEST  avg_surf_p={test_avg['avg/mae_surf_p']:.4f}")
         for name in TEST_SPLIT_NAMES:
             print_split_metrics(name, test_metrics[name])
+        append_metrics_jsonl(metrics_jsonl_path, {
+            "event": "test",
+            "best_epoch": best_metrics["epoch"],
+            "test_avg": test_avg,
+            "test_splits": test_metrics,
+        })
 
-    write_run_summary(
+    write_experiment_summary(
         model_path=model_path,
         model_dir=model_dir,
         cfg=cfg,

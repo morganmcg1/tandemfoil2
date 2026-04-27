@@ -53,23 +53,23 @@ Below are details of the training files that can be used in an autoresearch cont
 
 ### Data
 
-Pre-processed samples live on the PVC at `/mnt/new-pvc/datasets/tandemfoil/splits_v2/` (private author-specific PVC, you'll have to download the dataset yourself to be able to run this code). Materialize them once from the manifest:
+Pre-processed samples live on the PVC at `/mnt/new-pvc/datasets/tandemfoil/splits_v2/` (private author-specific PVC, you'll have to download the dataset yourself to be able to execute this code). Materialize them once from the manifest:
 
 ```
 python data/prepare_splits.py
 ```
 
-After that, `train.py` streams `.pt` samples directly — no re-preprocessing per run.
+After that, `train.py` streams `.pt` samples directly — no repeated preprocessing per experiment.
 
 See `program.md` for input feature layout (24 input dims), target channels, split design, and the full metric contract.
 
 ### Training
 
 ```
-python train.py [--debug] [--epochs 50] [--agent <name>] [--run_name <name>]
+python train.py [--debug] [--epochs 50] [--agent <name>] [--experiment_name <name>]
 ```
 
-The trainer prints per-epoch metrics and a per-split MAE breakdown to the console every epoch. At the end of the run it loads the best checkpoint (selected on `val_avg/mae_surf_p`) and evaluates it on the four held-out test splits, writing `test_avg/mae_surf_p` plus per-split per-channel MAEs to `models/<run>/metrics.yaml`.
+The trainer prints per-epoch metrics and a per-split MAE breakdown to the console every epoch. At completion it loads the best checkpoint (selected on `val_avg/mae_surf_p`) and evaluates it on the four held-out test splits, writing `test_avg/mae_surf_p` plus per-split per-channel MAEs to `models/<experiment>/metrics.yaml` and `models/<experiment>/metrics.jsonl`.
 
 Environment:
 

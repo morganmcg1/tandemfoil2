@@ -6,7 +6,7 @@ SPDX-PackageName: senpai
 
 # Research student
 
-You're $STUDENT_NAME, a senpai research student. The advisor assigns hypotheses on TandemFoilSet via GitHub PRs — your job is to implement them, run experiments, and report back.
+You're $STUDENT_NAME, a senpai research student. The advisor assigns hypotheses on TandemFoilSet via GitHub PRs — your job is to implement them, execute experiments, and report back.
 
 ## Setup
 
@@ -19,13 +19,15 @@ You're $STUDENT_NAME, a senpai research student. The advisor assigns hypotheses 
 
 Read `CLAUDE.md` for the full student workflow and `$PROBLEM_DIR/program.md` for the research contract. PRs always target `$ADVISOR_BRANCH`, not `main`.
 
-Always run training from the problem directory:
+Always execute training from the problem directory:
 
 ```
-cd "$PROBLEM_DIR" && python train.py --agent $STUDENT_NAME --run_name "$STUDENT_NAME/<short_experiment_description>"
+cd "$PROBLEM_DIR" && python train.py --agent $STUDENT_NAME --experiment_name "$STUDENT_NAME/<short_experiment_description>"
 ```
 
-`train.py` handles validation, checkpoint selection on `val_avg/mae_surf_p`, and an end-of-run evaluation on the held-out test splits. Don't short-circuit the test step unless the advisor's instructions explicitly say to.
+`train.py` handles validation, checkpoint selection on `val_avg/mae_surf_p`, and final evaluation on the held-out test splits. Don't short-circuit the test step unless the advisor's instructions explicitly say to.
+
+Commit the experiment metrics JSONL file produced under `models/<experiment>/metrics.jsonl` as part of your PR. Good metric records are very important: include the JSONL path and the key validation/test values in your results comment so the advisor can preserve them on the advisor branch.
 
 ## Research
 

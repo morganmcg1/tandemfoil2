@@ -12,10 +12,10 @@ The baseline is a [Transolver](https://arxiv.org/abs/2402.02366) with physics-aw
 
 ## Codebase
 
-- `train.py` — trainer. Transolver model, training loop, validation, end-of-run test evaluation, local checkpoint and metric summary. **Primary editable entrypoint.**
+- `train.py` — trainer. Transolver model, training loop, validation, final test evaluation, local checkpoint and metric summaries. **Primary editable entrypoint.**
 - `data/loader.py` — `SplitDataset`, `TestDataset`, `load_data`, `load_test_data`, `pad_collate`. **Read-only during normal experiment PRs.**
 - `data/scoring.py` — MAE accumulation shared by val and test. **Read-only.**
-- `data/prepare_splits.py` — materializes per-sample `.pt` files on the PVC from `data/split_manifest.json`. Organizer script, run once. **Read-only.**
+- `data/prepare_splits.py` — materializes per-sample `.pt` files on the PVC from `data/split_manifest.json`. Organizer script, execute once. **Read-only.**
 - `data/generate_manifest.py`, `data/split_manifest.json`, `data/SPLITS.md` — split design and manifest. **Read-only.**
 - `instructions/prompt-advisor.md`, `instructions/prompt-student.md` — senpai role prompts.
 - `pyproject.toml` — runtime deps. Add any new package you need in the same PR that uses it.
@@ -74,7 +74,7 @@ train_ds, val_splits, stats, sample_weights = load_data()
 
 test_splits = load_test_data()
 # test_splits["test_single_in_dist"][i]    → (x, y, is_surface)
-# y is joined in from the hidden .test_*_gt/ dirs so the end-of-run test
+# y is joined in from the hidden .test_*_gt/ dirs so the final test
 # evaluation can compute MAE in the trainer without a separate submission step.
 ```
 
@@ -179,7 +179,7 @@ Keep this contract intact — `data/scoring.py` assumes predictions are given in
 
 ## Metrics
 
-All metrics in `data/scoring.py` are computed in the original (denormalized) target space, in float64, with per-sample skipping for non-finite ground truth. The same helpers are used for validation during training and for the end-of-run test evaluation so the numbers are apples-to-apples.
+All metrics in `data/scoring.py` are computed in the original (denormalized) target space, in float64, with per-sample skipping for non-finite ground truth. The same helpers are used for validation during training and for the final test evaluation so the numbers are apples-to-apples.
 
 **Primary ranking metric.** Equal-weight mean surface-pressure MAE across the four splits:
 
@@ -198,14 +198,14 @@ mae_surf_p(S) = Σ_{valid surface nodes in S} |p_pred - p_true| / n_surf_nodes
 - `{split}/mae_vol_{Ux, Uy, p}` — volume MAE per channel, physical units
 - `{split}/loss`, `{split}/vol_loss`, `{split}/surf_loss` — normalized-space losses used for training
 
-**Checkpoint selection.** Best checkpoint = lowest `val_avg/mae_surf_p`. That checkpoint is the one evaluated on the test splits at the end of training and saved under `models/<run>/checkpoint.pt` with `metrics.yaml`.
+**Checkpoint selection.** Best checkpoint = lowest `val_avg/mae_surf_p`. That checkpoint is the one evaluated on the test splits at the end of training and saved under `models/<experiment>/checkpoint.pt` with `metrics.yaml` and `metrics.jsonl`.
 
 Lower is better. For paper-facing numbers, the decision-driving quantity is `test_avg/mae_surf_p`. Surface pressure accuracy matters most.
 
 ## Constraints
 
 - **VRAM**: GPUs have 96 GB. Don't OOM — meshes can reach 242K nodes.
-- **Timeout**: each training run is capped by `SENPAI_TIMEOUT_MINUTES` (wall clock) and `--epochs`. Do not override these.
+- **Timeout**: each training execution is capped by `SENPAI_TIMEOUT_MINUTES` (wall clock) and `--epochs`. Do not override these.
 - **Simplicity**: all else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it.
 - **Data loaders are read-only.** Don't change the interface in `data/`. If you need a different sampler or feature transform, do it in `train.py`.
 - **No new packages** outside of `pyproject.toml`. If you need one, add it in the same PR that uses it.
