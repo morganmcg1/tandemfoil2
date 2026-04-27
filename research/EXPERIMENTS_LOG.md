@@ -87,3 +87,36 @@
 - Surf-weight is orthogonal to EMA — right move is to test compounding rather than close.
 - Rebase onto post-#356 baseline (gets EMA + NaN-safe path), keep `surf_weight=50.0`, re-run, report Δ vs new baseline.
 - If "EMA + surf_weight=50" beats 132.28 by any margin, merge as next baseline.
+
+## 2026-04-27 23:51 — PR #354: slice_num=64→128, n_head=4→8 (charliepai2d1-frieren) — **CLOSED**
+- Branch: `charliepai2d1-frieren/slice-128-heads-8` (closed + branch deleted)
+- Hypothesis: doubling slice tokens and heads to give finer physics-aware attention on irregular meshes.
+
+### Headline metrics (best epoch = 7/50, run cut by 30-min timeout at ep8)
+| | val_single_in_dist | val_geom_camber_rc | val_geom_camber_cruise | val_re_rand | **val_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` | 200.71 | 169.81 | 117.20 | 138.18 | **156.48** |
+
+| | test_single_in_dist | test_geom_camber_rc | test_geom_camber_cruise | test_re_rand | **test_avg (clean)** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` | 182.71 | 155.54 | 99.20 | 138.95 | **144.10** |
+
+- Per-epoch wall clock: ~250 s (vs ~145 s baseline). 8 of 50 epochs trained.
+- Peak VRAM: 82.32 GB (vs 42 GB baseline).
+- Δ vs new baseline (132.276 / 118.041): **val +18.3%, test +22.1%** — both clear regressions.
+
+### Analysis
+- **Throughput is the binding constraint, not the lever's intrinsic merit.** All-block slice_num=128 + heads=8 takes ~250 s/epoch, fitting only 8 of 50 configured epochs in the 30-min training budget. The baseline fits ~13 epochs at ~145 s/epoch in the same wall clock. The val curve was still descending strongly at the timeout (229 → 156 over 8 epochs).
+- **Independent rediscovery of the scoring NaN bug.** Frieren correctly diagnosed both the `inf*0=NaN` propagation in `data/scoring.py:accumulate_batch` and the bad sample (`test_geom_camber_cruise/000020.pt`, `y[:,2]` non-finite). They added a NaN-safe rerun that produced clean test numbers (144.10).
+
+### Decision: close, reassign to mixed-slice-last-layer
+- Clear >5% regression on both val and test → meets close criteria per CLAUDE.md.
+- The lever isn't disproven — it's under-budgeted. Frieren's own analysis was honest about this.
+- Reassigned to **PR #373 (mixed-slice-last-layer)** — `slice_num=128` only in the final block, `slice_num=64` in layers 0–3. Targets ~+15% per-epoch cost vs baseline (~165–175 s/epoch), should fit ~10–11 epochs in the 30-min budget. Direct follow-up to frieren's "mixed slice counts across layers" suggestion.
+
+## 2026-04-27 23:55 — Round-1.5 assignments (post-#356-merge follow-ups)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #373 | frieren | mixed-slice-last-layer | Last-layer-only `slice_num=128` (mixed slicing) | Replaces closed #354; respects 30-min timeout; pays slice cost only at the regression head |
+| #374 | tanjiro | grad-clip-1p0 | Gradient clipping at `max_norm=1.0` between backward and step | Variance-reduction lever complementary to EMA; logs pre-clip grad norm as diagnostic |

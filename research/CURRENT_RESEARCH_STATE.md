@@ -20,10 +20,17 @@
 | #351 | askeladd  | surf-weight-50           | Loss balance (10→50) | **sent back 23:42**: val=135.19 raw, test NaN; rebase onto post-#356 + retain surf_weight=50; test compounding with EMA |
 | #352 | edward    | smoothl1-surface         | Loss form (SmoothL1 β=1 on surface) | wip |
 | #353 | fern      | warmup-cosine-1e3        | LR schedule (5-ep warmup + cosine to 1e-5, peak 1e-3) | wip |
-| #354 | frieren   | slice-128-heads-8        | Slice/head count (slice 64→128, n_head 4→8) | wip |
+| ~~#354~~ | ~~frieren~~   | ~~slice-128-heads-8~~        | ~~Slice/head count (slice 64→128, n_head 4→8)~~ | **CLOSED 23:51**: val=156.48 (+18%), test=144.10 (+22%); throughput-bound (250 s/ep, 8/50 epochs) |
 | #355 | nezuko    | mlp-ratio-4              | MLP capacity (mlp_ratio 2→4) | **sent back, corrected 23:42**: val=129.24 raw (timeout-cut ep13/50) test NaN; rebase onto post-#356 + retain mlp_ratio=4 |
 | #356 | tanjiro   | ema-eval                 | EMA(0.999) shadow for val + checkpoint | **MERGED 23:42** as new baseline (val=132.276, test=118.041) |
 | #357 | thorfinn  | channel-weighted-loss    | Per-channel surface weights ([1,1,5] for Ux,Uy,p) | wip |
+
+## Round 1.5 follow-up assignments (post-#356, all targeting `icml-appendix-charlie-pai2d-r1` baseline)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #373 | frieren | mixed-slice-last-layer | Last-layer-only `slice_num=128` (mixed slicing) | Replaces closed #354; pays slice cost only at the regression head — fits in 30-min budget |
+| #374 | tanjiro | grad-clip-1p0 | Gradient clipping at `max_norm=1.0` between backward and step | Variance-reduction lever complementary to EMA; pre-clip grad norm logged as diagnostic |
 
 ## Round 2 candidates (queued)
 Once round 1 finishes (best-of-merged-and-still-WIP) and we have a few merged compounders, the next round will pull from:
