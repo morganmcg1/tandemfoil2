@@ -1,55 +1,62 @@
 # SENPAI Research State
 
 - **Date:** 2026-04-27
-- **Track:** `icml-appendix-willow-pai2c-r5` (fresh research track, no prior baseline)
+- **Track:** `icml-appendix-willow-pai2c-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-r5`
-- **Most recent direction from human researcher team:** None (no open issues on `willow-pai2c-r5` at boot)
+- **Most recent direction from human researcher team:** None (no open issues on this track)
 
-## Active blocker — student polling (recovering incrementally)
+## Current baseline
 
-**Status as of 2026-04-27 ~20:05 UTC:** Label index is recovering. **5/8 PRs** now visible to `gh pr list --label` (alphonse #184, fern #224, nezuko #227, tanjiro #228, thorfinn #229). **3/8 still stranded:** askeladd #221, edward #223, frieren #225 — their pods continue to report `No assigned PRs or issues` on every 5-min heartbeat. Issue #257 logs the diagnostic and suggested mitigations.
+**PR #227 (Huber surface loss, surf_weight=10):** `val_avg/mae_surf_p = 112.1574`
 
-## Cross-track learnings from PR #224 (fern, first result)
+| Split | `val_*/mae_surf_p` |
+|---|---|
+| `val_single_in_dist`     | 147.6473 |
+| `val_geom_camber_rc`     | 112.0473 |
+| `val_geom_camber_cruise` |  89.5626 |
+| `val_re_rand`            |  99.3723 |
+| **avg** | **112.1574** |
 
-These apply to every experiment under the 30-min timeout — propagate when assigning future work:
+W&B run: `6bylngu8`
 
-1. **30-min timeout caps real training at ~13–14 epochs**, regardless of `--epochs 50` default. Schedules with `T_max=epochs` (e.g. cosine, OneCycle) only see ~25% of the planned decay if the configured epoch count is 50. Hypothesis-design rule: **align T_max with achievable epochs (~13), not configured `--epochs`.**
-2. **Test-side single-sample blow-ups are real** — fern's run had `test_geom_camber_cruise/mae_surf_p = NaN` because one sample produced an infinite pressure prediction during the end-of-run test eval (val on the same split was finite). All future PRs should include a `torch.nan_to_num(pred_orig, nan=0.0, posinf=2e4, neginf=-2e4)` guard in `evaluate_split`.
+## Key constraints / learnings
 
-## Current research focus
+- **30-min timeout limits training to ~13–14 epochs** (fp32). Schedule T_max must align to ~13–14 achievable epochs, not configured 50.
+- **Batch size does not help throughput** — Transolver attention is mesh-size-dominated (N=74K–242K), not batch-dominated. bs=8 was same speed as bs=4. Closed dead end (PR #228).
+- **NaN/Inf poisoning of cruise test split** is a recurring issue — one sample produces Inf pressure prediction, poisoning `test_geom_camber_cruise/mae_surf_p`. Mitigation: add `nan_to_num` guard in `evaluate_split`.
+- **surf_weight=25 with MSE is worse** than surf_weight=10 with Huber. OOD generalization needs volume coherence; over-weighting surface harms volume scaffold. Optimal surf_weight likely 10–20.
+- **Warmup with 5-epoch budget** was harmful (14 epochs total = 36% warmup = too much). Shorter warmup (2 ep) or no warmup preferred.
 
-**Round 1 — orthogonal first-round sweep on the default Transolver baseline.**
-
-This is a fresh research track with no prior baseline. The first action is to anchor a baseline (alphonse, default config) and in parallel run seven hypotheses spanning the major orthogonal axes of improvement. The goal is to learn which dimension(s) yield the largest gains so Round 2 can compound the winners.
-
-Primary metric: `val_avg/mae_surf_p` — equal-weight mean surface-pressure MAE across the four val splits (`val_single_in_dist`, `val_geom_camber_rc`, `val_geom_camber_cruise`, `val_re_rand`). Test-time companion: `test_avg/mae_surf_p`.
-
-## Round 1 assignments (in flight)
+## Active PRs (WIP)
 
 | PR | Student | Hypothesis | Axis |
 |----|---------|------------|------|
-| #184 | alphonse | Baseline anchor: default Transolver config | reference |
-| #221 | askeladd | `n_hidden` 128 → 256 | capacity (width) |
+| #263 | tanjiro | bf16 autocast throughput unlock | throughput → more epochs |
+| #260 | askeladd | `n_hidden` 128 → 256 (wider model) | capacity (width) |
+| #259 | nezuko | Pure L1 on surface (β→∞ limit of Huber) | loss form sweep |
+| #229 | thorfinn | `n_layers` 5 → 7 (deeper model) | capacity (depth) |
+| #224 | fern | 2-epoch warmup + aligned cosine (v2) | LR schedule (corrected) |
 | #223 | edward | `slice_num` 64 → 128 | inductive bias (physics tokens) |
-| #224 | fern | 5-epoch linear warmup + cosine | LR schedule |
-| #225 | frieren | `surf_weight` 10 → 25 | loss weighting (toward primary metric) |
-| #227 | nezuko | Smooth-L1 (Huber) on surface only | loss form (heavy tails) |
-| #228 | tanjiro | `batch_size` 4 → 8, `lr` × √2 | batch + LR scaling |
-| #229 | thorfinn | `n_layers` 5 → 7 | capacity (depth) |
+| #265 | frieren | Huber + `surf_weight` 10 → 15 (clean isolation) | loss weighting |
+| #266 | alphonse | `lr` 5e-4 → 1e-3 with cosine (faster convergence under timeout) | learning rate |
 
-## Potential next research directions (after Round 1 results)
+## Recently closed PRs
 
-Ranked by expected value, contingent on what wins in Round 1:
+- **PR #225** (frieren, surf_weight=25, MSE): CLOSED — worse than baseline (+9.8%). Confounded by loss-form mismatch (MSE vs Huber). Follow-up: PR #265.
+- **PR #184** (alphonse, baseline anchor, MSE default): CLOSED — established MSE reference at 134.09, confirms Huber (PR #227) wins by 16.4%.
+- **PR #228** (tanjiro, bs=8 sqrt-LR): CLOSED — 33% worse; bs scaling doesn't help throughput on Transolver.
 
-1. **Compound the winners.** If width and slice_num both improve metrics, run a combined `n_hidden=256 + slice_num=128` follow-up. If warmup + Huber both win, combine.
-2. **Per-channel loss reweighting.** Targets (Ux, Uy, p) have very different magnitudes. Currently all weighted equally inside the squared error. Channel-specific weights — e.g. `w_p` larger to match the metric — is an obvious next lever.
-3. **Boundary-layer-aware sampling.** Surface nodes near the leading edge of high-Re foils carry the largest pressure deviations and are likely the hardest. Surface-distance-weighted or curvature-weighted loss could focus capacity there.
-4. **Symmetry data augmentation.** TandemFoilSet has no x-flip data augmentation. Vertical mirroring (around the chord line, with appropriate sign-flips on `Uy`, AoA, and camber) would roughly double the effective training set. Cheap and physics-respecting.
-5. **Mixed-precision training (bf16 autocast).** Increases throughput → either more epochs or larger model in the same time budget. Particularly useful if capacity-scaling experiments win.
-6. **Unified positional encoding (`unified_pos=True`, ref=8).** The Transolver has a built-in ref-grid encoding currently disabled. Worth a single-experiment test once the simpler levers are pulled.
-7. **Surface-only attention head / late-layer surface bias.** If surface MAE is the metric, a small surface-specific output head fed by the last-layer features could dedicate capacity to surface predictions without sacrificing volume features.
-8. **Mesh-size-aware learning rate per-batch.** Variable mesh sizes (74K → 242K) mean gradient norms vary by ~3× across batches. Adaptive per-batch LR or gradient clipping could stabilize.
+## Highest-priority hypotheses to test next (after current wave)
+
+1. **Compound winners**: If width (askeladd #260) and/or depth (thorfinn #229) beat baseline, combine with Huber surface loss and optimal surf_weight.
+2. **bf16 + architecture growth**: If tanjiro's #263 unlocks more epochs via bf16, test wider/deeper model that OOMs at fp32 batch_size=4.
+3. **Per-channel pressure weighting**: Add separate weight for the `p` channel within surface loss (p is the primary metric; Ux/Uy are not ranked). Requires train.py code edit.
+4. **EMA weight averaging (decay=0.999)**: Addresses observed last-epoch bounce-back (alphonse: 134.09 @ ep13 → 174.38 @ ep14). EMA should smooth prediction stability and improve best-checkpoint quality.
+5. **surf_weight=20**: Follow-up if sw=15 (frieren #265) beats baseline, test sw=20 to find the sweet spot.
+6. **Learning rate scaling**: If alphonse's #266 (lr=1e-3) beats baseline, test lr=7e-4 as a moderate midpoint and lr=1.5e-3 as an aggressive upper.
+7. **Symmetry data augmentation (vertical flip)**: Physics-respecting Uy sign-flip augmentation roughly doubles training data. Zero-cost throughput gain.
+8. **Unified positional encoding** (`unified_pos=True, ref=8`): Transolver built-in feature currently disabled; worth a single test after simpler levers exhausted.
 
 ## Plateau watch
 
-Not applicable yet — Round 1 has not reported. Once 5+ consecutive experiments stop improving, escalate via the Plateau Protocol: change strategy tier, revisit first principles, try bolder ideas (new architectures, new loss formulations).
+Not triggered — baseline improvement still being found (Huber PR #227 merged). Monitor after current wave of 8 PRs lands.

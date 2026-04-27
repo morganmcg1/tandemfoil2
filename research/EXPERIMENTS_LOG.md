@@ -91,6 +91,34 @@ Sent PR back (status:wip) with refined re-run spec:
 ### Action
 - **Closed.** Tanjiro reassigned to **PR #263 (bf16 autocast)** — proper way to buy throughput here, predicted 1.5–2× speedup on attention-heavy Transolver, doubles effective epoch budget.
 
+## 2026-04-27 21:00 — PR #225: Higher surface weight surf_weight=25 (MSE surface) → CLOSED
+- **Student:** willowpai2c5-frieren
+- **Branch:** `willowpai2c5-frieren/surf-weight-25` (deleted)
+- **Hypothesis:** Increasing `surf_weight` from 10→25 would push optimization toward `val_avg/mae_surf_p` (the primary metric), since surface nodes are <5% of total nodes and may be underweighted even at sw=10.
+- **W&B run:** [`tzk7dwzb`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-r5/runs/tzk7dwzb)
+
+### Results (best epoch = 14 of 50, timeout-limited)
+
+| Split | `mae_surf_p` | Δ vs baseline (112.16) |
+|---|---|---|
+| `val_single_in_dist`     | 151.5108 | +3.86 worse |
+| `val_geom_camber_rc`     | 136.2449 | +24.20 worse |
+| `val_geom_camber_cruise` |  95.8309 | +6.27 worse  |
+| `val_re_rand`            | 108.9428 | +9.57 worse  |
+| **`val_avg/mae_surf_p`** | **123.124** | **+10.97 (+9.8%) — WORSE** |
+| `test_avg/mae_surf_p`    | NaN (cruise inf) | — |
+
+### Analysis & conclusions
+
+- **Dead end for MSE+sw=25.** All four val splits got worse vs baseline (Huber+sw=10).
+- **Important confound:** PR #225 was branched before Huber surface loss (PR #227) was merged, so this compares MSE+sw=25 vs Huber+sw=10 — two things changed simultaneously.
+- **Student's diagnosis was correct:** sw=25 gives surface nodes ~500× per-node gradient weight. Excessive surface-signal dominance degrades volume feature quality, which also scaffolds surface predictions. The OOD geometry split (val_geom_camber_rc) was hit hardest (+21.6%) — unseen-camber generalization depends on broad volume coherence.
+- **Cleanly falsified: MSE+sw=25 < Huber+sw=10** on val_avg/mae_surf_p.
+- **Open question:** What is the optimal surf_weight on top of the Huber baseline? Likely somewhere between 10 and 25. Frieren assigned PR #265 to test Huber+sw=15.
+
+### Action
+- **Closed.** Frieren reassigned to **PR #265 (Huber+surf_weight=15)** — cleans up the confound, directly tests surf_weight=15 on top of the merged Huber baseline.
+
 ## 2026-04-27 20:37 — PR #184: Baseline anchor (default Transolver, MSE) → CLOSED
 - **Student:** willowpai2c5-alphonse
 - **Branch:** `willowpai2c5-alphonse/baseline-anchor-default-config` (deleted)
