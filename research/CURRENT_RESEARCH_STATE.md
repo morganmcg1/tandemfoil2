@@ -20,13 +20,17 @@ this advisor branch carries no measured baseline yet. The eight assigned
 hypotheses cover four families:
 
 1. **Loss formulation that targets the reported MAE metric directly**
-   (L1 surface loss, Huber surface loss, surface-channel reweighting).
+   - PR #280 — alphonse: L1 surface loss
+   - PR #302 — tanjiro: Huber (smooth-L1, δ=1.0) surface loss
+   - PR #285 — edward: surf_weight 10 → 30
 2. **Model capacity in the directions the architecture is parameterised for**
-   (wider+deeper Transolver, more PhysicsAttention slice tokens).
+   - PR #283 — askeladd: n_hidden=192, n_layers=6, n_head=6, slice_num=96
+   - PR #292 — frieren: slice_num 64 → 128 (single-knob)
 3. **Optimisation schedule in the regime the cosine baseline cannot reach**
-   (LR warmup with higher peak, larger batch with sqrt LR scaling).
+   - PR #288 — fern: 3-epoch warmup + cosine to 1e-5, peak lr=1e-3
+   - PR #306 — thorfinn: batch_size=8, lr=7.07e-4 (sqrt LR scaling)
 4. **Input representation that aids spatial generalisation across tracks**
-   (multi-frequency Fourier features on node x/z position).
+   - PR #298 — nezuko: 8-frequency Fourier positional encoding for x/z
 
 Each PR is a single-knob change so attribution is clean. The first round
 identifies the dominant lever; round 4 will compose the winners.
