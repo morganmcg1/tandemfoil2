@@ -38,3 +38,33 @@ Sent PR back (status:wip) with refined re-run spec:
 ### Cross-track learnings (broadcast to research state)
 - All experiments should design schedules for ~13 achievable epochs, not the configured 50.
 - All experiments should add a NaN-guard in eval to avoid the single-sample test poisoning.
+
+## 2026-04-27 20:21 — PR #227: Smooth-L1 (Huber β=1.0) surface loss → MERGED
+- **Student:** willowpai2c5-nezuko
+- **Branch:** `willowpai2c5-nezuko/huber-surface-loss`
+- **Hypothesis:** Replace MSE with Smooth-L1 (β=1.0) on surface loss only; MSE on volume unchanged. Heavy-tail pressure residuals should benefit from the linear gradient regime outside β.
+- **W&B run:** [`6bylngu8`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-r5/runs/6bylngu8)
+
+### Results
+
+| Metric | Value |
+|---|---|
+| `val_avg/mae_surf_p` (best @ epoch 14) | **112.1574** |
+| `val_single_in_dist/mae_surf_p`     | 147.6473 |
+| `val_geom_camber_rc/mae_surf_p`     | 112.0473 |
+| `val_geom_camber_cruise/mae_surf_p` |  89.5626 |
+| `val_re_rand/mae_surf_p`            |  99.3723 |
+| `test_avg/mae_surf_p`               | **NaN** (cruise poisoned); partial avg 3 splits = 107.79 |
+| Epochs trained                      | 14 of 50 (timeout-limited, ~133 s/epoch) |
+| Peak GPU                            | ~42.1 GB |
+
+### Analysis
+- **MERGED as new track baseline.** First officially landed result with better-than-average confidence.
+- Beats fern's warmup-cosine (140.22) by **20%**, but comparison is confounded (nezuko ran with no warmup, fern ran with 5-epoch warmup). Clean attribution vs MSE-no-warmup awaits alphonse's PR #184.
+- Best epoch is the last — model still improving at timeout. Both this and future runs are under the T_max-50 vs 14-epoch reality mismatch flagged from fern's run.
+- NaN on cruise test split (one sample, pressure blow-up). Same as fern — NaN-guard now a standard recommendation for all future PRs.
+
+### Action
+- **Merged.** BASELINE.md updated to `val_avg/mae_surf_p = 112.1574`.
+- **Nezuko reassigned** to PR #259: pure L1 on surface (loss-form sweep, β=∞ limit) to isolate tail-damping vs smooth-near-zero mechanism.
+- **Askeladd**: fresh PR #260 created (closed stuck PR #221 which failed label indexing for 2+ hours).
