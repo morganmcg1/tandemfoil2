@@ -435,7 +435,16 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+warmup_epochs = 5
+warmup = torch.optim.lr_scheduler.LinearLR(
+    optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs,
+)
+cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer, T_max=max(MAX_EPOCHS - warmup_epochs, 1),
+)
+scheduler = torch.optim.lr_scheduler.SequentialLR(
+    optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs],
+)
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
