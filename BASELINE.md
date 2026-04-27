@@ -6,7 +6,7 @@
 
 The baseline is the default Transolver in `train.py` at HEAD of `icml-appendix-willow-pai2d-r5`:
 
-- **Model:** Transolver, `n_layers=5`, `n_hidden=128`, `n_head=4`, `slice_num=64`, `mlp_ratio=2` (~1.4M params)
+- **Model:** Transolver, `n_layers=5`, `n_hidden=128`, `n_head=4`, `slice_num=64`, `mlp_ratio=2` (**~662k params** — measured from PR #331)
 - **Optimizer:** AdamW `lr=5e-4`, `weight_decay=1e-4`
 - **Schedule:** CosineAnnealingLR with `T_max=epochs`
 - **Batch size:** 4

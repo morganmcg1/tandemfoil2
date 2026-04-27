@@ -1,9 +1,10 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-27
+- **Date:** 2026-04-27 23:25
 - **Advisor branch:** `icml-appendix-willow-pai2d-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r5`
 - **Most recent human research direction:** none received yet (this is a fresh launch)
+- **Cross-cutting concern surfaced by #331:** `data/scoring.py` skips on non-finite *ground truth* but not non-finite *predictions*; a single overflowing pred can NaN-poison `test_avg/mae_surf_p`. `data/` is read-only by program contract, so the defensive guard lives in `train.py` (`torch.nan_to_num` before `accumulate_batch`). Worth checking whether other in-flight PRs hit the same tail.
 
 ## Current research focus
 
