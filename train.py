@@ -254,6 +254,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
+            pred_orig = torch.nan_to_num(pred_orig, nan=0.0, posinf=2e4, neginf=-2e4)
             ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
@@ -419,7 +420,7 @@ model_config = dict(
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
-    n_layers=5,
+    n_layers=7,
     n_head=4,
     slice_num=64,
     mlp_ratio=2,
