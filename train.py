@@ -218,6 +218,25 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
+def per_sample_norm_mse(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """MSE normalized per sample by the target's per-sample std.
+
+    pred, target: [B, N, C]; mask: [B, N] (True for real nodes).
+    Each sample's MSE is divided by its own ``target.std()**2`` so high-Re
+    and low-Re samples contribute equally to the gradient.
+    """
+    B = pred.shape[0]
+    losses = []
+    for b in range(B):
+        m = mask[b]
+        p = pred[b][m]
+        t = target[b][m]
+        t_std = t.std().clamp(min=1e-6)
+        sample_loss = ((p - t) ** 2).mean() / (t_std ** 2)
+        losses.append(sample_loss)
+    return torch.stack(losses).mean()
+
+
 def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
@@ -486,6 +505,7 @@ _write_jsonl({
     "config": asdict(cfg),
     "max_epochs": MAX_EPOCHS,
     "max_timeout_min": MAX_TIMEOUT_MIN,
+    "loss_kind": "per_sample_norm_mse",
 })
 
 best_avg_surf_p = float("inf")
@@ -512,12 +532,13 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
 
-        vol_mask = mask & ~is_surface
-        surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        # Per-sample normalized MSE: divides each sample's MSE by its own
+        # target std^2 so high-Re (large-y) and low-Re (small-y) samples
+        # contribute equally to the gradient (analogous to relative L2 in FNO).
+        surf_mask = mask & is_surface.bool()
+        vol_loss = per_sample_norm_mse(pred, y_norm, mask)
+        surf_loss = per_sample_norm_mse(pred, y_norm, surf_mask)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
