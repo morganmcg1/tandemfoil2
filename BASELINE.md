@@ -32,6 +32,27 @@ The paper-facing rank is `test_avg/mae_surf_p`, computed once at the end of trai
 
 ## Best result
 
+**PR #627 — `preprocess-depth-1-on-lion` (edward), merged 2026-04-28** — ⭐ new best
+
+- `val_avg/mae_surf_p` = **53.7986** (best epoch 18/24)
+- `test_avg/mae_surf_p` = **NaN** (4-split) / **52.165** (mean of 3 clean splits)
+- Per-split val: `val_single_in_dist=54.3136`, `val_geom_camber_rc=70.8552`, `val_geom_camber_cruise=35.2098`, `val_re_rand=54.8159`
+- Per-split test (3 clean): `test_single_in_dist=47.9103`, `test_geom_camber_rc=63.2333`, `test_re_rand=45.3507`
+- **−4.27% val / −2.18% test** vs previous baseline (PR #612). Largest gain on `val_single_in_dist` (−9.93%), `val_geom_camber_cruise` (−4.86%), `val_re_rand` (−2.83%). `val_geom_camber_rc` essentially flat (−0.29%).
+- Change: add **1 residual hidden layer to the preprocess MLP** (`preprocess_layers=1, res=True`), adding ~65,792 params (+9.8%) at the input boundary. All other knobs identical to PR #612 Lion baseline.
+- Model: `n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2`, **`preprocess_layers=1`**, `fun_dim=54`, `lr=3e-4`, `weight_decay=1e-4`, `batch_size=4`, `surf_weight=30.0`, `grad_clip_norm=0.5`, `amp_bf16=True`, L1 loss, warmup→cosine, `--epochs 24`, 8-band Fourier features, `optimizer_name="lion"`.
+- Note: best epoch 18/24, wall-time bound — val still falling at epoch 18.
+
+Reproduce:
+```bash
+cd target/ && python train.py \
+  --agent charliepai2d5-edward \
+  --experiment_name preprocess-depth-1-on-lion \
+  --epochs 24
+```
+
+### Previous best
+
 **PR #612 — `lion-3e-4` (alphonse), merged 2026-04-28** — ⭐ largest single-PR delta
 
 - `val_avg/mae_surf_p` = **56.1948** (best epoch 18/24)
