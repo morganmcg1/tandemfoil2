@@ -44,10 +44,11 @@
 | ~~#438~~ | ~~fern~~ | ~~lr-2e-3~~ | ~~`Config.lr = 1e-3 → 2e-3` on merged #408 baseline~~ | **CLOSED 04-28 02:35**: val +6.75 % / test +8.33 % vs #408 (+16.92 % / +17.94 % vs current #417). LR ceiling for max_norm=0.5 envelope now bracketed (1e-3 wins, 2e-3 loses). Reassigned fern to #465. |
 | ~~#445~~ | ~~askeladd~~ | ~~ema-decay-0p95~~ | ~~`ema_decay = 0.99 → 0.95` on merged #417 baseline~~ | **CLOSED 04-28 02:45**: val +9.77 % / test +10.24 %. Predicted lose-case fired (balanced-domain sampler noise floor tripped). EMA-decay optimum bracketed [0.97, 0.99]. Reassigned askeladd to #474. |
 | ~~#458~~ | ~~frieren~~ | ~~weight-decay-5e-4~~ | ~~`Config.weight_decay = 1e-4 → 5e-4`~~ | **CLOSED 04-28 03:00**: val +4.76 % / test +3.28 % vs #417 base; +15.59 % / +14.61 % vs current #398. `geom_camber_rc` regressed worst — opposite of predicted OOD-helps pattern. Lose mechanism (slows convergence) dominated. Reassigned to #483. |
-| #465 | fern | cosine-tmax-13 | `T_max=50 → 13`, `eta_min=1e-5` on merged #417 baseline | Replaces closed #438; cashes fern's follow-up #2. Cosine schedule has been degenerate (best-at-last with lr ~95 % of peak) across every merged baseline. Single-knob fix. |
+| ~~#465~~ | ~~fern~~ | ~~cosine-tmax-13~~ | ~~`T_max=50 → 13`, `eta_min=1e-5` on merged #417 baseline~~ | **CLOSED 04-28 03:20**: val +5.56 % vs #417, **+16.46 % vs current #398**. Smoking gun: train loss REVERSED at ep13 — schedule un-trained the model. LR/schedule axis fully mapped: model needs more high-LR steps, not better anneal. Reassigned to #491. |
 | #474 | askeladd | ema-decay-0p97 | `ema_decay = 0.99 → 0.97` on merged #398 baseline | Replaces closed #445; bracket-narrowing run for the EMA-decay optimum. Honest band −1 % to +1 %. |
 | #475 | nezuko | swiglu-inner-256 | `swiglu_inner = 168 → 256` on merged #398 baseline | Capacity sweep on the new SwiGLU baseline. Tests whether SwiGLU's "fixes OOD" property scales with capacity. |
 | #483 | frieren | swiglu-mlp-dropout-0p1 | Add `nn.Dropout(0.1)` inside `SwiGLUMLP.forward` on merged #398 baseline | Replaces closed #458. Tests training-time stochasticity as alternative regularizer to WD. Frieren's own follow-up #4. |
+| #491 | fern | tf32-matmul-precision | `torch.set_float32_matmul_precision('high')` on merged #398 baseline | Replaces closed #465; throughput PR. SwiGLU is matmul-heavy (3 matmuls/block). Predicted 10–20 % per-epoch wall-clock reduction. |
 
 ## Updated picture from round-1 returns
 - **#356 (EMA) merged** at val=132.276 (−3.1 % vs same-run best raw).

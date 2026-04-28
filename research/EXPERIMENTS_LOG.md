@@ -816,3 +816,44 @@ Beats baseline on every val and test split. Strongest single best gain: `val_sin
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #483 | frieren | swiglu-mlp-dropout-0p1 | Add `nn.Dropout(0.1)` inside `SwiGLUMLP.forward` on merged #398 baseline | Replaces closed #458; tests training-time stochasticity as alternative regularizer to WD. Frieren's own follow-up #4. Honest band −1 % to +2 %. |
+
+## 2026-04-28 03:20 — PR #465: cosine T_max 50 → 13 + eta_min=1e-5 (charliepai2d1-fern) — **CLOSED (regression)**
+- Branch: `charliepai2d1-fern/cosine-tmax-13` (closed + branch deleted)
+- Hypothesis: schedule has been degenerate across all merged baselines (best-at-last with cosine still 95 % of peak). Hypothesis: `T_max=13` lets the schedule actually anneal toward eta_min=1e-5 by ep13.
+
+### Headline metrics (best EMA epoch=13/50, timeout-cut)
+| | val_single_in_dist | val_geom_camber_rc | val_geom_camber_cruise | val_re_rand | **val_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` (EMA) | 121.43 | 114.22 | 81.97 | 98.62 | **104.06** |
+
+| | test_single_in_dist | test_geom_camber_rc | test_geom_camber_cruise | test_re_rand | **test_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` | 107.00 | 101.25 | 67.64 | 94.31 | **92.55** |
+
+- vs prior #417 (run base): val +5.56 %, test +5.32 %.
+- vs current #398 (post-SwiGLU): val **+16.46 %**, test **+16.87 %**.
+- All four splits regressed; cruise hardest (+9.15 % val).
+
+### Smoking-gun mechanism (fern's writeup)
+- **Train loss REVERSED direction at ep13** (vol 0.355 → 0.424, surf 0.200 → 0.238). The schedule actively *un-trained* the model.
+- **Best raw arrived at ep12** (106.003), degraded at ep13 (106.119). EMA shadow held best-EMA at ep13 only because the lag baked in earlier (better-trained) iterates.
+- **Effective LR-time-integral was 57 %** of baseline T_max=50 (avg LR 5.43e-4 vs 9.52e-4 across 13 epochs) → 43 % less aggregate optimization work in same wall-clock budget.
+- At ep11–13, lr=1.34e-4 → 6.67e-5 → 2.44e-5 — the per-step update is below the useful learning floor for this model size at this stage.
+
+### Closed-PR insight chain (now complete)
+- #353 → "schedule degenerate at this budget" (correct diagnosis)
+- #408 / #438 → "best-at-last-epoch with cosine still 95 % of peak" (consistent observation)
+- #465 (this PR) → **"the model needs more high-LR steps, not better anneal"** (correct interpretation)
+
+The cosine-to-zero recipe assumes a local minimum has been reached by anneal time; we are not there yet at 13/50 epochs. **LR/schedule axis fully mapped at this budget.** Negative result is durable for the appendix.
+
+### Decision: close, reassign to TF32 matmul precision
+- Clear >5 % regression on val and test vs current baseline. Per CLAUDE.md close criteria.
+- Fern's #1 follow-up (lr=2e-3 + T_max=50) was already tested in their own #438 (val +6.75 % regression). LR ceiling for the `max_norm=0.5` envelope at lr=1e-3 is locked. Pushing higher LR fails for a different reason than the schedule fails. No win available on this axis at this budget.
+- Reassigned to **PR #491 (tf32-matmul-precision)** — single-line throughput PR. Tanjiro's #394 follow-up #1 that's been queued. Optimizer-agnostic so it benefits whoever wins the optimizer-family race (Lion #430 mid-rebase). Predicted 10–20 % per-epoch wall-clock reduction.
+
+## 2026-04-28 03:22 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #491 | fern | tf32-matmul-precision | `torch.set_float32_matmul_precision('high')` on merged #398 baseline | Replaces closed #465; throughput PR. SwiGLU baseline is matmul-heavy (3 matmuls/block × 5 blocks). Predicted ~10–20 % per-epoch wall-clock reduction, free accuracy-neutral on Blackwell. |
