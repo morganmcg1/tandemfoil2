@@ -8,7 +8,13 @@ SPDX-PackageName: senpai
 
 ## Current Best
 
-**No completed runs yet.** This is a fresh research track. The first student experiments are in-flight (PRs #764–#780) and will establish the baseline once they complete.
+| Metric | Value | PR | Branch | Notes |
+|--------|-------|----|--------|-------|
+| `val_avg/mae_surf_p` | **137.0013** | #764 | `charliepai2e2-alphonse/larger-model-capacity` | epoch 9/50 only (30-min timeout); model still in steep descent (-17/epoch); **undertrained** |
+
+This is the first measured number for this track. It was set with n_hidden=256 (4× stock capacity). The model had not converged — val loss was still dropping at ~17 units/epoch at cutoff. This number will be superseded once the in-flight wave completes fuller runs.
+
+**Effective working baseline for second-wave assignment:** treat 137.0 as a soft floor to beat, knowing it reflects undertrained n_hidden=256, not converged stock architecture.
 
 ## Baseline Architecture (stock Transolver from train.py)
 
@@ -30,6 +36,6 @@ SPDX-PackageName: senpai
 
 ## History
 
-| Date | PR | val_avg/mae_surf_p | Notes |
-|------|----|--------------------|-------|
-| — | — | TBD | Awaiting first student runs |
+| Date | PR | val_avg/mae_surf_p | Config | Notes |
+|------|----|--------------------|--------|-------|
+| 2026-04-28 | #764 | 137.0013 | n_hidden=256 | Epoch 9/50; 30-min wall-clock cap; undertrained; first measured number |
