@@ -436,9 +436,11 @@ print(f"Optimiser: head_params={len(head_params)} (lr={cfg.lr * HEAD_LR_MULTIPLI
       f"backbone_params={len(backbone_params)} (lr={cfg.lr:.2e})")
 
 optimizer = torch.optim.AdamW([
-    {"params": backbone_params, "lr": cfg.lr},
-    {"params": head_params, "lr": cfg.lr * HEAD_LR_MULTIPLIER},
-], weight_decay=cfg.weight_decay)
+    {"params": backbone_params, "lr": cfg.lr,
+     "weight_decay": cfg.weight_decay},
+    {"params": head_params, "lr": cfg.lr * HEAD_LR_MULTIPLIER,
+     "weight_decay": cfg.weight_decay * 5.0},
+])
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
 # --- EMA of weights ----------------------------------------------------
