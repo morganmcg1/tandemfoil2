@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -378,7 +379,7 @@ class Config:
     lr: float = 5e-4
     weight_decay: float = 1e-4
     batch_size: int = 4
-    surf_weight: float = 10.0
+    surf_weight: float = 50.0
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -463,6 +464,26 @@ model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
 
+metrics_tag = _sanitize_artifact_token(cfg.wandb_name or cfg.agent or "run")
+metrics_path = Path("research/metrics") / f"{metrics_tag}-{run.id}.jsonl"
+metrics_path.parent.mkdir(parents=True, exist_ok=True)
+metrics_fp = open(metrics_path, "w")
+
+def _jsonl_log(record: dict) -> None:
+    metrics_fp.write(json.dumps(record, default=float) + "\n")
+    metrics_fp.flush()
+
+_jsonl_log({
+    "event": "start",
+    "run_id": run.id,
+    "wandb_name": cfg.wandb_name,
+    "agent": cfg.agent,
+    "config": asdict(cfg),
+    "model_config": model_config,
+    "n_params": n_params,
+    "git_commit": _git_commit_short(),
+})
+
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
 global_step = 0
@@ -534,6 +555,7 @@ for epoch in range(MAX_EPOCHS):
     for k, v in val_avg.items():
         log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
     wandb.log(log_metrics)
+    _jsonl_log({"event": "epoch", "epoch": epoch + 1, **log_metrics})
 
     tag = ""
     if avg_surf_p < best_avg_surf_p:
@@ -596,6 +618,13 @@ if best_metrics:
             test_log[f"test_{k}"] = v
         wandb.log(test_log)
         wandb.summary.update(test_log)
+        _jsonl_log({
+            "event": "test",
+            "best_epoch": best_metrics["epoch"],
+            "best_val_avg/mae_surf_p": best_avg_surf_p,
+            "total_train_minutes": total_time,
+            **test_log,
+        })
 
     save_model_artifact(
         run=run,
@@ -612,4 +641,6 @@ if best_metrics:
 else:
     print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping artifact upload.")
 
+metrics_fp.close()
+print(f"Local metrics JSONL: {metrics_path}")
 wandb.finish()
