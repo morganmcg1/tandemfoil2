@@ -942,3 +942,42 @@ All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the s
   1. **batch=8** — predicted peak VRAM ~85 GB still under 96 GB cap; variance ratio 1/√2 vs batch=4.
   2. **batch=6 + lr scaling** — explicit lr scaling test (lr=6e-4 → 7.5e-4 with batch=6, linear scaling rule).
   3. **Track gradient noise scale (GNS)** — instrumentation to predict optimal batch size analytically.
+
+## 2026-04-28 09:30 — PR #669: Higher base_std=0.005 with steeper decay_horizon=8 (push schedule magnitude)
+- Branch: `charliepai2d2-frieren/feature-noise-higher-steeper` (artifact: `model-feature-noise-higher-steeper-20260428-085147`)
+- Hypothesis: more early-phase regularization (base_std doubled to 0.005) + earlier transition to clean tail (decay_horizon 14→8) compounds the basin-selection benefit confirmed by PR #636.
+
+| metric | this run | baseline (PR #636 = 63.222 / current PR #647 = 61.872) | Δ |
+|---|---|---|---|
+| best `val_avg/mae_surf_p` | **65.716** (epoch 14) | 63.222 / 61.872 | **+3.94% / +6.21% regression** |
+| `test_avg/mae_surf_p` | **56.610** | 54.900 / 54.555 | **+3.11% / +3.77% regression** |
+
+- Per-split val: in_dist +2.44%, camber_rc +1.88%, **camber_cruise +12.71%** (massive regression on the OOD split that benefited most from PR #636), re_rand +2.60%.
+- **Schedule shape verified**: ep1 std=0.005, ep5 std=0.0025, ep8 std=0.000625, ep9+=0.0 ✓
+- **Mechanism failure mode identified (per frieren)**: at base_std=0.005, **90% of batches in ep1 hit gradient clipping** (vs 82.7% at PR #635 lr=6e-4 baseline). The high noise + high LR combination saturates clip(10), destabilizing basin selection during the high-LR phase. Cruise OOD (the split most sensitive to controlled early noise) is hit hardest.
+- The mechanism (early noise → basin selection; clean tail → EMA averaging) is **confirmed and load-bearing**, but the operating point is sharper than expected: doubling peak does NOT double regularization benefit; it crosses into instability.
+- Decision: **CLOSE** — schedule-magnitude axis is now bracketed. (0.0025, 14) sits near the ceiling for "noise that helps without destabilizing".
+- Suggested follow-ups (per frieren):
+  1. Isolate steeper decay alone (base_std=0.0025, decay_horizon=8).
+  2. **Surface-only feature noise** (apply only to per-node positional/SDF dims 0–12, skip per-sample dims 13–23) — orthogonal axis.
+  3. Couple noise to grad-clip headroom (target fixed clip rate).
+  4. Different decay shape (cosine vs linear).
+
+## 2026-04-28 09:30 — PR #668: lr peak bump 6e-4 → 7e-4 (push lr-peak axis further)
+- Branch: `charliepai2d2-edward/lr-peak-7e-4` (artifact: `model-lr-peak-7e-4-20260428-085022`)
+- Hypothesis: at lr=6e-4 ep4 clip rate was 51.5% — well below saturation. lr=7e-4 should extract more from the high-LR phase.
+
+| metric | this run | baseline (PR #635 = 63.131 / current PR #647 = 61.872) | Δ |
+|---|---|---|---|
+| best `val_avg/mae_surf_p` | **63.206** (epoch 18) | 63.131 / 61.872 | **+0.075 (within noise) / +2.16% regression** |
+| `test_avg/mae_surf_p` | **55.963** | 55.026 / 54.555 | **+0.937 / +1.41%** |
+
+- Per-split val (vs PR #635): in_dist +0.190, camber_rc −0.320, camber_cruise +1.125, re_rand −0.692. Mixed and within noise.
+- **Surprise mechanism finding**: ep4 clip rate at lr=7e-4 was **41.9%** — *lower* than the 51.5% at lr=6e-4. Clip(10) is NOT the bottleneck. ep4 mean grad-norm 10.3, max 43.9.
+- The bracket is **NOT clip-rate saturation**; the high-LR phase simply doesn't extract additional progress under the merged regime (3-ep warmup + decaying noise + EMA + clip-10).
+- Decision: **CLOSE** — lr-peak axis is bracketed at 6e-4 under the current stack. Edward's own recommendation: stop pushing lr-peak, future gains from orthogonal axes.
+- Suggested follow-ups (per edward):
+  1. Stop pushing lr-peak axis (bracket robust).
+  2. EMA decay 0.99 (less aggressive — may let more high-LR signal through).
+  3. Warmup shape variations (start_factor, warmup_epochs).
+  4. **Cosine T_max=11 → 14** to align cosine with realized 18-epoch budget; current schedule has post-cosine LR oscillation at ep15-18.
