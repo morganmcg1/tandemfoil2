@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-28 ~23:15 (Fourier PE K=4 merged at 89.71; #861 vol-subsample closed; fern reassigned #888 stratified subsample)
+- **As of:** 2026-04-28 ~23:25 (Fourier PE K=4 merged at 89.71; #816 alphonse FiLM rebase #1 sent back for rebase #2 onto post-#820 baseline)
 - **Most recent human direction:** none yet for this track
 - **Branch:** `icml-appendix-willow-pai2e-r4`
 - **Current best:** `val_avg/mae_surf_p = 89.714` (#820) and `3-split test mean = 88.16` (run `w9xbc0wl`)
@@ -35,7 +35,7 @@ on L1-only baseline). The compounding mechanism is well-understood.
 
 | PR | Student | Round-2 idea | Predicted impact | Status |
 |---|---|---|---|---|
-| #816 | alphonse | FiLM conditioning of LayerNorm (#2) | -5 to -12% | **rebase + rerun (96.61 on L1-only → -2.6% on new baseline expected)** |
+| #816 | alphonse | FiLM conditioning of LayerNorm (#2) | -5 to -12% | **rebase #1 returned val=91.82 (-7.47%) on PRE-#820 baseline; sent back for rebase #2 onto post-Fourier-PE 89.71** |
 | #820 | thorfinn | Fourier PE on (x, z) coords (#3) | **−9.59%** | **MERGED — val baseline 89.71 (new best)** |
 | #863 | askeladd | Seed determinism PR (infra) — replaces merged #797 | infra: variance ↓ | wip |
 | #819 | frieren | Relative L2 mix α=0.5 (sent back from pure α=1.0, +1.07%) | -1 to -4% target | wip retry |
@@ -129,6 +129,19 @@ Best two-by-two interactions to test once round 1 winners are merged:
 - Whether the FiLM `val_geom_camber_rc` regression (+9.9% on alphonse's
   L1-only run) is from spurious foil-2 conditioning in raceCar samples,
   and whether it persists on the rebased baseline.
+  **PARTIAL ANSWER (#816 rebase #1):** Reversed cleanly under ch=[1,1,3]
+  → camber_rc became the LARGEST gain at −13.84%. Mechanistic read:
+  the regression on L1-only was a loss-landscape imbalance, not a
+  conditioning-amplification problem. With pressure up-weighted ×3,
+  FiLM modulation correctly exploits the pressure-dominant gradient
+  signal. Open question: whether this persists once Fourier PE's
+  spectral basis is also in the model (rebase #2 will resolve).
+- **NEW: FiLM × Fourier PE compounding** — rebase #2 of #816 will tell
+  us whether the two levers are additive (predicted: yes, mechanism
+  is orthogonal — input-feature spectral basis vs in-block LN scale)
+  or whether Fourier PE absorbs FiLM's effective capacity. If they
+  compound, val should land at ≤87. If they wash, ≈89.71. Either
+  outcome is a clean appendix-worthy result.
 
 ## Notes / constraints
 

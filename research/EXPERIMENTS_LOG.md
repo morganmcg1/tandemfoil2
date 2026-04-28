@@ -1,5 +1,65 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-28 23:20 — PR #816: FiLM-condition Transolver blocks (rebase #1, val=91.82) — **SENT BACK for second rebase onto #820 baseline**
+
+- Branch: `willowpai2e4-alphonse/film-conditioning`
+- Student: willowpai2e4-alphonse
+- W&B run: [`kn6so193`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/kn6so193)
+
+**Hypothesis.** FiLM-Zero modulates LayerNorm scale/shift via a
+small MLP on the 11 global scalars (log Re, AoA1, NACA1×3, AoA2,
+NACA2×3, gap, stagger). Predicted −5 to −12% on val_avg/mae_surf_p.
+
+**Results vs PRIOR baseline 99.23 (pre-#820, L1+ch=[1,1,3]):**
+
+| Metric | Prior baseline | This run (rebase #1) | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | 99.23 | **91.823** | **−7.47%** |
+| `test_avg/mae_surf_p` | 92.61 | **80.993** | **−12.55%** |
+| Param count | 660 K | 829 K | +26% |
+| Best epoch | 12 | 13 / 13 (timeout) | curve still descending |
+| Wall time | 30.77 min | 31.22 min | +1.5% |
+
+**Per-split val (best epoch 13):**
+
+| Split | Prior baseline | This run | Δ |
+|---|---:|---:|---:|
+| `val_single_in_dist` | 116.68 | 115.03 | −1.41% |
+| `val_geom_camber_rc` | 113.94 | **98.17** | **−13.84%** |
+| `val_geom_camber_cruise` | 75.02 | 69.54 | −7.30% |
+| `val_re_rand` | 91.28 | 84.55 | **−7.37%** |
+| **val_avg** | 99.23 | 91.82 | **−7.47%** |
+
+**Per-split test:** EVERY split improved 9–16% (single −16.48%,
+camber_rc −12.31%, cruise −10.11%, re_rand −9.34%). The cross-split
+robustness is far stronger than typical noise.
+
+**vs CURRENT merged baseline (89.71, post-#820 Fourier PE):**
+val_avg=91.82 sits **+2.36% above** baseline. PR is also CONFLICTING
+on the file paths #820 touched. So it is not directly mergeable.
+
+**Decision.** **Send back for second rebase onto post-#820 advisor
+branch HEAD.** Rationale:
+
+1. PR is CONFLICTING — needs rebase regardless.
+2. The current val=91.82 was earned against the pre-Fourier-PE
+   baseline. We need to re-test against the post-#820 baseline
+   (89.71) to see whether FiLM × Fourier PE compound or one
+   absorbs the other.
+3. Mechanistically they touch orthogonal levers (input-feature
+   spectral basis vs in-block LN modulation), so we predict
+   compounding to ~85–87 val, but require evidence.
+4. The test signal (−12.55% across all 4 splits) is too strong
+   to abandon. Camber_rc reversal under ch=[1,1,3] is
+   mechanistically clean (the channel up-weight rebalances the
+   loss landscape so the conditioning channel finally helps the
+   raceCar foil-2 noise dimensions instead of being amplified by
+   them).
+
+**Threshold to merge after rebase:** val_avg < 89.71 AND test
+4-split mean < 88.16. Sent back at 23:20 with detailed rebase
+instructions and per-split predictions.
+
 ## 2026-04-28 23:15 — PR #861: Volume subsampling keep_frac=0.15 — **CLOSED (superseded by #820 merge)**
 
 - Branch: `willowpai2e4-fern/volume-subsampling`
