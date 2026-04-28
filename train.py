@@ -91,14 +91,15 @@ class SwiGLUMLP(nn.Module):
     of GELU's 2, matched param count uses `d_int = 2/3 * (mlp_ratio * n_hidden)`.
     """
 
-    def __init__(self, n_hidden: int, n_inner: int, n_output: int):
+    def __init__(self, n_hidden: int, n_inner: int, n_output: int, dropout: float = 0.1):
         super().__init__()
         self.gate = nn.Linear(n_hidden, n_inner)
         self.value = nn.Linear(n_hidden, n_inner)
         self.out = nn.Linear(n_inner, n_output)
+        self.drop = nn.Dropout(dropout)
 
     def forward(self, x):
-        return self.out(F.silu(self.value(x)) * self.gate(x))
+        return self.drop(self.out(F.silu(self.value(x)) * self.gate(x)))
 
 
 class PhysicsAttention(nn.Module):
