@@ -218,17 +218,23 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device, split_name: str = "") -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
     ``score.py`` (float64, non-finite samples skipped).
+
+    Per-sample finite check on ``pred_orig`` masks out blown-up predictions so
+    one bad sample cannot poison the whole-split MAE; ``data/scoring.py`` only
+    guards against non-finite ground truth.
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
     n_surf = n_vol = n_batches = 0
+    n_dropped = 0
+    n_kept = 0
 
     with torch.no_grad():
         for x, y, is_surface, mask in loader:
@@ -240,8 +246,36 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+            pred_orig = pred * stats["y_std"] + stats["y_mean"]
 
-            sq_err = (pred - y_norm) ** 2
+            B = pred_orig.shape[0]
+            pred_finite = torch.isfinite(pred_orig.reshape(B, -1)).all(dim=-1)
+            y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            sample_ok = pred_finite & y_finite
+            if not pred_finite.all():
+                bad = int((~pred_finite).sum().item())
+                n_dropped += bad
+                tag = f" in {split_name}" if split_name else ""
+                print(f"[eval] dropping {bad} sample(s) with non-finite predictions{tag}")
+            if not sample_ok.all():
+                keep = sample_ok.unsqueeze(-1).expand(-1, mask.shape[-1])
+                mask = mask & keep
+                is_surface = is_surface & keep
+            n_kept += int(pred_finite.sum().item())
+
+            # Replace any non-finite values with 0 before any masked sums.
+            # IEEE 754 makes NaN * 0 = NaN (and Inf * 0 = NaN), so masking alone
+            # is not enough — both predictions and ground truth must be sanitized
+            # so masked-out positions contribute exactly 0 to the accumulators.
+            pred_clean = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)
+            pred_orig_clean = torch.nan_to_num(pred_orig, nan=0.0, posinf=0.0, neginf=0.0)
+            y_clean = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+            y_norm_clean = torch.nan_to_num(y_norm, nan=0.0, posinf=0.0, neginf=0.0)
+
+            # Squaring finite-but-large padded outputs can still overflow fp32 to
+            # Inf; sanitize post-square as well.
+            sq_err = (pred_clean - y_norm_clean) ** 2
+            sq_err = torch.nan_to_num(sq_err, nan=0.0, posinf=0.0, neginf=0.0)
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
@@ -254,16 +288,23 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             ).item()
             n_batches += 1
 
-            pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            ds, dv = accumulate_batch(pred_orig_clean, y_clean, is_surface, mask, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
 
     vol_loss = vol_loss_sum / max(n_batches, 1)
     surf_loss = surf_loss_sum / max(n_batches, 1)
     out = {"vol_loss": vol_loss, "surf_loss": surf_loss,
-           "loss": vol_loss + surf_weight * surf_loss}
-    out.update(finalize_split(mae_surf, mae_vol, n_surf, n_vol))
+           "loss": vol_loss + surf_weight * surf_loss,
+           "n_dropped": n_dropped, "n_kept": n_kept}
+    finalized = finalize_split(mae_surf, mae_vol, n_surf, n_vol)
+    if n_surf == 0:
+        for ch in ("Ux", "Uy", "p"):
+            finalized.pop(f"mae_surf_{ch}", None)
+    if n_vol == 0:
+        for ch in ("Ux", "Uy", "p"):
+            finalized.pop(f"mae_vol_{ch}", None)
+    out.update(finalized)
     return out
 
 
@@ -359,11 +400,18 @@ def save_model_artifact(
 
 
 def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
+    def _fmt(key: str) -> str:
+        v = m.get(key)
+        return f"{v:.4f}" if v is not None else "  N/A"
+    drop_tag = ""
+    if m.get("n_dropped", 0):
+        drop_tag = f"  [dropped={m['n_dropped']}]"
     print(
         f"    {split_name:<26s} "
         f"loss={m['loss']:.4f}  "
-        f"surf[p={m['mae_surf_p']:.4f} Ux={m['mae_surf_Ux']:.4f} Uy={m['mae_surf_Uy']:.4f}]  "
-        f"vol[p={m['mae_vol_p']:.4f} Ux={m['mae_vol_Ux']:.4f} Uy={m['mae_vol_Uy']:.4f}]"
+        f"surf[p={_fmt('mae_surf_p')} Ux={_fmt('mae_surf_Ux')} Uy={_fmt('mae_surf_Uy')}]  "
+        f"vol[p={_fmt('mae_vol_p')} Ux={_fmt('mae_vol_Ux')} Uy={_fmt('mae_vol_Uy')}]"
+        f"{drop_tag}"
     )
 
 
@@ -394,7 +442,9 @@ MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
+amp_enabled = device.type == "cuda"
+print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else "") +
+      (f" (AMP=bfloat16)" if amp_enabled else ""))
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -511,14 +561,16 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
 
-        vol_mask = mask & ~is_surface
-        surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+        with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp_enabled):
+            pred = model({"x": x_norm})["preds"]
+            sq_err = (pred - y_norm) ** 2
+
+            vol_mask = mask & ~is_surface
+            surf_mask = mask & is_surface
+            vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+            surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
         loss.backward()
@@ -537,7 +589,7 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device, split_name=name)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -624,7 +676,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, split_name=name)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
