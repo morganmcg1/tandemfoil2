@@ -1,5 +1,63 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 08:53 — PR #591 (sent back): linear-Re sampling on pre-EMA stack
+
+- branch: `willowpai2d1-fern/linear-re-sampling-bracket` (in flight as draft after send-back)
+- hypothesis: linear Re weighting (`weight ∝ Re/Re_median`) beats sqrt
+  via more aggressive high-Re emphasis. Predicted -2 to +3%.
+
+### Results (vs PR #531 sqrt baseline; on pre-EMA stack)
+
+| Run | best_epoch | val_avg | Δ vs PR #531 | test_avg | Δ vs PR #531 |
+|---|---|---|---|---|---|
+| **urof57ac** (primary) | 37/50 | **52.6814** | **−2.61%** | 45.8970 | −1.07% |
+| qej9578p (replicate) | 36/50 | 52.7078 | −2.56% | 45.8858 | −1.10% |
+
+**Two-seed reproducibility within 0.05% on val_avg, 0.02% on test_avg —
+exceptionally tight.** Linear vs sqrt is a clear win on the assignment-time
+baseline.
+
+vs current PR #634 baseline (51.70, post-EMA + NaN cleanup): **+1.89%**
+(slight regression). Same goal-post-shift situation.
+
+### Per-split val (vs PR #531 sqrt baseline)
+
+| Split | linear | sqrt | Δ |
+|---|---|---|---|
+| val_single_in_dist | 55.11 | 56.75 | −2.90% |
+| val_geom_camber_rc | 67.16 | 68.60 | −2.10% |
+| val_geom_camber_cruise | 34.93 | 35.36 | −1.21% |
+| val_re_rand | 53.53 | 55.65 | **−3.82%** (biggest win, contra prediction) |
+
+### Within-domain weight quantiles (linear-Re)
+
+| Domain | p10 | p50 | p90 | p90/p10 |
+|---|---|---|---|---|
+| racecar_single | 3.86e-4 | 1.66e-3 | 2.92e-3 | **7.56×** |
+| racecar_tandem | 8.23e-4 | 2.21e-3 | 3.65e-3 | 4.43× |
+| cruise | 8.05e-4 | 2.32e-3 | 3.69e-3 | 4.59× |
+
+Spread roughly doubled vs sqrt (~2.3× → ~5.5× mean). Racecar_single hit the
+predicted 6-8× range; more-balanced domains stayed ~4.5×.
+
+### Analysis & conclusions
+
+- **Sent back, not closed.** Two-seed reproducibility is excellent;
+  linear vs sqrt is genuinely a clean win. But run preceded EMA merge
+  (PR #324 v4) and NaN cleanup (PR #634). Per-epoch wall ~47-48 s
+  confirms pre-EMA stack.
+- **Predicted post-rebase val_avg: 50-51** at 70-90% stacking efficiency.
+  Linear-Re and EMA are orthogonal (sampler vs parameter-trajectory
+  averaging) so the −2.6% effect should mostly transfer.
+- **Useful round-3 finding**: at this stack level, sampler-tuning seed
+  variance is ~0.05% (well below the ±1% canonical band). Tight enough
+  that single-seed sampler-tuning results are reliable.
+- Send-back instructions: rebase onto current advisor branch + re-run
+  with same linear-Re weighting; auto-includes EMA + NaN cleanup.
+- **Followups queued**: Re^1.5 probe (if rebased linear wins big),
+  per-sample Re-weighted loss (round 4), test_cruise sensitivity probe
+  (if rebased linear shows cruise-test regression).
+
 ## 2026-04-28 08:48 — PR #644 (closed): NACA camber-aware learnable embedding
 
 - branch: `willowpai2d1-thorfinn/naca-camber-bin-embedding` (deleted on close)

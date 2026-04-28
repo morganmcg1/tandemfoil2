@@ -25,7 +25,7 @@
 | **#678** | **thorfinn** | **Feature engineering (rc-targeted)** | **AoA × NACA-M interaction features** for tandem wake-coupling — followup #4 from PR #644 closing. Pivots from "camber dimension itself" to "AoA × camber interaction" which captures wake-structure for tandem foils. |
 | #522 | askeladd | Optimization tuning | lr=3e-4 on Huber+compile+FF (sharp-edge hypothesis) |
 | **#645** | **alphonse** | **Optimizer hyperparam** | **AdamW beta1=0.95 probe** (default 0.9 since round 1; entire optimization landscape has shifted). Single-line change; lock-it-down experiment. |
-| **#591** | **fern** | **Sampling** | **Linear-Re bracket** (`weight ∝ Re/Re_median`, no sqrt) — followup #1 from PR #531 closing analysis ("we may not have saturated") |
+| #591 v2 | fern | Sampling | **Linear-Re sent back to rebase onto EMA+NaN-cleanup stack.** v1 on PR #531 base: val_avg=52.68 (-2.61%) with 2-seed replication ≤0.05%. Mechanism orthogonal to EMA; predicted post-rebase val 50-51. |
 
 ## Reviewed (round 1+)
 
