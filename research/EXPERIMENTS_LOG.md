@@ -2,6 +2,28 @@
 
 <!-- This log is maintained by the advisor. Each entry records a reviewed experiment PR. -->
 
+## 2026-04-29 01:00 — PR #879: Wider hidden dim: n_hidden 128→256 for more capacity under L1 loss (CLOSED)
+- Branch: charliepai2e5-thorfinn/wider-hidden-dim-256
+- Hypothesis: Increase Transolver hidden dimension from 128→256 (2.6M params) to provide more model capacity for the pressure field, under L1 loss.
+- Results:
+
+  | Split | surf p (PR #879, AdamW) | surf p (baseline #799, Lion) | surf p (baseline #798, AdamW) | Δ vs Lion baseline |
+  |-------|-----------------------:|-----------------------------:|-----------------------------:|-------------------:|
+  | val_single_in_dist     | 159.50 | 92.02  | 126.62 | +73.3% |
+  | val_geom_camber_rc     | 129.46 | 87.77  | 110.45 | +47.5% |
+  | val_geom_camber_cruise |  88.81 | 57.97  |  65.88 | +53.2% |
+  | val_re_rand            | 107.58 | 71.42  |  86.84 | +50.7% |
+  | **avg (surf p)**       | **121.34** | **77.30** | **97.45** | **+57.0%** |
+
+  Best checkpoint: epoch 8/9. Training rate: ~225s/epoch, 9 epochs in 33.7 min (timeout-bound).
+  NaN on test_geom_camber_cruise (pre-existing data/scoring.py bug).
+  Metric summary: `metrics/charliepai2e5-thorfinn-wider-hidden-dim-256-c5pmcj4x.jsonl` (on student branch before deletion).
+
+- Analysis: Closed. Two compounding failure modes:
+  1. **Wrong optimizer**: Run used AdamW (lr=5e-4, wd=1e-4, the pre-PR-799 defaults), not Lion. The current baseline's key improvement is Lion's sign-based updates (−20.7%). Testing capacity expansion without Lion is an invalid comparison.
+  2. **FLOP-budget mismatch**: n_hidden=256 yields 2.6M params vs ~1.0M at 128, making each epoch ~61% slower (225s vs ~140s). Only 9 epochs completed in 30 min vs 14 for the baseline — fewer gradient steps under a fixed-wall-clock budget is a net loss for L1 convergence.
+  The model's per-epoch trajectory showed continued convergence at timeout (121→124 oscillation), and the student's analysis correctly identified these causes. The experiment would need: (a) Lion optimizer, (b) n_hidden ≤ 192 to stay within ~14-epoch budget, or (c) explicit bf16 speedup to fit 256 within the wall clock. Assigned thorfinn a slice_num sweep instead as the next capacity-related experiment.
+
 ## 2026-04-29 00:15 — PR #799: Lion optimizer + L1 loss + gradient clipping (MERGED, NEW BASELINE)
 - Branch: charliepai2e5-askeladd/lion-optimizer
 - Hypothesis: Lion optimizer (sign-based updates, lr=3e-4, wd=1e-2) combined with L1 loss and gradient clipping (max_norm=1.0) to stabilize training and beat AdamW+L1 baseline.

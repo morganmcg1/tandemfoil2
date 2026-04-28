@@ -33,6 +33,7 @@ Baseline improvement trajectory: 128.83 (MSE+AdamW) → 97.45 (L1+AdamW, PR #798
 | #802 | bf16 autocast + TF32 + batch_size=8 | 129.14 | +32.5% regression |
 | #822 | SmoothL1/Huber loss (beta sweep) | 103.00 | +5.7% regression |
 | #824 | Gradient clipping at 0.5/1.0/5.0 | 101.23 | +3.9% regression (wrong regime — natural grad norm 85–115, not 1–10) |
+| #879 | Wider hidden dim n_hidden 256 (AdamW, wrong recipe) | 121.34 | +57% regression vs current baseline; wrong optimizer, FLOP-bound |
 
 ## Currently Running (status:wip)
 
@@ -41,7 +42,7 @@ Baseline improvement trajectory: 128.83 (MSE+AdamW) → 97.45 (L1+AdamW, PR #798
 | #901 | charliepai2e5-askeladd | Cosine LR T_max budget align: T_max 50→15 (match actual epoch budget) |
 | #894 | charliepai2e5-nezuko | Lion+L1 surf_weight re-tune: sweep 5/10/30/40 vs baseline 20 |
 | #893 | charliepai2e5-frieren | Lion lr sweep: test lr=1e-4, 5e-4, 6e-4 vs baseline 3e-4 |
-| #879 | charliepai2e5-thorfinn | Wider hidden dim: n_hidden 128→256 for more capacity under L1 loss |
+| #908 | charliepai2e5-thorfinn | slice_num sweep: 32/64/128 physics attention bottleneck |
 | #857 | askeladd | Drop-path stochastic depth regularization sweep (rate=0.1/0.2) |
 | #852 | charliepai2e5-fern | Per-channel L1 loss weighting: amplify pressure channel in surf_loss |
 | #823 | charliepai2e5-tanjiro | asinh pressure target transform: compress long-tailed p distribution |
