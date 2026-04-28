@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-28 ~22:20 (NaN-guard merged; seed PR launched as priority infra)
+- **As of:** 2026-04-28 ~22:40 (round-1 cleanup complete; nezuko + edward reassigned; round-2 fully populated)
 - **Most recent human direction:** none yet for this track
 - **Branch:** `icml-appendix-willow-pai2e-r4`
 - **Current best:** `val_avg/mae_surf_p = 99.226` (#754) and `test_avg/mae_surf_p = 92.610` ✓ (#797 unblock, run `2hcmefh9`)
@@ -25,8 +25,8 @@ weight signal.
 | #749 | alphonse | Capacity 256×8 | **closed** (no convergence in 30-min budget) |
 | #755 | frieren | slice_num 128 | **closed** (+33% epoch cost cancels gain) |
 | #760 | thorfinn | batch_size 8 | **closed** (BS=8 viable but no L1 retest) |
-| #753 | edward | surf_weight 20/30/50 | wip (round 1, L1+ch retest) |
-| #757 | nezuko | 5% warmup + cosine on L1+ch=[1,1,3] | wip (sent back to retest on new baseline) |
+| #753 | edward | surf_weight 20/30/50 | **closed** (sw=30 best at 125.80; superseded by ch=[1,1,3] merge) |
+| #757 | nezuko | 5% warmup + cosine on L1+ch=[1,1,3] | **closed** (+3.81% worse; schedule family exhausted) |
 
 ### Round 2 in flight (orthogonal, on top of L1 + ch=[1,1,3] = 99.23)
 
@@ -38,14 +38,22 @@ weight signal.
 | #851 | tanjiro | Huber loss δ=1.0 (#5) — replaces #818 SGDR (closed) | -3 to -8% | wip |
 | #819 | frieren | Relative L2 loss (per-sample norm) (#1) | -5 to -15% | wip |
 | #861 | fern | Volume subsampling (15%) (#7) — replaces #829 (closed) | -3 to -8% | wip |
+| #872 | nezuko | Domain-ID embedding 3-class (#8) — replaces #757 (closed) | -2 to -6% | wip |
+| #873 | edward | EMA model weights (Polyak) — replaces #753 (closed) | -1 to -3% | wip |
 
 **Closed in round 2:**
 - #818 tanjiro SGDR T_0=10 → +6% worse, structural budget mismatch
-  (restart fires at natural convergence epoch). Schedule lever family
-  exhausted at this budget — two negatives in a row (#758 + #818).
+  (restart fires at natural convergence epoch).
 - #829 fern p-channel 5× → +3.6% worse. Optimum in (3×, 5×). Channel-
   weight scalar lever saturated at 3×; split-aware weighting would be
   the next step but is a larger redesign.
+- #757 nezuko warmup retest → +3.81% worse on the new baseline.
+  **Schedule lever family is now exhausted at this 30-min budget** —
+  three consecutive negatives (#758 + #818 + #757).
+- #753 edward surf_weight sweep → superseded by L1+ch=[1,1,3] merge.
+  Best (sw=30 at 125.80) sits 27% above current baseline because runs
+  predate the channel-weight merge. **`surf_weight × channel_weights`
+  lever family is exhausted** — they're multiplicative, not orthogonal.
 
 ## Round 2 hypotheses ranked and ready
 
@@ -84,6 +92,11 @@ Best two-by-two interactions to test once round 1 winners are merged:
 
 - Which lever contributes more: relative L2 loss vs. FiLM conditioning. They
   likely compound but the interaction is unknown.
+- **FiLM (continuous) vs Domain-ID (categorical) conditioning** — both touch
+  the regime-information story but with different mathematical mechanisms
+  (multiplicative LayerNorm scale vs additive token-stream embedding). They
+  may compound or one may dominate. nezuko's #872 vs alphonse's #816
+  rebase will resolve this.
 - **Channel-weight optimum is settled** at 3× — fern's sweep showed 5× is
   past the inflection. Split-level heterogeneity (camber_rc still gains
   from more p-weight, others hurt) suggests split-aware weighting as a

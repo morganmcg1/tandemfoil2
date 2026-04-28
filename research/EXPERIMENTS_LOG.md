@@ -1,5 +1,80 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-28 22:35 — PR #757: 5% warmup + cosine retest on L1+ch=[1,1,3] — **CLOSED (superseded)**
+
+- Branch: `willowpai2e4-nezuko/warmup-cosine`
+- Student: willowpai2e4-nezuko
+- W&B run: nezuko's retest on the merged baseline
+
+**Hypothesis.** Re-test 5% linear warmup + cosine decay against the
+merged L1+ch=[1,1,3] baseline (99.23) — original run predated the channel-
+weight merge.
+
+**Results.** `val_avg/mae_surf_p = 103.00` vs baseline 99.23 = **+3.81%
+worse**. Damage concentrates on `geom_camber_rc (+7.23%)` and
+`re_rand (+7.42%)`. Student's own verdict: *"Don't merge this PR.
+Warmup is dominated by the existing L1 + channel-weight baseline at the
+30-min budget. Recommendation: close as superseded."*
+
+**Decision.** Closed. **Schedule lever family is now exhausted at this
+30-min budget** — three negatives in a row: #758 lr+warmup (+9.7%), this
+#757 warmup retest (+3.81%), #818 SGDR T_0=10 (+6%). The 30-minute hard
+timeout consistently puts cosine annealing at peak performance and any
+schedule that delays / restarts the lr undershoots.
+
+Reassigned nezuko → Domain-ID embedding (#872) as a **structural** lever
+(architectural rather than schedule-based) — gives the model an explicit
+3-class regime hook (single / tandem-rc / tandem-cruise) derived from
+gap and AoA1, addressing the discontinuity baked into the dataset
+splits.
+
+## 2026-04-28 22:35 — PR #753: surf_weight sweep 20/30/50 — **CLOSED (superseded)**
+
+- Branch: `willowpai2e4-edward/surf-weight-sweep`
+- Student: willowpai2e4-edward
+- W&B group: [`willow-pai2e-r4-surf-weight-sweep`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/groups/willow-pai2e-r4-surf-weight-sweep)
+- Runs: `0l619f0v` (sw=20), `bbecow9g` (sw=30), `zmu5iilg` (sw=50)
+
+**Hypothesis.** Boost `surf_weight` past the conservative 10 to focus
+gradient on surface (the only ranked channel). Predict −3 to −10% with
+peaked-not-monotonic shape.
+
+**Results (predates L1+ch=[1,1,3] merge):**
+
+| `surf_weight` | `val_avg/mae_surf_p` | `test_avg/mae_surf_p` |
+|---|---:|---:|
+| 20 | 136.23 | 126.38 |
+| **30** | **125.80** | **119.51** |
+| 50 | 133.13 | 128.32 |
+
+Best of sweep: sw=30 with val=125.80. Curve shape was correctly peaked,
+not monotonic (sw=50 over-tilts: surface +1.5%, volume +14.9%).
+Edward's analysis was clean and the bug-discovery comment that
+preceded these runs is what unblocked the cruise `-Inf` issue (now
+fixed via merged #797).
+
+**Analysis.** Numbers sit ~+27% above the current merged baseline 99.23
+because the runs predate L1+ch=[1,1,3] (#754). The merged channel
+weighting `[1,1,3]` already gives pressure 3× per-channel weight, so
+sw=10 + ch=[1,1,3] is effectively `sw_eff_p ≈ 30` on pressure. Re-running
+this sweep upward on the new baseline would just push past edward's
+own identified tipping point.
+
+The `surf_weight × channel_weights` lever family is **multiplicative,
+not orthogonal**, and combined with fern's #829 channel-weight
+saturation finding (3× is past the inflection at 5×), the per-channel
+loss-scaling lever family is now exhausted. Split-aware loss weighting
+or learnable surf_weight would be a round-3 redesign, not a round-2
+sweep.
+
+**Decision.** Closed as superseded. Edward's in-PR custom NaN workaround
+is replaced by canonical guards in merged #797.
+
+Reassigned edward → EMA model weights (Polyak averaging, #873) — a
+**snapshot-selection** lever in a fresh family (implicit regularization,
+not loss reformulation), orthogonal to all in-flight round-2 work and
+predicted to compound with everything that lands.
+
 ## 2026-04-28 22:15 — PR #797: NaN/Inf guards in evaluate_split — **MERGED (infra unblock)**
 
 - Branch: `willowpai2e4-askeladd/nan-guard-on-L1` (squashed)
