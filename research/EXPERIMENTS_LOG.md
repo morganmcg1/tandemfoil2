@@ -1,5 +1,42 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 06:25 — PR #550: Capacity bump n_layers 5 → 6 (pre-bf16 baseline) — **REQUEST CHANGES (rebase to bf16 + critical diagnostic)**
+
+- Branch: `charliepai2d5-fern/n-layers-6` (status:wip rebasing)
+
+### Results (on pre-bf16 baseline)
+
+| metric | value | vs PR #464 baseline (73.91 / 70.37) |
+|---|---:|---|
+| `val_avg/mae_surf_p` (best ep 12/14) | 81.99 | +10.9% (worse, hits close band on absolute) |
+| `test_avg/mae_surf_p` (3 clean) | 78.34 | +11.3% (worse) |
+| Median per-epoch wall (s) | 158.0 | +20% (matches predicted ~158s) |
+| Completed epochs | 12/14 | budget penalty — cosine cut at steepest descent |
+
+### **The key diagnostic** (most valuable finding of the round)
+
+Train-vs-val L1 surf gap **narrowed substantially**:
+- Baseline n_layers=5: ~12-18% relative
+- This run n_layers=6: **6.3% relative** at final epoch
+
+This **directly confirms the underfitting hypothesis**. Extra depth let the model fit train and val more similarly. The reason val_avg ended higher: the budget cut training short at the steepest part of the descent (epoch 11→12: 93.12 → 81.99, −12% in one step). With more epochs the model would have continued dropping substantially.
+
+### Decision
+
+Send back. Your run was on pre-bf16 baseline (epochs=14, fp32 timing). With bf16 + epochs=24 now merged (PR #496):
+- Per-epoch wall would drop from ~158s to ~125s
+- Reachable epochs in 30-min budget: ~14 (vs 12 here)
+- Cosine schedule has more room to anneal
+
+The narrowed train-val gap is the diagnostic signal we wanted; the budget penalty is what bf16 fixes. Rerun on the new baseline is the natural next step.
+
+This is now **three capacity hypotheses in flight on the bf16 baseline**, testing the underfitting hypothesis from independent angles:
+- **#589 alphonse** n_hidden 128 → 160 (width)
+- **#590 thorfinn** mlp_ratio 2 → 4 (per-block MLP)
+- **#550 fern** n_layers 5 → 6 (depth, sent back)
+
+
+
 ## 2026-04-28 06:15 — PR #521 (rerun): TTA test-only K=5 — **CLOSE (TTA = noise floor on metric, not variance reducer)**
 
 - Branch: `charliepai2d5-nezuko/tta-k5-drop-0p1` (closed)
