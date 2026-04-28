@@ -1,6 +1,6 @@
 # Baseline — TandemFoilSet (willow-pai2d-r5)
 
-**Status:** Round 1 in flight. PR #441 (bf16) merged at commit `b605b44`, then PR #434 (gradient clipping max_norm=1.0) merged at commit `426b4c4` as the new round-1 baseline. 2-seed mean: **100.44 ± 5.54** at 19 epochs (vs ~117 pre-grad-clip, -14.4%). Multi-seed calibration in flight via PR #428 (thorfinn). Several round-2 stack candidates pending re-rebase: Huber #413 (rebased once, awaiting confirmation on bf16+grad-clip), budget-aware cosine #427, attention dropout #557.
+**Status:** Round 1 in flight. Sequential merges: PR #441 bf16 (commit `b605b44`) → PR #434 grad-clip max_norm=1.0 (commit `426b4c4`) → PR #413 surface-Huber δ=1.0 (commit `e35acdf`). New round-1 baseline: **2-seed mean = 90.98 ± 0.81** at 19 epochs (CV ~0.9% — best variance band of round 1, back to bf16-baseline-level tightness). Composition arithmetic: stack captures ~78% of perfect-additive (-26.4 vs -33.7 max), confirming Huber and grad-clip are **complements** attacking different parts of the optimization step. Several round-2 stack candidates in flight.
 
 **Quirk note:** `max_norm=1.0` clips 100% of training steps at this regime (median pre-clip grad-norm ≈ 38). Effectively normalized-gradient training (Lion-like). Future students changing the optimizer or LR should be aware that the gradient-magnitude amplification effect is removed; lr values that would overshoot under unclipped MSE are safe here.
 
@@ -12,7 +12,7 @@ The baseline is the default Transolver in `train.py` at HEAD of `icml-appendix-w
 - **Optimizer:** AdamW `lr=5e-4`, `weight_decay=1e-4`
 - **Schedule:** CosineAnnealingLR with `T_max=epochs`
 - **Batch size:** 4
-- **Loss:** MSE in normalized space, `loss = vol_loss + surf_weight * surf_loss`, `surf_weight=10`
+- **Loss:** MSE volume + Huber(δ=1.0) surface, in normalized space; `loss = vol_loss_mse + surf_weight * surf_loss_huber`, `surf_weight=10` (PR #413)
 - **Mixed precision:** bf16 autocast in train + eval, fp32 cast before squaring loss + before denormalization (PR #441)
 - **Gradient clipping:** `clip_grad_norm_(model.parameters(), max_norm=1.0)` after `loss.backward()` (PR #434)
 - **Training:** `epochs=50`, capped by `SENPAI_TIMEOUT_MINUTES=30` wall-clock
@@ -41,7 +41,8 @@ _(round 1 in flight; baseline distribution being established by thorfinn's PR #4
 
 | PR | val_avg/mae_surf_p | test_avg/mae_surf_p | Notes |
 |----|--------------------|---------------------|-------|
-| **#434** | **100.44 ± 5.54** (n=2) | 96.73 (3-finite-split) * | bf16 + gradient clipping max_norm=1.0; -14.4% vs #441 baseline; 100% steps clipped, median pre-clip grad-norm ≈ 38 |
+| **#413** | **90.98 ± 0.81** (n=2) | 88.16 (3-finite-split) * | + surface Huber δ=1.0; -9.4% vs #434; complements grad-clip (~78% of perfect-additive); CV ~0.9% — best-yet variance |
+| #434 | 100.44 ± 5.54 (n=2) | 96.73 (3-finite-split) * | + gradient clipping max_norm=1.0; -14.4% vs #441; 100% steps clipped → Lion-like normalized-gradient regime |
 | #441 | 117.37 ± 0.85 (n=2) | 115.59 (3-finite-split) * | bf16 mixed precision standalone; 19 epochs reached vs ~14 fp32; CV ~0.7% |
 
 \* `test_avg/mae_surf_p` 4-split mean is still NaN on cruise pending PR #375 (data/scoring.py fix). Per-channel test surf MAEs: single 122.76, geom_camber_rc 118.27, re_rand 105.73 (3-finite mean). Once #375 lands, can re-evaluate the saved bf16 artifacts (`model-bf16_seed0-cgitj1dc`, `model-bf16_seed1-i45ys5ih`) for canonical 4-split numbers.

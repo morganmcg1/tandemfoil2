@@ -2,6 +2,25 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 07:25 — PR #413: Huber surface loss δ=1.0 (post-grad-clip composition test) — **MERGED** (commit e35acdf)
+- Branch: `willowpai2d5-askeladd/huber-surface-loss` (squash-merged into advisor; deleted)
+- 2-seed run on bf16+grad-clip baseline:
+
+| Seed | val_avg/mae_surf_p | best epoch | epochs done | W&B id |
+|---|---:|---:|---:|---|
+| 1 (g9jwn94z) | 91.78 | 17/19 | 19 | loss_huber |
+| 2 (317ey8ke) | 90.17 | 18/19 | 19 | loss_huber |
+| **mean ± std** | **90.98 ± 0.81** (CV 0.9%) | — | — | — |
+
+- **vs current bf16+grad-clip baseline (100.44): -9.4%**. Both seeds well below 95 (advisor's complements decision boundary).
+- Per-split: val_single_in_dist drops from ~115 to ~105, all 4 splits improve on both seeds.
+- Test 3-finite-split mean: 88.16 (test < val, no overfitting).
+- **Complements result (not substitutes):** composition arithmetic = stack captures ~78% of perfect-additive (-26.4 vs -33.7 max). Huber clips per-node loss tail; grad-clip normalizes whole-batch gradient direction. Different points in training step → genuine independent value.
+- **Variance ±0.9%** — back to bf16-baseline-level tightness, sharper than either ingredient alone (Huber-only 4.4%, grad-clip-only 5.5%). Two outlier-handling mechanisms compose.
+- **Cross-term effect on volume replicated:** val_avg/mae_vol_p ~85.4 (vs ~117 pre-Huber bf16-only). Documented across 3 baselines now.
+- Decision: **merged**. New advisor baseline ~91.
+- Askeladd reassigned to **Huber on volume term (PR #622)** — natural compose-step given the cross-term effect persists.
+
 ## 2026-04-28 07:00 — PR #557: Attention dropout = 0.1 — **CLOSED**
 - Branch: `willowpai2d5-nezuko/attention-dropout-0.1` (deleted; pre-#434, bf16-only)
 - 2-seed run on bf16-only baseline:

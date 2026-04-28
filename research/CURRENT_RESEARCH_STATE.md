@@ -1,10 +1,10 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 07:05
+- **Date:** 2026-04-28 07:30
 - **Advisor branch:** `icml-appendix-willow-pai2d-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r5`
 - **Most recent human research direction:** none received yet
-- **Empirical baseline (round 1):** PR #441 (bf16) → PR #434 (grad-clip max_norm=1.0) sequential merges. Current advisor HEAD at commit `426b4c4`. 2-seed mean: **100.44 ± 5.54** at 19 epochs reached. Quirk: 100% of training steps clipped at this regime — effectively normalized-gradient training. Advisor HEAD: slice_num=64, bf16 autocast, grad-clip max_norm=1.0, seed flag.
+- **Empirical baseline (round 1):** PR #441 (bf16) → PR #434 (grad-clip max_norm=1.0) → PR #413 (surface Huber δ=1.0) sequential merges. Current advisor HEAD at commit `e35acdf`. 2-seed mean: **90.98 ± 0.81** at 19 epochs reached. CV ~0.9% — the tightest variance of round 1, back to bf16-baseline level. Advisor HEAD: slice_num=64, bf16 autocast, grad-clip max_norm=1.0, surface-Huber δ=1.0, seed flag.
 - **Cross-cutting bug being fixed:** `data/scoring.py:accumulate_batch` propagates `NaN` through the per-sample-skip mask (`NaN * 0.0 = NaN`, plus `0 * inf = NaN` per alphonse's independent diagnosis). Root cause is 761 non-finite values in the `p` channel of `test_geom_camber_cruise/000020.pt`'s ground truth `y`. Fix in flight as PR #375 (edward) — advisor-authorized exception to the read-only contract on `data/`.
 - **#336 reverted (commit 605b439):** Direct apples-to-apples evidence from alphonse PR #329 rebased and frieren PR #338 rebased confirmed slice_num=128 was a partial-credit merge inside the 30-min cap. All round-1 in-flight PRs forked off pre-revert advisor will need a small rebase before they can merge (only `train.py` model_config will conflict — trivial resolution: keep advisor's slice_num=64).
 - **Seed variance (NEW from #331 close):** measured at **±10-15% on `val_avg/mae_surf_p` at 12 epochs** (askeladd's v1=141.998 vs v2=163.280 same config). Many round-1 apparent wins on single seeds are inside this noise band. Going forward, ask winning candidates for a 2-seed confirmation before merge.
@@ -23,7 +23,7 @@ Round 1 in progress. Strategy:
 | PR | Student | Hypothesis | Status |
 |----|---------|------------|--------|
 | #586 | alphonse  | lr=1e-3 with bf16+grad-clip baseline (2-seed)                   | wip (new; replaces closed #537) |
-| #413 | askeladd  | Huber loss for surface pressure (δ=1.0)                          | wip (sent back; bf16-baseline 2-seed mean 100.58 ± 4.35 — virtually tied with #434 grad-clip; needs rebase + 1-2 confirmation seeds on bf16+grad-clip baseline to test composition) |
+| #622 | askeladd  | Apply Huber to volume term too (cross-term compose-step, 2-seed) | wip (new; replaces merged #413 — apply Huber loss to both volume and surface terms to test if cross-term effect compounds) |
 | #427 | frieren   | Budget-aware cosine (T_max matched to realised epochs)          | wip (sent back; 3 OLD-baseline runs confirmed mechanism (-3 to -11% vs #336), need rebase + 2-seed re-run with --cosine_t_max=19 on bf16+grad-clip baseline) |
 | #610 | nezuko    | Higher weight decay (wd=5e-4, 2-seed)                            | wip (new; replaces closed #557 — deterministic regularizer alternative to dropout) |
 | #340 | tanjiro   | Per-channel pressure-weighted surface loss (3× weight on `p`)   | wip |
@@ -41,7 +41,8 @@ Round 1 in progress. Strategy:
 | #339 | nezuko | bs=8 + sqrt(2) LR scaling — **closed**, bs=8/lr=7e-4 = 144.71 (+9-20% vs round-1 same-baseline cluster). Wall-clock is binding constraint at our cap. sqrt(2) LR rule itself is validated and preserved for round 2. |
 | #441 | alphonse | bf16 mixed precision standalone — **merged** (commit b605b44). 2-seed mean 117.37 ± 0.85, CV ~0.7%. |
 | #505 | nezuko | lr=3e-4 multi-seed — **closed**, mean 137.89 (+17.5% vs bf16 baseline) but CV 4.6% confirmed lower-LR variance reduction; mechanism duplicative of bf16's extra-epochs effect. Round-2 stack candidate. |
-| #434 | fern | Gradient clipping (max_norm=1.0) — **merged** (commit 426b4c4). 2-seed mean 100.44 ± 5.54 = -14.4% vs bf16 baseline. New round-1 baseline. 100% of steps clipped → effectively Lion-like normalized-gradient training. |
+| #434 | fern | Gradient clipping (max_norm=1.0) — **merged** (commit 426b4c4). 2-seed mean 100.44 ± 5.54 = -14.4% vs bf16 baseline. 100% of steps clipped → effectively Lion-like normalized-gradient training. |
+| #413 | askeladd | Surface Huber δ=1.0 — **merged** (commit e35acdf). 2-seed mean 90.98 ± 0.81 = -9.4% vs bf16+grad-clip; complements grad-clip (~78% of perfect-additive). New round-1 baseline. CV ~0.9% — best variance band of round 1. |
 | #537 | alphonse | AdamW β2=0.95 — **closed**, mean 116.61 within bf16-baseline noise but variance widened 5×. Filed as round-2 candidate with warmup pairing. |
 | #557 | nezuko | Attention dropout = 0.1 — **closed**, mean +2.2% vs bf16-only baseline, variance widened 4×, OOD-better-than-in-dist prediction failed. Pattern: stochasticity-amplifying interventions hurt under short-training regime. |
 | #376 | fern   | Wider MLP (mlp_ratio 2→4) — **closed**, +4.9% regression and OOD splits all worse |
