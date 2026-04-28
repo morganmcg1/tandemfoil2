@@ -1,5 +1,86 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 03:42 — PR #314 round-3 (merged, NEW BASELINE): SmoothL1/Huber + bf16 + FF + `torch.compile`
+
+- branch: `willowpai2d1-edward/huber-loss` (deleted on merge)
+- hypothesis: stack SmoothL1 (β=1.0) on top of compile+FF baseline.
+  Predicted post-rebase val_avg in 65-75 range based on prior 91% stacking
+  efficiency (FF + Huber).
+
+### Results
+
+| Metric | Value | Δ vs prior baseline (PR #416, compile+FF) |
+|---|---|---|
+| Best `val_avg/mae_surf_p` | **69.8310** (epoch 35 of 36) | **−13.62%** |
+| `test_avg/mae_surf_p` | **61.7177** | **−15.93%** |
+| Per-epoch wall (steady) | ~49 s | ≈baseline |
+| Cold compile time | 32.5 s | up from 27.85 s on compile+FF (SmoothL1 graph nodes) |
+| Epochs completed | 36 / 50 | −1 (essentially same) |
+| Peak GPU memory | **24.1 GB steady** | ≈baseline (memory anomaly RESOLVED) |
+| W&B run | `fs3tf90w` (`smoothl1-beta1-on-compile-ff`) | — |
+
+Cumulative improvement: **−51.6% val_avg / −53.0% test_avg** since original PR #312 reference (144.21 → 69.83, 131.18 → 61.72).
+
+### Stack composition
+
+| Stack | val_avg | Δ vs FF baseline (106.92) |
+|---|---|---|
+| FF alone | 106.92 | — |
+| Compile alone (on FF) | 80.85 | −26.07 |
+| Huber alone (on FF) | 92.32 | −14.60 |
+| **Compile + Huber (on FF) — this run** | **69.83** | **−37.09** |
+| Sum-of-individuals | — | −40.67 |
+| **Capture ratio** | — | **91.2%** |
+
+The 91% capture ratio is identical to the FF + Huber stack alone (also
+91%), indicating the three mechanisms (compile = execution graph; FF =
+input representation; Huber = loss gradient profile) live on genuinely
+orthogonal axes. The remaining 9% overlap is the shared "more cosine
+schedule reaches the model" mechanism.
+
+### Memory anomaly resolved
+
+Rounds 1 & 2 showed transient ~95-98 GB peaks attributable to SmoothL1
+autograd intermediates (`|x-y|`, `min(|x-y|, β)`, where-mask). Compile
+flat-lines at 24.1 GB across all 36 epochs because the inductor graph
+**fuses these intermediates into a single kernel** without materializing
+them as separate tensors. ~78 GB headroom now exists at the new baseline.
+
+This resolves my pre-rebase memory prediction error (88-90 GB expected;
+actual 24.1 GB) — naive memory accounting undercounts compile's kernel-
+fusion benefits when the loss has compound autograd intermediates.
+
+### Per-split val (epoch 35 best checkpoint)
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy | mae_vol_p |
+|---|---|---|---|---|
+| val_single_in_dist | 76.34 | 0.92 | 0.48 | 83.08 |
+| val_geom_camber_rc | 81.78 | 1.37 | 0.66 | 89.00 |
+| val_geom_camber_cruise | 52.16 | 0.70 | 0.40 | 53.36 |
+| val_re_rand | 69.04 | 1.04 | 0.52 | 68.97 |
+| **val_avg** | **69.83** | 1.01 | 0.52 | 73.60 |
+
+Per-split structure mirrors prior runs: cruise easiest, single-in-dist
+hardest. **Ux/Uy MAE also at strong levels** — Huber+compile+FF improves
+all three velocity/pressure surface channels, not just `surf_p`.
+
+### Analysis & conclusions
+
+- **Merged. New round baseline.** Cumulative −51.6% across the round.
+- Three orthogonal mechanisms compose to ~91% efficiency. The "stack
+  effect ratio" stayed constant from 2-mechanism to 3-mechanism stacks,
+  which is a strong empirical signal that the next intervention is
+  unlikely to capture much less than its measured single-lever delta.
+- **78 GB VRAM headroom** opens batch-size scaling investigation again
+  (PR #360 ruled it out without compile; memory math is now different).
+- Followups assigned: pure L1 on this baseline (edward followup #2,
+  PR #504). β sweep, EMA stack, and batch-size revisit are queued.
+- Still a clear schedule-budget ROI: cosine T_max=50 with 36 epochs
+  reachable means lr at end is 9e-5 (~18% of peak), still misaligned.
+  Fern's #407 with --epochs 37 is the precise alignment.
+
+
+
 ## 2026-04-28 02:56 — PR #416 round-2 (merged, NEW BASELINE): `torch.compile(dynamic=True)` + bf16 + FF
 
 - branch: `willowpai2d1-alphonse/torch-compile-pilot` (deleted on merge)

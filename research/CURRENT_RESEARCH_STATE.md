@@ -6,101 +6,92 @@
 
 ## Current research focus
 
-**Round baseline is PR #416 (alphonse, compile + bf16 + FF): val_avg = 80.85, test_avg = 73.41** — cumulative **−44.0%** vs the original PR #312 reference (144.21 → 80.85). The biggest jumps came from compile (−24.4%), FF (−12.2% earlier), and bf16 (−15.5% earlier).
+**Round baseline is PR #314 (edward, SmoothL1/Huber + compile + FF + bf16): val_avg = 69.83, test_avg = 61.72** — cumulative **−51.6% on val_avg / −53.0% on test_avg** vs the original PR #312 reference (144.21 → 69.83). Over half the metric is gone in a single round.
 
-**Big update on rc-camber**: FF on its own only relieved the OOD `geom_camber_rc` split by −3.3%, hinting at a "camber→pressure mapping" representation bottleneck. Compile + FF takes it to **−25.8%** on the same split — so the rc-camber gap was *schedule-truncation-bound*, not a representation bottleneck. The "camber-aware feature embedding" round-2 experiment has been **dequeued**.
+The four merged mechanisms — bf16, FF K=8, `torch.compile(dynamic=True)`, SmoothL1(β=1.0) — sit on three distinct axes (execution / input feature / loss gradient profile) and compose at **~91% of sum-of-individuals** efficiency. That ratio held constant from 2-mechanism (FF + Huber) to 3-mechanism (compile + FF + Huber), which is a strong signal the next stacked intervention will retain its single-lever delta.
 
-Themes in play:
+**Big open questions for round 3:**
 
-1. **Throughput / schedule** — compile merged. Followups: `mode="reduce-overhead"` (alphonse #481, just-assigned), cosine T_max alignment (fern #407, in flight). With 37 epochs reachable, T_max=50 is increasingly misaligned.
-2. **Loss formulation** — Huber+FF clean win (edward #314, sent back to rebase onto compile+FF — predicted post-rebase val_avg 65-75). Pressure-weighting falsified post-bf16 (askeladd #313 closed); refined surface-only variant in flight (#451).
-3. **Spatial features** — FF merged. Tanjiro testing Gaussian RFF (#443) as the representation followup.
-4. **Stability / regularization** — nezuko EMA decay=0.999 rebased (#324). EMA-warmup pathology diagnosed and corrected.
-5. **Capacity** — parked at PR #393. Now feasible again with compile speedup + 70 GB VRAM headroom; queued.
-
-## Important falsified hypotheses
-
-- Larger batch alone (PR #360): trainer not launch-bound, padding scales with B.
-- Domain-bucketed sampler (PR #384): allocator fragmentation, pipeline mismatch.
-- Pressure-weighting (1,1,5) post-bf16 (PR #313): not orthogonal to bf16; starves Ux/Uy.
-- Halfstep capacity at T_max=50 (PR #393): schedule mismatch, parked.
-- EMA decay=0.9999 at 7K-step budget (PR #324 v1): warmup pathology, decay=0.999 rebased.
+1. **Does pure L1 match SmoothL1?** Edward (#504, just-assigned) is testing. If yes, simpler formulation for the paper.
+2. **Does cosine T_max alignment add another small win?** Fern (#407) is testing `--epochs 37` on the (then-current) compile+FF baseline. Will need rebase onto Huber baseline.
+3. **Does EMA(0.999) stack with compile+FF?** Nezuko (#324, sent back). Will need rebase onto Huber baseline.
+4. **Does Gaussian RFF beat deterministic FF?** Tanjiro (#443).
+5. **Does half-step capacity finally win post-compile?** Alphonse (#503).
+6. **Does surface-only pressure-weighting recover the round-1 win?** Askeladd (#451).
 
 ## In-flight PRs
 
 | PR | Student | Theme | Hypothesis |
 |---|---|---|---|
-| #314 | edward | Loss formulation | **SmoothL1/Huber β=1.0** — sent back AGAIN to rebase onto compile+FF baseline (was on FF: val_avg=92.32) |
-| #321 | frieren | Optimization & schedule | warmup + cosine peak=7e-4 (sent back from peak=1e-3) |
-| #324 | nezuko | Stability / regularization | EMA-only **decay=0.999** — sent back AGAIN to rebase onto compile+FF (was on FF: val_avg=98.00) |
-| #333 | thorfinn | Loss / metric alignment | surf_weight ∈ {15, 25, 40} sweep |
-| #407 | fern | Schedule (on compile+FF) | Cosine T_max alignment via `--epochs 37` (matches achievable budget on compile+FF baseline; fern asked before running, advisor confirmed) |
-| #443 | tanjiro | Spatial features (on compile+bf16+FF) | Gaussian RFF K=16 σ=10 (rebase target updated to PR #416 baseline; tanjiro asked before running) |
+| #321 | frieren | Optimization & schedule | warmup + cosine peak=7e-4 (sent back from peak=1e-3; will likely need rebase onto Huber baseline) |
+| #324 | nezuko | Stability / regularization | EMA-only **decay=0.999** — sent back AGAIN to rebase onto compile+FF (NOW will need to rebase onto Huber baseline) |
+| #333 | thorfinn | Loss / metric alignment | surf_weight ∈ {15, 25, 40} sweep (round-1 cohort, will likely need rebase) |
+| #407 | fern | Schedule | Cosine T_max alignment via `--epochs 37` (was for compile+FF; rebase onto Huber needed) |
+| #443 | tanjiro | Spatial features | Gaussian RFF K=16 σ=10 (was for compile+FF; rebase onto Huber needed) |
 | #451 | askeladd | Loss formulation | Surface-only pressure weighting (1,1,5) on surf_loss only |
-| **#503** | **alphonse** | **Capacity (on compile+FF)** | **Half-step Transolver h=160/L=5/heads=5/slices=80 — finally testable with compile speedup** |
+| #503 | alphonse | Capacity | Half-step Transolver h=160/L=5/heads=5/slices=80 on compile+FF (rebase onto Huber needed) |
+| **#504** | **edward** | **Loss formulation** | **Pure L1 on Huber+compile+FF baseline** (replace SmoothL1) |
 
 ## Reviewed (round 1+)
 
 | PR | Student | Outcome | Headline |
 |---|---|---|---|
-| #312 | alphonse | Merged → superseded ×3 | Initial baseline: val_avg=144.21. Cherry-picked `data/scoring.py` `0*Inf=NaN` fix (b78f404). |
+| #312 | alphonse | Merged → superseded ×4 | Initial baseline: val_avg=144.21. + `data/scoring.py` `0*Inf=NaN` fix (b78f404). |
 | #318 | fern | Closed | +22% — wider+deeper untestable at old throughput. |
-| #321 | frieren | Sent back | +2.9%. Variation: peak=7e-4 (in flight). |
-| #360 | fern | Closed | +3.12%. bsz=8 alone didn't help. |
+| #321 | frieren | Sent back | +2.9%. peak=7e-4 in flight. |
+| #360 | fern | Closed | +3.12%. bsz=8 alone — trainer not launch-bound. (Memory math changed post-compile; queued for revisit.) |
 | #359 | alphonse | Merged → superseded by #327 | bf16 autocast: val_avg=121.85 (−15.5%). |
-| #313 v2 | askeladd | Closed | +0.56% on bf16. Pressure weighting and bf16 not orthogonal. Refined hypothesis (#451) assigned. |
+| #313 v2 | askeladd | Closed | +0.56%. Pressure weighting and bf16 not orthogonal. |
 | #384 | fern | Closed | +3.3%, +17% slower. Bucketing falsified. |
-| #393 | alphonse | Closed | +7.55%. Halfstep capacity confounded by T_max mismatch. Parked, retest queued. |
-| #327 | tanjiro | Merged → superseded by #416 | FF K=8: val_avg=106.92 (−12.2% vs bf16). |
-| #324 v1 | nezuko | Sent back | +148% — EMA decay 0.9999 too slow for 7K-step budget. Rebase + decay=0.999. |
-| #314 v1 | edward | Sent back | −14.4% on bf16 alone. Sent back to rebase onto FF (then compile+FF). |
-| #314 v2 | edward | **Sent back AGAIN** | **−13.65% on FF (val_avg=92.32). compile+FF merged simultaneously.** |
-| #324 v2 | nezuko | **Sent back AGAIN** | **−8.34% on FF (val_avg=98.00). EMA-warmup pathology fixed; compile merged simultaneously. Per-split shows EMA hits rc-camber best (−16%).** |
-| **#416** | **alphonse** | **Merged (CURRENT BASELINE)** | **`torch.compile`+FF: val_avg=80.85 (−24.4% vs FF, cumulative −44.0%). 37 epochs in 30 min.** |
+| #393 | alphonse | Closed | +7.55%. Halfstep capacity confounded by T_max=50. **Now retesting (#503) with compile speedup.** |
+| #327 | tanjiro | Merged → superseded by #416 | FF K=8: val_avg=106.92 (−12.2%). |
+| #324 v1 | nezuko | Sent back | +148% — EMA decay 0.9999 too slow. v2 sent back, v3 in flight. |
+| #314 v1+v2 | edward | Sent back ×2 | Huber on bf16: −14.4%. Huber on FF: −13.65%. Both sent back for rebase. |
+| #416 | alphonse | Merged → superseded by #314 v3 | `torch.compile`+FF: val_avg=80.85 (−24.4%). |
+| #324 v2 | nezuko | Sent back AGAIN | −8.34% on FF (val_avg=98.00). EMA pathology fixed. compile merged simultaneously. |
+| #481 | alphonse | Closed | +4.27%. `mode="reduce-overhead"` ruled out (9 CUDAGraph captures eat the shave). |
+| **#314 v3** | **edward** | **Merged (CURRENT BASELINE)** | **Huber+compile+FF: val_avg=69.83 (−51.6% cumulative).** |
 
 ## Throughput levers status
 
 - bf16 autocast: **MERGED**
 - Sinusoidal Fourier features (x,z) K=8: **MERGED**
 - `torch.compile(dynamic=True)`: **MERGED**
-- Larger batch size: **RULED OUT**
+- SmoothL1/Huber loss (β=1.0): **MERGED** (also a memory win post-compile)
+- Larger batch size: ruled out *without* compile (#360); **revisit queued** post-compile (78 GB headroom)
 - Domain-bucketed sampler: **RULED OUT**
 - Pressure weighting (uniform): **RULED OUT post-bf16**
-- `mode="reduce-overhead"`: **RULED OUT** (9 CUDAGraph captures eat the shave)
-- Cosine T_max alignment: in flight (#407, fern, --epochs 37 confirmed)
+- `mode="reduce-overhead"`: **RULED OUT**
+- Cosine T_max alignment: in flight (#407, fern, will need rebase onto Huber)
 
-**Throughput frontier exhausted.** Remaining levers require padding inputs to fixed shapes (conflicts with simplicity) or architectural rewrites.
+## Stacking pattern
+
+Captured ratio held at **91%** through both 2-mechanism (FF+Huber) and 3-mechanism (compile+FF+Huber) stacks. Suggests round-3 interventions will retain their single-lever measured delta when stacked. Key implications:
+
+- Pure L1 (edward #504): probably matches/closely-matches Huber. Decision is qualitative.
+- Cosine T_max alignment (fern #407): expected ~−1% to −3%; should retain when stacked.
+- EMA(0.999) (nezuko #324): expected ~−6% absolute on Huber baseline → val_avg ~64-65.
+- Gaussian RFF (tanjiro #443): may match deterministic FF; small delta.
+- Half-step capacity (alphonse #503): unknown; depends on whether the model is undercapacitied at the new baseline.
+- Surface-only pressure-weighting (askeladd #451): small, probably <2%.
 
 ## Potential next directions
 
-- **Once edward #314 v3 lands** (Huber + compile + FF): predicted val_avg
-  65-75. Would unlock the "all four orthogonal levers stacked" config.
-- **Capacity scale-up revisited.** With 70 GB VRAM free + 49 s/epoch, the
-  half-step (h=160, L=5, heads=5, slices=80) PR #393 should now finish
-  ~25-30 epochs in 30 min. Schedule decay still misaligned at T_max=50
-  but much better-positioned than the 14 epochs of the original attempt.
-- **Cosine T_max=37** to match the achievable budget on compile+FF
-  (fern's #407 with `--epochs 20` was matched to the *pre-compile* 19-
-  epoch budget). May need to re-spec.
-- **β sweep on Huber** (edward followup #1, queued).
-- **Pure L1 on FF baseline** (edward followup #2, queued).
-- **Cosmetic NaN cleanup** in `train.py::evaluate_split` — flagged 5+
-  times now.
+- **Re-investigate batch_size scaling.** PR #360 closed because trainer wasn't launch-bound and padding scales with B. With compile, both have changed: kernel fusion may unblock batch-size compute scaling, and padding cost is now amortized across more samples per Python-overhead unit. 78 GB headroom exists for bsz=8 or 16.
+- **Cosmetic NaN cleanup** in `train.py::evaluate_split` — flagged 6+ times.
+- **β sweep on Huber** (edward followup #1, queued for if pure L1 doesn't win).
 - **Round 2 ideas (kept warm):**
-  - Test-time augmentation (limited by cruise AoA asymmetry).
+  - Test-time augmentation.
   - Per-Re weighting in sampler.
   - Surface-only auxiliary head.
-  - Mesh-aware encoders (kNN/GAT/PointNet) before slice attention.
-  - Gradient-based features: |∇x dsdf|, |∇z dsdf|.
+  - Mesh-aware encoders.
+  - Gradient-based features.
   - Bigger architectural swings: GNO/GNOT, Galerkin Transformer.
 
 ## Notes
 
-- 30-min wall-clock cap (`SENPAI_TIMEOUT_MINUTES=30`) **still binding** at
-  current compile+FF baseline (37/50 epochs).
-- Memory note: SmoothL1 has higher transient peak (~98 GB on FF baseline);
-  Compile drops peak by ~9 GB. Expected post-compile-rebase Huber peak:
-  ~88-90 GB. Monitor on edward's next run.
-- `data/scoring.py` patched (b78f404) — `test_avg/mae_surf_p` is finite.
+- 30-min wall-clock cap **still binding** at 36/50 epochs. Fern's T_max
+  alignment may release another small win.
+- `data/scoring.py` patched (b78f404).
 - Cosmetic NaN in `train.py::evaluate_split` printed test loss is known.
 - One hypothesis per PR. Sweeps allowed under one `--wandb_group`.
