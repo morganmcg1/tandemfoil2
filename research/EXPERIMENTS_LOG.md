@@ -1,5 +1,43 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 08:50 — PR #642 (CLOSED): slice_num=32 (architectural bracket DOWN from 64)
+- Branch: `charliepai2d3-nezuko/l1ff12-ema-cos14-lr-7p5e-4-slice32` (deleted)
+- Hypothesis: slice-routing softmax over-parametrised at slice_num=64 for 1500-sample regime; halving may concentrate token mass and improve signal-to-noise.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | slice_num=32 | PR #578 baseline (64) | Δ |
+|--------|-------------:|----------------------:|--:|
+| `val_avg/mae_surf_p` | 76.81 | 75.78 | **+1.36% REGRESSION** |
+| `test_avg/mae_surf_p` | 66.65 | 66.27 | +0.57% |
+| Peak memory (GB) | **37.55** | 42.51 | **−4.96 GB (−11.7%)** ✓ much bigger drop than predicted |
+| Sec/epoch | 112.3 | ~132 | ~flat (slice softmax not dominant compute) |
+
+### Per-split val — same Pareto pattern as PR #616 / #607 / #617
+
+| split | slice_num=32 | baseline | Δ% |
+|-------|-------------:|---------:|---:|
+| val_single_in_dist | 86.52 | 84.61 | +2.26% |
+| val_geom_camber_rc | 89.83 | 85.83 | **+4.66% ↑** |
+| val_geom_camber_cruise | **55.45** | 58.09 | **−4.55% ↓** |
+| val_re_rand | 75.43 | 74.58 | +1.14% |
+
+### Analysis
+
+The **fourth recent closure** sharing the "cruise improves, others regress" Pareto signature (alongside PR #616 max_norm=10, PR #607 annealed input noise, PR #617 eta_min=5e-5). At 32 slices, each token's soft-routing distribution is ~2× sharper, which helps low-rank fields (cruise) but loses fidelity on multi-scale structure (in-dist, rc-camber).
+
+**Useful finding**: 11.7% peak-memory drop for a single-line change — the slice-routing tensors `(B, H, T, S)` dominate slice-attention activations, savings bigger than the ~640-param delta would suggest. Worth knowing for future capacity experiments where memory is the binding constraint (could redirect freed memory to n_head=6 or mlp_ratio=3 within budget).
+
+### Decision: CLOSED
+
+Lever closed at slice_num=64 for the round-3 stack at single slice_num. Halving doesn't pay off at val_avg despite the cruise improvement.
+
+Reassigning nezuko to **asymmetric slice budget by depth** `slice_num=[64, 64, 64, 32, 32]` (PR #670) — directly extends this PR's per-split signal. Tests if early blocks need broad multi-scale routing (in-dist, rc-camber, re_rand benefit) while late blocks benefit from concentrated routing for final aggregation (cruise benefit). The cheap-to-implement compromise of student's suggestion #2.
+
+Filed for round-5: cluster-aware top-k sparse routing, learnable per-block slice temperature, cruise NaN/Inf scoring artefact (loss field corrupted but MAE intact).
+
+---
+
 ## 2026-04-28 08:34 — PR #638 (CLOSED): surf_weight=15 (bracket up from default 10)
 - Branch: `charliepai2d3-tanjiro/surf-weight-15` (deleted)
 - Hypothesis: increase surface loss weight from 10 → 15 to put more gradient signal on the primary surface MAE metric.

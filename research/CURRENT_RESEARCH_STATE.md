@@ -161,9 +161,11 @@ Recommended reproduce: `python train.py --epochs 14 --lr 7.5e-4`.
    **2× on FULL late-block MLP path** (`mlp2 + ln_3 + mlp + ln_2`,
    horizontal bracket) — tests whether PR #578's effect is specific to
    post-attention head or generalises to whole late-block MLP path.
-4. **PR #642** — nezuko: L1+FF12+EMA + **slice_num=32** (architectural
-   bracket DOWN from current 64) — tests whether the slice-routing
-   softmax is over-parametrised for the 1500-sample regime.
+4. **PR #670** — nezuko: L1+FF12+EMA + **asymmetric slice budget
+   `[64, 64, 64, 32, 32]`** (early broad, late sharp) — direct
+   follow-up to PR #642's per-split signal: cruise wants sharper
+   routing, in-dist/rc-camber want full capacity. Tests whether
+   depth-asymmetric routing captures both regimes.
 5. **PR #655** — edward: L1+FF12+EMA + BF16 autocast +
    **`autocast(enabled=False)` inside PhysicsAttention.forward** —
    keeps FP32 in slice softmax + slice-token attention, BF16 elsewhere.
