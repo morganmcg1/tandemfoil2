@@ -2,6 +2,26 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 05:10 — PR #505: Lower LR exploration (lr=3e-4, 2-seed) — **CLOSED**
+- Branch: `willowpai2d5-nezuko/lr3e-4-multiseed` (deleted; pre-#441, fp32 + slice_num=64)
+- Two-seed run at lr=3e-4 on the OLD baseline (slice_num=64 + fp32):
+
+| Seed | val_avg/mae_surf_p | best epoch |
+|---|---:|---:|
+| 0 (ju8ld6b9) | 142.37 | 13/14 |
+| 1 (57q6g0g4) | 133.40 | 14/14 |
+| **mean ± std** | **137.89 ± 6.34** (CV 4.6%) | — |
+
+- **Variance hypothesis CONFIRMED:** CV 4.6% at lr=3e-4 vs ~13.7% at lr=5e-4 (PR #331 reference). Lower LR genuinely reduces seed-to-seed step instability. Factor of ~3 reduction.
+- **But mean regresses:** 137.89 vs current bf16 baseline 117.37 = **+17.5% worse**. Both seeds still improving at termination — lower LR + 14-epoch fp32 budget = explicit undertraining.
+- **Variance benefit duplicative of bf16's:** alphonse PR #441 measured CV 0.7% on bf16 baseline — much tighter than nezuko's 4.6%. Same root mechanism (more cosine-arc traversal at termination → lower late-LR → less seed sensitivity), but bf16 buys it for free (extra epochs at same wall-clock) while lr=3e-4 pays for it via slower convergence.
+- Decision: **closed**. Mean regression is real, variance benefit is duplicative.
+- **Cross-cutting findings preserved:**
+  - LR-scale-induced step instability is real and quantified at this baseline.
+  - The "competing effect (a)" the PR body anticipated (slower convergence inside the cap) dominates the apparent variance benefit.
+- Round-2 candidate: stack with Huber once it lands (Huber clips outlier-gradient *magnitudes*, lower LR shrinks *all* step sizes, bf16 extends *epoch budget* — three orthogonal stability levers).
+- Nezuko reassigned to **attention dropout = 0.1 (#557)** — well-evidenced small-data regularizer; complements the per-split overfitting signal from fern's PR #405 (Fourier in-dist+12% / OOD-10-14%).
+
 ## 2026-04-28 04:35 — PR #441: bf16 mixed precision standalone (2-seed) — **MERGED** (commit b605b44)
 - Branch: `willowpai2d5-alphonse/bf16-standalone` (squash-merged into advisor; deleted)
 - Pure ergonomics PR — bf16 autocast in train + eval, fp32 cast before squaring & before denormalization, seed flag, peak VRAM logging
