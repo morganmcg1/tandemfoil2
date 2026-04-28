@@ -1,5 +1,55 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 07:50 — PR #594: FiLM at all 5 block boundaries (mid-network specialization)
+- Branch: `charliepai2d4-thorfinn/film-all-blocks` (deleted on close)
+- Student: charliepai2d4-thorfinn
+- **Outcome: CLOSED** (wall-clock +2.12% val regression; matched-epoch -1.92% but throughput cost eats gain).
+
+### Headline (epoch 31 vs 34, EMA-evaluated, both runs in PR)
+| Metric | baseline-ref-film-last-only | film-all-blocks | Δ |
+|---|---|---|---|
+| `val_avg/mae_surf_p` (best, EMA, wall-clock) | 56.80 (ep 34) | 58.01 (ep 31) | +2.12% (loses) |
+| `val_avg/mae_surf_p` (matched at ep 31) | 59.14 | 58.01 | **-1.92%** (wins, within predicted band) |
+| `test_avg/mae_surf_p` (wall-clock) | 48.59 | 50.41 | +3.77% (loses) |
+| Per-epoch | 54.0 s | 57.1 s | +5.7% |
+| Total epochs | 34 | 31 | -3 |
+| Peak GPU memory | 24.25 GB | 29.0 GB | +20% |
+| Param count | 671 K | 673.6 K | +2.6 K (+0.4%) |
+
+### Mechanism — supported in matched-epoch, eaten by throughput
+- Matched-epoch FiLM gain: ~-1.92% at ep 31 (inside predicted -1% to -3% band).
+- Throughput cost: +5.7%/epoch ≈ 3 epochs in 30-min cap.
+- Cosine-tail value: -4% over those 3 epochs (baseline drops 59.14 → 56.80 over ep 31→34).
+- Net wall-clock effect: -1.92% (FiLM gain) + +4% (lost cosine-tail) ≈ +2% (matches the observed +2.12%).
+
+### Per-split val: regression concentrated on OOD splits
+| Split | Δ |
+|---|---|
+| val_single_in_dist     | +1.46% |
+| val_geom_camber_rc     | -0.25% (≈flat) |
+| val_geom_camber_cruise | **+4.79%** |
+| val_re_rand            | **+4.04%** |
+
+### Per-split test: same OOD-concentrated regression pattern
+| Split | Δ |
+|---|---|
+| test_single_in_dist     | +1.59% |
+| test_geom_camber_rc     | +1.53% |
+| test_geom_camber_cruise | **+7.30%** (largest) |
+| test_re_rand            | **+6.75%** |
+
+### Volume MAE: "both modes gain" mechanism doesn't extend
+- vol_p IMPROVES on in-domain splits (-1.27% rc, -1.37% single)
+- vol_p REGRESSES on OOD splits (+5.95% cruise, +3.32% re_rand)
+- Surface MAE regresses across all channels and splits — the clean trunk/decoder separation from #484 breaks down with intermediate FiLMs.
+
+### Why close
+- Wall-clock budget is the operating regime; matched-epoch wins don't translate when throughput cost eats epochs.
+- OOD regression is a structural concern — early-block FiLMs may amplify noise where domain-discriminative signal is weaker, OR over-specialize the trunk in ways that hurt cross-Re / cross-camber generalization.
+- Throughput optimization (gather-based dual-mode select) could potentially recover the matched-epoch gain — parked as round-2 if domain-conditional FiLM (next experiment) suggests the mechanism family is worth deeper investment.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=594 records, 33 lines from film-all-blocks run).
+
 ## 2026-04-28 07:30 — PR #549: Linear warmup + cosine sweep — **NEW BASELINE**
 - Branch: `charliepai2d4-alphonse/warmup-cosine-sweep` (deleted on merge)
 - Student: charliepai2d4-alphonse
