@@ -1,5 +1,81 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 01:30 — PR #400 (MERGED): L1 + 8-frequency Fourier positional features (compose)
+- Branch: `charliepai2d3-nezuko/l1-fourier-pos-8freq`
+- Hypothesis: port the validated FF lever (PR #298, won −13.7% on MSE)
+  to the L1 baseline; tests whether L1 and Fourier features compose;
+  predicted −2% to −8%.
+- Config: L1 surface loss (already in advisor `train.py`), 8-freq
+  Fourier features for `(x, z)` (one helper + `fun_dim` update + 3
+  concat sites), all other knobs at L1-baseline defaults.
+- Diff: 4 files (`train.py` +20 lines, metrics dir).
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs L1 baseline (PR #280, 102.64) |
+|--------|--------:|---------------------------------:|
+| `val_avg/mae_surf_p`  | **91.87** | **−10.5%** |
+| `test_avg/mae_surf_p` | **81.11** | **−17.0%** |
+| Per-epoch wallclock   | ~131 s   | ≈ same |
+| Peak GPU memory       | 42.38 GB | +0.25 GB |
+| Param count           | 670,551  | +8,192 (input MLP `linear_pre`) |
+
+### Per-split val (best epoch 14) — gap *widened*, not closed
+
+| split | L1 baseline | this PR | Δ |
+|-------|------------:|--------:|--:|
+| val_single_in_dist     | 121.18 | 117.24 | **−3.3%** (smallest gain) |
+| val_geom_camber_rc     | 125.01 |  98.99 | **−20.8%** (largest gain) |
+| val_geom_camber_cruise |  73.22 |  68.61 | −6.3% |
+| val_re_rand            |  91.14 |  82.64 | −9.3% |
+
+### Per-split test (best-val checkpoint)
+
+| split | mae_surf_p |
+|-------|-----------:|
+| test_single_in_dist     | 100.17 |
+| test_geom_camber_rc     |  85.47 |
+| test_geom_camber_cruise |  61.17 |
+| test_re_rand            |  77.64 |
+
+### Decision
+
+**Merged** as the new round-3 baseline. FF and L1 are **independent
+levers, not redundant** — most of the FF effect (was ~14% on MSE in
+PR #298) survived the loss-shape change to L1 (~10% here). Test gain
+(~17%) larger than val gain (~10.5%) is real generalisation evidence,
+not val overfit.
+
+### Mechanistic read
+
+Student's analysis: in-distribution samples cluster near training data,
+so the model interpolates fine without high-frequency positional
+encoding. FF helps most where the model needs to **extrapolate sharp
+pressure features it hasn't seen exactly** (camber holdouts). L1 then
+sharpens the loss gradient for the high-magnitude tail of the
+surface-p distribution, most pronounced in OOD samples. Two levers,
+two failure modes — they compose nearly additively, with the bigger
+gain showing where both failure modes are active.
+
+### Round-4 implications
+
+- **`val_single_in_dist` is now the dominant bottleneck** at 117.24
+  (vs 68.61 cruise, 82.64 re_rand, 98.99 rc camber). Round-5 priorities
+  should target the high-Re raceCar single regime specifically.
+- **Cross-regime axis (`val_re_rand`)** improved less than camber-OOD
+  axes — student's suggested `log(Re)` Fourier features (extending the
+  proven FF lever to scalar log-Re) is the natural next step. Assigning
+  to nezuko.
+- **Frequency search (8 vs 12 vs 16 vs 4)** is round-5 work — hold
+  until log(Re) FF lands.
+- **`loss=NaN`/`vol_loss=Inf` on `test_geom_camber_cruise`** in
+  metrics.yaml is a pre-existing logged-loss accumulator issue (the
+  loss accumulator in `evaluate_split` doesn't have the `nan_to_num`
+  treatment that `accumulate_batch` got in commit `2eb5c7f`). MAE
+  numbers themselves are clean. Round-5 cleanup PR.
+
+---
+
 ## 2026-04-28 01:10 — PR #285 (CLOSED): surf_weight 10 → 30 (MSE)
 - Branch: `charliepai2d3-edward/surf-weight-30` (deleted on close)
 - Hypothesis: tripling the surface loss weight pushes more gradient

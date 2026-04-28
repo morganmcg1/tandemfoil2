@@ -15,19 +15,29 @@ help across at least three of the four tracks.
 
 ## Round 3 focus
 
-**Current measured baseline (merged 2026-04-28 00:03):**
-PR #280 (alphonse) — **L1 surface loss**, `bs=4`, `lr=5e-4`, all other
-defaults. `val_avg/mae_surf_p = 102.64`, `test_avg/mae_surf_p = 97.73`
-(NaN-safe re-eval). Wins on **all four** val splits vs the prior baseline,
-including −36% on the hardest split (`val_single_in_dist`).
+**Current measured baseline (merged 2026-04-28 01:30):**
+PR #400 (nezuko) — **L1 surface loss + 8-frequency Fourier positional
+features for `(x, z)`**. `val_avg/mae_surf_p = 91.87`,
+`test_avg/mae_surf_p = 81.11`. Wins on **all four** val splits and all
+four test splits vs the prior L1 baseline. Test gain (−17%) larger than
+val gain (−10.5%) is real generalisation evidence.
 
-**Previous baseline (round 3 reference 1):**
-PR #306 (thorfinn) — `bs=8, lr=7.07e-4` MSE, val 135.20 / test 123.15.
-Established the round-3 starting reference. The L1 win (−24% val) is much
-larger than the bs/lr win it superseded.
+**Round-3 baseline lineage:**
+| Round | best val | best test | lever | Δ vs prior |
+|-------|---------:|----------:|-------|----:|
+| PR #306 | 135.20 | 123.15 | bs=8 + sqrt-LR (MSE) | reference |
+| PR #280 | 102.64 |  97.73 | + L1 surface loss | **−24.1%** |
+| **PR #400** | **91.87** | **81.11** | **+ 8-freq spatial Fourier features** | **−10.5% val, −17.0% test** |
 
-**Round-3 dominant lever:** loss formulation. Aligning the gradient with
-the reported MAE metric is the highest-impact change found so far.
+**Round-3 dominant lever (1 of 2 stacked):** loss formulation (L1) +
+input-encoding spectral compensation (Fourier features). Two
+independent levers, attacking different failure modes (heavy-tailed
+gradients vs spectral bias on input position).
+
+**Current bottleneck**: `val_single_in_dist` at 117.24 (vs 68.61
+cruise, 82.64 re_rand, 98.99 rc camber). High-Re raceCar singles —
+the FF lever helped least there. Round-5 priorities should target this
+regime specifically.
 
 **Closed PRs (2026-04-28):**
    - PR #283 — askeladd (wider+deeper): val 166.64 (+62% vs L1 baseline);
@@ -61,19 +71,25 @@ composition even if they don't outright beat 102.64:**
 1. **Loss formulation (pre-L1 baseline)**
    - PR #302 — tanjiro: Huber (smooth-L1, δ=1.0) surface loss — informs
      whether the L2-near-zero region helps over pure L1.
-2. **L1-baseline composition (post-#280 merge, with L1 already in
-   `train.py`):**
+2. **L1+FF-baseline composition** (post-#400 merge — `train.py` has both
+   L1 and 8-freq spatial Fourier features). The 6 in-flight PRs below
+   were branched off the L1-only advisor (post-#280, pre-#400), so their
+   results test their lever on the L1 baseline (val 102.64). To compose
+   with the new PR #400 baseline (val 91.87), winners will need to be
+   re-tested on the new advisor:
    - PR #383 — alphonse: L1 + 3× pressure channel weight in surface loss
      *(loss focus)*
    - PR #389 — askeladd: L1 + matched cosine schedule (`--epochs 14`) so
      the schedule fully decays inside the 30-min cap *(schedule)*
    - PR #395 — frieren: L1 + `weight_decay 1e-4 → 1e-3` *(regularisation)*
    - PR #396 — fern: L1 + EMA of weights for evaluation *(weight averaging)*
-   - PR #400 — nezuko: L1 + 8-freq Fourier positional features for `(x, z)`
-     *(input encoding compose test)*
    - PR #419 — thorfinn: L1 + AdamW(beta2=0.95) — modern transformer
      optimiser config for noisier gradients *(optimiser)*
-   - PR (edward, new): L1 + gradient clipping `max_norm=1.0` *(stability)*
+   - PR #423 — edward: L1 + gradient clipping `max_norm=1.0` *(stability)*
+   - PR (nezuko, new): L1 + spatial FF + **`log(Re)` Fourier features**
+     — extends the proven FF lever to the scalar log-Re input, targets
+     the cross-regime axis where `val_re_rand` improved less than camber
+     splits *(input encoding extension)*
 
 ## Round-4 throughput infra (new debt from PR #390 close)
 
@@ -134,21 +150,25 @@ Following round 3, plausible next steps depending on which family wins:
   with point-cloud transformer variants, GINO/FNO style spectral mixing in
   irregular meshes, hierarchical clustering of slice tokens.
 
-## Per-track diagnostics on the current baseline
-
-The round-3 baseline shows strongly uneven per-split surface MAE:
+## Per-track diagnostics on the current baseline (PR #400)
 
 | split | val mae_surf_p | comment |
 |-------|---------------:|---------|
-| `val_geom_camber_cruise` |  97.95 | easiest — low-Re cruise meshes |
-| `val_re_rand`            | 114.32 | mid — stratified Re, all tandem domains |
-| `val_geom_camber_rc`     | 138.39 | unseen front-foil camber, raceCar |
-| `val_single_in_dist`     | **190.14** | hardest — high-Re raceCar singles |
+| `val_geom_camber_cruise` |  68.61 | easiest — low-Re cruise meshes |
+| `val_re_rand`            |  82.64 | mid — stratified Re, all tandem domains |
+| `val_geom_camber_rc`     |  98.99 | unseen front-foil camber, raceCar |
+| `val_single_in_dist`     | **117.24** | hardest — high-Re raceCar singles |
 
-The high-Re raceCar singles are the dominant error. Round-4 candidates
-that target this specifically: log-space pressure prediction, Re-aware
-output rescaling, an explicit log-Re embedding beyond the raw `log(Re)`
-feature.
+`val_single_in_dist` is still the dominant bottleneck even after L1+FF —
+the gap to cruise (1.71×) actually *widened* from the L1 baseline (1.65×).
+High-Re raceCar singles are the persistent failure mode.
+
+Round-4/5 candidates that target this regime specifically:
+- **`log(Re)` Fourier features** ← assigning to nezuko this round.
+- Log-space pressure prediction (target transform).
+- Re-aware output rescaling (per-sample scalar gain).
+- Per-domain sample reweighting in the WeightedRandomSampler (boost
+  raceCar single).
 
 ## Constraints (do not override)
 
