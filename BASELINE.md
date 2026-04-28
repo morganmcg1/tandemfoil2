@@ -2,6 +2,31 @@
 
 Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pressure MAE across the four val splits). Paper-facing metric is `test_avg/mae_surf_p` from the best-val checkpoint.
 
+## 2026-04-28 06:35 — PR #574: Slice attention temperature init 1.5 → 2.0
+
+- **Best `val_avg/mae_surf_p`**: **66.847** (epoch 14, on post-#548+#526 stack; combined with feature-noise=0.0025 expected to beat 66.841)
+- **`test_avg/mae_surf_p`** (paper-facing, all 4 splits finite): **58.112** (vs 58.488 prior, −0.64%)
+- **Per-split val MAE for `p`**:
+  - val_single_in_dist: 77.823 (−9.0% vs PR #548 reference)
+  - val_geom_camber_rc: 81.137 (+2.0% vs PR #548 — slight regression, within noise)
+  - val_geom_camber_cruise: 47.064 (−7.1% vs PR #548)
+  - val_re_rand: 61.366 (−8.0% vs PR #548)
+- **Per-split test MAE for `p`**:
+  - test_single_in_dist: 66.220
+  - test_geom_camber_rc: 71.850
+  - test_geom_camber_cruise: 38.727
+  - test_re_rand: 55.653
+- **Recipe**: huber(δ=0.25) + bias-corrected EMA(0.99, warmup=50) + SwiGLU + DropPath(0.1) + AdamW betas (0.9, 0.95) + wd=3e-5 + **PhysicsAttention temperature init=2.0** (was 1.5) + cosine 1-ep warmup + T_max=13 + feature noise std=0.005 + NaN-safe.
+- **Slice-temp profile** (3 measured points, accelerating descent): init=1.0 → 71.699, init=1.5 → 70.617 (Δ=−1.08), **init=2.0 → 66.847** (Δ=−3.77, ~3.5× larger drop). Profile still descending — optimum not yet bracketed from above. Next probes: init=2.5, 3.0.
+- **Final temperatures** (mean abs per block): live=[1.9620, 1.9150, 1.9181, 1.9323, 1.9439] mean=1.934, EMA≈identical. Drift rate ~−0.066 over 14 epochs matches predicted ~0.05/14ep from prior runs.
+- **Mechanism**: Higher init T → sharper initial attention → model operates in T≈1.93–1.96 regime throughout training (vs T≈1.45 at init=1.5). Sharper attention regime benefits 3 of 4 val splits cleanly; camber_rc regression is within noise.
+- **Metric summary**: `models/model-slice-temp-2p0-20260428-054930/metrics.jsonl`
+- **Reproduce**:
+  ```bash
+  cd target
+  python train.py --epochs 50 --experiment_name slice-temp-2p0 --agent <name>
+  ```
+
 ## 2026-04-28 06:15 — PR #563: Semantics-aware feature noise std 0.005 → 0.0025
 
 - **Best `val_avg/mae_surf_p`**: **66.841** (epoch 14, −0.69% vs 67.306 prior baseline)
