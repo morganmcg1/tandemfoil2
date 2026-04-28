@@ -1,5 +1,143 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 02:30 — PR #423 (CLOSED, validated on L1 / loses to current): gradient clipping `max_norm=1.0`
+- Branch: `charliepai2d3-edward/l1-grad-clip-1` (deleted on close)
+- Hypothesis: gradient clipping caps the global gradient norm,
+  preventing high-Re samples from dominating; predicted −1% to −3%.
+- Config: L1 baseline (pre-FF, pre-matched-cosine), `max_norm=1.0` added
+  before `optimizer.step()`. Single-line code change.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs L1 baseline (PR #280, 102.64) | vs current baseline (PR #389, 90.90) |
+|--------|--------:|---------------------------------:|-------------------------------------:|
+| `val_avg/mae_surf_p`  | 97.15 | **−5.4%** ✓ above band | +6.9% (loses) |
+| `test_avg/mae_surf_p` | 87.61 | **−10.4%** ✓ above band | +8.4% (loses) |
+
+### Per-split val (best epoch 14)
+
+| split | this PR | L1 baseline | Δ |
+|-------|--------:|------------:|--:|
+| val_single_in_dist     | 120.42 | 121.18 | −0.6% |
+| val_geom_camber_rc     | 106.21 | 125.01 | **−15.0%** |
+| val_geom_camber_cruise |  73.33 |  73.22 | +0.15% |
+| val_re_rand            |  88.63 |  91.14 | −2.8% |
+
+### Pre-clip grad norm diagnostic (most useful round-3 instrumentation)
+
+| epoch | mean | max |
+|------:|-----:|----:|
+| 1  | 60.25 | 150.23 |
+| 5  | 53.88 | 137.94 |
+| 10 | 50.77 | 123.23 |
+| 14 | 45.73 | 123.07 |
+
+Pre-clip grad norms are **50× max_norm=1.0** — clip is doing heavy
+work, not a no-op. Round-5: tighter values (`max_norm ∈ {0.5, 0.1}`)
+are well within "still doing work" territory.
+
+### Decision
+
+**Closed.** Same merge-order pattern as PRs #298, #395, #419. Lever
+validated on L1 baseline; lost by merge timing to PR #389.
+
+**Notable: 5th convergent OOD-camber improvement signature this round.**
+`val_geom_camber_rc` −15.0% lines up with PR #400 (FF, −20.8%), PR #389
+(matched cosine, −19.4%), PR #419 (beta2=0.95, −13.6%), PR #395
+(wd=1e-3, −11.9%). Five independent mechanisms — input encoding,
+schedule, optimiser, regularisation, stability — same direction of
+effect.
+
+Re-assigning edward to L1+FF + matched cosine + grad clipping compose
+test (three-lever stack on the post-#389 advisor).
+
+Per-epoch metrics not centralised in `EXPERIMENT_METRICS.jsonl` —
+branch deleted on close. Pre-clip grad-norm trajectory recorded in
+this log entry as a round-5 reference.
+
+---
+
+## 2026-04-28 02:28 — PR #389 (MERGED): L1 + matched cosine schedule (`--epochs 14`)
+- Branch: `charliepai2d3-askeladd/l1-cos-matched-14`
+- Hypothesis: match cosine T_max to actual wallclock budget (14 epochs)
+  so the schedule fully decays inside the 30-min cap; predicted −5% to
+  −15%.
+- Config: L1 baseline (PR #280, pre-FF), `--epochs 14`, all other knobs
+  at defaults. CLI-only diff.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs L1 baseline (PR #280, 102.64) | vs L1+FF baseline (PR #400, 91.87) |
+|--------|--------:|---------------------------------:|-----------------------------------:|
+| `val_avg/mae_surf_p`  | **90.90** | **−11.4%** | **−1.06%** ✓ |
+| `test_avg/mae_surf_p` | **80.84** | **−17.3%** | −0.33% ✓ |
+| Per-epoch wallclock | ~131 s | unchanged | unchanged |
+| Peak GPU memory | 42.14 GB | unchanged | unchanged |
+| **Reproducibility** | 3 re-runs: 90.90 / 91.47 / 91.94 | ~1% spread |
+
+### Per-split val (best epoch 14)
+
+| split | this PR | L1 baseline | Δ |
+|-------|--------:|------------:|--:|
+| val_single_in_dist     | 105.82 | 121.18 | −12.7% |
+| val_geom_camber_rc     | 100.82 | 125.01 | **−19.4%** |
+| val_geom_camber_cruise |  71.37 |  73.22 |  −2.5% |
+| val_re_rand            |  85.60 |  91.14 |  −6.1% |
+
+### Per-split test (best-val checkpoint)
+
+| split | mae_surf_p |
+|-------|-----------:|
+| test_single_in_dist     | 94.78 |
+| test_geom_camber_rc     | 88.30 |
+| test_geom_camber_cruise | 59.67 |
+| test_re_rand            | 80.62 |
+
+### Validation trajectory — the cosine tail is where the gain lives
+
+```
+epoch  1: 260.33  best
+epoch  2: 195.53  best
+…
+epoch 11: 103.53  best
+epoch 12:  94.07  best
+epoch 13:  91.73  best
+epoch 14:  90.90  best   ← T_max=14, LR ≈ 0
+```
+
+The last 4 epochs (11→14) cut another 12.6 mae_surf_p as the LR anneals
+through the cosine tail — exactly the "fine-tune phase" the L1 baseline
+was missing.
+
+### Decision
+
+**Merged.** First round-3 PR with effect size large enough (3-seed
+spread ~1%, vs −11.4% delta on L1 baseline) to clearly clear the
+seed-noise floor that has been blocking attribution on every other
+lever this round.
+
+### Convergent OOD-camber signal — now 5 levers
+
+`val_geom_camber_rc` was the dominant winner here too (−19.4%), the
+same per-split signature as PR #400 (FF, −20.8%), PR #419 (beta2=0.95,
+−13.6%), PR #395 (wd=1e-3, −11.9%), and PR #423 (grad clipping,
+−15.0%). **Five different mechanisms hitting the same direction of
+effect on OOD-camber generalisation.** The compose tests in flight
+(#437 wd, #432 log(Re), #446 beta2, #447 EMA) plus the new ones
+(matched cosine + grad clipping compose) will reveal additivity vs
+shared dynamic.
+
+### Caveat — measurement on L1-only branch, not L1+FF advisor
+
+PR #389 was branched off the pre-FF advisor, so the measured 90.90 is
+L1 + matched cosine *without* FF. The advisor `train.py` now retains
+FF (from PR #400) and adds the metrics dir from this PR. The first
+round-4 PR running on the post-merge advisor with `--epochs 14` will
+give the L1+FF + matched cosine compose number. Expected ≤ 90.90 if
+the levers compose; could be as low as ~80 if they fully stack.
+
+---
+
 ## 2026-04-28 01:50 — PR #302 (CLOSED): Huber (smooth-L1, δ=1.0) surface loss
 - Branch: `charliepai2d3-tanjiro/huber-surf-loss` (deleted on close)
 - Hypothesis: Huber on surface loss bounds gradient on heavy-tailed

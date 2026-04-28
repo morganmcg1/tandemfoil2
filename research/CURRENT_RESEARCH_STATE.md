@@ -15,29 +15,36 @@ help across at least three of the four tracks.
 
 ## Round 3 focus
 
-**Current measured baseline (merged 2026-04-28 01:30):**
-PR #400 (nezuko) — **L1 surface loss + 8-frequency Fourier positional
-features for `(x, z)`**. `val_avg/mae_surf_p = 91.87`,
-`test_avg/mae_surf_p = 81.11`. Wins on **all four** val splits and all
-four test splits vs the prior L1 baseline. Test gain (−17%) larger than
-val gain (−10.5%) is real generalisation evidence.
+**Current measured baseline (merged 2026-04-28 02:28):**
+PR #389 (askeladd) — **L1 + matched cosine schedule** (`--epochs 14`,
+T_max=14). `val_avg/mae_surf_p = 90.90`, `test_avg/mae_surf_p = 80.84`.
+Three-seed reproducibility ~1% spread. **First round-3 result with
+effect size large enough to clearly clear the seed-noise floor.**
+
+**Important caveat**: PR #389 was branched off the pre-FF advisor, so
+the measured 90.90 reflects L1+matched-cosine *without* FF. The
+advisor `train.py` retains FF from PR #400 — running the post-merge
+advisor with `--epochs 14` is **untested** but expected to land below
+90.90 if FF and matched cosine compose. The 90.90/80.84 numbers should
+be treated as approximately tied with PR #400's 91.87/81.11 (both
+configurations are good, ~1% gap is below seed noise).
 
 **Round-3 baseline lineage:**
 | Round | best val | best test | lever | Δ vs prior |
 |-------|---------:|----------:|-------|----:|
 | PR #306 | 135.20 | 123.15 | bs=8 + sqrt-LR (MSE) | reference |
 | PR #280 | 102.64 |  97.73 | + L1 surface loss | **−24.1%** |
-| **PR #400** | **91.87** | **81.11** | **+ 8-freq spatial Fourier features** | **−10.5% val, −17.0% test** |
+| PR #400 |  91.87 |  81.11 | + 8-freq spatial Fourier features | **−10.5% / −17.0%** |
+| **PR #389** | **90.90** | **80.84** | **+ matched cosine `--epochs 14`** | **−1.06% / −0.33%** (≈ tied with FF) |
 
-**Round-3 dominant lever (1 of 2 stacked):** loss formulation (L1) +
-input-encoding spectral compensation (Fourier features). Two
-independent levers, attacking different failure modes (heavy-tailed
-gradients vs spectral bias on input position).
+**Round-3 proven levers (cumulative)**:
+1. L1 surface loss (PR #280) — loss formulation aligned with metric.
+2. 8-freq spatial Fourier features (PR #400) — spectral bias mitigation.
+3. Matched cosine `--epochs 14` (PR #389) — let LR fully decay.
 
-**Current bottleneck**: `val_single_in_dist` at 117.24 (vs 68.61
-cruise, 82.64 re_rand, 98.99 rc camber). High-Re raceCar singles —
-the FF lever helped least there. Round-5 priorities should target this
-regime specifically.
+**Round-4 priority**: confirm the L1+FF + matched-cosine compose
+result. Round-5 candidate stacking depends on which compose tests
+return wins.
 
 **Closed PRs (2026-04-28):**
    - PR #283 — askeladd (wider+deeper): val 166.64 (+62% vs L1 baseline);
@@ -101,38 +108,53 @@ composition even if they don't outright beat 102.64:**
    re-tested on the new advisor:
    - PR #383 — alphonse: L1 + 3× pressure channel weight in surface loss
      *(loss focus)* — branched off L1-only.
-   - PR #389 — askeladd: L1 + matched cosine schedule (`--epochs 14`) so
-     the schedule fully decays inside the 30-min cap *(schedule)* —
-     branched off L1-only.
-   - PR #423 — edward: L1 + gradient clipping `max_norm=1.0` *(stability)*
-     — branched off L1-only.
    - PR #432 — nezuko: L1+FF + **`log(Re)` Fourier features** *(input
      encoding extension)* — on post-#400 advisor.
    - PR #437 — frieren: L1+FF + `weight_decay 1e-3` *(regularisation
      compose)* — on post-#400 advisor.
-   - PR (thorfinn, new): L1+FF + AdamW(beta2=0.95) *(optimiser compose)*
+   - PR #446 — thorfinn: L1+FF + AdamW(beta2=0.95) *(optimiser compose)*
      — on post-#400 advisor.
-   - PR (fern, new): L1+FF + EMA(decay=0.999) *(weight averaging compose
+   - PR #447 — fern: L1+FF + EMA(decay=0.999) *(weight averaging compose
      with budget-aware decay)* — on post-#400 advisor.
-   - PR (tanjiro, new): L1+FF + L1 volume loss *(loss formulation
+   - PR #448 — tanjiro: L1+FF + L1 volume loss *(loss formulation
      extension — does L1 dominance extend to volume?)* — on post-#400
      advisor.
+   - PR (askeladd, new): L1+FF + `--epochs 14` + `lr=7.5e-4` —
+     student-suggested follow-up: now that cosine actually anneals,
+     `lr=5e-4` is conservatively low; modest LR bump tests headroom on
+     the matched schedule *(schedule × lr)*.
+   - PR (edward, new): L1+FF + `--epochs 14` + grad clipping `max_norm=1.0`
+     — three-lever stack (FF + matched cosine + clipping) tests whether
+     the "convergent OOD-camber" levers compose additively *(stability ×
+     schedule × FF compose)*.
 
-## Convergent OOD-camber generalisation signal
+## Convergent OOD-camber generalisation signal — now 5 levers
 
-Three closed PRs (#395 wd=1e-3, #419 beta2=0.95) and one merged PR (#400
-spatial FF) all produced the **same per-split signature**: dominant
-win on `val_geom_camber_rc` (−11.9% / −13.6% / −20.8% respectively),
-flat-or-mild on in-dist / re_rand. Three different mechanisms
-(regularisation / optimiser second-moment / input encoding), same
-direction of effect on OOD-camber generalisation.
+Five round-3 PRs hit the **same per-split signature**: dominant win on
+`val_geom_camber_rc` (the unseen-front-foil-camber raceCar tandem track),
+flat-or-mild on the other splits.
 
-Round-4 compose tests (#437 wd, new thorfinn beta2, new nezuko log(Re))
-will reveal whether the levers each hit independent paths to the same
-generalisation gain (additive — round-5 stack of all four) or share a
-common dynamic (diminishing — only one of the three matters once
-combined). Round-5 priority depends entirely on which of these compose
-tests cleanly beat the new baseline.
+| PR | lever | `val_geom_camber_rc` Δ |
+|----|-------|-----------------------:|
+| #400 (merged) | spatial Fourier features | −20.8% |
+| #389 (merged) | matched cosine | **−19.4%** |
+| #423 (closed) | gradient clipping | −15.0% |
+| #419 (closed) | AdamW(beta2=0.95) | −13.6% |
+| #395 (closed) | weight_decay=1e-3 | −11.9% |
+
+Five independent mechanisms — input encoding, schedule, optimiser
+second-moment, regularisation, stability — same direction of effect.
+Whatever's bottlenecking `val_geom_camber_rc` is responsive to "make
+optimisation more effective in the limited budget we have" rather than
+to any one specific intervention.
+
+Round-4 compose tests (#437 wd, #432 log(Re), #446 beta2, #447 EMA,
+edward grad clipping) will reveal whether the levers each hit
+independent paths to the same generalisation gain (additive — round-5
+stack of all five) or share a common dynamic (diminishing — only one
+or two of the five matter once combined). Two of the five (FF and
+matched cosine) are now baked in as baseline, so the remaining
+compose tests measure marginal gain on top of those.
 
 ## Round-4 throughput infra (new debt from PR #390 close)
 
