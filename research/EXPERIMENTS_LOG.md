@@ -31,6 +31,38 @@
 
 ---
 
+## 2026-04-28 09:26 — PR #611: H18 wider Transolver (n_hidden=192, n_head=6) — **CLOSED**
+
+- Branch: `willowpai2d4-thorfinn/h18-wider-transolver` (post-#442, pre-#343 — no bf16+compile)
+- 3-cell paired-seed matrix in W&B group `h18-wider`:
+
+| Run | n_hidden | n_head | seed | params | val_raw | val_ema | test_avg | best ep | epochs done | W&B |
+|-----|---------:|-------:|-----:|-------:|--------:|--------:|---------:|--------:|------------:|-----|
+| **A — sanity** | 128 | 4 | 123 | 0.75M | 119.36 | **109.19** | **98.47** | 13 | 13 | `rkaegum4` |
+| B — wider | 192 | 6 | 123 | 1.57M | 137.75 | 130.70 | 114.46 | 9 | 9 (timeout) | `m5u18tpb` |
+| C — wider | 192 | 6 | 124 | 1.57M | 147.27 | 133.90 | 120.87 | 9 | 9 (timeout) | `5m9g7x0j` |
+
+Mean(B, C) − A: **+21.2% val_ema / +19.5% test_avg** — far past the +2% close-cleanly threshold.
+
+### Conclusions
+
+- **Decisive close.** Effect is far beyond noise; B-C seed spread is tight (2.4% val_ema, 5.4% test_avg) so the regression is real not noise.
+- **Under-convergence, not capacity-limited.** Wider runs hit 30-min timeout at epoch 9 vs baseline's epoch 13. val_raw curve was still descending steeply at epoch 9 (137 vs baseline's 119). Wider model is ~30% slower per epoch (~138s vs ~138s on the same compute regime).
+- **Cross-split signature didn't materialize as predicted.** Predicted strongest improvement on geom-OOD splits; observed roughly uniform regression across all four splits — characteristic of an under-trained model rather than a capacity-limited one. Capacity-limited regressions show *differential* signatures.
+- **Run A is the SEVENTH clean seed-controlled baseline reproduction** (PR #442 Run F, #523 Run A, #576 Run A, #343 Run G, #561 Run A, #602 Run A, now #611 Run A).
+- **Memory cost was higher than predicted:** 66.7 GB vs 44.6 GB baseline. The advisor's "essentially free on memory" prediction was wrong by ~22 GB. Useful calibration for future architectural-scaling hypotheses.
+
+### Useful follow-ups (deferred)
+
+- **Re-test wider on post-#343 path.** PR #343 (bf16+compile) merged in the meantime as round-0 winner #4 (val=80.91 / test=72.73, 2.4× throughput). At post-#343 throughput (~50 s/epoch baseline, ~70 s/epoch wider), wider would get ~26 epochs vs baseline's 34 — still under-converged but much better than 9. Could be worth re-testing once round-1 in-flight stack settles.
+- **Smaller widening factor (`n_hidden=160, n_head=5` → 1.2× params, dim_head=32)** could fit more epochs in the budget. But two strikes (H8 round 1, H18 round 1) suggest wider isn't the right lever at our dataset size.
+
+### Action
+
+Closed; reassigning thorfinn to **H22 (torch.compile mode='reduce-overhead' with fixed N_max padding)** — askeladd's flagged follow-up #3 from H6. Could unlock another 20-30% throughput via CUDAGraphs. Plays to thorfinn's engineering strengths.
+
+---
+
 ## 2026-04-28 08:49 — PR #576 (round 2): H16 arcsinh × EMA × FiLM — **SENT BACK FOR REBASE-ONTO-#343**
 
 - Branch: `willowpai2d4-nezuko/h16-arcsinh-pressure-target` (rebased onto post-#442, **not yet onto post-#343**)

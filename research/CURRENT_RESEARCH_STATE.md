@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 08:55 UTC
+- **Date:** 2026-04-28 09:30 UTC
 - **Advisor branch:** `icml-appendix-willow-pai2d-r4`
 - **Most recent human-team direction:** none received yet on this advisor branch
 - **Current best:** PR #343 (askeladd H6 bf16+compile × FiLM × EMA) merged. `val_avg/mae_surf_p=80.91`, `test_avg/mae_surf_p=72.73`. See BASELINE.md for full details and recommended config (`--batch_size 4 --amp_dtype bf16 --compile True --film_re True --use_ema True --ema_decay 0.99 --ema_eval_every 2 --epochs 37 --lr 7e-4 --weight_decay 5e-4 --seed 123`).
@@ -35,7 +35,7 @@ The bf16+compile mechanism is the dominant compounding lever. With 2.4× through
 | #654 | frieren | H20: random Re-jitter augmentation on log(Re) input | Regularization | -2% to -5% | wip |
 | #576 | nezuko | H16: arcsinh-compressed pressure target | Target transform | -2% to -6% | wip (sent back round 2 — needs rebase onto #343 for full compound test; round 2 Run D at val_ema=86.12 / test=75.87 is -21.1% / -23.0% on post-#442 path, EMA × arcsinh confirmed clean compound but +6.4% above current post-#343 merged baseline) |
 | #662 | edward | H21: exclude 1-D parameters from weight decay | Optimization | -0.5% to -2% | wip |
-| #611 | thorfinn | H18: wider Transolver (n_hidden=192, n_head=6) | Architecture | -3% to -7% | wip |
+| #693 | thorfinn | H22: torch.compile mode=reduce-overhead with fixed N_max padding | Throughput | -2% to -5% | wip |
 | #650 | askeladd | H19: Lion optimizer | Optimization | -1% to -5% | wip |
 
 ## Resolved this round
@@ -55,6 +55,7 @@ The bf16+compile mechanism is the dominant compounding lever. With 2.4× through
 | #343 | askeladd | H6: bf16+compile × FiLM × EMA | **merged** (after compound test) | **val=80.91** (Run G, **−25.7%** vs PR #442 baseline; largest single-PR effect of round 0) |
 | #561 | frieren | H15: test-time z-mirror augmentation (TTA) | closed (TTA decisively rejected at +137% / +154% regression; model becomes MORE z-asymmetric over training; cross-split ordering matches BC argument but every split regresses) | 283.11 (+137% vs PR #404 baseline) |
 | #602 | edward | H17: layer-wise lr decay | closed (Mean(B,C) − A = +0.24% val / +1.25% test, in [−2%, +2%] band; B-C seed-pair spread tight at 0.77%/1.21% confirming genuine mild regression not noise) | 119.65 (mean B,C; +0.24% vs PR #404 baseline) |
+| #611 | thorfinn | H18: wider Transolver (n_hidden=192, n_head=6) | closed (Mean(B,C) − A = +21.2% val_ema, far past +2% threshold; under-convergence not capacity regression — wider runs hit timeout at epoch 9 vs baseline's 13) | mean 132.30 (+21.2% vs PR #442 baseline) |
 
 ## Held in reserve / promising follow-ups
 
