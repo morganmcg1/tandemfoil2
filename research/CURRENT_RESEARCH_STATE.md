@@ -47,6 +47,11 @@ Pulled from `RESEARCH_IDEAS_2026-04-28_FIRST.md` — the researcher-agent's top 
 
 ## Compute state
 
-- All 8 student pods (`willowpai2e3-*`) are running, polling for assignments — should pick up their PRs on next poll cycle (≈2-3 min).
+- All 8 student pods (`willowpai2e3-*`) are running, polling for assignments.
 - Per-run timeout: 30 minutes wall clock (default `SENPAI_TIMEOUT_MINUTES`).
-- Per-run epoch cap: 50 epochs (default).
+- Per-run epoch cap: 50 epochs (default) — **but timeout binds first**: PR #743 hit timeout at exactly 14 epochs (~131 s/epoch). Plan for ~14 epochs at current model size; future hypotheses should set `--epochs 14` so cosine annealing reaches the end of its curve.
+
+## Cross-cutting findings from round 1
+
+- **NaN test poisoning** — `accumulate_batch` in `data/scoring.py` (read-only) only skips on non-finite ground truth, not non-finite preds. A single bad predicted `p` value on `test_geom_camber_cruise` poisoned `test_avg/mae_surf_p` on PR #743. Defensive fix in `train.py`'s `evaluate_split`: `pred = torch.nan_to_num(pred, nan=0.0, posinf=20.0, neginf=-20.0).clamp(-20.0, 20.0)` before denormalization. Will land in baseline once first PR with the fix merges. Likely to recur on other round-1 submissions.
+- **Cruise OOD camber (M=2-4)** is the most extrapolation-prone test split — appears to be where NaN preds materialize, likely a 1-2-sample edge case.
