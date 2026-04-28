@@ -25,23 +25,28 @@ Per programme contract, surface pressure on the held-out camber/Re splits is
 where the paper-facing numbers live. Per-sample y std varies by an order of
 magnitude even inside one domain, so high-Re samples drive the extremes.
 
-## Wave 1 — currently in flight (assigned, training)
+## Wave 1 status
 
-| Student | PR | Hypothesis family | Why it's interesting |
-|---------|----|-------------------|----------------------|
-| alphonse | #732 | Larger model capacity (n_hidden 128→256, n_layers 5→7, n_head 4→8) | Capacity headroom — Transolver scaling. |
-| askeladd | #733 | More slices (slice_num 64→256) | Finer physics-attention partitions for long meshes. |
-| edward | #734 | Higher surf_weight (10→50) | Direct lever on the primary metric. |
-| fern | #737 | LR warmup + cosine decay | Optimization stability, especially early epochs. |
-| frieren | #739 | Huber loss replacing MSE | Robustness to high-Re extreme pressure spikes. |
-| nezuko | #742 | Dropout regularization | Reduce overfit on small (~1.5k) train set. |
-| tanjiro | #745 | Separate output heads (Ux, Uy, p) | Decouple pressure head from velocity dynamics. |
-| thorfinn | #763 | Physics-informed distance features (dist-to-surface, log-dist, tandem indicator) | Inductive bias for boundary-layer / tandem interaction. |
+| Student | PR | Status | Result |
+|---------|----|--------|--------|
+| alphonse | #732 | **Closed** | val_avg=154.95 (6/50 epochs; 30-min OOM fallback to n_layers=6; test NaN) |
+| alphonse | #796 | **WIP** | FiLM-Re conditioning — new assignment |
+| askeladd | #733 | WIP | Mid-train |
+| edward | #734 | WIP | Mid-train; ~239 at step 1195 |
+| fern | #737 | WIP | Mid-train |
+| frieren | #739 | WIP | Mid-train |
+| nezuko | #742 | WIP | Mid-train; ~247 early |
+| tanjiro | #745 | WIP | Mid-train |
+| thorfinn | #763 | WIP | Mid-train |
 
-This wave probes capacity, attention partitioning, loss reweighting, schedule,
-robust loss, regularization, output decomposition, and feature engineering —
-roughly orthogonal levers. Surface pressure metric will tell us which axes
-matter most.
+**Current best val_avg/mae_surf_p:** 154.95 (alphonse #732, run pkyat9dy) — reference only, no baseline merged yet.
+
+**Key learnings from Wave-1 so far:**
+- Throughput is binding: 0.93M-param baseline does ~20 epochs/30min; 3.01M-param does ~6 epochs. BF16/grad-checkpointing needed before scaling.
+- Trajectory suggests capacity is NOT the bottleneck at first contact — need to establish baseline first.
+- `test_geom_camber_cruise` NaN on under-trained large models; scoring.py NaN-pred gap confirmed (data/ read-only).
+
+**Awaiting:** edward, nezuko, askeladd, fern, frieren, tanjiro, thorfinn results to establish baseline architecture val_avg benchmark.
 
 ## Current research themes
 
@@ -81,8 +86,7 @@ hypotheses. Until that lands, the priors I'm carrying for next wave:
 - **Test-time adaptation.** TTA via per-sample fine-tuning on geometry
   features for the unseen-camber splits.
 
-This list will be refreshed once the researcher-agent's
-`RESEARCH_IDEAS_2026-04-28_19:30.md` lands.
+Full bank in `research/RESEARCH_IDEAS_2026-04-28_19:30.md`.
 
 ## Open questions
 
