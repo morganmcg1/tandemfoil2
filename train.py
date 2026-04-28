@@ -138,9 +138,11 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 drop_path=0.0):
         super().__init__()
         self.last_layer = last_layer
+        self.drop_path = drop_path
         self.ln_1 = nn.LayerNorm(hidden_dim)
         self.attn = PhysicsAttention(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
@@ -149,6 +151,7 @@ class TransolverBlock(nn.Module):
         self.ln_2 = nn.LayerNorm(hidden_dim)
         self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
                        n_layers=0, res=False, act=act)
+        self.mlp_drop = nn.Dropout(dropout)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
@@ -156,9 +159,14 @@ class TransolverBlock(nn.Module):
                 nn.Linear(hidden_dim, out_dim),
             )
 
+    def _drop(self, x, residual):
+        if self.training and self.drop_path > 0 and torch.rand(1, device=x.device).item() < self.drop_path:
+            return residual
+        return x + residual
+
     def forward(self, fx):
-        fx = self.attn(self.ln_1(fx)) + fx
-        fx = self.mlp(self.ln_2(fx)) + fx
+        fx = self._drop(self.attn(self.ln_1(fx)), fx)
+        fx = self._drop(self.mlp_drop(self.mlp(self.ln_2(fx))), fx)
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
         return fx
@@ -168,6 +176,7 @@ class Transolver(nn.Module):
     def __init__(self, space_dim=1, n_layers=5, n_hidden=256, dropout=0.0,
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
+                 drop_path_max=0.0,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None):
         super().__init__()
@@ -185,11 +194,13 @@ class Transolver(nn.Module):
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
+        self.drop_path_max = drop_path_max
         self.blocks = nn.ModuleList([
             TransolverBlock(
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                drop_path=drop_path_max * (i / max(n_layers - 1, 1)),
             )
             for i in range(n_layers)
         ])
@@ -390,6 +401,8 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    dropout: float = 0.05  # dropout rate inside each TransolverBlock (PhysicsAttention + post-MLP)
+    drop_path_max: float = 0.05  # max stochastic-depth rate (linear 0..max across layers)
 
 
 if __name__ == "__main__":
@@ -428,6 +441,8 @@ if __name__ == "__main__":
         n_head=4,
         slice_num=64,
         mlp_ratio=2,
+        dropout=cfg.dropout,
+        drop_path_max=cfg.drop_path_max,
         output_fields=["Ux", "Uy", "p"],
         output_dims=[1, 1, 1],
     )
