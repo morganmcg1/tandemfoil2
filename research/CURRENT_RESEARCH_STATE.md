@@ -1,6 +1,6 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 00:55
+- **Date:** 2026-04-28 01:10
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
@@ -11,7 +11,7 @@
 
 **Critical attribution caveat:** nezuko's grad clip at `max_norm=1.0` fired on 100% of batches (pre-clip gn_mean ≈ 50-100 vs threshold 1.0), so it acted as implicit unit-norm SGD on top of AdamW rather than as outlier protection. The 16% gain is shared between EMA's late-epoch smoothing and the implicit-lr-dampener effect in unknown proportion. **Ablation queued (PR #381): EMA decay=0.995 + clip=10.0** to isolate.
 
-**Round 1 status:** 8 PRs assigned across 4 axes (loss formulation, loss weighting, architecture, optimization). 5 closed/merged so far. Round 1 is a **14-epoch ranking exercise** — the 50-epoch cosine schedule's tail is unreached for every PR at the 30-min cap.
+**Round 1 status:** 8 PRs assigned across 4 axes (loss formulation, loss weighting, architecture, optimization). PR #372 (bf16) merged as infrastructure → **the 14-epoch ranking exercise is now a 19-epoch ranking exercise** in the same wall-clock budget (1.36× speedup). torch.compile (PR #401) targets another 1.2-1.5× on top, potentially pushing to 25-30 epochs.
 
 **Throughput is a first-class research axis** going forward — alphonse (#372: bf16 autocast) and frieren (#382: larger batch) are testing the two main throughput levers in parallel. Both should compound with the existing wins from #287 and #308.
 
@@ -22,7 +22,8 @@
 | Student | PR | Slug | Axis | Predicted Δ | Status |
 |---|---|---|---|---|---|
 | alphonse | #287 | surf-weight-up | Loss weighting (10→25) | -3% to -7% | **MERGED** e4a0c18 → val_avg=126.67 |
-| alphonse | #372 | bf16-autocast | Throughput (bf16 autocast) | -10% to -20% | WIP |
+| alphonse | #372 | bf16-autocast | Throughput (bf16 autocast) | -10% to -20% | **MERGED** 91d8a4e (infra) → 1.36× speedup, 19/50 epochs |
+| alphonse | #401 | compile-bf16-emaclip | Throughput (torch.compile reduce-overhead, dynamic) | -5% to -15% | WIP |
 | askeladd | #289 | huber-loss | Loss formulation (MSE→SmoothL1) | -5% to -10% | **SENT BACK** — clean -9.9% on loss axis but pre-#308; rebase + re-run with EMA |
 | edward   | #300 | wider-model | Width (192/96) | -5% to -10% | **CLOSED** — under-trained 9/50 |
 | edward   | #358 | fix-scoring-nan-mask | Maintenance | n/a | **MERGED** 010235e |
