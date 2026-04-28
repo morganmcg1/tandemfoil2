@@ -1,13 +1,13 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 06:35 UTC
+- **Date:** 2026-04-28 07:00 UTC
 - **Advisor branch:** `icml-appendix-willow-pai2d-r4`
 - **Most recent human-team direction:** none received yet on this advisor branch
-- **Current best:** PR #404 (edward H11) merged. `val_avg/mae_surf_p=119.36`, `test_avg/mae_surf_p=107.54`. See BASELINE.md for full details and recommended config (`--film_re True --epochs 25 --lr 7e-4 --weight_decay 5e-4 --seed 123`).
+- **Current best:** PR #442 (thorfinn H12) merged. `val_ema/mae_surf_p=109.19`, `test_avg/mae_surf_p=98.47`. See BASELINE.md for full details and recommended config (`--film_re True --use_ema True --ema_decay 0.99 --ema_eval_every 2 --epochs 25 --lr 7e-4 --weight_decay 5e-4 --seed 123`).
 
 ## Active research focus
 
-**Round 0 ongoing — two winners merged so far.** PR #344 (warmup + per-step cosine + NaN fix) merged first; PR #404 (Re-conditional FiLM + wd=5e-4) merged second after rigorous disentanglement that confirmed FiLM × wd interaction is the load-bearing mechanism. Six in-flight hypotheses are testing other directions, three of which have been sent back for rebases or focused re-runs because their first-round results need to be measured against the moving baseline.
+**Round 0 ongoing — three winners merged so far.** PR #344 (warmup + per-step cosine + NaN fix) merged first; PR #404 (Re-conditional FiLM + wd=5e-4) merged second after rigorous disentanglement; **PR #442 (EMA decay=0.99 + every-other-epoch eval) merged third** with a clean −8.5% / −8.4% compound on top of FiLM. The EMA × FiLM compound was decisive: val_raw exactly reproduced PR #404's baseline (119.36 to 4 sig figs), confirming the seed-controlled comparison protocol works at the program level; EMA layered a clean −8.5% on top across all four test splits.
 
 ## Current themes
 
@@ -27,7 +27,7 @@
 | #343 | askeladd | H6: bf16 + torch.compile + larger batch | Throughput | -3% to -9% | wip (sent back round 1 — needs rebase onto #404; round 1 Run A was -32% / -25.4% vs current baseline, **largest single-PR effect of round 0 by far**; bs=8 hurts, bs=4+bf16+compile is the working config) |
 | #576 | nezuko | H16: arcsinh-compressed pressure target | Target transform | -2% to -6% | wip |
 | #348 | tanjiro | H3: Smooth L1 (Huber) on surface pressure | Loss reformulation | -2% to -6% | wip |
-| #442 | thorfinn | H12: EMA of model weights for evaluation | Optimization | -1% to -4% | wip (sent back round 2 — needs rebase onto #404 + Run F to test EMA × FiLM compound; round 2 Run D at decay=0.99 confirmed mechanism triply validated with 9.2% within-run lift but absolute val_ema=121.24 ties PR #344 baseline within noise) |
+| #611 | thorfinn | H18: wider Transolver (n_hidden=192, n_head=6) | Architecture | -3% to -7% | wip |
 | #468 | fern | H9: surface-arc pressure-gradient penalty | Physics-aware | -2% to -5% | wip |
 | #561 | frieren | H15: test-time z-mirror augmentation (TTA) | Inference-time regularization | -1% to -3% | wip |
 | #602 | edward | H17: layer-wise lr decay for Transolver blocks | Optimization | -1% to -4% | wip |
@@ -45,6 +45,7 @@
 | #347 | nezuko | H5: Fourier features (× FiLM in round 3) | closed (Fourier × FiLM antagonistic at +8.5% regression; Fourier-only round 2 gave -3.14% on pre-#404 path but doesn't compound) | 129.49 (+8.5% vs current baseline) |
 | #523 | edward | H14: 5-D FiLM conditioner | closed (Run B at +seed=123 was -2.93% but Run C at seed=124 was +5.27%; mean(B,C) is essentially zero; cruise -7.2% survives seed-avg as the sole real signal) | mean 120.76 (+1.2% vs baseline) |
 | #404 | edward | H11: Re-conditional FiLM modulation | **merged** (after disentanglement) | **119.36** (Run E, −1.3% vs prior baseline) |
+| #442 | thorfinn | H12: EMA decay=0.99 × FiLM | **merged** (after EMA × FiLM compound test) | **val_ema=109.19** (Run F, −8.5% vs PR #404 baseline) |
 
 ## Held in reserve / promising follow-ups
 
@@ -56,8 +57,9 @@
 - **Per-domain `surf_weight`** — closely related to H10's failure mode; revisit if H10 mechanism can be salvaged.
 - **FiLM hidden=32** — halve the FiLM head's 83K params from PR #404, tightening the +12.6% params objection.
 - **Concat-Re instead of FiLM** — cheaper alternative to FiLM if it captures most of the gain.
-- **3-seed nail-down of Run E (PR #404)** — would give a real error bar on the −2.2% test headline.
-- **Compounding the round-0 winners** — once 2–3 separate ideas merge, run a combined-best PR to ensure their gains are additive.
+- **3-seed nail-down of Run E (PR #404) and Run F (PR #442)** — would give real error bars on the merge headlines.
+- **EMA tighter decay sweep (decay=0.995)** — midpoint between 0.99 and 0.999; FiLM-stabilized training may benefit from longer averaging window. Marginal expected gain.
+- **`--ema_eval_every 1`** — every-epoch EMA eval on FiLM-merged path may catch better checkpointing decisions on odd epochs.
 
 ## Open methodological note
 
