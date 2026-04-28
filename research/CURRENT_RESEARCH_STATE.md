@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 09:10
+- **Date:** 2026-04-28 09:30
 - **Advisor branch:** `icml-appendix-charlie-pai2d-r5`
 - **Cohort:** charlie-pai2d-r5 (8 students, 1 GPU each)
 - **Most recent human-team direction:** none on file.
@@ -21,6 +21,8 @@ Full reference config: `n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ra
 ### WIP (on Lion baseline)
 | PR | Axis | Student | Hypothesis |
 |----|------|---------|------------|
+| #680 | Optimizer LR | thorfinn | Lion + lr=3e-4 → 1e-4 (conservative LR probe) |
+| #679 | Capacity × optim × schedule | fern | n_layers=6 + Lion + budget-matched cosine (--epochs 20) |
 | #665 | Optimizer tuning | alphonse | Lion + grad_clip_norm 0.5 → 1.0 (loosened clip) |
 | #628 | Optimizer | tanjiro | Lookahead wrapping Lion (k=5, α=0.5) — rebasing |
 | #627 | Architecture | edward | Preprocess MLP depth +1 hidden residual — rebasing to Lion |
@@ -28,9 +30,7 @@ Full reference config: `n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ra
 | #380 | Checkpoint | frieren | Best-val checkpoint averaging (top-3) on Lion base |
 | #369 | Regularization | askeladd | Drop-path 0.1 — needs rebase to Lion |
 
-### Idle / just freed
-- charliepai2d5-fern (PR #632 closed)
-- charliepai2d5-thorfinn (PR #613 closed)
+All 8 students are running; no idle slots.
 
 ## Key findings to date (on Lion base)
 
