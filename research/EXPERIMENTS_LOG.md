@@ -80,6 +80,73 @@ a dead end — it just needs to be tested on top of L1.
 re-run with `lr=1e-3 + 10% warmup + L1`. The two changes are orthogonal
 in the codebase (loss tensor vs scheduler), so the rebase should be clean.
 
+## 2026-04-28 20:15 — PR #754: Per-channel loss weight: pressure 3x — **SENT BACK**
+
+- Branch: `willowpai2e4-fern/p-channel-3x`
+- Student: willowpai2e4-fern
+- W&B run: [`jr8nfzbg`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/jr8nfzbg)
+
+**Hypothesis.** Pressure is the only ranked channel; weighting per-element MSE
+on the `p` channel 3× should focus gradient there at the cost of (acceptable)
+slight Ux/Uy degradation.
+
+**Implementation.** `channel_weights = [1.0, 1.0, 3.0]` multiplied into
+`(pred - y_norm) ** 2` in train loop and `evaluate_split`. Stock model and
+hyperparameters otherwise.
+
+**Results (epoch 14 best, 30.8 min wall, ran on MSE before L1 merge)**
+
+| Metric | fern channel-3x (MSE) |
+|---|---|
+| `val_avg/mae_surf_p` | 130.87 |
+| `test_avg/mae_surf_p` | NaN (cruise bug) |
+| 3-split test mean (W&B) | 130.20 |
+
+| Split | val mae_surf_p | val mae_surf_Ux | val mae_surf_Uy |
+|---|---|---|---|
+| `val_single_in_dist` | 169.98 | 2.47 | 1.08 |
+| `val_geom_camber_rc` | 137.29 | 3.34 | 1.30 |
+| `val_geom_camber_cruise` | 100.65 | 1.72 | 0.73 |
+| `val_re_rand` | 115.55 | 2.63 | 1.00 |
+
+**Analysis.** Worse than the merged L1 baseline (101.93) by ~28%, but the run
+was MSE-based (predates the L1 merge). Velocity channels stayed sane: surface
+Ux MAE 1.7-3.3, Uy MAE 0.7-1.3 — no qualitative degradation, so the 3× weight
+is not destabilizing the velocity field. Per-epoch trajectory still descending
+at the cap (146 → 141 → 130.9), so a longer schedule would help, but the
+bigger question is whether channel-3x compounds with L1.
+
+**Decision.** Sent back. Asked fern to rebase on L1 and re-run; net
+expression `sq_err = (pred - y_norm).abs() * channel_weights[None, None, :]`.
+If this compounds with L1, we'll sweep 5×/10× next round.
+
+**Important diagnostic surfaced.** Fern empirically pinned the
+`test_geom_camber_cruise` NaN bug to **two** distinct issues:
+
+1. **Model emits non-finite predictions** (`vol_loss = +Inf` in W&B summary)
+2. **GT itself has NaN** in `test_geom_camber_cruise/000020.pt` p channel
+   (verified via direct file scan — exactly 1 of 200 cruise test samples)
+
+The second finding is critical: even with the model output guarded, scoring
+still propagates `NaN * 0 = NaN` from the bad GT sample through the
+masked-sum accumulator. PR #797 (askeladd, NaN guard) has been expanded to
+handle both bugs — drop samples with non-finite GT before `accumulate_batch`,
+in addition to the original `nan_to_num` on `pred`.
+
+## Round 1 status snapshot (2026-04-28 ~20:15)
+
+| PR | Student | Topic | Status |
+|----|---------|-------|--------|
+| #749 | alphonse | Capacity scale-up | wip |
+| #752 | askeladd | L1 loss | merged (baseline 101.93) |
+| #753 | edward | surf_weight 20/30/50 | wip |
+| #754 | fern | Per-channel pressure 3× | sent back to retest on L1 |
+| #755 | frieren | slice_num 64→128 | wip |
+| #757 | nezuko | 5% warmup + cosine | wip |
+| #758 | tanjiro | lr=1e-3 + 10% warmup | sent back to retest on L1 |
+| #760 | thorfinn | batch_size 4→8 | wip |
+| #797 | askeladd | NaN/Inf guard (scope expanded) | wip |
+
 ## Round 1 status snapshot (2026-04-28 ~20:00)
 
 | PR | Student | Topic | Status |
