@@ -214,10 +214,47 @@ class Transolver(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Loss functions
+# ---------------------------------------------------------------------------
+
+def relative_mae_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: torch.Tensor,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """Per-sample relative MAE: |pred - target| / (mean(|target|) + eps), per-channel.
+
+    The denominator is computed per-sample (across nodes of that sample), per-channel,
+    over only the masked nodes. This makes every sample contribute equally to the
+    gradient signal regardless of its target magnitude — addressing the dominance of
+    high-Re samples under MSE in normalized space.
+
+    pred, target shape: [B, N, C]; mask shape: [B, N] bool. The reduction matches the
+    MSE structure used elsewhere — sum over (masked nodes × channels) divided by the
+    masked node count — so surf_weight scaling stays comparable across loss types.
+    """
+    mask_3d = mask.unsqueeze(-1).to(target.dtype)  # [B, N, 1]
+
+    # Per-sample, per-channel mean(|target|) over masked nodes; [B, 1, C]
+    n_per_sample = mask_3d.sum(dim=1, keepdim=True).clamp(min=1)
+    scale = (target.abs() * mask_3d).sum(dim=1, keepdim=True) / n_per_sample
+    scale = scale + eps  # additive epsilon (formula in PR)
+
+    rel = (pred - target).abs() / scale  # [B, N, C]
+    return (rel * mask_3d).sum() / mask.sum().clamp(min=1)
+
+
+# ---------------------------------------------------------------------------
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device, huber_delta: float = 0.0) -> dict[str, float]:
+def evaluate_split(
+    model, loader, stats, surf_weight, device,
+    huber_delta: float = 0.0,
+    loss_type: str = "mse",
+    rel_mae_eps: float = 1e-6,
+) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -253,24 +290,43 @@ def evaluate_split(model, loader, stats, surf_weight, device, huber_delta: float
                 y = torch.where(pred_ok_b, y, torch.full_like(y, float("nan")))
                 y_norm = torch.where(pred_ok_b, y_norm, torch.zeros_like(y_norm))
 
-            if huber_delta > 0:
-                err = F.huber_loss(pred, y_norm, reduction="none", delta=huber_delta)
-            else:
-                err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
-            vol_loss_sum += (
-                (err * vol_mask.unsqueeze(-1)).sum()
-                / vol_mask.sum().clamp(min=1)
-            ).item()
-            surf_loss_sum += (
-                (err * surf_mask.unsqueeze(-1)).sum()
-                / surf_mask.sum().clamp(min=1)
-            ).item()
+            if loss_type == "relative_mae":
+                vol_loss_sum += relative_mae_loss(pred, y_norm, vol_mask, eps=rel_mae_eps).item()
+                surf_loss_sum += relative_mae_loss(pred, y_norm, surf_mask, eps=rel_mae_eps).item()
+            else:
+                if huber_delta > 0:
+                    err = F.huber_loss(pred, y_norm, reduction="none", delta=huber_delta)
+                else:
+                    err = (pred - y_norm) ** 2
+                vol_loss_sum += (
+                    (err * vol_mask.unsqueeze(-1)).sum()
+                    / vol_mask.sum().clamp(min=1)
+                ).item()
+                surf_loss_sum += (
+                    (err * surf_mask.unsqueeze(-1)).sum()
+                    / surf_mask.sum().clamp(min=1)
+                ).item()
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+
+            # NaN-safe guard (folds in fix from PR #821): the cruise split contains
+            # at least one sample with -Inf in y, and accumulate_batch's multiplicative
+            # mask formulation defeats per-sample skip via Inf*0=NaN. Build a per-sample
+            # finite mask (over both y and pred) and pass it as the mask argument so the
+            # bad sample is excluded from both sums and node counts.
+            B = y.shape[0]
+            sample_finite = (
+                torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+                & torch.isfinite(pred_orig.reshape(B, -1)).all(dim=-1)
+            )
+            keep_full = mask & sample_finite[:, None]
+            zero = torch.zeros((), dtype=y.dtype, device=y.device)
+            y_safe = torch.where(keep_full[..., None], y, zero)
+            pred_safe = torch.where(keep_full[..., None], pred_orig, zero)
+            ds, dv = accumulate_batch(pred_safe, y_safe, is_surface, keep_full, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
 
@@ -403,6 +459,8 @@ class Config:
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
     huber_delta: float = 0.0  # 0 = MSE (default); >0 = Huber with this delta
+    loss_type: str = "mse"  # "mse" (default; uses huber_delta to switch MSE/Huber) or "relative_mae"
+    rel_mae_eps: float = 1e-6  # additive epsilon in the relative MAE denominator
 
 
 cfg = sp.parse(Config)
@@ -504,15 +562,19 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        if cfg.huber_delta > 0:
-            err = F.huber_loss(pred, y_norm, reduction="none", delta=cfg.huber_delta)
-        else:
-            err = (pred - y_norm) ** 2
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        if cfg.loss_type == "relative_mae":
+            vol_loss = relative_mae_loss(pred, y_norm, vol_mask, eps=cfg.rel_mae_eps)
+            surf_loss = relative_mae_loss(pred, y_norm, surf_mask, eps=cfg.rel_mae_eps)
+        else:
+            if cfg.huber_delta > 0:
+                err = F.huber_loss(pred, y_norm, reduction="none", delta=cfg.huber_delta)
+            else:
+                err = (pred - y_norm) ** 2
+            vol_loss = (err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+            surf_loss = (err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
@@ -532,7 +594,12 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device, cfg.huber_delta)
+        name: evaluate_split(
+            model, loader, stats, cfg.surf_weight, device,
+            huber_delta=cfg.huber_delta,
+            loss_type=cfg.loss_type,
+            rel_mae_eps=cfg.rel_mae_eps,
+        )
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -600,7 +667,12 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, cfg.huber_delta)
+            name: evaluate_split(
+                model, loader, stats, cfg.surf_weight, device,
+                huber_delta=cfg.huber_delta,
+                loss_type=cfg.loss_type,
+                rel_mae_eps=cfg.rel_mae_eps,
+            )
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
