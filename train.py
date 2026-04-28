@@ -217,6 +217,7 @@ class Transolver(nn.Module):
     def __init__(self, space_dim=1, n_layers=5, n_hidden=256, dropout=0.0,
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
+                 preprocess_layers=0,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None):
         super().__init__()
@@ -227,10 +228,12 @@ class Transolver(nn.Module):
 
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
-                                  n_layers=0, res=False, act=act)
+                                  n_layers=preprocess_layers,
+                                  res=(preprocess_layers > 0), act=act)
         else:
             self.preprocess = MLP(fun_dim + space_dim, n_hidden * 2, n_hidden,
-                                  n_layers=0, res=False, act=act)
+                                  n_layers=preprocess_layers,
+                                  res=(preprocess_layers > 0), act=act)
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
@@ -449,6 +452,7 @@ model_config = dict(
     n_head=4,
     slice_num=64,
     mlp_ratio=2,
+    preprocess_layers=1,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
