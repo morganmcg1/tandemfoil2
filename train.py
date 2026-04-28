@@ -46,6 +46,29 @@ from data import (
     pad_collate,
 )
 
+
+def subsample_volume_nodes(
+    mask: torch.Tensor,
+    is_surface: torch.Tensor,
+    keep_frac: float,
+    generator: torch.Generator | None = None,
+) -> torch.Tensor:
+    """Return a new mask that keeps all surface nodes (where mask & is_surface)
+    and a random `keep_frac` subset of volume nodes (where mask & ~is_surface).
+
+    Pad-region elements (mask=False) stay masked out.
+
+    Shapes: mask, is_surface: [B, N] bool. Returns [B, N] bool.
+    """
+    if keep_frac >= 1.0:
+        return mask
+    vol_mask = mask & ~is_surface
+    surf_mask = mask & is_surface
+    keep = torch.rand(vol_mask.shape, device=mask.device, generator=generator) < keep_frac
+    new_vol_mask = vol_mask & keep
+    return surf_mask | new_vol_mask
+
+
 # ---------------------------------------------------------------------------
 # Transolver model
 # ---------------------------------------------------------------------------
@@ -386,6 +409,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    vol_subsample_frac: float = 1.0  # 1.0 = baseline (no subsampling); 0.15 = keep ~15 percent of volume nodes
 
 
 cfg = sp.parse(Config)
@@ -486,6 +510,14 @@ for epoch in range(MAX_EPOCHS):
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
+
+        if cfg.vol_subsample_frac < 1.0:
+            mask = subsample_volume_nodes(mask, is_surface, cfg.vol_subsample_frac)
+
+        if n_batches == 0:
+            surf_frac = (mask & is_surface).sum().float() / mask.sum().float().clamp(min=1)
+            wandb.log({"train/effective_surf_frac": surf_frac.item(),
+                       "global_step": global_step})
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
