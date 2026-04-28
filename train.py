@@ -158,7 +158,8 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 layerscale_init: float = 1e-4):
         super().__init__()
         self.last_layer = last_layer
         self.ln_1 = nn.LayerNorm(hidden_dim)
@@ -168,6 +169,11 @@ class TransolverBlock(nn.Module):
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
         self.mlp = SwiGLU_MLP(hidden_dim, hidden_dim, hidden_dim, mlp_ratio=mlp_ratio)
+        # LayerScale (CaiT, Touvron et al. 2021): per-channel learnable gate on
+        # each residual branch, init small so the model behaves like identity at
+        # the start of training and grows specific branches as needed.
+        self.gamma_attn = nn.Parameter(layerscale_init * torch.ones(hidden_dim))
+        self.gamma_mlp = nn.Parameter(layerscale_init * torch.ones(hidden_dim))
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
@@ -176,8 +182,8 @@ class TransolverBlock(nn.Module):
             )
 
     def forward(self, fx):
-        fx = self.attn(self.ln_1(fx)) + fx
-        fx = self.mlp(self.ln_2(fx)) + fx
+        fx = self.gamma_attn * self.attn(self.ln_1(fx)) + fx
+        fx = self.gamma_mlp * self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
         return fx
@@ -461,8 +467,17 @@ n_params = sum(p.numel() for p in model.parameters())
 swiglu_inter = model.blocks[0].mlp.intermediate
 print(
     f"Model: Transolver ({n_params/1e6:.2f}M params) + EMA(decay=0.99) "
-    f"[SwiGLU MLP intermediate={swiglu_inter}]"
+    f"[SwiGLU MLP intermediate={swiglu_inter}, LayerScale init=1e-4]"
 )
+
+
+def gamma_stats(m: nn.Module) -> dict[str, float]:
+    """Mean abs of gamma_attn / gamma_mlp per TransolverBlock for monitoring."""
+    out: dict[str, float] = {}
+    for i, blk in enumerate(m.blocks):
+        out[f"block{i}/gamma_attn_abs_mean"] = blk.gamma_attn.detach().abs().mean().item()
+        out[f"block{i}/gamma_mlp_abs_mean"] = blk.gamma_mlp.detach().abs().mean().item()
+    return out
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
@@ -558,6 +573,7 @@ for epoch in range(MAX_EPOCHS):
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
+        "layerscale": gamma_stats(model),
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
