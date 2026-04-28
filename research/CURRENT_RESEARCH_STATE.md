@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- 2026-04-28 21:40
+- 2026-04-28 22:00
 - No recent research direction from human researcher team (no open GitHub issues found)
 - Current research focus and themes:
 
@@ -30,11 +30,11 @@ Every prior result needs to be re-judged against the new baseline. Specifically,
 | #800 | alphonse | n_hidden=256 + bf16 AMP | WIP — rebased on clipping baseline, re-running |
 | #780 | thorfinn | mlp_ratio 2→4 | WIP — reviewed 2026-04-28 21:35; sent back to rebase onto clipping baseline (prev result 135.296 without clipping) |
 | #772 | nezuko | per-channel output affine | WIP — reviewed 2026-04-28 21:35; sent back to rebase onto clipping baseline (prev result 138.497 without clipping) |
-| #768 | frieren | lr=1e-4 + warmup | WIP — rebased on clipping baseline, re-running |
+| #875 | frieren | Schedule-to-budget cosine: T_max=14 to align LR annealing to achievable epoch budget | WIP — new assignment 2026-04-28 22:00 |
 | #767 | fern | surf_weight 10→50 | WIP — rebased on clipping baseline, re-running |
 | #766 | edward | n_layers 5→8 | WIP — first run on clipping baseline, still running |
 
-All 8 students have active WIP assignments. No idle students. Checked 2026-04-28 21:40 — PRs #780 and #772 reviewed and sent back for rebase onto clipping baseline; all 8 experiments now running. PR #856 (EMA for tanjiro) added as a new assignment.
+All 8 students have active WIP assignments. No idle students. Checked 2026-04-28 22:00 — PR #768 (frieren/lower-lr-warmup) closed as dead-end: warmup+clipping are substitutes, warmup costs 6-10 units post-clipping. frieren re-assigned to schedule-to-budget-cosine (PR #875).
 
 ## Potential Next Research Directions
 

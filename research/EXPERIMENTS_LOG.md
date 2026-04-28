@@ -86,11 +86,30 @@ A single line of code (`torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)`
 
 ---
 
-## 2026-04-28 20:55 — PR #768: Lower LR + warmup (5e-4→1e-4 + 500-step warmup) [SENT BACK]
+## 2026-04-28 19:00 — PR #768: Lower LR + warmup (5e-4→1e-4 + 500-step warmup) [CLOSED — DEAD END]
 
 - **Branch:** `frieren/lower-lr-warmup`
-- val_avg/mae_surf_p = 125.35. Beat original baseline but not new baseline.
-- **Decision:** Sent back — rebase onto clipping baseline. With clipping handling extremes, the higher 5e-4 LR may now train safely without warmup; and the lower-LR variant should compound with clipping for further gain.
+- **Hypothesis:** Lower peak LR (1e-4) + 500-step linear warmup would protect orthogonal in_project_slice initialization from destructive early updates, finding better local minima.
+- **Round 1** (pre-gradient-clipping): lr=1e-4 + warmup → val_avg/mae_surf_p = 125.35. Beat old baseline 137.0013.
+- **Round 2** (post-gradient-clipping, rebased on PR #778):
+
+| Run | val_avg/mae_surf_p | Delta vs 104.7457 |
+|-----|-------------------|--------------------|
+| lr=5e-4 + 500-step warmup (epoch 12) | 111.0786 | +6.33 (worse) |
+| lr=2e-4 + 500-step warmup (epoch 14) | 115.0022 | +10.26 (worse) |
+
+Per-split (lr=5e-4 + warmup, best epoch 12):
+| Split | mae_surf_p |
+|-------|-----------|
+| val_single_in_dist | 130.93 |
+| val_geom_camber_rc | 123.76 |
+| val_geom_camber_cruise | 84.34 |
+| val_re_rand | 105.29 |
+| **avg** | **111.08** |
+
+- **Analysis:** Warmup and gradient clipping are substitutes, not complements. Pre-clipping, warmup protected the model from explosive gradients in early training. Post-clipping, the warmup ramp wastes the first 1.3 epochs of compute in a 14-epoch budget. Both warmup variants landed in the 111–115 band.
+- **Key insight from frieren:** Current cosine is tuned for 50 epochs but only ~14 complete (28% progress). LR never anneals. This is an independent improvement worth pursuing → assigned as PR #875 (schedule-to-budget-cosine).
+- **Decision:** CLOSED. Warmup is not useful post-clipping. Follow-up: budget-aligned cosine annealing (PR #875).
 
 ---
 
