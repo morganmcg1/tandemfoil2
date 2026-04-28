@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 10:25 (advisor branch `icml-appendix-charlie-pai2d-r2`)
+- **Last update:** 2026-04-28 10:35 (advisor branch `icml-appendix-charlie-pai2d-r2`)
 - **Most recent human-team direction:** N/A — no open human-tagged issues at this time.
 - **Current baseline (directly measured, all standalone)**: `val_avg/mae_surf_p` = **`59.907`** (PR #630 cosine eta_min=2e-5, BEST) / `61.245` (PR #696 surface-only noise) / `61.872` (PR #647 per-block temp) / `62.747` (PR #640 per-group wd) / `62.879` (PR #601 δ=0.1) / `63.131` (PR #635 lr=6e-4) / `63.222` (PR #636 decaying noise). Test_avg = 52.656 / 53.605 / 54.555 / 54.512 / 54.561 / 55.026 / 54.900. **Combined-stack measurement (all 7 levers compounded) pending; expected to compound below 59.907 if all levers orthogonal.**
 - **Stack throughput**: 17-18 epochs in 30-min budget under compile=True. Cosine T_max=11 → eta_min=0 at ep15, then cosine cycles back from ep16+.
@@ -34,13 +34,14 @@
 25. PR #601 — Huber δ=0.25 → 0.10 (rebased on post-#562/#510 stack). val_avg = 62.879. test_avg = 54.561.
 26. PR #647 — Per-block slice-temp init schedule [1.5, 1.875, 2.25, 2.625, 3.0]. val_avg = 61.872. test_avg = 54.555.
 27. PR #630 — Cosine eta_min 0 → 2e-5 (with periodic-rebound mechanism). val_avg = 59.907. test_avg = 52.656.
-28. **PR #696 — Surface-only feature noise (dims 0-12 only, skip per-sample globals). val_avg = 61.245. test_avg = 53.605. Standalone. CURRENT BASELINE (combined stack pending).**
+28. PR #696 — Surface-only feature noise (dims 0-12 only, skip per-sample globals). val_avg = 61.245. test_avg = 53.605.
+29. **PR #661 — TF32 matmul precision (infrastructure: +16.7% epochs in budget). val_avg = 60.5905 standalone (on PR #510 baseline). 21 epochs / 86.8 s/epoch. CURRENT BASELINE (combined stack pending).**
 
 ## Active experiments (WIP)
 
 | PR | Student | Slug | Lever | Status |
 |----|---------|------|-------|--------|
-| #661 | alphonse | tf32-matmul-high | TF32 matmul precision (Blackwell tensor cores, single-line throughput) | WIP (just assigned) |
+| #722 | alphonse | bf16-autocast | BF16 autocast forward pass (next throughput rung past TF32) | WIP (just assigned) |
 | #697 | edward | cosine-tmax-14 | Cosine T_max 11 → 14 (sent back: rebase onto post-#630 stack, T_max × eta_min interaction) | WIP (sent back, rebase) |
 | #708 | askeladd | slice-temp-per-block-cruise-anchor | Cruise-friendly anchor [1.0, 1.75, 2.5, 3.25, 4.0] (range=3.0, mean=2.5) | WIP (just assigned) |
 | #646 | fern | batch-size-6 | batch_size 4 → 6 with compile (rebase onto post-#647 stack) | WIP (sent back, rebase) |
@@ -60,7 +61,7 @@
 5. **Batch-size gradient quality** (fern #646, batch=6 with compile): gradient noise reduction may compound with EMA averaging. Replaces closed warmup-aggressiveness axis.
 6. **Cosine T_max alignment** (edward #697, T_max=14): align cosine with realized 18-epoch compile budget. Currently cosine ends at ep14 then wraps; T_max=14 gives clean monotone descent through ep17.
 7. **Per-block cruise-friendly anchor** (askeladd #708, [1.0, 1.75, 2.5, 3.25, 4.0]): combine block-0=1.0 (cruise benefit) with mean=2.5 (higher than #647's 2.25) and range=3.0 (wider). Disambiguates variance-vs-mean per PR #682's confound finding.
-8. **TF32 matmul precision** (alphonse #661): single-line `torch.set_float32_matmul_precision("high")` to use Blackwell TF32 tensor cores. Expected 1.5–2× matmul speedup → 25–40% epoch time reduction. Highest EV/effort ratio of the throughput follow-ups.
+8. **BF16 autocast forward pass** (alphonse #722): TF32 just merged with -15.1% per-iter; matmul fraction is only ~50-60%. BF16 autocast accelerates ALL BF16-safe ops (linear, attention, GELU), not just matmul. Expected 30-50% additional throughput.
 
 **Closed axes**: EMA decay_target above 0.995 at warmup_steps=50 (cap doesn't bind within budget — PR #600); feature_noise_std (interior min at 0.0025, U-shaped — PR #595); surf_weight at 15 on huber-clip stack (clip absorbs the increase, single_in_dist vol_p degrades — PR #605); single-scalar wd (basin floor at 3e-5 on new stack; wd=0 regresses +2.75% — PR #554); LinearLR start_factor (sweet spot at 0.3, both 0.5 and 0.2 regress — PR #620); global slice-temp init (saturating at 2.0, camber_rc consistently regresses with sharper attention — PR #608); torch.compile reduce-overhead with naive fixed-shape padding (compute-bound at max-mesh shape, throughput regressed −22% — PR #629; bucketed batching is the right next probe); noise schedule magnitude above 0.0025 (base_std=0.005 destabilizes basin selection at peak LR via 90% clip rate — PR #669); lr peak above 6e-4 (clip not the bottleneck; high-LR phase doesn't extract more under merged regime — PR #668); scalar Huber δ below 0.10 (profile saturated, -0.19% step at 0.10→0.05 vs -3.00% at 0.25→0.10; converged residual distribution is invariant to δ — PR #674); per-block schedule range without higher mean (variance with lower mean costs val_avg; mean drop is load-bearing cost — PR #682).
 
