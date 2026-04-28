@@ -1,5 +1,40 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 00:55 — PR #289: SmoothL1 (Huber β=1.0) loss replacing MSE
+- Branch: `charliepai2d4-askeladd/huber-loss` (sent back to draft)
+- Student: charliepai2d4-askeladd
+- **Outcome: SENT BACK** (clean -9.9% on loss-formulation axis; rebase+re-run with EMA+clip).
+
+### Headline (epoch 14 of 14, askeladd's own A/B)
+| Metric | MSE baseline-ref (askeladd) | Huber β=1.0 | Δ |
+|---|---|---|---|
+| `val_avg/mae_surf_p` | 128.49 | **115.76** | **-9.9%** |
+| Best epoch | 13 | 14 | — |
+
+### Per-split val Δ (Huber − MSE, primary metric only)
+| Split | Δ on mae_surf_p |
+|---|---|
+| val_single_in_dist     | -7.6% |
+| val_geom_camber_rc     | -5.5% |
+| val_geom_camber_cruise | **-16.2%** (largest gain) |
+| val_re_rand            | -12.9% |
+
+### Late-epoch stability (epochs 9-14)
+| | std | max-min |
+|---|---|---|
+| MSE | 17.6 | 45.4 |
+| Huber | 8.0 | 19.5 |
+
+### Analysis
+- **Cleanly positive on the loss-formulation axis.** Predicted -5% to -10% on val_avg; got -9.9%. Every per-split per-channel metric improves; velocity channels gain even more relatively (-15% to -38%) because Huber's median-tracking generalizes across all channels.
+- **Cruise wins biggest** (-16% on cruise mae_surf_p) — exactly the mechanism askeladd predicted: under MSE, low-amplitude cruise samples are out-competed for gradient by high-Re raceCar tails; Huber's bounded tail evens the playing field.
+- **2× lower late-epoch variance** confirms Huber's stabilization claim.
+- **Variance floor established**: askeladd's two Huber seeds spread by ~5pp on val_avg. **Round-1 winners by less than ~5% are within run-to-run noise** — keep this in mind for ranking decisions going forward.
+- **Branch predates #308.** This run lacks EMA+clip — same situation as edward's #368. Rebased re-run will tell us whether Huber and EMA compound (expected: yes; predict 95-105 range).
+- Independent diagnosis of the inf-y bug (now fixed in #358).
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=289 records, 15 lines from initial run).
+
 ## 2026-04-28 00:50 — PR #368: Fourier positional encoding on (x,z): 8-freq sin/cos
 - Branch: `charliepai2d4-edward/fourier-pos-encoding` (sent back to draft)
 - Student: charliepai2d4-edward

@@ -1,6 +1,6 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 00:50
+- **Date:** 2026-04-28 00:55
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
@@ -23,7 +23,7 @@
 |---|---|---|---|---|---|
 | alphonse | #287 | surf-weight-up | Loss weighting (10→25) | -3% to -7% | **MERGED** e4a0c18 → val_avg=126.67 |
 | alphonse | #372 | bf16-autocast | Throughput (bf16 autocast) | -10% to -20% | WIP |
-| askeladd | #289 | huber-loss | Loss formulation (MSE→SmoothL1) | -5% to -10% | WIP |
+| askeladd | #289 | huber-loss | Loss formulation (MSE→SmoothL1) | -5% to -10% | **SENT BACK** — clean -9.9% on loss axis but pre-#308; rebase + re-run with EMA |
 | edward   | #300 | wider-model | Width (192/96) | -5% to -10% | **CLOSED** — under-trained 9/50 |
 | edward   | #358 | fix-scoring-nan-mask | Maintenance | n/a | **MERGED** 010235e |
 | edward   | #368 | fourier-pos-encoding | Input (8-freq Fourier on (x,z)) | -3% to -8% | **SENT BACK** — 117.68 promising but pre-#308; rebase + re-run with EMA |
@@ -45,7 +45,8 @@
 - **EMA late-epoch smoothing is high-value** in this regime (PR #308 hit best on every one of 13 epochs). Decay=0.999 has a slow warmup; decay=0.995 should pay off earlier in the budget.
 - **Aggressive grad clipping is implicit lr dampening** — useful side-effect, but worth attributing cleanly.
 - **Architectural-scale changes need throughput-friendliness baked in** — wider (#300), more-slices (#309), and deeper (#304) all lost epochs to per-step compute. We've now closed three PRs on the same axis pattern; the lesson is firmly priced in.
-- **Independent diagnoses converged on the same scoring NaN bug** (4 students), now fixed (#358).
+- **Independent diagnoses converged on the same scoring NaN bug** (6 students), now fixed (#358).
+- **Variance floor: ~5pp** between two Huber seeds (askeladd #289). Round-1 winners by less than ~5% on val_avg are within run-to-run noise.
 
 ## Potential next research directions
 
