@@ -65,7 +65,7 @@ Per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`. Per-experiment JS
 
 ## Round-6 in flight (5 students)
 
-Built on the merged baseline (huber-δ=0.25 + bias-corrected EMA(0.99) + SwiGLU + DropPath + AdamW betas (0.9, 0.95) + NaN-safe). Conservative target val_avg < 72.414.
+Built on the merged baseline. Conservative target val_avg < 72.414.
 
 | PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
 |----|---------|------|-------|-------------------------------------|
@@ -74,6 +74,16 @@ Built on the merged baseline (huber-δ=0.25 + bias-corrected EMA(0.99) + SwiGLU 
 | #495 | frieren | feature-noise-002 | Sweep semantics-aware feature noise std 0.01 → 0.02 | −0.5% to −2% |
 | #510 | alphonse | torch-compile-baseline | Wrap model in `torch.compile(mode='reduce-overhead')` — speeds up baseline, opens door to RMSNorm fusion | −1% to −3% |
 | #511 | nezuko | adamw-beta2-090 | AdamW betas (0.9, 0.95) → (0.9, 0.90) — push β₂ profile further | −0.5% to −1.5% (could regress) |
+
+## Round-7 just-assigned (3 students)
+
+Built on the merged baseline. Conservative target val_avg < 72.414.
+
+| PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
+|----|---------|------|-------|-------------------------------------|
+| #518 | askeladd | bias-corrected-ema-warmup-50 | EMA warmup_steps 10 → 50 (longer cold-start ramp; her own follow-up #1 from #479) | −0.5% to −1.5% |
+| #519 | edward | n-head-8 | Multi-head attention 4 → 8 (head_dim 32 → 16; param-matched parallel attention paths) | −0.5% to −1.5% |
+| #520 | thorfinn | slice-temp-1p0 | PhysicsAttention temperature init 0.5 → 1.0 (default-sharpness softmax start; learnable param-matched) | −0.3% to −1.5% |
 
 ## Disconfirmed directions (do not retry on this branch)
 
