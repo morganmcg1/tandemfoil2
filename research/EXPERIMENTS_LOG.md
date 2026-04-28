@@ -2,6 +2,31 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 05:55 — PR #434: Gradient clipping (max_norm=1.0, 2-seed) — **SENT BACK (intent to merge)**
+- Branch: `willowpai2d5-fern/grad-clip` (post-bf16 advisor; train.py change is clean 4-line block, research/*.md staleness only)
+- Two seeds on bf16 advisor with `clip_grad_norm_(model.parameters(), max_norm=1.0)` after `loss.backward()`:
+
+| Seed | val_avg/mae_surf_p | best epoch | epochs done | W&B id |
+|---|---:|---:|---:|---|
+| 0 (igt4ggio) | 96.52 | 19/19 | 19 | grad_clip group |
+| 1 (fbqg8u42) | 104.35 | 18/19 | 19 | grad_clip group |
+| **mean ± std** | **100.44 ± 5.54** (CV 5.5%) | — | — | — |
+
+- **vs current bf16 baseline (117.37): -14.4%**. Biggest single-PR win of round 1.
+- Per-split improvement on every split, both seeds:
+  - val_single_in_dist: 114-116 (-17%)
+  - val_geom_camber_rc: 105-124 (-4 to -19%)
+  - val_geom_camber_cruise: 73-77 (-17 to -22%)
+  - val_re_rand: 92-100 (-8 to -15%)
+- Test 3-finite-split mean: **96.73** (Seeds 92.48 / 100.98)
+- Variance ±3.9% half-range vs ±15% PR #331 reference → ~4× compression
+- **Mechanism finding (fern):** 100% of steps clipped, median pre-clip grad-norm = 38, max = 776. So `max_norm=1.0` is acting like aggressive gradient *normalization* (constant-direction-step optimization) — closer to Lion/Sign-SGD than to outlier clipping. Convergence is excellent anyway, suggesting normalized-gradient steps work well for this problem.
+- Decision: **send back for research/*.md rebase only, then merge.** New advisor baseline expected ≈ 100.4.
+- Cross-cutting findings preserved:
+  - Three orthogonal variance levers identified in round 1: bf16 (more cosine arc), grad-clip (early-step magnitude normalization), Huber (outlier per-node clipping). Coherent "more-stable-training" round-2 narrative.
+  - Per-epoch curves track each other extremely tightly (max gap < 20 MAE for epoch ≥ 5 across seeds) — strongest visual evidence in round 1 of suppressed early-batch divergence.
+- Strategic angle: Once this lands, in-flight PRs (Huber #413, budget-aware cosine #427, β2=0.95 #537, dropout #557) all rebase against bf16+grad-clip. Their hypothesis tests directly measure compose-on-top wins above the 100.4 bar.
+
 ## 2026-04-28 05:10 — PR #505: Lower LR exploration (lr=3e-4, 2-seed) — **CLOSED**
 - Branch: `willowpai2d5-nezuko/lr3e-4-multiseed` (deleted; pre-#441, fp32 + slice_num=64)
 - Two-seed run at lr=3e-4 on the OLD baseline (slice_num=64 + fp32):
