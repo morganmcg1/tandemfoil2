@@ -1,5 +1,86 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 01:54 — PR #314 (sent back): SmoothL1 / Huber loss (β=1.0)
+
+- branch: `willowpai2d1-edward/huber-loss` (in flight as draft after send-back)
+- hypothesis: replace MSE with SmoothL1 (β=1.0) to align loss with the MAE
+  metric and bound gradients on high-Re outliers. Predicted -2 to -5%.
+
+### Results (vs bf16 baseline, but BEFORE FF merge)
+
+| Metric | Value | vs PR #359 (bf16) | vs PR #327 (FF, current baseline) |
+|---|---|---|---|
+| Best `val_avg/mae_surf_p` | **104.2658** (epoch 17 of 19) | **−14.4%** | **−2.5% (still beats FF baseline!)** |
+| `test_avg/mae_surf_p` | **92.1301** | **−17.1%** | **−4.8%** |
+| Per-epoch wall | ~97 s | ≈baseline | ≈baseline |
+| Peak GPU memory | ~95.7 GB transient (epochs 1-2), ~47 GB steady | +14 GB steady | +14 GB steady |
+| Epochs completed | 19 / 50 | same | same |
+| W&B run | `czpoam0v` (`smoothl1-beta1`) | | |
+
+### Per-split val (epoch 17 best checkpoint)
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy | mae_vol_p |
+|---|---|---|---|---|
+| val_single_in_dist | 136.57 | 1.83 | 0.82 | 131.62 |
+| val_geom_camber_rc | 112.14 | 2.13 | 0.96 | 114.45 |
+| val_geom_camber_cruise | 75.12 | 0.98 | 0.55 | 71.05 |
+| val_re_rand | 93.23 | 1.56 | 0.75 | 89.04 |
+| **val_avg** | **104.27** | 1.62 | 0.77 | 101.54 |
+
+### Analysis & conclusions
+
+- **Sent back, not merged.** Edward rebased onto pre-FF advisor branch
+  (tip 0069451) but the FF merge happened at the same time (f17992d).
+  Edward's run is essentially Huber+bf16 with no FF. Even so, the result
+  (104.27) is *already below the FF baseline* (106.92) — Huber alone is
+  a stronger lever than FF.
+- The right test is **Huber on top of FF** (orthogonal mechanisms): FF
+  improves spatial frequency representation, Huber bounds gradients on
+  high-Re outliers. Predicted to stack to val_avg ~90.
+- Memory anomaly (transient 95.7 GB peak in epochs 1-2) is from the
+  caching allocator; SmoothL1 has more autograd intermediates than MSE.
+  Steady-state +14 GB. Means we can't safely scale batch_size with Huber
+  without instrumentation — flagged for future PRs.
+- Per-split improvement is **uniform** (unlike pressure-weighting which
+  was heavily split-dependent). All four splits improve substantially.
+
+## 2026-04-28 01:54 — PR #313 (closed, rebased run): Pressure-weighted MSE on bf16
+
+- branch: `willowpai2d1-askeladd/pressure-channel-loss-weight` (deleted on close)
+- hypothesis: same as original #313 (pressure-weighted MSE 5x p), but rebased
+  onto bf16 baseline.
+
+### Results
+
+| Metric | Value | vs PR #359 (bf16, rebase target) | vs PR #327 (FF, current baseline) |
+|---|---|---|---|
+| Best `val_avg/mae_surf_p` | 122.5350 (epoch 19 of 19) | **+0.56%** (flat) | **+14.6%** (regression) |
+| `test_avg/mae_surf_p` | 112.7175 | +1.41% | +16.4% |
+| W&B run | `wf3av0ps` | | |
+
+### Per-split deltas vs bf16 baseline
+
+| Split | Δ |
+|---|---|
+| val_single_in_dist | +4.19% |
+| val_geom_camber_rc | **+5.26%** (sign flip — was −14% pre-bf16) |
+| val_geom_camber_cruise | −5.65% |
+| val_re_rand | −3.78% |
+
+### Analysis & conclusions
+
+- **Closed.** Excellent diagnosis from askeladd: pressure weighting and
+  bf16 are *not* orthogonal — both addressed the same underlying issue
+  (high-Re pressure samples dominating gradient). Once bf16 closed the
+  rc-camber gap (170.34 → 130.28 between PR #312 and PR #359), the
+  additional pressure weighting just starves Ux/Uy. Surface Ux/Uy errors
+  went +25-40% across every split — that's the smoking gun.
+- The orthogonality assumption in my send-back was wrong. Documented for
+  the future.
+- Followup queued and assigned: surface-only pressure weighting (askeladd
+  PR #451). Restricting (1,1,5) to surf_loss only might preserve cruise /
+  re_rand wins without volume Ux/Uy damage.
+
 ## 2026-04-28 01:50 — PR #327 (merged, NEW BASELINE): Sinusoidal Fourier features for (x, z), K=8
 
 - branch: `willowpai2d1-tanjiro/fourier-features-positions` (deleted on merge)
