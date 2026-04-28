@@ -426,6 +426,7 @@ class Config:
     surf_weight: float = 10.0
     epochs: int = 50
     drop_path_max: float = 0.1
+    feature_noise_std: float = 0.005
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
@@ -527,6 +528,14 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
+        if cfg.feature_noise_std > 0.0:
+            B, N, _ = x_norm.shape
+            # Per-node noise on dims 0..12 (positions, saf, dsdf, is_surface)
+            noise_per_node = torch.randn(B, N, 13, device=x_norm.device, dtype=x_norm.dtype)
+            # Per-sample noise on dims 13..23 (per-sample globals: log_re, AoA*, NACA*, gap, stagger)
+            noise_per_sample = torch.randn(B, 1, 11, device=x_norm.device, dtype=x_norm.dtype).expand(B, N, 11)
+            noise = torch.cat([noise_per_node, noise_per_sample], dim=-1)   # [B, N, 24]
+            x_norm = x_norm + cfg.feature_noise_std * noise
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
         err = F.huber_loss(pred, y_norm, delta=0.25, reduction='none')
