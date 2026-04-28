@@ -2,6 +2,24 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 02:08 — PR #413: Huber loss for surface pressure (delta=1.0) — **SENT BACK (intent to merge)**
+- Branch: `willowpai2d5-askeladd/huber-surface-loss` (sits on pre-#433 commit, slice_num=128)
+- Two-seed run on slice_num=128 baseline:
+
+| Seed | best_epoch | val_avg/mae_surf_p | Δ vs baseline (139.83) |
+|---|---:|---:|---:|
+| huber_d1 (s1, hy6o1c7v) | 9 | **123.77** | **−11.5%** |
+| huber_d1_seed2 (s2, pngn7xcr) | 11 (last) | **113.17** | **−19.1%** |
+| **2-seed mean** | — | **118.47** | **−15.3%** |
+| Spread | — | 10.60 | ±4.5% from mean |
+
+- **Every split improves on every seed.** val_single_in_dist (the high-Re raceCar singles that drive extreme tails) drops 15-23%.
+- **Cross-term effect:** volume MAEs also drop 8-18% — capping surface gradients on extreme samples frees encoder capacity for the volume regression.
+- **Variance reduction observed:** ±4.5% spread between seeds (vs ±10-15% measured on PR #331 with MSE).
+- W&B group: `loss_huber`
+- Decision: **sent back for rebase + brief re-run on slice_num=64.** Branch was forked pre-#433, so direct merge would re-revert slice_num to 128. Huber's mechanism is slice_num-independent so we expect the win to compose; one slice_num=64 confirmation run will lock it in.
+- **Round-1 leading candidate.** After rebase + confirmation, this becomes the new advisor baseline.
+
 ## 2026-04-28 01:55 — PR #433: Revert PR #336 slice_num 128→64 — **MERGED** (commit 605b439)
 - Branch: `willowpai2d5-alphonse/revert-336-slice-num` (deleted; squash-merged into advisor)
 - Pure administrative revert: train.py one-line `slice_num: 128 → 64`, BASELINE.md cleanup of #336 entry
