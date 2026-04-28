@@ -156,12 +156,35 @@ class TransolverBlock(nn.Module):
                 nn.Linear(hidden_dim, out_dim),
             )
 
-    def forward(self, fx):
+    def forward(self, fx, gamma=None, beta=None):
         fx = self.attn(self.ln_1(fx)) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
+        # FiLM modulation on hidden state before output projection.
+        if gamma is not None:
+            fx = (1.0 + gamma.unsqueeze(1)) * fx + beta.unsqueeze(1)
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
         return fx
+
+
+class FiLMLayer(nn.Module):
+    """Per-block FiLM head: log(Re) -> (gamma, beta) for hidden modulation."""
+
+    def __init__(self, n_hidden):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(1, 32),
+            nn.SiLU(),
+            nn.Linear(32, 2 * n_hidden),
+        )
+        # Zero-init final layer: gamma=beta=0 -> block starts as identity.
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
+
+    def forward(self, log_re):
+        out = self.net(log_re)
+        gamma, beta = out.chunk(2, dim=-1)
+        return gamma, beta
 
 
 class Transolver(nn.Module):
@@ -193,8 +216,13 @@ class Transolver(nn.Module):
             )
             for i in range(n_layers)
         ])
+        self.film_layers = nn.ModuleList([FiLMLayer(n_hidden) for _ in range(n_layers)])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
+        # Re-zero FiLM final layer after global _init_weights override.
+        for film in self.film_layers:
+            nn.init.zeros_(film.net[-1].weight)
+            nn.init.zeros_(film.net[-1].bias)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -207,9 +235,12 @@ class Transolver(nn.Module):
 
     def forward(self, data, **kwargs):
         x = data["x"]
+        # log(Re) is broadcast-identical across nodes; pull from node 0 of each sample.
+        log_re = x[:, 0, 13:14]  # [B, 1]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        for block in self.blocks:
-            fx = block(fx)
+        for block, film in zip(self.blocks, self.film_layers):
+            gamma, beta = film(log_re)
+            fx = block(fx, gamma, beta)
         return {"preds": fx}
 
 
