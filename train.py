@@ -81,6 +81,22 @@ class MLP(nn.Module):
         return self.linear_post(x)
 
 
+class GaussianFourierFeatures(nn.Module):
+    """Fixed (non-learnable) Gaussian Fourier feature encoding (Tancik 2020)."""
+
+    def __init__(self, in_dim=2, m=8, sigma=1.0, seed=42):
+        super().__init__()
+        g = torch.Generator().manual_seed(seed)
+        B = torch.randn(m, in_dim, generator=g) * sigma
+        self.register_buffer("B", B)
+        self.m = m
+        self.sigma = sigma
+
+    def forward(self, xz):
+        proj = 2 * torch.pi * xz @ self.B.t()
+        return torch.cat([proj.sin(), proj.cos()], dim=-1)
+
+
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
@@ -168,6 +184,7 @@ class Transolver(nn.Module):
     def __init__(self, space_dim=1, n_layers=5, n_hidden=256, dropout=0.0,
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
+                 fourier_m=8, fourier_sigma=1.0, fourier_seed=42,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None):
         super().__init__()
@@ -176,11 +193,16 @@ class Transolver(nn.Module):
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
 
+        self.fourier_pe = GaussianFourierFeatures(
+            in_dim=space_dim, m=fourier_m, sigma=fourier_sigma, seed=fourier_seed,
+        )
+        fourier_extra = 2 * fourier_m
+
         if self.unified_pos:
-            self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
+            self.preprocess = MLP(fun_dim + ref**3 + fourier_extra, n_hidden * 2, n_hidden,
                                   n_layers=0, res=False, act=act)
         else:
-            self.preprocess = MLP(fun_dim + space_dim, n_hidden * 2, n_hidden,
+            self.preprocess = MLP(fun_dim + space_dim + fourier_extra, n_hidden * 2, n_hidden,
                                   n_layers=0, res=False, act=act)
 
         self.n_hidden = n_hidden
@@ -207,7 +229,10 @@ class Transolver(nn.Module):
 
     def forward(self, data, **kwargs):
         x = data["x"]
-        fx = self.preprocess(x) + self.placeholder[None, None, :]
+        xz = x[..., :self.space_dim]
+        fpe = self.fourier_pe(xz)
+        x_aug = torch.cat([x, fpe], dim=-1)
+        fx = self.preprocess(x_aug) + self.placeholder[None, None, :]
         for block in self.blocks:
             fx = block(fx)
         return {"preds": fx}
@@ -223,11 +248,22 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
     ``score.py`` (float64, non-finite samples skipped).
+
+    Non-finite guard: ``test_geom_camber_cruise/000020.pt`` carries 761 +Inf
+    values in the y pressure channel from upstream CFD failure (issue #13).
+    The masked-sum aggregation in ``data.scoring`` evaluates ``Inf * 0 = NaN``
+    in IEEE 754, which corrupts the accumulator. We mask out samples whose y
+    has any non-finite element and zero those positions in y/y_norm before
+    computing err/loss; predictions are also sanitized in case the model itself
+    emits NaN/Inf. ``data/scoring.py`` is read-only for students, so this
+    guard lives here in train.py.
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
     n_surf = n_vol = n_batches = 0
+    n_nonfinite_y_samples = 0
+    n_nonfinite_pred_elems = 0
 
     with torch.no_grad():
         for x, y, is_surface, mask in loader:
@@ -239,6 +275,15 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+
+            B = y.shape[0]
+            y_finite_per_sample = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            n_nonfinite_y_samples += int((~y_finite_per_sample).sum().item())
+            mask = mask & y_finite_per_sample.unsqueeze(-1)
+            y = torch.where(torch.isfinite(y), y, torch.zeros_like(y))
+            y_norm = torch.where(torch.isfinite(y_norm), y_norm, torch.zeros_like(y_norm))
+            n_nonfinite_pred_elems += int((~torch.isfinite(pred)).sum().item())
+            pred = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -261,7 +306,9 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     vol_loss = vol_loss_sum / max(n_batches, 1)
     surf_loss = surf_loss_sum / max(n_batches, 1)
     out = {"vol_loss": vol_loss, "surf_loss": surf_loss,
-           "loss": vol_loss + surf_weight * surf_loss}
+           "loss": vol_loss + surf_weight * surf_loss,
+           "nonfinite_y_samples": n_nonfinite_y_samples,
+           "nonfinite_pred_elems": n_nonfinite_pred_elems}
     out.update(finalize_split(mae_surf, mae_vol, n_surf, n_vol))
     return out
 
@@ -419,10 +466,13 @@ model_config = dict(
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
+    n_layers=3,
+    n_head=1,
+    slice_num=16,
     mlp_ratio=2,
+    fourier_m=8,
+    fourier_sigma=1.0,
+    fourier_seed=42,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
