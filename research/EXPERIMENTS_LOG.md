@@ -222,3 +222,24 @@ Test splits: both have test_avg null (pre-fix runs); 3-split avg: baseline 118.0
 
 ### Cross-cutting: thorfinn's matched-baseline methodology
 Thorfinn independently identified the data/scoring.py NaN bug (same root cause as askeladd). Excellent experimental practice: ran matched baseline side-by-side, produced full split breakdown, conducted 3-cause analysis. The matched baseline (122.15) reshapes our noise estimate — round-1 noise band is now 122–146, not 135–146.
+
+## 2026-04-28 22:00 — PR #759 (CLOSED): EMA model weights (decay=0.999)
+- **Branch:** `willowpai2e3-nezuko/ema-model-weights`
+- **Hypothesis:** Apply Exponential Moving Average (decay=0.999) of model weights to reduce noise in surface pressure predictions; an EMA shadow model averages over the stochastic gradient trajectory, producing smoother predictions. Predicted −5 to −10% on val_avg/mae_surf_p.
+- **Run:** W&B `qetkdsku`, 14/14 epochs, askeladd Huber-merged baseline (103.13) used as beat-threshold.
+
+| Split | val | test |
+|---|---|---|
+| `*_single_in_dist` | — | — |
+| `*_geom_camber_rc` | — | — |
+| `*_geom_camber_cruise` | — | — |
+| `*_re_rand` | — | — |
+| **avg** | **124.51** | **110.63** |
+
+### Analysis & decision: CLOSE
+- val_avg=124.51 is **+20.7% worse** than current best (PR #814 Huber, 103.13) and **+1.9% worse** than founding baseline (122.15) — within round-1 noise but in the wrong direction vs. the current bar.
+- **Regime mismatch (fundamental diagnosis):** EMA's benefit is maximal in the *converged-but-noisy* regime — late training where parameters have found a basin but stochastic gradients cause high-frequency jitter. At 14-epoch budget, Transolver is still descending the loss curve (the live weights are improving every epoch). EMA shadow weights (decay=0.999 means ~1000-step effective memory) are staler than the current live weights and drag the ensemble toward earlier, worse states rather than smoothing noise around a convergence point.
+- **Supporting evidence:** nezuko's own analysis correctly identified this: "the training loss was still decreasing at epoch 14, which suggests the model hadn't fully converged and EMA might have been averaging over a range of improving but not yet optimal weights."
+- **EMA is correctly motivated for a longer budget.** At ~50 epochs or with a lower LR tail, this hypothesis should be revisited. At current 14-epoch ceiling, EMA is a hindrance.
+- Notable: nezuko independently discovered a NaN-guard variant during implementation — good diagnostic instinct. That NaN-guard is covered by the already-merged PR #807 (torch.where pattern), so no further action needed on that front.
+- **Closed 2026-04-28. Next assignment: #858 focal-surface-loss (gamma=1.0).**
