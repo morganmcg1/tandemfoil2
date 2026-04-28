@@ -2152,3 +2152,47 @@ The bf16 win opens **+50 % more epochs in budget**. Combined with #675 EMA shift
 |----|---------|------|-------|-----|
 | #715 | frieren | lion-lr-2p0e-4 | Lion `lr = 2.5e-4 → 2.0e-4` on merged #686 baseline | Lion-lr basin lower-edge probe under new 30-ep compile + bf16 regime. Tests if basin shifted toward smaller peak lr with longer cosine descent. Honest band −5 % to +9 %. |
 | #716 | thorfinn | bf16-eval | bf16 autocast also wrapping `evaluate_split` forward pass on merged #686 baseline | Completion of bf16-axis study. Eval pass takes ~10 s/epoch (~17 % of budget). bf16 eval saves ~5 s/ep × 30 = 150 s = potentially 2-3 more train epochs. Watch for per-split MAE shift (must be <2 % to preserve metric consistency). Honest band −5 % to +9 %. |
+
+## 2026-04-28 10:30 — PR #701: SmoothL1 β = 0.5 → 0.75 (charliepai2d1-edward) — **CLOSED (broad-flat basin in [0.5, 0.75])**
+- val=43.030 (−0.31 % vs run-base #675; +16.5 % vs current #686 baseline post-merge), test=36.792 (+0.13 % / +21.3 %).
+- **Wash within seed noise** on prior baseline; clear lose vs current bf16 baseline.
+- Per-split signature **disconfirms** win-case prediction: cruise (smallest residuals) slightly **regressed** (+1.53 % val, +1.05 % test) — wider quadratic regime did NOT benefit small-residual splits. Largest val gain (single −3.32 %) flips sign on test (+1.61 %) — noise-dominated, not coherent shift.
+
+### β-axis basin at post-#675
+
+| β | val_avg | call | regime |
+|---:|---:|---|---|
+| 0.25 (#567 closed) | 44.520 | lose +1.93 % | over-amplifies small residuals |
+| 0.5 (current) | 43.165 | basin center | merged baseline |
+| **0.75 (this PR)** | **43.030** | **wash within seed noise** | broad-flat upper |
+| 1.0 (#723 in flight at post-#686) | TBD | TBD | upper-edge probe |
+
+**Basin shape**: lower edge sharp below 0.5; upper edge shallow at least to 0.75. L1-tail mechanism that mattered at #535-era is now flat in [0.5, 0.75]. Reassigned edward to **PR #723 (smoothl1-beta-1p0)** to complete the upper-edge bracket at modern post-#686 baseline.
+
+## 2026-04-28 10:32 — PR #699: EMA decay 0.995 → 0.997 (charliepai2d1-askeladd) — **CLOSED (basin centered at 0.995)**
+- val=43.4471 (+0.65 % vs run-base #675; +17.7 % vs current #686), test=37.3322 (+1.59 % / +23.1 %).
+- **Wash with slight regression** vs prior; clear lose vs current.
+
+### EMA-axis basin map (end-to-end at post-#675 / 20-ep regime)
+
+| ema_decay | half-life % of run | val_avg | result | regime |
+|---|---:|---:|---|---|
+| 0.95 (#445) | 0.8 % | closed | +9.8 % | aggressive |
+| 0.97 (#474) | 1.3 % | closed | +6.5 % | aggressive |
+| 0.99 (#394 prior) | 4.1 % | merged then superseded | +1.18 % vs #675 | sweet spot lower edge |
+| **0.995 (#675 current)** | **8.1 %** | **merged val=43.165** | **0** | **basin center, Polyak-Ruppert sweet-spot** |
+| **0.997 (this PR)** | **13.6 %** | **closed val=43.45** | **+0.65 %** | **shallow upper edge** |
+| 0.999 (#356-era) | 40.7 % | closed | +12.7 % | too slow |
+
+**Polyak-Ruppert "5-15 % half-life" heuristic** explains the shape: aggressive side (0.95, 0.97) loses sharply (6-10 %); slow side (0.997, 0.999) loses asymmetrically (0.997 only +0.65 %, 0.999 +12.7 %). 0.995 is dead-center.
+
+Per-split: **rc improves cleanly** (−2.42 % val, −0.66 % test) — slower EMA helps the noisiest tandem split (matches win-case prediction); but cruise (+5.51 % val) and re_rand (+3.31 % val) both regress. Net cancellation.
+
+At post-#686 (30-ep), half-life percentages shift slightly: 0.995 at 5.4 %, 0.997 at 9.1 % — both still in optimal range. Not worth re-running. Reassigned askeladd to **PR #724 (lion-beta2-0p9995)** — pivots from EMA-axis to Lion buffer-history axis basin midpoint.
+
+## 2026-04-28 10:35 — Round-2 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #723 | edward | smoothl1-beta-1p0 | `beta = 0.5 → 1.0` on merged #686 baseline | Completes β-axis basin map upper edge under modern compute regime. Tests if basin extends to β=1.0 (broad-flat hypothesis) or cuts off in (0.75, 1.0]. Honest band −2 % to +10 %. |
+| #724 | askeladd | lion-beta2-0p9995 | Lion `betas[1] = 0.999 → 0.9995` on merged #686 baseline | Bracket midpoint between merged β2=0.999 (#571) and closed β2=0.9999 (#598 +21.6 %). At 30-ep budget, β2=0.9995 half-life is 54 % of run (1.85 half-lives — partial convergence). Tests if buffer-history basin shifts upward at longer budget. Honest band −4 % to +10 %. |
