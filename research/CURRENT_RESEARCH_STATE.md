@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-28 ~22:40 (round-1 cleanup complete; nezuko + edward reassigned; round-2 fully populated)
+- **As of:** 2026-04-28 ~22:50 (#851 Huber closed, #819 relL2 sent back for α=0.5 mix; tanjiro reassigned LinearNO #880)
 - **Most recent human direction:** none yet for this track
 - **Branch:** `icml-appendix-willow-pai2e-r4`
 - **Current best:** `val_avg/mae_surf_p = 99.226` (#754) and `test_avg/mae_surf_p = 92.610` ✓ (#797 unblock, run `2hcmefh9`)
@@ -35,11 +35,11 @@ weight signal.
 | #816 | alphonse | FiLM conditioning of LayerNorm (#2) | -5 to -12% | **rebase + rerun (96.61 on L1-only → -2.6% on new baseline expected)** |
 | #820 | thorfinn | Fourier PE on (x, z) coords (#3) | -4 to -10% | **rebase + rerun (91.15 on L1-only → -8.2% on new baseline expected — strongest single signal)** |
 | #863 | askeladd | Seed determinism PR (infra) — replaces merged #797 | infra: variance ↓ | wip |
-| #851 | tanjiro | Huber loss δ=1.0 (#5) — replaces #818 SGDR (closed) | -3 to -8% | wip |
-| #819 | frieren | Relative L2 loss (per-sample norm) (#1) | -5 to -15% | wip |
+| #819 | frieren | Relative L2 mix α=0.5 (sent back from pure α=1.0, +1.07%) | -1 to -4% target | wip retry |
 | #861 | fern | Volume subsampling (15%) (#7) — replaces #829 (closed) | -3 to -8% | wip |
 | #872 | nezuko | Domain-ID embedding 3-class (#8) — replaces #757 (closed) | -2 to -6% | wip |
 | #873 | edward | EMA model weights (Polyak) — replaces #753 (closed) | -1 to -3% | wip |
+| #880 | tanjiro | LinearNO ELU+1 linear attention (#6) — replaces #851 Huber (closed) | -3 to -8% | wip |
 
 **Closed in round 2:**
 - #818 tanjiro SGDR T_0=10 → +6% worse, structural budget mismatch
@@ -54,6 +54,12 @@ weight signal.
   Best (sw=30 at 125.80) sits 27% above current baseline because runs
   predate the channel-weight merge. **`surf_weight × channel_weights`
   lever family is exhausted** — they're multiplicative, not orthogonal.
+- #851 tanjiro Huber δ=1.0 → +12.6% worse (val), +10.3% worse (test).
+  **Loss-shape lever family exhausted** — z-normalized residuals
+  concentrate in the |err|<=1 regime where Huber's gradient shrinks,
+  giving optimizer 3-10× weaker pressure on the residuals we want
+  cleaned up. Direct mechanistic clash with L1+ch=[1,1,3] (whose merit
+  is constant-magnitude gradient × per-channel weight).
 
 ## Round 2 hypotheses ranked and ready
 

@@ -1,5 +1,88 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-28 22:45 — PR #851: Huber loss δ=1.0 — **CLOSED (negative)**
+
+- Branch: `willowpai2e4-tanjiro/huber-delta-loss`
+- Student: willowpai2e4-tanjiro
+- W&B run: [`vt737i14`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/vt737i14)
+
+**Hypothesis.** Huber δ=1.0 (smooth quadratic near zero, L1 outlier
+asymptote) should improve late-stage convergence near `err=0` over
+pure L1, smoothing the optimizer's trajectory.
+
+**Results (epoch 13 best, 30.79 min):**
+
+| Metric | Baseline (L1, m46h5g4s) | Huber δ=1.0 | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | 99.23 | 111.69 | **+12.6%** |
+| `test_avg/mae_surf_p` (3 finite splits) | 99.34 | 109.61 | +10.3% |
+
+Per-split val damage (predicted opposite!):
+
+| Split | Δ |
+|---|---:|
+| `val_single_in_dist` (heavy-tail) | +5.3% |
+| `val_geom_camber_rc` | +8.3% |
+| `val_geom_camber_cruise` | **+23.7%** |
+| `val_re_rand` | **+18.0%** |
+
+**Analysis (tanjiro's mechanism — clean and correct).** With
+z-normalized targets, residuals concentrate in `|err|<=1` regime where
+**Huber's gradient shrinks** (e.g. err=0.3 → grad=0.3 vs L1's 1.0). At
+14-epoch budget, Huber gives the optimizer 3-10× weaker per-step
+pressure on the very residuals we want it to clean up.
+
+The L1+ch=[1,1,3] baseline succeeds because L1's constant-magnitude
+gradient lets the 3× pressure weight bite at every optimization step.
+Huber's diminishing-near-zero gradient counteracts that lever — a
+direct mechanistic clash.
+
+**Decision.** Closed. Loss-shape lever family is exhausted (Huber is
+the canonical smoothing variant). Three negatives in schedule+loss-shape
+on tanjiro's account (#758, #818, #851). Reassigned tanjiro → LinearNO
+ELU+1 linear attention (#880) — fresh architectural family (kernel
+swap inside slice attention).
+
+## 2026-04-28 22:45 — PR #819: Relative L2 loss (per-sample norm) — **SENT BACK (mixed)**
+
+- Branch: `willowpai2e4-frieren/relative-l2-loss`
+- Student: willowpai2e4-frieren
+- W&B run: [`9enw7nkx`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/9enw7nkx)
+
+**Hypothesis.** Per-sample L1-numerator / L2-denominator normalization
+to equalize gradient contribution across samples with heavy-tail
+target magnitude. Predicted -5 to -15%.
+
+**Results vs merged baseline (99.23):**
+
+| Split | Baseline (m46h5g4s) | This run | Δ |
+|---|---:|---:|---:|
+| `val_single_in_dist` | 116.68 | 117.81 | +1.0% |
+| `val_geom_camber_rc` | 113.94 | **127.75** | **+12.1%** |
+| `val_geom_camber_cruise` | 75.02 | **67.30** | **-10.3%** |
+| `val_re_rand` | 91.28 | 88.28 | -3.3% |
+| **val_avg** | **99.23** | **100.29** | **+1.07%** |
+| **3-split test mean** | 99.34 | 104.03 | +3.2% |
+
+**Analysis (frieren's split-heterogeneity story — very useful):**
+Per-sample equalization works as advertised — `val_single_in_dist` and
+`val_geom_camber_cruise` improved -11.6% each (vs frieren's #752 L1-only
+reference baseline). But `val_geom_camber_rc` regressed +16.9% because
+re-weighting reduces incentive to fit high-magnitude samples — exactly
+the regime that drives geometric extrapolation to unseen camber. Per-
+sample normalization is **anti-geometric-extrapolation** when target
+magnitude correlates with geometric extremity.
+
+**Note on baseline confusion:** Frieren reported -1.6% vs #752 (101.93
+L1-only), but #754 (L1+ch=[1,1,3], val=99.23) merged after his run
+started. Re-anchoring to the new baseline shifts the headline to +1.07%
+(noise floor, not a win).
+
+**Decision.** Sent back for one focused retry: mixed loss `α·L_rel +
+(1-α)·L_abs` at α=0.5 — frieren's own #1 follow-up. Goal: keep the
+cruise/single wins without the camber_rc damage. Single retry; if it
+doesn't beat 99.23, close. PR #819 reverted to draft (status:wip).
+
 ## 2026-04-28 22:35 — PR #757: 5% warmup + cosine retest on L1+ch=[1,1,3] — **CLOSED (superseded)**
 
 - Branch: `willowpai2e4-nezuko/warmup-cosine`
