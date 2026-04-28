@@ -76,6 +76,13 @@ return wins.
      Per-split signal confirms the regularisation hypothesis exactly —
      `val_geom_camber_rc` −11.9%, `val_single_in_dist` +6.2%. Same
      merge-order story as PR #298. Re-assigned as L1+FF + wd compose test.
+   - PR #437 — frieren (L1+FF + wd=1e-3 compose): **val 91.35 (≈ tied
+     with current baseline 90.90)**. **Per-split signal is the most
+     informative of round 3** — refutes the "convergent OOD-camber
+     levers all compose additively" narrative. wd × FF overlap
+     destructively on rc-camber (+11.8% regression), compose additively
+     on cruise-camber (−11.5%) and sign-flip on in-dist (−7.5% vs
+     +6.2% under L1-only). See "Convergent OOD-camber narrative" section.
    - PR #302 — tanjiro (Huber surface δ=1.0 on MSE): val 105.53 (+2.8%
      vs L1, +14.9% vs L1+FF). Wins narrowly on raceCar tandem
      (`val_geom_camber_rc` −8.9%) but loses on cruise (+21%) and re_rand
@@ -110,8 +117,6 @@ composition even if they don't outright beat 102.64:**
      *(loss focus)* — branched off L1-only.
    - PR #432 — nezuko: L1+FF + **`log(Re)` Fourier features** *(input
      encoding extension)* — on post-#400 advisor.
-   - PR #437 — frieren: L1+FF + `weight_decay 1e-3` *(regularisation
-     compose)* — on post-#400 advisor.
    - PR #446 — thorfinn: L1+FF + AdamW(beta2=0.95) *(optimiser compose)*
      — on post-#400 advisor.
    - PR #447 — fern: L1+FF + EMA(decay=0.999) *(weight averaging compose
@@ -119,42 +124,78 @@ composition even if they don't outright beat 102.64:**
    - PR #448 — tanjiro: L1+FF + L1 volume loss *(loss formulation
      extension — does L1 dominance extend to volume?)* — on post-#400
      advisor.
-   - PR (askeladd, new): L1+FF + `--epochs 14` + `lr=7.5e-4` —
-     student-suggested follow-up: now that cosine actually anneals,
-     `lr=5e-4` is conservatively low; modest LR bump tests headroom on
-     the matched schedule *(schedule × lr)*.
-   - PR (edward, new): L1+FF + `--epochs 14` + grad clipping `max_norm=1.0`
-     — three-lever stack (FF + matched cosine + clipping) tests whether
-     the "convergent OOD-camber" levers compose additively *(stability ×
-     schedule × FF compose)*.
+   - PR #461 — askeladd: L1+FF + `--epochs 14` + `lr=7.5e-4` —
+     higher peak LR with matched cosine *(schedule × lr)*.
+   - PR #462 — edward: L1+FF + `--epochs 14` + grad clipping
+     `max_norm=1.0` — three-lever stack *(stability × schedule × FF)*.
+   - PR (frieren, new): L1+FF + `--epochs 14` + **`wd=5e-4`**
+     (interior-point) — tests whether intermediate wd captures
+     cruise/in-dist compose without rc-camber regression seen at
+     wd=1e-3 in PR #437. Most-informative round-5 single-knob.
 
-## Convergent OOD-camber generalisation signal — now 5 levers
+## Convergent OOD-camber narrative — partially refuted by PR #437
 
-Five round-3 PRs hit the **same per-split signature**: dominant win on
-`val_geom_camber_rc` (the unseen-front-foil-camber raceCar tandem track),
-flat-or-mild on the other splits.
+Five round-3 levers all improved `val_geom_camber_rc` on the L1
+baseline (FF, matched cosine, beta2=0.95, wd=1e-3, grad clipping).
+The natural reading was "five independent paths to the same OOD-camber
+gain → stack additively in round 5".
 
-| PR | lever | `val_geom_camber_rc` Δ |
-|----|-------|-----------------------:|
-| #400 (merged) | spatial Fourier features | −20.8% |
-| #389 (merged) | matched cosine | **−19.4%** |
-| #423 (closed) | gradient clipping | −15.0% |
-| #419 (closed) | AdamW(beta2=0.95) | −13.6% |
-| #395 (closed) | weight_decay=1e-3 | −11.9% |
+**PR #437 (frieren, L1+FF + wd=1e-3 compose) refutes that for the
+wd × FF pair specifically:**
 
-Five independent mechanisms — input encoding, schedule, optimiser
-second-moment, regularisation, stability — same direction of effect.
-Whatever's bottlenecking `val_geom_camber_rc` is responsive to "make
-optimisation more effective in the limited budget we have" rather than
-to any one specific intervention.
+| split | L1 + wd (PR #395) | L1+FF (PR #400) | L1+FF + wd (#437) | what stacks? |
+|-------|------------------:|----------------:|------------------:|--------------|
+| val_geom_camber_rc | −11.9% | −20.8% | **+11.8% (worse)** | **destructive** |
+| val_geom_camber_cruise | +2.4% | −6.3% | **−11.5%** | additive |
+| val_single_in_dist | +6.2% | −3.3% | **−7.5%** (sign-flipped) | additive |
 
-Round-4 compose tests (#437 wd, #432 log(Re), #446 beta2, #447 EMA,
-edward grad clipping) will reveal whether the levers each hit
-independent paths to the same generalisation gain (additive — round-5
-stack of all five) or share a common dynamic (diminishing — only one
-or two of the five matter once combined). Two of the five (FF and
-matched cosine) are now baked in as baseline, so the remaining
-compose tests measure marginal gain on top of those.
+**wd and FF overlap on rc-camber** — they're doing the same
+regularisation work there, and stacking pushes past optimal. They
+**compose** on cruise and in-dist. Adding FF *flipped the sign* of
+wd's effect on in-dist.
+
+**This reframes round-4/5 strategy**: per-split analysis is now
+load-bearing. Round-5 cannot be "stack everything from round-3" — the
+levers compete on at least the rc-camber axis. Each remaining compose
+test (#432 log(Re) FF, #446 beta2, #447 EMA, #462 grad clipping +
+matched cosine) needs to be evaluated *per-split*, with particular
+attention to whether rc-camber regresses (overlap with FF) vs improves
+(orthogonal mechanism).
+
+Two of the five round-3 levers are now baseline (FF, matched cosine).
+The remaining three (beta2, EMA, clipping) are the round-4 compose
+tests. **Likely outcomes per lever:**
+
+- **EMA** (fern #447): weight-averaging mechanism, most likely
+  orthogonal to FF/wd → compose additively.
+- **beta2=0.95** (thorfinn #446): optimiser-side, may overlap with wd
+  on the rc-camber axis if it's also an effective-regularisation
+  lever; per-split signal will tell.
+- **Grad clipping + matched cosine** (edward #462): stability mechanism
+  — may overlap with matched cosine's natural gradient-decay effect.
+
+## Round-5 priorities (refreshed by PR #437)
+
+1. **Interior-point wd sweep** (3e-4, 5e-4, 7.5e-4) on L1+FF + matched
+   cosine. Find the wd that captures cruise/in-dist compose without
+   rc-camber regression. **Round-5 priority #1.**
+2. **DropPath / stochastic depth** — different regularisation
+   dimension; may help rc-camber where wd's weight-magnitude axis
+   competes with FF.
+3. **FF frequency count variation** — tests whether rc-vs-cruise
+   asymmetry is about geometry-interpolation regime (boundary-shoulder
+   rc M=6-8 vs centre-band cruise M=2-4).
+4. **Auxiliary log-pressure target transform** — the persistent
+   `val_single_in_dist` bottleneck (still ~106 even on best baseline)
+   wasn't dented by any round-3 lever; needs a different attack.
+
+## Harness debt
+
+PR #437 also surfaced concurrent-run interference: the entrypoint
+launched a parallel `train.py` while the student's run was in test
+eval, causing the parallel run to OOM/crash. Empty stale dir
+`models/model-l1ff_wd_1e-3-20260428-021302/`. Entrypoint should
+serialise per-process. Round-5 harness cleanup.
 
 ## Round-4 throughput infra (new debt from PR #390 close)
 

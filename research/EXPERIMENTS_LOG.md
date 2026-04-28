@@ -1,5 +1,91 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 02:35 — PR #437 (CLOSED, ties current; reveals compose dynamics): L1+FF + wd=1e-3
+- Branch: `charliepai2d3-frieren/l1ff-wd-1e-3` (deleted on close)
+- Hypothesis: stack the validated `wd=1e-3` lever (PR #395) onto the
+  L1+FF baseline (PR #400). Predicted −1% to −4%.
+- Config: L1+FF baseline (post-#400), `--weight_decay 1e-3`. CLI-only.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs L1+FF baseline (PR #400, 91.87) | vs current baseline (PR #389, 90.90) |
+|--------|--------:|-----------------------------------:|-------------------------------------:|
+| `val_avg/mae_surf_p`  | 91.35 | −0.6% | **+0.5%** (≈ tied) |
+| `test_avg/mae_surf_p` | 81.35 | +0.3% | +0.6% |
+
+### Per-split val (best epoch 14) — three different stacking patterns
+
+| split | L1 + wd (PR #395) | L1+FF (PR #400) | L1+FF+wd (this PR) | what stacks? |
+|-------|------------------:|----------------:|-------------------:|--------------|
+| val_geom_camber_rc | −11.9% | −20.8% | **+11.8% (worse)** | **destructive** |
+| val_geom_camber_cruise | +2.4% | −6.3% | **−11.5%** | additive |
+| val_single_in_dist | +6.2% | −3.3% | **−7.5%** (sign-flipped) | additive |
+| val_re_rand | −1.0% | −9.3% | +3.6% | flat |
+
+### Decision — close per criterion, but reframe round-3 understanding
+
+**Closed.** Headline ties the current baseline; below merge threshold.
+But the per-split signal is **the most informative of round 3** —
+contradicts the "five convergent OOD-camber levers all stack
+additively" narrative.
+
+### Round-3 narrative shift
+
+The five levers that improved `val_geom_camber_rc` on the L1 baseline
+(FF, matched cosine, beta2=0.95, wd=1e-3, grad clipping) were
+hypothesised to be independent paths to the same gain → would stack
+additively in round 5. PR #437 shows that, at minimum for the wd × FF
+pair, **they overlap on rc-camber** (destructive stacking), **compose
+on cruise-camber** (additive), and **flip sign on in-dist** (FF gives
+the model enough positional richness that higher wd helps in-dist
+where it hurt under L1-only).
+
+**Implications for the round-4 compose tests in flight**:
+- #446 (thorfinn, beta2=0.95 on L1+FF) — beta2 may have similar overlap
+  story as wd (both are optimiser-side regularisers).
+- #447 (fern, EMA on L1+FF) — orthogonal mechanism (weight averaging),
+  most likely additive.
+- #462 (edward, grad clipping on L1+FF + matched cosine) — stability
+  mechanism, may overlap with matched-cosine's gradient-decay effect.
+- #432 (nezuko, log(Re) FF on L1+FF) — different input dimension,
+  most likely additive.
+
+Per-split analysis is now the load-bearing diagnostic, not just the
+headline. **Round-5 cannot be a naive "stack everything"** — some
+levers will compete on rc-camber even if they each individually
+improved it on the L1 baseline.
+
+### Round-5 priorities reordered
+
+1. **wd downward sweep on L1+FF (3e-4, 5e-4, 7.5e-4)** — interpolates
+   between baseline (1e-4) and this PR (1e-3). Tests for an interior
+   wd that captures cruise/in-dist gain without rc regression. **Most
+   informative round-5 single-knob.**
+2. **FF frequency-count variation** — tests whether the rc-vs-cruise
+   asymmetry is about geometry-interpolation regime
+   (boundary-shoulder rc M=6-8 vs centre-band cruise M=2-4).
+3. **DropPath / stochastic depth** — different regularisation
+   dimension than weight magnitude; may help rc-camber where wd
+   doesn't.
+
+Re-assigning frieren to the matched-cosine variant of (1):
+L1+FF + matched cosine + wd=5e-4 (intermediate wd on the live
+baseline).
+
+Per-epoch metrics not centralised in `EXPERIMENT_METRICS.jsonl` —
+branch deleted on close.
+
+### Harness debt note
+
+Student observed a stale concurrent run dir
+(`model-l1ff_wd_1e-3-20260428-021302/`, no agent prefix) created by
+the entrypoint launching a parallel `train.py` while their main run
+was still in test eval. Empty config-only dir, crashed on epoch 1
+from GPU contention. Entrypoint should serialise per-process to
+prevent this. Recording for harness cleanup.
+
+---
+
 ## 2026-04-28 02:30 — PR #423 (CLOSED, validated on L1 / loses to current): gradient clipping `max_norm=1.0`
 - Branch: `charliepai2d3-edward/l1-grad-clip-1` (deleted on close)
 - Hypothesis: gradient clipping caps the global gradient norm,
