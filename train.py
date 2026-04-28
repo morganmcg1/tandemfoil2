@@ -22,6 +22,7 @@ import math
 import os
 import subprocess
 import time
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -279,13 +280,16 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device, amp_ctx=None) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
-    ``score.py`` (float64, non-finite samples skipped).
+    ``score.py`` (float64, non-finite samples skipped). ``amp_ctx`` wraps the
+    forward only — metric accumulation stays in fp64.
     """
+    if amp_ctx is None:
+        amp_ctx = nullcontext()
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
@@ -309,12 +313,21 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y_clean - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
-            # Defensive: zero out non-finite predictions so a stray NaN/inf
-            # at any (sample, node, channel) position cannot propagate
-            # through `pred * mask = inf * 0 = NaN` into the metric. The
-            # masked-out positions are excluded from the loss/MAE anyway,
-            # so this only changes behavior when the model produces NaN.
+            with amp_ctx:
+                pred = model({"x": x_norm})["preds"]
+            pred = pred.float()
+            # bf16 forward can produce non-finite preds on extreme samples.
+            # Fall back to an fp32 forward for those batches so test metrics
+            # stay valid; checked only on masked-in positions because
+            # padding can legitimately be uninitialised.
+            if not torch.isfinite(pred[mask]).all():
+                with torch.amp.autocast(device_type="cuda", enabled=False):
+                    pred = model({"x": x_norm})["preds"].float()
+            # Defensive: zero out any remaining non-finite predictions so
+            # a stray NaN/inf at any (sample, node, channel) position
+            # cannot propagate through `pred * mask = inf * 0 = NaN`
+            # into the metric. Masked-out positions are excluded anyway,
+            # so this only matters when the model produces non-finite preds.
             pred = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)
 
             sq_err = (pred - y_norm) ** 2
@@ -464,6 +477,13 @@ class Config:
     surf_weight: float = 10.0
     epochs: int = 50
     warmup_frac: float = 0.05  # fraction of total steps used for linear LR warmup
+    grad_accum_steps: int = 1
+    amp_dtype: str = "bf16"  # one of: "bf16", "fp32" (no autocast)
+    compile: bool = True  # torch.compile the model (auto-disabled in debug)
+    # ``reduce-overhead`` records a CUDAGraph per distinct N_max — with the variable
+    # mesh sizes of TandemFoilSet that pool blows past 96 GB. ``default`` keeps the
+    # inductor kernels but skips CUDAGraphs.
+    compile_mode: str = "default"  # passed to torch.compile
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -490,6 +510,16 @@ if cfg.seed is not None:
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
+
+_AMP_DTYPES = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": None}
+amp_dtype = _AMP_DTYPES[cfg.amp_dtype]
+amp_ctx = (
+    torch.amp.autocast(device_type="cuda", dtype=amp_dtype)
+    if (torch.cuda.is_available() and amp_dtype is not None)
+    else nullcontext()
+)
+print(f"AMP: {cfg.amp_dtype}  compile: {cfg.compile and not cfg.debug}  "
+      f"compile_mode: {cfg.compile_mode}  grad_accum_steps: {cfg.grad_accum_steps}")
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -545,7 +575,8 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.we
 # total step budget for the configured epoch count (so cosine actually reaches
 # zero when the run completes within timeout). Warmup gives the orthogonal-init
 # slice projection in PhysicsAttention a stable start at batch_size=4.
-total_steps = max(1, len(train_loader) * MAX_EPOCHS)
+optimizer_steps_per_epoch = math.ceil(len(train_loader) / cfg.grad_accum_steps)
+total_steps = max(1, optimizer_steps_per_epoch * MAX_EPOCHS)
 warmup_steps = max(1, int(total_steps * cfg.warmup_frac))
 
 
@@ -558,6 +589,17 @@ def lr_lambda(step: int) -> float:
 
 scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 print(f"Schedule: linear warmup {warmup_steps} steps + cosine over {total_steps} total steps")
+
+# torch.compile after optimizer is bound to the raw parameters. ``dynamic=True``
+# avoids recompile thrash when each batch's padded N_max varies.
+_compile_enabled = cfg.compile and not cfg.debug and torch.cuda.is_available()
+if _compile_enabled:
+    model = torch.compile(model, mode=cfg.compile_mode, dynamic=True)
+
+
+def _raw_module(m):
+    """Unwrap torch.compile's OptimizedModule so save/load uses prefix-less keys."""
+    return m._orig_mod if hasattr(m, "_orig_mod") else m
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -602,6 +644,8 @@ best_metrics: dict = {}
 global_step = 0
 train_start = time.time()
 
+total_epochs_completed = 0
+
 for epoch in range(MAX_EPOCHS):
     if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
         print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
@@ -620,19 +664,24 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+        with amp_ctx:
+            pred = model({"x": x_norm})["preds"]
+            sq_err = (pred - y_norm) ** 2
 
-        vol_mask = mask & ~is_surface
-        surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+            vol_mask = mask & ~is_surface
+            surf_mask = mask & is_surface
+            vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+            surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            loss = vol_loss + cfg.surf_weight * surf_loss
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
+        # Scale only the backward pass for grad accumulation; logged ``loss`` stays unscaled.
+        (loss / cfg.grad_accum_steps).backward()
+        n_batches += 1
+        if n_batches % cfg.grad_accum_steps == 0:
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad(set_to_none=True)
+
         global_step += 1
 
         if cfg.use_ema:
@@ -657,15 +706,21 @@ for epoch in range(MAX_EPOCHS):
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
-        n_batches += 1
 
+    # Flush any remaining accumulated gradients at epoch boundary.
+    if n_batches % cfg.grad_accum_steps != 0:
+        optimizer.step()
+        scheduler.step()
+        optimizer.zero_grad(set_to_none=True)
+
+    total_epochs_completed = epoch + 1
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device, amp_ctx=amp_ctx)
         for name, loader in val_loaders.items()
     }
     val_avg_raw = aggregate_splits(split_metrics)
@@ -676,7 +731,7 @@ for epoch in range(MAX_EPOCHS):
     )
     if do_ema_eval:
         split_metrics_ema = {
-            name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device, amp_ctx=amp_ctx)
             for name, loader in val_loaders.items()
         }
         val_avg_ema = aggregate_splits(split_metrics_ema)
@@ -687,25 +742,30 @@ for epoch in range(MAX_EPOCHS):
         ema_avg_surf_p = None
 
     # Pick the better of the two for tracking the best checkpoint and for the test eval.
+    # _raw_module() unwraps torch.compile's OptimizedModule so the saved state_dict has
+    # prefix-less keys and reloads cleanly into either model or ema_model.
     if do_ema_eval and ema_avg_surf_p < raw_avg_surf_p:
         active_metrics = split_metrics_ema
         active_avg_surf_p = ema_avg_surf_p
-        active_state = ema_model.state_dict()
+        active_state = _raw_module(ema_model).state_dict()
         active_label = "ema"
     else:
         active_metrics = split_metrics
         active_avg_surf_p = raw_avg_surf_p
-        active_state = model.state_dict()
+        active_state = _raw_module(model).state_dict()
         active_label = "raw"
 
     val_loss_mean = sum(m["loss"] for m in split_metrics.values()) / len(split_metrics)
     dt = time.time() - t0
 
+    peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
     log_metrics = {
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
         "val/loss": val_loss_mean,
         "epoch_time_s": dt,
+        "epoch": epoch + 1,
+        "peak_gpu_memory_gb": peak_gb,
         "global_step": global_step,
         "val_active/source_is_ema": int(active_label == "ema"),
         "val_active/ema_eval_done": int(do_ema_eval),
@@ -739,7 +799,6 @@ for epoch in range(MAX_EPOCHS):
         torch.save(active_state, model_path)
         tag = f" * [{active_label}]"
 
-    peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
     ema_str = f"{ema_avg_surf_p:.4f}" if do_ema_eval else "skipped"
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
@@ -750,7 +809,10 @@ for epoch in range(MAX_EPOCHS):
         print_split_metrics(name, active_metrics[name])
 
 total_time = (time.time() - train_start) / 60.0
-print(f"\nTraining done in {total_time:.1f} min")
+final_peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+sec_per_epoch = (total_time * 60.0 / total_epochs_completed) if total_epochs_completed else float("nan")
+print(f"\nTraining done in {total_time:.1f} min — epochs completed: {total_epochs_completed}, "
+      f"sec/epoch: {sec_per_epoch:.1f}, peak GPU: {final_peak_gb:.1f} GB")
 
 # --- Test evaluation + artifact upload ---
 if best_metrics:
@@ -766,9 +828,14 @@ if best_metrics:
         "best_val_avg_ema/mae_surf_p": best_metrics.get("val_avg_ema/mae_surf_p"),
         "best_eval_source": eval_source,
         "total_train_minutes": total_time,
+        "total_epochs_completed": total_epochs_completed,
+        "sec_per_epoch": sec_per_epoch,
+        "peak_gpu_memory_gb": final_peak_gb,
     })
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    _raw_module(model).load_state_dict(
+        torch.load(model_path, map_location=device, weights_only=True)
+    )
     model.eval()
 
     test_metrics = None
@@ -781,7 +848,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, amp_ctx=amp_ctx)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
