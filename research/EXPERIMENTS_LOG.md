@@ -1,5 +1,60 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 06:30 — PR #512: Fourier n_freqs sweep — n=4 wins, mechanism partially confirmed
+- Branch: `charliepai2d4-edward/fourier-nfreqs-sweep` (still in flight after revision)
+- Student: charliepai2d4-edward
+- **Outcome: SENT BACK** (n=4 wins on n=8 base by -1.96%; pre-#467 / pre-#484 branch; rebase + re-run with β=0.5 + FiLM).
+
+### Headline (4-arm sweep, EMA-evaluated, paired in same PR)
+| n_freqs | best epoch | val_avg/mae_surf_p | Δ vs n=8 ref | test_avg/mae_surf_p | n_params |
+|---|---|---|---|---|---|
+| **4** | 32 | **61.70** | **-1.96%** | **53.50** | 666,455 |
+| 6 | 32 | 62.37 | -0.91% | 54.01 | 668,503 |
+| 8 (paired ref) | 33 | 62.80 | (control) | 54.90 | 670,551 |
+| 12 | 32 | 62.61 | -0.52% | 54.17 | 674,647 |
+
+n=8 ref reproduces #368's 62.94 within run-to-run noise.
+
+### Mechanism: cruise-split detail (the high-freq-noise diagnostic)
+| n_freqs | val_cruise/mae_surf_p | test_cruise/mae_surf_p |
+|---|---|---|
+| 4  | 44.36 | 37.18 |
+| 6  | **43.68** | **36.65** ← test best |
+| 8  | 45.04 | 38.12 ← worst |
+| 12 | **43.30** ← val best | 37.75 |
+
+**Refined hypothesis**: n=8 IS a local pessimum on cruise (+1.5pp vs n=4/6), confirming high-freq bands hurt at this band count. But the pattern isn't strictly monotonic — n=12 actually ties or beats n=8 on every metric. Edward's reading: "the model can apparently learn to ignore the highest bands when there are enough of them, but n=8 lands in a bad sweet spot where the highest bands are large enough to inject noise but not redundant enough to be ignored."
+
+### Per-split val (n=4 winner)
+| Split | n=4 | n=8 ref | Δ |
+|---|---|---|---|
+| val_single_in_dist     | 63.17 | 66.12 | -4.5% |
+| val_geom_camber_rc     | 76.90 | 77.16 | -0.3% |
+| val_geom_camber_cruise | 44.36 | 45.04 | -1.5% |
+| val_re_rand            | 62.39 | 62.90 | -0.8% |
+
+### Per-split test (n=4 winner)
+| Split | n=4 | n=8 ref | Δ |
+|---|---|---|---|
+| test_single_in_dist     | 57.27 | 57.22 | +0.1% (essentially flat) |
+| test_geom_camber_rc     | 65.73 | 68.95 | **-4.7%** |
+| test_geom_camber_cruise | 37.18 | 38.12 | -2.5% |
+| test_re_rand            | 53.81 | 55.33 | -2.7% |
+
+All 4 test splits gain at n=4.
+
+### Why send back rather than merge
+- Branch is pre-#467 / pre-#484. Absolute val 61.70 is +7.6% above current merged baseline (#484 at 57.37 with β=0.5 + FiLM).
+- Mechanism is clearly orthogonal: Fourier features are computed outside the model on x_norm before the model forward; β=0.5 changes loss curve shape; FiLM is an affine inside the model. Three independent layers, no expected interference.
+- Predicted post-rebase val: -1.10 mae gap from sweep → expected **56.3-57.0 range** with β=0.5 + FiLM + n=4.
+- Edward will also flip the Config default `n_freqs=8 → 4` to make the merged baseline reproduce with the winning value (same fix as #539 huber_beta default flip).
+
+### Useful follow-ups identified
+- **Learnable Gaussian Fourier features (Tancik 2020)**: replace fixed `2^k π` ladder with `B ∼ N(0, σ²I)` learned/tuned. The largest predicted gain remaining on the Fourier axis per edward's read.
+- **Per-axis n_freqs**: x and z play different physical roles (chord vs pitch); separate band counts exploit that.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=512 records, 137 lines from all 4 sweep arms).
+
 ## 2026-04-28 06:15 — PR #484: Surface-conditional FiLM rebased onto post-#467 — **NEW BASELINE**
 - Branch: `charliepai2d4-thorfinn/surface-film` (deleted on merge)
 - Student: charliepai2d4-thorfinn

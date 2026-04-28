@@ -1,6 +1,6 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 06:20
+- **Date:** 2026-04-28 06:35
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
@@ -37,7 +37,7 @@
 | edward   | #300 | wider-model | Width (192/96) | -5% to -10% | **CLOSED** — under-trained 9/50 |
 | edward   | #358 | fix-scoring-nan-mask | Maintenance | n/a | **MERGED** 010235e |
 | edward   | #368 | fourier-pos-encoding | Input (8-freq Fourier on (x,z)) | -3% to -8% | **MERGED** 430cd62 → val_avg=**62.94** (NEW BEST, -0.62% val / -1.30% test) |
-| edward   | #512 | fourier-nfreqs-sweep | Input (n_freqs ∈ {4, 6, 12} sweep on top of #368) | -1% to -3% | WIP |
+| edward   | #512 | fourier-nfreqs-sweep | Input (n_freqs ∈ {4, 6, 8, 12} sweep) | -1% to -3% | **SENT BACK** — n=4 wins by -1.96% paired (mechanism partially confirmed); pre-#467 / pre-#484; rebase + re-run with β=0.5 + FiLM |
 | fern     | #304 | deeper-model-droppath | Depth (5→8 + DropPath 0.1) | -3% to -8% | **CLOSED** — 210 s/epoch, 9/50 epochs, equal-epoch worse |
 | fern     | #388 | arcsinh-pressure | Heavy-tail (arcsinh on p target) | -5% to -15% | **CLOSED** — +15.1% regression; sinh decode amplifies tail errors |
 | fern     | #422 | pchannel-p-w05 | Loss weighting (per-channel w_p=0.5 to free velocity gradient) | -2% to -7% | **CLOSED** — same-epoch -1.85% (within noise); velocity -7 to -10% (mechanism supported) |
