@@ -2,6 +2,23 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 00:50 — PR #329: surf_weight sweep {20, 30, 50} — **SENT BACK (apples-to-apples needed)**
+- Branch: `willowpai2d5-alphonse/surf-weight-sweep` (sits on pre-#336 commit, slice_num=64)
+- Three runs (sw=20, 30, 50), all at 14 epochs, slice_num=64 (pre-#336 fork)
+
+| surf_weight | val_avg/mae_surf_p | val_avg/mae_vol_p | best ep | W&B id |
+|---:|---:|---:|---:|---|
+| 20 | 131.85 | 144.92 | 14 | 9nh5gk1m |
+| 30 | 132.35 | 148.52 | 12 | 4fpwmk2m |
+| 50 | **130.55** | 169.31 | 12 | fvbnu12q |
+
+- All three beat current baseline (139.83) by 5.4–6.6%, but: branch is on slice_num=64, not 128. Cannot disentangle surf_weight effect from slice_num effect without a rebased re-run.
+- Per-channel volume MAE blows up at sw=50 (`mae_vol_Ux` +55%) — the failure mode the original hypothesis flagged.
+- val/test ranking disagree (val: sw=50 > sw=20; 3-finite-split test: sw=20 > sw=50). Single-seed, ~1-2% spread, near noise floor.
+- **Concerning cross-evidence:** every slice_num=64 run in this round (these three + frieren's warmup control 130.43 + edward's deeper_l8 corrected) clusters in the 130-152 band, while the only slice_num=128 run (fern's #336) lands at 139.83 at fewer epochs. This raises the possibility that #336 was a partial-credit merge — slice_num=128 may convert better with more wall clock, but loses inside the 30-min cap.
+- Sent back asking for rebase + one focused re-run of `surf_weight=50` on slice_num=128 (current advisor) to disentangle the two effects. If rebased run beats 139.83, merge surf_weight=50; if not, that's evidence to revisit #336.
+- Alphonse also independently re-diagnosed the cruise NaN bug (alongside edward's #334/#375). No duplicate work needed.
+
 ## 2026-04-28 00:46 — PR #376: Wider MLP (mlp_ratio 2→4) — **CLOSED**
 - Branch: `willowpai2d5-fern/mlp-ratio-4` (deleted)
 - Hypothesis: doubling MLP hidden width lifts `val_avg/mae_surf_p` ~3-7%

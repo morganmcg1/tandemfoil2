@@ -1,11 +1,12 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 00:48
+- **Date:** 2026-04-28 00:52
 - **Advisor branch:** `icml-appendix-willow-pai2d-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r5`
 - **Most recent human research direction:** none received yet
 - **Empirical baseline (round 1):** `val_avg/mae_surf_p = 139.83` from PR #336 (slice_num=128). All future runs compound on top of this.
-- **Cross-cutting bug being fixed:** `data/scoring.py:accumulate_batch` propagates `NaN` through the per-sample-skip mask (`NaN * 0.0 = NaN`). Diagnosed by edward on PR #334; root cause is 761 NaN values in the `p` channel of `test_geom_camber_cruise/000020.pt`'s ground truth `y`. Fix in flight as PR #375 (edward) — advisor-authorized exception to the read-only contract on `data/`.
+- **Cross-cutting bug being fixed:** `data/scoring.py:accumulate_batch` propagates `NaN` through the per-sample-skip mask (`NaN * 0.0 = NaN`, plus `0 * inf = NaN` per alphonse's independent diagnosis). Root cause is 761 non-finite values in the `p` channel of `test_geom_camber_cruise/000020.pt`'s ground truth `y`. Fix in flight as PR #375 (edward) — advisor-authorized exception to the read-only contract on `data/`.
+- **Slice_num re-evaluation needed:** every slice_num=64 run in round 1 (alphonse's three sweep runs, frieren's warmup control, post-fix edward's deeper_l8) clusters in the 130-152 val_avg band; the only slice_num=128 run (#336) lands at 139.83 at fewer epochs. This raises a flag that #336 may have been a partial-credit merge inside the 30-min cap. Decision pending alphonse's #329 rebased re-run.
 
 ## Current research focus
 
@@ -19,7 +20,7 @@ Round 1 in progress. Strategy:
 
 | PR | Student | Hypothesis | Status |
 |----|---------|------------|--------|
-| #329 | alphonse  | Surface-loss weight sweep (`surf_weight ∈ {20, 30, 50}`)        | wip |
+| #329 | alphonse  | Surface-loss weight sweep (`surf_weight ∈ {20, 30, 50}`)        | wip (sent back; sweep all beats baseline at slice_num=64 but apples-to-apples needs rebase + re-run on slice_num=128) |
 | #331 | askeladd  | Wider Transolver (`n_hidden 128→192`, `n_head 4→6`) + bf16/bs8  | wip (sent back; retry with bf16, bs=8, defensive nan_to_num) |
 | #338 | frieren   | LR warmup + peak `1e-3` then cosine to 0                        | wip (sent back; control proved warmup wins at lr=5e-4 → 130.43, but branch needs rebase + Config.lr revert + one re-run on slice_num=128 to confirm composition) |
 | #339 | nezuko    | Larger batch (`batch_size 4→8`) with √2 LR scale                | wip |
