@@ -1,17 +1,17 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 05:45
+- **Date:** 2026-04-28 06:20
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
 
 ## Current research focus
 
-**Current best:** PR #467 (askeladd, Huber β=0.5 + Fourier + EMA + clip + bf16 + compile + cudagraph_skip), merged commit eb5168f. `val_avg/mae_surf_p = 57.50` (EMA-evaluated), `test_avg/mae_surf_p = 50.51`. **-8.65% over PR #368 on val, -7.71% on test** — strongest single-knob win since compile. Cumulative **-54.6% from PR #287's first baseline**, **-57.5% from the published-baseline-equivalent**.
+**Current best:** PR #484 (thorfinn, surface-conditional FiLM + Huber β=0.5 + Fourier + EMA + clip + bf16 + compile + cudagraph_skip), merged commit dc9e0e5. `val_avg/mae_surf_p = 57.37` (EMA-evaluated), `test_avg/mae_surf_p = 48.96`. **-0.23% over PR #467 on val, -3.06% on test_avg.** Paired comparison shows -3.05% val, -2.92% test, **all 8 splits gain**. Cumulative **-54.7% from PR #287's first baseline**, **-57.6% from the published-baseline-equivalent**.
 
-**Compounding evidence accumulating across stacked levers**: Huber β=0.5 (PR #467) + Fourier (PR #368) + Huber-β-1.0 base (PR #289) + EMA + clip (PR #381) + compile (PR #401) + bf16 (PR #372) — seven orthogonal levers all positive without observable interference. The β=0.5 contribution is the largest single-knob since compile: per-split monotone β order, cruise camber gains most (-12.1% val), per-channel breakdown shows velocity gains as much as pressure → loss-shape effect is fundamental, not just tail-dominance.
+**Compounding evidence accumulating across 8 stacked levers**: FiLM (PR #484) + Huber β=0.5 (PR #467) + Fourier (PR #368) + Huber base (PR #289) + EMA + clip (PR #381) + compile (PR #401) + bf16 (PR #372) — eight orthogonal levers all positive without observable interference. FiLM mechanism: shared trunk → tiny domain-conditional decoder (γ_surf, β_surf) vs (γ_vol, β_vol) at last LayerNorm output before mlp2 → no parallel pathway, no trunk interference. **Volume MAE also improves** on all 4 val splits, replicating the trunk/decoder-separation story.
 
-**Open infrastructure note**: Config default still `huber_beta=1.0` (the value at #467's merge-base). Reproducing the merged baseline requires explicit `--huber_beta 0.5`. PR #539 (askeladd's β finer sweep) flips the Config default to 0.5 to keep β=0.5 as the lived-in baseline.
+**Open infrastructure note**: Config defaults still `huber_beta=1.0` and `film=False`. Reproducing the merged baseline requires explicit `--huber_beta 0.5 --film`. PR #539 (askeladd's β finer sweep) flips `huber_beta` default to 0.5; thorfinn's next PR (FiLM at all blocks) may flip `film` default to True.
 
 **Open infrastructure issue:** 2 of 4 launches at the rebased compile + EMA + clip + bf16 stack crash with CUDAGraph private-pool blowup at variable mesh sizes. Alphonse's depth experiment (#435) hit the same OOM at depth=8, requiring `mode="default"` workaround (~10-15% throughput cost). PR #466 (alphonse) bundles the fix: `cudagraph_skip_dynamic_graphs=True` flag + cosine T_max retune to actually-reachable epoch count.
 
@@ -56,7 +56,8 @@
 | thorfinn | #310 | per-channel-surf-weights | Loss weighting (3× p) | -3% to -8% | **CLOSED** — +13% regression |
 | thorfinn | #379 | surface-aware-decoder | Architecture (substitutive surface MLP head) | -3% to -7% | **CLOSED** — within noise vs own baseline-ref; substitutive design wastes vol head signal |
 | thorfinn | #436 | additive-surf-head | Architecture (additive surface head) | -2% to -7% | **CLOSED** — +3.47% (trunk interference is deeper bottleneck) |
-| thorfinn | #484 | surface-film | Architecture (surface-conditional FiLM in last block) | -1% to -4% | **SENT BACK** — paired -2.34% val / -3.23% test (mechanism strong, vol MAE also gains); auto-merge CONFLICTING with #467; rebase + re-run with β=0.5 |
+| thorfinn | #484 | surface-film | Architecture (surface-conditional FiLM in last block) | -1% to -4% | **MERGED** dc9e0e5 → val_avg=**57.37** (NEW BEST, -0.23% val / -3.06% test); paired -3.05%/-2.92% all 8 splits gain |
+| thorfinn | #594 | film-all-blocks | Architecture (FiLM at all 5 block boundaries, mid-network specialization) | -1% to -3% | WIP |
 
 ## Lessons from round 1 so far
 
