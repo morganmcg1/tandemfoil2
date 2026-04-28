@@ -23,28 +23,36 @@ denormalized target space.
 
 | PR   | W&B run    | val_avg/mae_surf_p | test_avg/mae_surf_p | Notes                                |
 |------|------------|---------------------|---------------------|--------------------------------------|
-| **#773** | [5yzk5722](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/5yzk5722) | **119.35** | **108.79** | EMA decay=0.99, epoch 13, **MERGED ✓** |
+| **#769** | [hp87pun7](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/hp87pun7) | **102.86** | **94.83** | Huber δ=0.5, no EMA, epoch 14, **MERGED ✓** |
+| #773 | [5yzk5722](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/5yzk5722) | 119.35 | 108.79 | EMA decay=0.99, no Huber, **MERGED ✓** |
 | #846 (ref) | [bv3x1tp6](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/bv3x1tp6) | 140.95 | 128.32 | Unmodified default @ 14 ep — canonical reference |
 
 **Pending wins (not yet baseline):**
-- PR #775 (nezuko warmup5-clip0.5): val_avg=115.01, test_avg=101.64 — beats baseline by 3.6%/6.6%, but built without EMA. Sent back for rebase + EMA stack test.
+- PR #775 (nezuko warmup5-clip0.5): val_avg=115.01, test_avg=101.64 — originally beat EMA-only baseline; re-running with --ema_decay 0.99 to compare against new Huber baseline.
 
-**Validation:** EMA win is real — PR #773 at 119.35 beats the unmodified default (140.95) by 15.4% on val and 15.3% on test under matched 30-min budget.
+**Accumulated gains vs unmodified default (140.95/128.32):**
+- EMA alone (PR #773): −15.4% val / −15.3% test
+- Huber δ=0.5 alone (PR #769): **−27.0% val / −26.2% test** — *largest single win so far*
+- Huber + EMA stack: **untested — in progress** (alphonse PR in flight)
 
-## Per-split test metrics (current best — PR #773, EMA decay=0.99)
+## Per-split test metrics (current best — PR #769, Huber δ=0.5, no EMA)
 
 | Split                      | test/mae_surf_p |
 |----------------------------|----------------|
-| test_single_in_dist        | 122.60         |
-| test_geom_camber_rc        | 121.49         |
-| test_geom_camber_cruise    |  81.38         |
-| test_re_rand               | 109.69         |
+| test_single_in_dist        | 109.68         |
+| test_geom_camber_rc        |  99.91         |
+| test_geom_camber_cruise    |  76.12         |
+| test_re_rand               |  93.62         |
+
+Biggest gains vs EMA baseline: rc −17.8%, re_rand −14.7% — exactly the heavy-tailed OOD splits the Huber hypothesis targeted.
 
 ## Reproduce best checkpoint
 
 ```bash
 cd target/
-python train.py --agent willowpai2e1-fern \
-    --wandb_group ema-decay-sweep --wandb_name ema-decay0.99 \
-    --ema_decay 0.99
+python train.py --agent willowpai2e1-alphonse \
+    --wandb_group huber-delta-sweep-v2 --wandb_name huber-delta0.5-v2 \
+    --huber_delta 0.5
 ```
+
+**For future experiments: always include both `--huber_delta 0.5` and `--ema_decay 0.99`** (two independent merged wins that are expected to stack). Neither is default — both must be set explicitly.
