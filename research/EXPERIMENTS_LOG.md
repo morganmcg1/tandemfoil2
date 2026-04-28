@@ -623,3 +623,61 @@ All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the s
   1. warmup_epochs=4 + cosine_epochs=10 with start_factor=0.2 — push gentler-warmup direction further.
   2. start_factor sweep (0.3, 0.2, 0.1) at fixed 3+11 schedule.
   3. Slight LR bump (lr=6e-4, 1.2× peak) with current schedule — gentler warmup may permit higher peak LR safely.
+
+## 2026-04-28 07:30 — PR #510: torch.compile mode="default" (rebase verification on post-#582 stack)
+- Branch: `charliepai2d2-alphonse/torch-compile-baseline` (artifact: `model-torch-compile-rebased-20260428-064446`)
+- Hypothesis: torch.compile gives meaningful wall-clock speedup → more epochs in 30-min budget. Mode="reduce-overhead" predicted to help further but flagged as risky for variable-shape padding.
+- Outcome: `mode="reduce-overhead"` OOMs from CUDA Graphs (one graph per mesh-padding shape, ~9 distinct shapes blew past 90 GB). `mode="default"` succeeds cleanly with TorchInductor fusion only.
+
+| metric | compile=default (this PR, rebased) | eager (PR #582 baseline, same hardware) | Δ |
+|---|---|---|---|
+| best `val_avg/mae_surf_p` | **64.824** (epoch 18) | 66.149 | **−2.0%** |
+| `test_avg/mae_surf_p` | **56.391** | 57.654 | **−2.2%** |
+| epochs in 30-min cap | **18** | 14 | **+28.6%** |
+| mean s/epoch (≥2) | **103.4 s** | 134.6 s | **−23.1%** |
+| peak VRAM | 42.6 GB | 45.9 GB | −7% |
+
+- Vs **current** baseline (post-PR #562 = 64.696): val_avg 64.824 = +0.128 (essentially flat, within seed noise).
+- All 4 val splits improved vs eager-on-same-stack; all 4 test splits improved vs eager-on-same-stack.
+- Compile cost: epoch 1 = 122.9 s including warmup (faster than eager's 139.3 s — fusion benefit on same epoch's late-phase forward/backward pays back the one-time compile cost).
+- Mechanism: TorchInductor kernel fusion on forward+backward → shorter per-step time. mode="default" skips CUDA Graphs (the source of reduce-overhead OOM) but retains the fusion. Compile is mode-orthogonal to all merged levers (huber, EMA bias-correction, slice-temp, feature noise, scheduler, grad-clip) — verified via `ema_decay` and `train/grad_norm_*` events being numerically equivalent under both modes.
+- Note: the rebased measurement is from `git_commit=bc218d5` which precedes PR #562 by 6 minutes (i.e., compiled run was on the OLD 1-ep warmup + T_max=13 schedule). Under PR #562's 3-ep warmup + T_max=11 schedule, cosine reaches LR=eta_min=0 by ep14, leaving epochs 15–18 as "free EMA-stabilization epochs" — the same dynamic as alphonse's measurement.
+- Decision: **MERGE**. Standalone val_avg gap to current baseline is +0.128 (within seed-to-seed noise of ~±1–2%); but throughput +28.6% compounds with every future PR. Infrastructure win unlocks more training time on every subsequent experiment.
+- Downstream consequence: future LR-schedule PRs may want to extend T_max=11 → 14–15 to fully use the 18-epoch budget, OR set `eta_min > 0` to extract more from the now-free epochs 15–18.
+- Suggested follow-ups (alphonse):
+  1. Fixed-shape padding for `reduce-overhead` (next assignment).
+  2. `mode="reduce-overhead"` with `dynamic=True` (cheaper than padding).
+  3. Bucketed batching by mesh size.
+  4. Rip out DropPath `Tensor.item()` graph break.
+  5. `torch.set_float32_matmul_precision("high")` for TF32.
+
+## 2026-04-28 07:30 — PR #601: Huber δ=0.25 → 0.1 (push toward L1)
+- Branch: `charliepai2d2-thorfinn/huber-delta-0p1` (artifact: `model-huber-delta-0p1-20260428-063745`)
+- Hypothesis: smaller δ linearizes more residuals, downweighting heavy tails further. Profile was monotone-descending (δ=2 → 107.6, δ=1 → 88.2, δ=0.5 → 87.3, δ=0.25 → 72.4) on prior stacks.
+- Result vs **prior** baseline (PR #575 = 66.195 — same starting baseline thorfinn was on): val_avg = **65.497** = **−1.05%** (3 of 4 val splits improve; in_dist regresses +1.87 pts).
+- Result vs **current** baseline (post-PR #562 = 64.696): val_avg 65.497 = **+1.24% regression** (cross-stack).
+- Loss-magnitude characterization at convergence (very informative): only 21–43% of per-element residuals are in the linear regime — much less than the predicted >95% pseudo-L1. Mechanism is more accurately: δ=0.1 makes the heavy-tailed minority (~30%) be treated as L1 while keeping ~70% in the smooth quadratic regime. δ=0.1 wins as a *better hybrid*, not as pseudo-L1.
+- Decision: **SEND BACK FOR REBASE** onto post-PR #562 stack. The standalone gain of −1.05% on the prior stack is robust same-stack evidence the lever works. The schedule revision (1-ep → 3-ep warmup, T_max=13 → 11) changes optimization dynamics meaningfully, and we want clean post-#562 measurement before merging.
+- If rebased run beats current baseline: merge.
+- Decision pending: rebased run on post-#562 stack.
+- Suggested follow-ups (carry-over): δ=0.05, channel-specific δ, outlier-aware sample weighting.
+
+## 2026-04-28 07:30 — PR #600: EMA decay_target 0.995 → 0.999 (UP direction probe)
+- Branch: `charliepai2d2-nezuko/ema-decay-target-0999` (artifact: `model-ema-decay-target-0999-20260428-063600`)
+- Hypothesis: longer EMA memory smooths late-training fine-tuning; profile 0.95 → 0.99 → 0.995 was still monotone-descending.
+- Result vs **prior** baseline (PR #575 = 66.195): val_avg = **67.856** = **+2.51% regression**. test_avg = 58.986 = +1.59% regression.
+
+| decay_target | val_avg/mae_surf_p | source |
+|---:|---:|---|
+| 0.95 | 75.655 | PR #540 |
+| 0.99 | 67.306 | PR #525 |
+| **0.995** | **66.195 ← min** | PR #575 |
+| 0.999 | 67.856 | this PR |
+
+- **Mechanistic finding (key):** at warmup_steps=50, the EMA effective decay is `min(decay_target, (1+s)/(50+s))`. For decay_target=0.995 the cap binds at step ~9750; for 0.999 the cap binds at step ~48950. Both are well **beyond the 5250-step budget**. Within budget, the trajectories are *numerically identical* — both follow the warmup ramp `(1+s)/(50+s)` throughout. Therefore the +2.51% gap CANNOT be a real EMA-dynamics signal — it must be single-seed run-to-run variance.
+- Decision: **CLOSE** — accepting the mechanism analysis. The EMA-decay-target axis cannot move outcomes within the 14-epoch budget when warmup_steps=50, because the cap doesn't bind. Future EMA improvements must vary `warmup_steps` (which controls ramp speed and indirectly when the cap binds).
+- Suggested follow-ups (per nezuko):
+  1. Vary `warmup_steps` (10, 20, 100, 200) at fixed `decay_target=0.995`. Smaller warmup makes the cap bind earlier in budget; larger keeps EMA slower throughout.
+  2. Re-probe `decay_target=0.999` with `warmup_steps=10` (where cap binds at step ~9990, still beyond budget but ramps differently).
+  3. Confirm 0.995 minimum with a second seed.
+  4. Treat 0.995 ↔ 0.999 as a soft tie for downstream stack decisions.
