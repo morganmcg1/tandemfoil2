@@ -381,7 +381,7 @@ class Config:
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 10.0
-    surf_huber_delta: float = 1.0  # delta for Huber surface loss (in normalized space)
+    surf_focal_gamma: float = 1.0  # focal up-weighting on surface L1: w_i = (err_i / mean_err) ** gamma (detached). 0 disables (= vanilla L1).
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -498,14 +498,25 @@ if __name__ == "__main__":
             # torch.where, not multiplication: NaN*0 = NaN would poison the loss.
             zero_norm = torch.zeros((), dtype=sq_err.dtype, device=sq_err.device)
             vol_loss = torch.where(vol_mask.unsqueeze(-1), sq_err, zero_norm).sum() / vol_mask.sum().clamp(min=1)
-            # Huber loss for surface (delta=1.0 in normalized space) — closer to MAE
-            # metric for outlier residuals while keeping MSE stability for small ones.
+            # L1 (abs error) per-node base for surface — matches the MAE metric
+            # exactly. Focal weighting (cfg.surf_focal_gamma>0) up-weights high-error
+            # nodes via detached per-node weights normalized to mean=1, keeping overall
+            # scale so surf_weight does not need re-tuning. gamma=0 reproduces vanilla L1.
             # Boolean indexing already excludes padding positions.
+            focal_max = focal_p99 = focal_frac_gt2 = float("nan")
             if surf_mask.any():
-                surf_loss = F.huber_loss(
-                    pred[surf_mask], y_norm[surf_mask],
-                    delta=cfg.surf_huber_delta, reduction="mean",
-                )
+                abs_err_per_elem = (pred[surf_mask] - y_norm[surf_mask]).abs()  # [N_surf, 3]
+                loss_per_node = abs_err_per_elem.mean(dim=-1)  # [N_surf]
+                if cfg.surf_focal_gamma > 0:
+                    with torch.no_grad():
+                        mean_err = loss_per_node.mean().clamp(min=1e-8)
+                        focal_weight = (loss_per_node / mean_err) ** cfg.surf_focal_gamma
+                        focal_max = focal_weight.max().item()
+                        focal_p99 = torch.quantile(focal_weight.float(), 0.99).item()
+                        focal_frac_gt2 = (focal_weight > 2.0).float().mean().item()
+                    surf_loss = (loss_per_node * focal_weight).mean()
+                else:
+                    surf_loss = loss_per_node.mean()
             else:
                 surf_loss = torch.zeros((), dtype=pred.dtype, device=pred.device)
             loss = vol_loss + cfg.surf_weight * surf_loss
@@ -514,7 +525,12 @@ if __name__ == "__main__":
             loss.backward()
             optimizer.step()
             global_step += 1
-            wandb.log({"train/loss": loss.item(), "global_step": global_step})
+            step_log = {"train/loss": loss.item(), "global_step": global_step}
+            if cfg.surf_focal_gamma > 0 and not (focal_max != focal_max):  # finite
+                step_log["train/surf_focal_max_weight"] = focal_max
+                step_log["train/surf_focal_p99_weight"] = focal_p99
+                step_log["train/surf_focal_frac_gt2"] = focal_frac_gt2
+            wandb.log(step_log)
 
             epoch_vol += vol_loss.item()
             epoch_surf += surf_loss.item()
