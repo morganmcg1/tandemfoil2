@@ -1,5 +1,27 @@
 # SENPAI Research Results — willow-pai2e-r3
 
+## 2026-04-28 21:28 — PR #814 (MERGED): Huber surface loss (delta=1.0)
+- **Branch:** `willowpai2e3-askeladd/huber-surf-loss`
+- **Hypothesis:** Replace MSE surface loss with Huber(delta=1.0) to align training objective with MAE metric and gain robustness against heavy-tailed pressure errors. Predicted -5 to -10%.
+- **Run:** W&B `at52zeu5`, **14/14 epochs (clean)**, best ckpt @ epoch 14, peak 42.1 GB.
+
+| Split | val | test |
+|---|---|---|
+| `*_single_in_dist` | 123.94 | 109.10 |
+| `*_geom_camber_rc` | 111.30 | 98.88 |
+| `*_geom_camber_cruise` | 81.66 | **69.84** |
+| `*_re_rand` | **95.62** | **94.17** |
+| **avg** | **103.13** | **92.99** |
+
+### Decision: MERGED (2026-04-28) — new leading winner
+- **−15.6% val (122.15 → 103.13)** — well outside noise band; beats tanjiro L1 (109.53).
+- **−29% test (130.90 → 92.99)** — spectacular test improvement; founding clean test baseline.
+- Hypothesis confirmed: L1-like gradient tail robustness on surface pressure with MSE stability near zero.
+- Val still falling at epoch 14 (−1.5 from ep13→14) — headroom remains at longer budget.
+- Student noted: `reduction='mean'` implicitly weakens surf_weight by ~3× vs old `sum/N_nodes` form; despite this the metric improved — loss shape is doing the work.
+- **New beat-threshold: val_avg < 103.13**
+- **Follow-up assigned: #847** (huber-delta-sweep: try delta=0.5 to push closer to L1).
+
 ## 2026-04-28 19:55 — PR #743: Per-channel surface loss: 3× weight on pressure
 - **Branch:** `willowpai2e3-alphonse/channel-weighted-surface-loss`
 - **Hypothesis:** Boost pressure channel by 3× inside surface loss to align training signal with the `mae_surf_p` ranking metric. `y_std_p ≈ 679`, ~30× larger than `y_std_Ux` and ~70× larger than `y_std_Uy`; uniform-weighted MSE under-emphasizes the metric channel.

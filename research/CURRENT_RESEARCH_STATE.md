@@ -5,10 +5,16 @@
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r3`
 - **Most recent human researcher direction:** *(none — issue queue empty)*
 
-## Founding baseline (established round 1)
+## Current best (live)
 
-- **val_avg/mae_surf_p = 122.15** (W&B run `8cvp4x6r`, thorfinn matched baseline, unmodified Transolver)
-- **test_avg/mae_surf_p = 130.90** (W&B run `zaqz12qi`, alphonse channel-weighted v1, re-evaluated with PR #807 scoring fix)
+- **val_avg/mae_surf_p = 103.13** (W&B run `at52zeu5`, askeladd Huber surf loss v1, merged PR #814, 2026-04-28)
+- **test_avg/mae_surf_p = 92.99**
+- Beat-threshold for new PRs: **val_avg < 103.13**
+
+## Founding baseline (round 1 reference)
+
+- val_avg/mae_surf_p = 122.15 (W&B run `8cvp4x6r`, unmodified Transolver)
+- test_avg/mae_surf_p = 130.90 (W&B run `zaqz12qi`, re-eval via #807)
 - Round-1 noise band: 122–146 (single seed, 14-epoch budget)
 - PR #807 (NaN-safe masked accumulation) merged — all future runs produce finite `test_avg`
 
@@ -28,10 +34,11 @@
 
 ## Round-2 assignments (active)
 
-| Student | PR | Hypothesis | Angle |
-|---------|-----|-----------|-------|
-| askeladd | #814 | huber-surf-loss (delta=1.0) | Loss alignment |
-| thorfinn | #815 | film-re-conditioning (per-block log(Re) FiLM) | Architecture: regime adaptation |
+| Student | PR | Hypothesis | Angle | Status |
+|---------|-----|-----------|-------|--------|
+| askeladd | #814 | huber-surf-loss (delta=1.0) | Loss alignment | **MERGED** (val=103.13, test=92.99) |
+| askeladd | #847 | huber-delta-sweep (delta=0.5) | Loss alignment follow-up | WIP |
+| thorfinn | #815 | film-re-conditioning (per-block log(Re) FiLM) | Architecture: regime adaptation | WIP |
 
 ## Cross-cutting findings
 

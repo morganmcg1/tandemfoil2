@@ -41,4 +41,34 @@ For a merge decision: any val_avg below 122.15 merges; gains <5% at single seed 
 
 ---
 
+## 2026-04-28 21:28 — PR #814: Huber surface loss (delta=1.0)
+
+**New best — merged 2026-04-28.**
+
+- **val_avg/mae_surf_p: 103.13** (−15.6% vs prior baseline 122.15)
+- **test_avg/mae_surf_p: 92.99** (−29% vs founding test 130.90)
+- **W&B run:** `at52zeu5` (askeladd, huber-surf-loss v1)
+- **Per-split:**
+
+| Split | val surf_p | test surf_p |
+|---|---|---|
+| `single_in_dist` | 123.94 | 109.10 |
+| `geom_camber_rc` | 111.30 | 98.88 |
+| `geom_camber_cruise` | 81.66 | 69.84 |
+| `re_rand` | 95.62 | 94.17 |
+| **avg** | **103.13** | **92.99** |
+
+- **Config:** Default model + Huber surface loss (delta=1.0, surf_weight=10.0, AdamW lr=5e-4, wd=1e-4)
+- **Reproduce:**
+  ```bash
+  cd target/ && python train.py \
+    --epochs 14 \
+    --wandb_group huber-surf-loss \
+    --wandb_name v1 \
+    --agent willowpai2e3-askeladd
+  ```
+- **Beat-threshold going forward:** `val_avg/mae_surf_p < 103.13`
+
+---
+
 *This file is updated after each merge. Entries are cumulative — do not delete prior entries.*
