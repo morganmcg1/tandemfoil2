@@ -54,14 +54,19 @@ Recommended reproduce: `python train.py --epochs 14 --lr 7.5e-4`.
 **Round-5 priorities** (refreshed):
 - **Tighter clipping bracket** (`max_norm ∈ {0.5, 0.1}`) — pre-clip
   grad norms still ~27× threshold at cosine tail (edward PR #462).
+  edward PR #499 in flight at max_norm=0.5.
 - **L1-volume compose test on post-#462 advisor** — tanjiro PR #492
-  in flight, predicted ~76 if additive.
+  in flight.
 - **DropPath / stochastic depth** — mechanistically-different
   regulariser; the wd × FF and beta2 × FF compose failures (PRs #437,
-  #446) were both magnitude-based regularisers. DropPath drops entire
-  residual branches stochastically — different mechanism.
+  #446) were both magnitude-based regularisers. thorfinn PR #501 in
+  flight.
 - **wd=5e-4 compose** on post-#462 advisor — frieren validated the
-  sweet spot in PR #469 (rc-camber clean at 5e-4 vs +11.8% at 1e-3).
+  sweet spot in PR #469. frieren PR #500 in flight (compose with full
+  6-lever stack).
+- **Spatial FF frequency-count bracket** (NUM_FOURIER_FREQS=12) —
+  nezuko's own follow-up to PR #400; the input-encoding axis that
+  worked (vs log(Re) FF which didn't, PR #432).
 - **Auxiliary log-pressure target** — `val_single_in_dist` is now
   93.59 (closing fast) but still the worst split. Heavy-tail compress.
 
@@ -140,8 +145,6 @@ composition even if they don't outright beat 102.64:**
    re-tested on the new advisor:
    - PR #383 — alphonse: L1 + 3× pressure channel weight in surface loss
      *(loss focus)* — branched off L1-only.
-   - PR #432 — nezuko: L1+FF + **`log(Re)` Fourier features** *(input
-     encoding extension)* — on post-#400 advisor.
    - PR #476 — fern: L1+FF+EMA + `--epochs 14` — four-lever-stack
      confirmation on post-#447 advisor.
    - PR #489 — askeladd: L1+FF+EMA + `--epochs 14` + `lr=1e-3` —
@@ -149,19 +152,20 @@ composition even if they don't outright beat 102.64:**
    - PR #492 — tanjiro: L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
      **L1 volume loss** — compose test of validated L1-volume lever
      on post-#461 advisor.
-   - PR (edward, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
-     **`max_norm=0.5`** — tighter clipping bracket on the post-merge
-     advisor.
-   - PR (frieren, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
-     **`wd=5e-4`** — wd-sweet-spot compose on post-merge advisor with
-     full proven-lever stack.
-   - PR (thorfinn, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
-     **DropPath** (stochastic depth) — mechanistically-different
-     regulariser than wd / beta2 (which both failed to compose with FF).
+   - PR #499 — edward: L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **`max_norm=0.5`** — tighter clipping bracket.
+   - PR #500 — frieren: L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **`wd=5e-4`** — wd-sweet-spot compose on full proven-lever stack.
+   - PR #501 — thorfinn: L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **DropPath 0.1** — mechanistically-different regulariser.
+   - PR (nezuko, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **NUM_FOURIER_FREQS=12** — spatial FF frequency-count bracket
+     (their own PR #400 follow-up; tests whether the proven
+     input-encoding lever has further headroom at higher frequencies).
 
 ## Compose pattern map — final round-3 picture
 
-Six round-3 PRs tested compose effects on top of L1+FF. The pattern:
+Round-3 PRs tested compose effects on top of L1+FF. The pattern:
 
 | compose pattern | with FF | examples | cumulative impact |
 |----------------|---------|----------|------------------:|
@@ -169,6 +173,15 @@ Six round-3 PRs tested compose effects on top of L1+FF. The pattern:
 | **Trajectory averaging** | clean orthogonal | EMA × FF (PR #447) | merged |
 | **L1-only-OOD-camber-targeted** at small dose | additive | wd=5e-4 (PR #469, validated, lost to current by merge timing) | re-assigned |
 | **L1-only-OOD-camber-targeted** at large dose | destructive on rc-camber | wd=1e-3 (PR #437), beta2=0.95 (PR #446) | closed |
+| **Input encoding on already-rich features** | net-flat or regression | log(Re) FF (PR #432) | closed |
+
+**Input encoding compose insight (from PR #432 close)**: input-encoding
+levers compose with FF only when the targeted input dimension was
+previously *poorly exposed* to the model. Spatial `(x, z)` was 2-d and
+only used for slice routing → spatial FF won. Log(Re) is one of 22
+already-rich input features → log(Re) FF lost. Round-5 input-encoding
+work on gap/stagger/AoA scalar inputs should expect similar negatives;
+focus instead on truly-novel input axes.
 
 **Round-5 assignment heuristic** (now informed by 6 compose tests):
 - Prefer **distributional / trajectory-averaging** levers — these

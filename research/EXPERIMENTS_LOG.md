@@ -1,5 +1,66 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 03:35 — PR #432 (CLOSED, refuted hypothesis): L1+FF + log(Re) Fourier features
+- Branch: `charliepai2d3-nezuko/l1-ff-pos-logre-8freq` (deleted on close)
+- Hypothesis: extend the proven 8-freq spatial FF lever to the scalar
+  `log(Re)` input. Predicted −2% to −8% on val.
+- Config: post-#400 advisor (L1+FF), added 16 log(Re) FF channels
+  (`fun_dim=70`, +4,096 weights in input MLP).
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs L1+FF baseline (91.87) | vs current baseline (PR #462, 80.06) |
+|--------|--------:|--------------------------:|-------------------------------------:|
+| `val_avg/mae_surf_p`  | 91.79 | −0.09% (≈ tied within noise) | +14.7% |
+| `test_avg/mae_surf_p` | 83.30 | **+2.70% (regressed)** | +18.9% |
+
+### Per-split val — refutes the predicted direction
+
+| split | L1+FF baseline | this PR | Δ | predicted? |
+|-------|---------------:|--------:|--:|:-----------|
+| val_re_rand | 82.64 | 90.44 | **+9.4% (regressed)** | predicted to *improve* disproportionately (cross-regime axis); opposite direction observed |
+| val_geom_camber_cruise | 68.61 | 75.12 | +9.5% | unrelated to Re axis, regressed |
+| val_geom_camber_rc | 98.99 | 98.84 | flat |
+| val_single_in_dist | 117.24 | 102.75 | **−12.4%** | in-dist memorisation, not Re-extrapolation |
+
+### Decision
+
+**Closed** per the >5% rule and the lever's mechanistic premise being
+refuted at split level.
+
+### Mechanistic read (round-3 narrative addition)
+
+Student's analysis: the spectral-bias argument that justified spatial
+FF (PR #400 winning −10.5%) is **much weaker for log(Re)**:
+- Spatial `(x, z)` enters via only 2 input channels + slice-attention
+  geometric routing. The model has no other handle on position →
+  removing spectral bias matters substantially.
+- Log(Re) is already one of 22 input features going through a
+  non-linear MLP + 5 attention layers; it's broadcastable to a
+  learned non-linear encoding by every layer. Adding 16 high-frequency
+  variants is **redundant capacity**, not new signal.
+
+**Round-3 finding for input encoding compose tests**: input-encoding
+levers compose with FF only when the targeted input dimension was
+previously *poorly exposed* to the model. Spatial FF wins because
+position is 2-d and only used for slice routing; log(Re) FF fails
+because Re is already rich. Round-5 input-encoding work targeting
+gap/stagger/AoA dimensions (1-d each, going through MLP) should expect
+similar negative results.
+
+The `val_re_rand` regression (+9.4%) suggests the smooth log(Re)
+representation may have been doing implicit cross-regime regularisation;
+breaking it with high-frequency components removes that effect.
+
+Re-assigning nezuko to spatial FF frequency-count bracket
+(`NUM_FOURIER_FREQS=12` on post-#462 advisor) — their own PR #400
+follow-up #1, the input-encoding lever that *did* work.
+
+Per-epoch metrics not centralised in `EXPERIMENT_METRICS.jsonl` —
+branch deleted on close.
+
+---
+
 ## 2026-04-28 03:31 — PR #462 (MERGED): L1+FF + matched cosine + grad clipping (max_norm=1.0)
 - Branch: `charliepai2d3-edward/l1ff-cos14-clip1`
 - Hypothesis: gradient clipping at `max_norm=1.0` composed with FF
