@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import time
@@ -415,6 +416,7 @@ class Config:
     surf_weight: float = 10.0
     surf_huber_delta: float = 1.0  # delta for Huber surface loss (in normalized space)
     epochs: int = 50
+    warmup_steps: int = 500
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -468,7 +470,17 @@ if __name__ == "__main__":
     print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+    total_steps = MAX_EPOCHS * len(train_loader)
+    warmup_steps = cfg.warmup_steps
+
+    def lr_lambda(step: int) -> float:
+        if step < warmup_steps:
+            return step / max(warmup_steps, 1)
+        progress = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
+        return 0.5 * (1 + math.cos(math.pi * progress))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    print(f"LR schedule: linear warmup {warmup_steps} steps -> cosine to 0 over {total_steps} total steps")
 
     run = wandb.init(
         entity=os.environ.get("WANDB_ENTITY"),
@@ -538,13 +550,17 @@ if __name__ == "__main__":
             loss.backward()
             optimizer.step()
             global_step += 1
-            wandb.log({"train/loss": loss.item(), "global_step": global_step})
+            scheduler.step()
+            wandb.log({
+                "train/loss": loss.item(),
+                "lr": scheduler.get_last_lr()[0],
+                "global_step": global_step,
+            })
 
             epoch_vol += vol_loss.item()
             epoch_surf += surf_loss.item()
             n_batches += 1
 
-        scheduler.step()
         epoch_vol /= max(n_batches, 1)
         epoch_surf /= max(n_batches, 1)
 
