@@ -81,6 +81,35 @@ class MLP(nn.Module):
         return self.linear_post(x)
 
 
+class ConditioningMLP(nn.Module):
+    """Project global scalars [B, cond_dim] to per-block (gamma, beta).
+
+    Returns shape [B, n_layers, 2, hidden_dim]. FiLM-Zero init: the second
+    linear's weights and bias are zero so gamma=beta=0 at first forward pass
+    and the model is identical to baseline; the conditioning grows during
+    training. The zero init is re-applied in ``Transolver.__init__`` after
+    ``self.apply(self._init_weights)`` since that traversal would otherwise
+    overwrite it with ``trunc_normal_``.
+    """
+
+    def __init__(self, cond_dim: int, n_layers: int, hidden_dim: int):
+        super().__init__()
+        self.n_layers = n_layers
+        self.hidden_dim = hidden_dim
+        proj_dim = max(hidden_dim, 64)
+        self.net = nn.Sequential(
+            nn.Linear(cond_dim, proj_dim),
+            nn.SiLU(),
+            nn.Linear(proj_dim, n_layers * 2 * hidden_dim),
+        )
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
+
+    def forward(self, cond: torch.Tensor) -> torch.Tensor:
+        out = self.net(cond)
+        return out.reshape(cond.shape[0], self.n_layers, 2, self.hidden_dim)
+
+
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
@@ -138,8 +167,10 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 use_film: bool = False):
         super().__init__()
+        self.use_film = use_film
         self.last_layer = last_layer
         self.ln_1 = nn.LayerNorm(hidden_dim)
         self.attn = PhysicsAttention(
@@ -156,9 +187,15 @@ class TransolverBlock(nn.Module):
                 nn.Linear(hidden_dim, out_dim),
             )
 
-    def forward(self, fx):
-        fx = self.attn(self.ln_1(fx)) + fx
-        fx = self.mlp(self.ln_2(fx)) + fx
+    def forward(self, fx, gamma=None, beta=None):
+        h = self.ln_1(fx)
+        if self.use_film and gamma is not None:
+            h = h * (1.0 + gamma.unsqueeze(1)) + beta.unsqueeze(1)
+        fx = self.attn(h) + fx
+        h = self.ln_2(fx)
+        if self.use_film and gamma is not None:
+            h = h * (1.0 + gamma.unsqueeze(1)) + beta.unsqueeze(1)
+        fx = self.mlp(h) + fx
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
         return fx
@@ -169,12 +206,15 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 cond_dim: int = 0):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
+        self.cond_dim = cond_dim
+        self.use_film = cond_dim > 0
 
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
@@ -184,17 +224,26 @@ class Transolver(nn.Module):
                                   n_layers=0, res=False, act=act)
 
         self.n_hidden = n_hidden
+        self.n_layers = n_layers
         self.space_dim = space_dim
         self.blocks = nn.ModuleList([
             TransolverBlock(
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                use_film=self.use_film,
             )
             for i in range(n_layers)
         ])
+        if self.use_film:
+            self.cond_mlp = ConditioningMLP(cond_dim, n_layers, n_hidden)
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
+        # Re-zero the conditioning MLP's last linear: the apply() above
+        # would otherwise overwrite the FiLM-Zero init with trunc_normal_.
+        if self.use_film:
+            nn.init.zeros_(self.cond_mlp.net[-1].weight)
+            nn.init.zeros_(self.cond_mlp.net[-1].bias)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -208,8 +257,15 @@ class Transolver(nn.Module):
     def forward(self, data, **kwargs):
         x = data["x"]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        for block in self.blocks:
-            fx = block(fx)
+        if self.use_film and "cond" in data:
+            film_params = self.cond_mlp(data["cond"])  # [B, n_layers, 2, H]
+            for i, block in enumerate(self.blocks):
+                gamma = film_params[:, i, 0]
+                beta = film_params[:, i, 1]
+                fx = block(fx, gamma=gamma, beta=beta)
+        else:
+            for block in self.blocks:
+                fx = block(fx)
         return {"preds": fx}
 
 
@@ -217,7 +273,8 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device,
+                   use_film: bool = False) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -240,7 +297,10 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            data_in = {"x": x_norm}
+            if use_film:
+                data_in["cond"] = x_norm[:, 0, 13:24]
+            pred = model(data_in)["preds"]
 
             # Bug 1 guard: replace +inf / -inf / NaN predictions in normalized
             # space with 0 (the per-channel mean post-standardization), so a
@@ -428,6 +488,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    film_conditioning: bool = False  # FiLM-condition blocks on 11 global scalars
 
 
 cfg = sp.parse(Config)
@@ -469,6 +530,7 @@ model_config = dict(
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
+    cond_dim=11 if cfg.film_conditioning else 0,
 )
 
 model = Transolver(**model_config).to(device)
@@ -531,7 +593,10 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
+        data_in = {"x": x_norm}
+        if cfg.film_conditioning:
+            data_in["cond"] = x_norm[:, 0, 13:24]
+        pred = model(data_in)["preds"]
         abs_err = (pred - y_norm).abs() * channel_weights[None, None, :]
 
         vol_mask = mask & ~is_surface
@@ -557,7 +622,8 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                             use_film=cfg.film_conditioning)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -578,6 +644,24 @@ for epoch in range(MAX_EPOCHS):
             log_metrics[f"{split_name}/{k}"] = v
     for k, v in val_avg.items():
         log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
+
+    if cfg.film_conditioning:
+        # Per-block FiLM gamma/beta diagnostics on a representative cond.
+        # Probe with the first val sample's conditioning so the magnitudes
+        # reflect actual model behaviour, not random init noise.
+        with torch.no_grad():
+            probe_x, _, _ = next(iter(val_splits.values()))[0]
+            probe_x = probe_x.unsqueeze(0).to(device)
+            probe_norm = (probe_x - stats["x_mean"]) / stats["x_std"]
+            probe_cond = probe_norm[:, 0, 13:24]
+            film = model.cond_mlp(probe_cond)  # [1, n_layers, 2, H]
+        for i in range(film.shape[1]):
+            log_metrics[f"film/block_{i}/abs_gamma_mean"] = film[0, i, 0].abs().mean().item()
+            log_metrics[f"film/block_{i}/abs_beta_mean"] = film[0, i, 1].abs().mean().item()
+        log_metrics["film/cond_mlp_last_w_norm"] = (
+            model.cond_mlp.net[-1].weight.detach().norm().item()
+        )
+
     wandb.log(log_metrics)
 
     tag = ""
@@ -625,7 +709,8 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                                 use_film=cfg.film_conditioning)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
