@@ -375,6 +375,7 @@ class Config:
     debug: bool = False
     skip_test: bool = False  # skip final test evaluation
     amp_bf16: bool = True  # use bfloat16 autocast for model forward; loss accumulator stays in fp32
+    aoa_jitter_std: float = 0.02   # std of Gaussian noise (radians) added to AoA1/AoA2 features during training
 
 
 cfg = sp.parse(Config)
@@ -461,6 +462,13 @@ for epoch in range(MAX_EPOCHS):
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
+
+        if cfg.aoa_jitter_std > 0:
+            noise1 = torch.randn(x.shape[0], 1, device=device) * cfg.aoa_jitter_std
+            noise2 = torch.randn(x.shape[0], 1, device=device) * cfg.aoa_jitter_std
+            x = x.clone()
+            x[..., 14] = x[..., 14] + noise1
+            x[..., 18] = x[..., 18] + noise2
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
