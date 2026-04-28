@@ -430,6 +430,12 @@ scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOC
 # without random-init drag. See PR #396 for derivation.
 EMA_DECAY = 0.997
 
+# --- Annealed input-space Gaussian noise -------------------------------
+# Linearly anneal sigma from START to 0 over [0, ANNEAL_EPOCHS]; epochs
+# beyond ANNEAL_EPOCHS train noise-free for late-epoch fine-tuning.
+INPUT_NOISE_SIGMA_START = 0.05
+INPUT_NOISE_ANNEAL_EPOCHS = 12
+
 ema_state = {k: v.detach().clone() for k, v in model.state_dict().items()
              if v.dtype.is_floating_point}
 
@@ -476,6 +482,11 @@ for epoch in range(MAX_EPOCHS):
         print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
         break
 
+    # Linearly anneal input noise: sigma_start at ep0, 0 at ep>=ANNEAL_EPOCHS.
+    epoch_progress = min(epoch / INPUT_NOISE_ANNEAL_EPOCHS, 1.0)
+    current_sigma = INPUT_NOISE_SIGMA_START * (1.0 - epoch_progress)
+    print(f"  Epoch {epoch+1}: input_noise_sigma={current_sigma:.4f}")
+
     t0 = time.time()
     model.train()
     epoch_vol = epoch_surf = 0.0
@@ -490,6 +501,14 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
+
+        # Annealed input-space additive Gaussian noise (training only,
+        # masked to real nodes). Applied BEFORE FF concat so FF features
+        # are computed from noised positions, mirroring PR #569.
+        if model.training and current_sigma > 0:
+            noise = torch.randn_like(x_norm) * current_sigma
+            x_norm = x_norm + noise * mask.unsqueeze(-1).float()
+
         ff = fourier_pos_features(x_norm[..., :2])
         x_norm = torch.cat([x_norm, ff], dim=-1)
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
@@ -571,6 +590,7 @@ for epoch in range(MAX_EPOCHS):
         "train/surf_loss": epoch_surf,
         "train/grad_norm_mean": epoch_grad_mean,
         "train/grad_norm_max": epoch_grad_max,
+        "train/input_noise_sigma": current_sigma,
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
