@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -421,7 +422,7 @@ model_config = dict(
     n_hidden=128,
     n_layers=5,
     n_head=4,
-    slice_num=64,
+    slice_num=128,
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
@@ -462,6 +463,30 @@ model_dir.mkdir(parents=True, exist_ok=True)
 model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
+
+metrics_dir = Path(__file__).resolve().parent / "research" / "metrics"
+metrics_dir.mkdir(parents=True, exist_ok=True)
+_metrics_basename = _sanitize_artifact_token(cfg.wandb_name or cfg.agent or "tandemfoil")
+metrics_path = metrics_dir / f"{_metrics_basename}_{run.id}.jsonl"
+
+
+def _write_jsonl(record: dict) -> None:
+    with open(metrics_path, "a") as f:
+        f.write(json.dumps(record, default=float) + "\n")
+
+
+_write_jsonl({
+    "kind": "run_start",
+    "run_id": run.id,
+    "wandb_name": cfg.wandb_name,
+    "agent": cfg.agent,
+    "git_commit": _git_commit_short(),
+    "config": asdict(cfg),
+    "model_config": model_config,
+    "n_params": n_params,
+    "train_samples": len(train_ds),
+    "val_samples": {k: len(v) for k, v in val_splits.items()},
+})
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
@@ -555,6 +580,25 @@ for epoch in range(MAX_EPOCHS):
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
 
+    _epoch_record = {
+        "kind": "epoch",
+        "epoch": epoch + 1,
+        "epoch_time_s": dt,
+        "peak_gb": peak_gb,
+        "lr": scheduler.get_last_lr()[0],
+        "train/vol_loss": epoch_vol,
+        "train/surf_loss": epoch_surf,
+        "val/loss": val_loss_mean,
+        "is_best": tag == " *",
+        "global_step": global_step,
+    }
+    for split_name, m in split_metrics.items():
+        for k, v in m.items():
+            _epoch_record[f"{split_name}/{k}"] = v
+    for k, v in val_avg.items():
+        _epoch_record[f"val_{k}"] = v
+    _write_jsonl(_epoch_record)
+
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
 
@@ -596,6 +640,23 @@ if best_metrics:
             test_log[f"test_{k}"] = v
         wandb.log(test_log)
         wandb.summary.update(test_log)
+
+    _final_record = {
+        "kind": "run_end",
+        "best_epoch": best_metrics["epoch"],
+        "best_val_avg/mae_surf_p": best_avg_surf_p,
+        "total_train_minutes": total_time,
+        "peak_gb": (torch.cuda.max_memory_allocated() / 1e9
+                    if torch.cuda.is_available() else 0.0),
+    }
+    if test_avg is not None:
+        for k, v in test_avg.items():
+            _final_record[f"test_{k}"] = v
+    if test_metrics is not None:
+        for split_name, m in test_metrics.items():
+            for k, v in m.items():
+                _final_record[f"test/{split_name}/{k}"] = v
+    _write_jsonl(_final_record)
 
     save_model_artifact(
         run=run,
