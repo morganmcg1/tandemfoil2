@@ -2,6 +2,27 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 08:25 — PR #586: lr=1e-3 with bf16+grad-clip baseline — **CLOSED**
+- Branch: `willowpai2d5-alphonse/lr-1e-3-with-gradclip` (deleted; pre-#413, bf16+grad-clip-only baseline)
+- 3 runs total (2 seeds at lr=1e-3 + 1 sensitivity probe at lr=7e-4):
+
+| Run | val_avg/mae_surf_p |
+|---|---:|
+| lr=1e-3 seed 0 (1dk2gnkc) | 102.53 |
+| lr=1e-3 seed 1 (hvooe56x) | 106.84 |
+| **lr=1e-3 2-seed mean** | **104.69 ± 3.04** |
+| lr=7e-4 seed 0 (kuyebyei) | **96.35** |
+
+- vs OLD bf16+grad-clip baseline (100.44): lr=1e-3 mean +4.25 worse, lr=7e-4 single-seed -4.09 better
+- vs current bf16+grad-clip+Huber baseline (90.98): lr=1e-3 mean +15.2% worse → close threshold
+- Decision: **closed** per stated rule. lr=1e-3 too aggressive (overshoots minimum). lr=7e-4 result is interesting and assigned as new PR #653.
+- Useful side-findings:
+  - Pre-clip grad-norm shifted only ~10% with 2× LR (38 → 41) — much less than predicted ~30%. Grad-clip dominates the per-step magnitude regardless of LR.
+  - **`lr × max_norm` is the actual control variable** — round-2 candidate.
+  - 100% clipping rate at every LR — confirms grad-clip's normalized-gradient regime is invariant to LR knob.
+  - No best-epoch shift across LRs (always 18-19) — model uses the full 30-min budget regardless; what differs is quality of minimum.
+- Reassignment: alphonse → **lr=7e-4 with bf16+grad-clip+Huber baseline (PR #653)** — single-seed lr=7e-4 probe was promising; 2-seed confirmation on the new (Huber-included) baseline tests if higher LR composes additively with Huber's smoother loss surface.
+
 ## 2026-04-28 07:35 — PR #585: SwiGLU FFN replacement — **SENT BACK (composition test on new Huber baseline)**
 - Branch: `willowpai2d5-fern/swiglu-ffn` (pre-#413 fork; train.py adds SwiGLU + reverts Huber, research/*.md staleness)
 - 2-seed run on bf16+grad-clip baseline (pre-Huber):
