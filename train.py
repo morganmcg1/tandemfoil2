@@ -214,6 +214,23 @@ class Transolver(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Boundary-layer feature augmentation
+# ---------------------------------------------------------------------------
+
+def add_boundary_layer_feature(x: torch.Tensor) -> torch.Tensor:
+    """Append log(Re * |saf|) as a new last input dim — local Re_x boundary-layer signal.
+
+    Re_x = Re * x/L governs the local boundary-layer state per Schlichting; |saf|
+    (signed arc-length magnitude at dims 2:4) is the per-node surface-distance
+    proxy. log(Re*|saf|) = log(Re) + log(|saf|).
+    """
+    log_re = x[..., 13:14]
+    saf_mag = x[..., 2:4].pow(2).sum(dim=-1, keepdim=True).clamp_min(1e-6).sqrt()
+    log_re_x = log_re + saf_mag.log()
+    return torch.cat([x, log_re_x], dim=-1)
+
+
+# ---------------------------------------------------------------------------
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
@@ -236,7 +253,8 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
-            x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            x_aug = add_boundary_layer_feature(x)
+            x_norm = (x_aug - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
@@ -414,9 +432,35 @@ val_loaders = {
     for name, ds in val_splits.items()
 }
 
+# Estimate mean/std for the boundary-layer feature (new dim 24) from training
+# data so it gets the same normalization treatment as the existing dims.
+print("Estimating boundary-layer feature stats from training data...")
+_bl_feats = []
+with torch.no_grad():
+    for _i, (_x, _y, _is_surface, _mask) in enumerate(train_loader):
+        _x = _x.to(device, non_blocking=True)
+        _mask = _mask.to(device, non_blocking=True)
+        _x_aug = add_boundary_layer_feature(_x)
+        _bl_feats.append(_x_aug[..., -1][_mask].float())
+        if _i >= 5:
+            break
+_bl_feats = torch.cat(_bl_feats)
+_bl_mean = _bl_feats.mean()
+_bl_std = _bl_feats.std().clamp_min(1e-3)
+print(f"  log(Re*|saf|): mean={_bl_mean.item():.3f}, std={_bl_std.item():.3f}, "
+      f"min={_bl_feats.min().item():.3f}, max={_bl_feats.max().item():.3f}, "
+      f"n={_bl_feats.numel()}")
+stats = {
+    "x_mean": torch.cat([stats["x_mean"], _bl_mean.view(1)]),
+    "x_std": torch.cat([stats["x_std"], _bl_std.view(1)]),
+    "y_mean": stats["y_mean"],
+    "y_std": stats["y_std"],
+}
+del _bl_feats
+
 model_config = dict(
     space_dim=2,
-    fun_dim=X_DIM - 2,
+    fun_dim=X_DIM - 2 + 1,  # +1 for boundary-layer feature log(Re*|saf|)
     out_dim=3,
     n_hidden=128,
     n_layers=5,
@@ -484,7 +528,8 @@ for epoch in range(MAX_EPOCHS):
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
 
-        x_norm = (x - stats["x_mean"]) / stats["x_std"]
+        x_aug = add_boundary_layer_feature(x)
+        x_norm = (x_aug - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
         sq_err = (pred - y_norm) ** 2
