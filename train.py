@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import time
@@ -45,6 +46,28 @@ from data import (
     load_test_data,
     pad_collate,
 )
+
+# ---------------------------------------------------------------------------
+# Input feature encoding
+# ---------------------------------------------------------------------------
+
+
+def fourier_encode_coords(coords: torch.Tensor, num_bands: int) -> torch.Tensor:
+    """Multi-scale sinusoidal positional encoding for (x, z) coords.
+
+    Input  coords: [..., 2] in normalized space.
+    Output: [..., 2 + 4*num_bands] = original coords concatenated with
+        sin/cos at frequencies [pi*2^0, ..., pi*2^{K-1}] for each axis.
+    """
+    if num_bands == 0:
+        return coords
+    freqs = 2.0 ** torch.arange(num_bands, device=coords.device, dtype=coords.dtype)
+    angles = coords.unsqueeze(-1) * freqs * math.pi  # [..., 2, num_bands]
+    return torch.cat(
+        [coords, angles.sin().flatten(-2), angles.cos().flatten(-2)],
+        dim=-1,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Transolver model
@@ -217,7 +240,7 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device, fourier_bands: int = 0) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -240,7 +263,13 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            if fourier_bands > 0:
+                coords = x_norm[..., :2]
+                rest = x_norm[..., 2:]
+                x_in = torch.cat([fourier_encode_coords(coords, fourier_bands), rest], dim=-1)
+            else:
+                x_in = x_norm
+            pred = model({"x": x_in})["preds"]
 
             # Bug 1 guard: replace +inf / -inf / NaN predictions in normalized
             # space with 0 (the per-channel mean post-standardization), so a
@@ -428,6 +457,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    fourier_bands: int = 0  # 0 = disabled, baseline behavior
 
 
 cfg = sp.parse(Config)
@@ -458,8 +488,9 @@ val_loaders = {
     for name, ds in val_splits.items()
 }
 
+EXTRA_FOURIER_DIMS = 4 * cfg.fourier_bands  # 4 = (sin+cos) * (x, z)
 model_config = dict(
-    space_dim=2,
+    space_dim=2 + EXTRA_FOURIER_DIMS,
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
@@ -512,6 +543,7 @@ best_avg_surf_p = float("inf")
 best_metrics: dict = {}
 global_step = 0
 train_start = time.time()
+logged_coord_range = False
 
 for epoch in range(MAX_EPOCHS):
     if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
@@ -531,7 +563,21 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
+        if not logged_coord_range:
+            coord_real = x_norm[..., :2][mask].abs()
+            coord_abs_max = coord_real.max().item()
+            coord_abs_p99 = torch.quantile(coord_real.flatten(), 0.99).item()
+            print(f"[sanity] x_norm[...,:2] |max|={coord_abs_max:.3f}  p99={coord_abs_p99:.3f}")
+            wandb.summary["coord_abs_max_first_batch"] = coord_abs_max
+            wandb.summary["coord_abs_p99_first_batch"] = coord_abs_p99
+            logged_coord_range = True
+        if cfg.fourier_bands > 0:
+            coords = x_norm[..., :2]
+            rest = x_norm[..., 2:]
+            x_in = torch.cat([fourier_encode_coords(coords, cfg.fourier_bands), rest], dim=-1)
+        else:
+            x_in = x_norm
+        pred = model({"x": x_in})["preds"]
         abs_err = (pred - y_norm).abs() * channel_weights[None, None, :]
 
         vol_mask = mask & ~is_surface
@@ -557,7 +603,7 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device, cfg.fourier_bands)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -625,7 +671,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, cfg.fourier_bands)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
