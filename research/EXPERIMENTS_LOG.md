@@ -76,6 +76,25 @@ Round-1 reviews. Primary ranking metric: `val_avg/mae_surf_p` (lower is better).
 - Per-split test MAE for `p`: single_in_dist=123.760, geom_camber_rc=104.946, geom_camber_cruise=66.144, re_rand=96.978.
 - Decision: **MERGE.** This is a metric-pipeline fix that unlocks the paper-facing metric for the entire research programme. Subsequent rounds will report a recoverable `test_avg`. BASELINE.md val_avg target stays at 105.999 (recipe high-water mark) — we do NOT raise the bar to 108.103 since that would be optimizing against RNG variance rather than recipe quality.
 
+## 2026-04-28 00:25 — PR #363: EMA of model weights (decay=0.999) for evaluation
+
+- Branch: `charliepai2d2-thorfinn/ema-eval` — metrics committed at `models/model-thorfinn-ema-eval-20260427-233441/{metrics.jsonl,metrics.yaml}`.
+- Hypothesis: EMA copy of weights (decay 0.999) used for val/test eval damps the late-training validation noise observed in round-1; checkpoint saves EMA weights.
+- Result: best `val_avg/mae_surf_p = 101.350` at epoch 14 — **−4.39% vs huber baseline (105.999)**, right at the upper end of the predicted −2% to −5% range.
+- Per-split val MAE for `p`: single_in_dist=126.32 (−5.76%), geom_camber_rc=109.41 (−0.07%, flat), geom_camber_cruise=76.99 (−6.93%), re_rand=92.68 (−5.19%).
+- 3-split test mean: 100.030 (cruise NaN — PR #361 had not landed when this run started).
+- **Striking observation:** the val curve is **monotonically decreasing every epoch**, with no transient spike. Round-1 huber had a 43% spike at epoch 12 (114→164→131→106); EMA fully damped it. Best epoch was the final epoch — implies the asymptote is even lower with more epoch budget.
+- Decision: **MERGE.** New baseline `val_avg/mae_surf_p = 101.350`. EMA is orthogonal to most other levers and should compound with future winners.
+
+## 2026-04-28 00:25 — PR #286: Increase surf_weight from 10 to 25
+
+- Branch: `charliepai2d2-frieren/surf-weight-25` (rebased onto post-huber advisor; metrics committed at `models/model-surf-weight-25-20260427-234307/`).
+- Hypothesis: upweight surface loss (10→25) to bias gradients toward the headline surface metric.
+- Result: best `val_avg/mae_surf_p = 108.222` at epoch 13 — **+2.10% regression vs huber baseline (105.999)**.
+- Per-split val MAE for `p`: single_in_dist=124.06 (−7.45%), geom_camber_rc=117.30 (+7.15%), geom_camber_cruise=88.69 (+7.21%), re_rand=102.84 (+5.21%).
+- Volume MAE regressed +10–17% across all splits.
+- Decision: **CLOSE.** sw=25 over-corrects: surface gain is concentrated entirely on the in-distribution split while OOD splits regress. Volume context is starved, hurting cross-split generalization. Direction not dead — student's suggestion to try sw ∈ {12, 15, 18} (smaller bumps) is reasonable for round-3 if other levers stall, ideally with the now-merged EMA baseline.
+
 ## Test-metric NaN follow-up (cross-PR)
 
 All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the student diagnoses:
