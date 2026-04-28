@@ -507,12 +507,19 @@ for epoch in range(MAX_EPOCHS):
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
 
-        x_norm = (x - stats["x_mean"]) / stats["x_std"]
-        ff = fourier_pos_features(x_norm[..., :2])
-        x_norm = torch.cat([x_norm, ff], dim=-1)
-        y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        err = pred - y_norm
+        with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16):
+            x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            ff = fourier_pos_features(x_norm[..., :2])
+            x_norm = torch.cat([x_norm, ff], dim=-1)
+            y_norm = (y - stats["y_mean"]) / stats["y_std"]
+            pred = model({"x": x_norm})["preds"]
+
+        # Cast pred to FP32 outside autocast so loss precision is restored
+        # for both surf_loss and aux log-p (PR #606's narrow guard was insufficient).
+        pred_fp32 = pred.float()
+        y_norm_fp32 = y_norm.float()
+
+        err = pred_fp32 - y_norm_fp32
         sq_err = err ** 2
         abs_err = err.abs()
 
@@ -521,11 +528,10 @@ for epoch in range(MAX_EPOCHS):
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
         surf_loss = (abs_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
 
-        # Auxiliary log-pressure loss on surface nodes only.
-        # Different mechanism from EMA / channel weighting / loss shape:
-        # target-space rescaling for heavy-tail.
+        # Auxiliary log-pressure loss on surface nodes only — also reads
+        # pred_fp32 so its precision is restored.
         y_p = y[..., 2]
-        pred_p_orig = pred[..., 2] * stats["y_std"][2] + stats["y_mean"][2]
+        pred_p_orig = pred_fp32[..., 2] * stats["y_std"][2] + stats["y_mean"][2]
         y_p_log = torch.sign(y_p) * torch.log1p(torch.abs(y_p))
         pred_p_log = torch.sign(pred_p_orig) * torch.log1p(torch.abs(pred_p_orig))
         log_p_aux = (
