@@ -190,3 +190,65 @@ Capacity expansion alone is not the answer when gradients explode. The student's
 
 **Decision:** SENT BACK. Rebase onto clipping baseline, re-run with n_hidden=256 + bf16, target val_avg/mae_surf_p < 104.7457.
 
+---
+
+## 2026-04-28 23:15 — PR #897: Schedule-to-budget cosine T_max=15 [SENT BACK — MARGINAL WIN, CONFLICT]
+
+- **Branch:** `charliepai2e2-alphonse/schedule-to-budget-cosine-tmax15`
+- **Hypothesis:** The stock cosine schedule is tuned for T_max=50 but only ~14 epochs complete in the 30-min budget. Setting T_max=15 (aligned to achievable epoch budget) allows the LR to complete its full cosine arc — decaying from 5e-4 → ~0 over the reachable window instead of barely moving. This should improve convergence within the wall-clock constraint.
+- **Outcome:** MARGINAL WIN — val_avg/mae_surf_p = **104.4004** vs baseline **104.7457** (Δ = -0.345, -0.33%). Merge was attempted but FAILED due to merge conflicts on `icml-appendix-charlie-pai2e-r2`. Sent back for rebase.
+
+### Results Table (best checkpoint)
+
+| Split | Baseline (PR #778) | T_max=15 (PR #897) | Delta |
+|-------|-------------------|-------------------|-------|
+| val_single_in_dist | 105.24 | 112.69 | +7.45 ✗ |
+| val_geom_camber_rc | 97.21 | 98.24 | +1.03 ✗ |
+| val_geom_camber_cruise | 98.39 | 95.21 | -3.18 ✓ |
+| val_re_rand | 118.15 | 111.47 | -6.68 ✓ |
+| **avg** | **104.7457** | **104.4004** | **-0.345** |
+
+### Mechanism Validation
+
+- T_max=15 means the cosine schedule completes its full arc in ~14 achieved epochs
+- LR decays from 5e-4 → 5.46e-6 (full decay to near-zero vs ~4.2e-4 with T_max=50)
+- Student confirmed gradient clipping baseline was correctly inherited
+- OOD generalization improved: val_re_rand -6.68, val_geom_camber_cruise -3.18
+- In-distribution performance regressed slightly: val_single_in_dist +7.45
+
+### Analysis
+
+The mechanism is validated: a budget-aligned cosine schedule does improve mean performance. The marginal aggregate gain (+0.33% improvement) masks a meaningful split pattern — OOD splits benefit from the aggressive final LR decay, while in-dist regression suggests the low final LR (5.46e-6) may be slightly too low, causing underfitting in the late epochs. The optimal T_max is likely between 15 and 50 — student suggested T_max ∈ {20, 25, 30} as natural next experiments. T_max=20–25 would set the final LR at 1e-5–5e-5 rather than 5e-6, potentially retaining the OOD win without the in-dist regression.
+
+**Decision:** Attempted merge → FAILED (conflicts with icml-appendix-charlie-pai2e-r2). Sent back as draft for rebase. Once rebased and re-run confirms the result, should merge (it is a winner). Baseline NOT updated yet — awaiting rebase confirmation.
+
+---
+
+## 2026-04-28 23:20 — PR #898: Less-aggressive gradient clipping (max_norm=5.0) [CLOSED — DEAD END]
+
+- **Branch:** `charliepai2e2-askeladd/less-aggressive-clip-norm`
+- **Hypothesis:** max_norm=1.0 may be too aggressive, cutting down genuine gradients alongside explosive ones. Loosening to max_norm=5.0 allows larger but still bounded gradient steps, potentially improving training signal quality without the instability of unclipped gradients.
+- **Outcome:** FAIL — val_avg/mae_surf_p = **114.9909** vs baseline **104.7457** (Δ = +10.25, +9.8% worse). Clear dead end.
+
+### Results Table
+
+| Split | Baseline (PR #778, norm=1.0) | max_norm=5.0 (PR #898) | Delta |
+|-------|------------------------------|------------------------|-------|
+| val_single_in_dist | 105.24 | 105.39 | +0.15 |
+| val_geom_camber_rc | 97.21 | 127.01 | +29.80 ✗ |
+| val_geom_camber_cruise | 98.39 | 117.89 | +19.50 ✗ |
+| val_re_rand | 118.15 | 109.65 | -8.50 ✓ |
+| **avg** | **104.7457** | **114.9909** | **+10.25** |
+
+### Training Trajectory
+
+Non-monotonic: val_avg went 143.6 (ep1) → 118.1 (ep4) → 114.0 (ep6) → 116.2 (ep8) → ~115 (plateau). Failed to push through the 110-level floor the tight clip achieves. This pattern is consistent with Adam's internal state (β₁, β₂ EMA) being calibrated to the scale of gradients when max_norm=1.0; loosening the clip changes the effective LR implicitly.
+
+### Analysis
+
+The result confirms that max_norm=1.0 is not over-tightening — it is a structural component of the current recipe, not an arbitrary guard. The Adam optimizer's β₁=0.9, β₂=0.999 effective step sizes are calibrated to gradients of magnitude ≤1.0 per dimension. Pre-clip norms average 43–114 per epoch with maxima 300–900; at max_norm=5.0, steps are still clipped but at 5× the scale, making Adam's effective learning rate 5× larger. This is why val_geom_camber_rc and val_geom_camber_cruise regressed severely (OOD splits are more sensitive to effective LR inflation) while val_re_rand improved marginally (in-dist OOD benefits from slightly larger updates). The fix is not in the clipping threshold — it is in exploring orthogonal improvements that work within the stable gradient regime.
+
+Student suggestions for follow-up: (1) sweep max_norm 1.0–5.0, (2) max_norm=5.0 + lower lr, (3) lower β₂=0.99, (4) no clip + lower lr. These are lower priority than other directions given this result.
+
+**Decision:** CLOSED. max_norm=1.0 is the correct setting. Askeladd now idle — reassigned to T_max sweep experiment.
+
