@@ -233,26 +233,37 @@ class Transolver(nn.Module):
 
 
 class WeightEMA:
-    """Exponential moving average of model parameters and buffers.
+    """Exponential moving average of model parameters and buffers, with
+    Adam-style bias correction during warmup.
 
-    `decay` is per optimizer step. After `update()`, `ema.module.state_dict()`
-    contains the EMA-tracked weights ready for evaluation.
+    The effective decay at step t is `min(decay_target, (1+t)/(warmup_steps+t))`,
+    so very early in training the EMA tracks the live model (decay≈0) and
+    asymptotes to `decay_target` as `t >> warmup_steps`.
     """
 
-    def __init__(self, model: nn.Module, decay: float = 0.999):
+    def __init__(self, model: nn.Module, decay_target: float = 0.999, warmup_steps: int = 10):
         import copy
         self.module = copy.deepcopy(model).eval()
         for p in self.module.parameters():
             p.requires_grad_(False)
-        self.decay = decay
+        self.decay_target = decay_target
+        self.warmup_steps = warmup_steps
+        self.step = 0
 
     @torch.no_grad()
     def update(self, model: nn.Module) -> None:
-        d = self.decay
+        self.step += 1
+        d = min(self.decay_target, (1.0 + self.step) / (self.warmup_steps + self.step))
         for ema_p, p in zip(self.module.parameters(), model.parameters()):
             ema_p.mul_(d).add_(p.detach(), alpha=1.0 - d)
         for ema_b, b in zip(self.module.buffers(), model.buffers()):
             ema_b.copy_(b)
+
+    @property
+    def effective_decay(self) -> float:
+        if self.step == 0:
+            return 0.0
+        return min(self.decay_target, (1.0 + self.step) / (self.warmup_steps + self.step))
 
 
 # ---------------------------------------------------------------------------
@@ -456,11 +467,12 @@ model_config = dict(
 )
 
 model = Transolver(**model_config).to(device)
-ema = WeightEMA(model, decay=0.99)   # was 0.999 - shorter half-life (~0.2 epochs vs ~1.85 epochs)
+ema = WeightEMA(model, decay_target=0.999, warmup_steps=10)
 n_params = sum(p.numel() for p in model.parameters())
 swiglu_inter = model.blocks[0].mlp.intermediate
 print(
-    f"Model: Transolver ({n_params/1e6:.2f}M params) + EMA(decay=0.99) "
+    f"Model: Transolver ({n_params/1e6:.2f}M params) + "
+    f"EMA(decay_target={ema.decay_target}, warmup_steps={ema.warmup_steps}) "
     f"[SwiGLU MLP intermediate={swiglu_inter}]"
 )
 
@@ -558,11 +570,14 @@ for epoch in range(MAX_EPOCHS):
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
+        "ema/effective_decay": ema.effective_decay,
+        "ema/step": ema.step,
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
-        f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
+        f"val_avg_surf_p={avg_surf_p:.4f}{tag}  "
+        f"ema_d={ema.effective_decay:.4f}"
     )
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
