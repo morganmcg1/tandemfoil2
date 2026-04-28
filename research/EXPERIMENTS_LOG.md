@@ -31,6 +31,46 @@
 
 ---
 
+## 2026-04-28 06:51 — PR #442 (round 3): H12 EMA × FiLM — **MERGED** (Round 0 winner #3)
+
+- Branch: `willowpai2d4-thorfinn/h12-ema-weights` (rebased onto post-#404 advisor branch)
+- Round 3 single-cell test: Run F = EMA decay=0.99 + every-other-epoch eval **on top of merged FiLM baseline** + `--seed 123`.
+
+| Run | Config | val_raw (best epoch) | **val_ema (best)** | active source | **test_avg** | best epoch | W&B |
+|-----|--------|----------------------:|-------------------:|:-------------:|-------------:|-----------:|-----|
+| Merged baseline (#404) | FiLM, no EMA | 119.36 | n/a | raw | 107.54 | 13 | `p0a1daar` |
+| **F — EMA + FiLM** | both | **119.36** (matches!) | **109.19** | ema | **98.47** | 13 | `gc57edp6` |
+
+### Per-split test for Run F vs PR #404 baseline
+
+| Split | Run F | PR #404 baseline | Δ |
+|-------|------:|-----------------:|--:|
+| `test_single_in_dist` | 111.60 | 120.69 | **−7.5%** |
+| `test_geom_camber_rc` | 112.42 | 120.45 | **−6.7%** |
+| `test_geom_camber_cruise` | 69.59 | 80.70 | **−13.8%** |
+| `test_re_rand` | 100.26 | 108.32 | **−7.4%** |
+| **avg** | **98.47** | 107.54 | **−8.4%** |
+
+### Conclusions
+
+- **EMA × FiLM compound is a clean uniform win.** Improvements range from −6.7% to −13.8% across all four test splits, with cruise getting the largest gain (smoothest split → loss-landscape oscillation noise dominates → EMA's noise-smoothing helps most).
+- **val_raw at epoch 13 = 119.36 matches PR #404 baseline to 4 sig figs.** Same code, same seed=123, same hyperparameters → identical raw result. Strongest reproducibility evidence on the branch; validates the seed-controlled comparison protocol introduced in PR #404.
+- **EMA mechanism validated for the fourth time.** Within-run lift: Run B (decay=0.999) 10.1%, Run D (decay=0.99) 9.2%, Run F (decay=0.99 + FiLM) 8.5% — all monotonically EMA > raw at every EMA-eval epoch starting from epoch 1. EMA's noise-smoothing benefit is independent of FiLM's regularization, confirming "pure compounding lever" framing from the original hypothesis.
+- **Eval-cost recovery worked exactly as predicted.** `--ema_eval_every 2` halves EMA-eval frequency without measurable signal loss; recovered ~1 lost training epoch.
+- **No antagonistic interaction**, unlike Fourier × FiLM (#347 round 3). EMA and FiLM are complementary rather than competing for capacity.
+
+### Useful follow-ups (deferred)
+
+- **Tighter decay sweep on FiLM-merged path.** Decay=0.99 worked here; FiLM's smoother training trajectory might benefit from decay=0.995 (half-life ~0.37 epoch). Marginal gains expected (1-2%).
+- **`--ema_eval_every 1` on FiLM-merged path.** With FiLM's smoother trajectory the every-2 schedule may be missing useful checkpointing on odd epochs. Run F still finished in 31.2 min.
+- **3-seed pin-down of Run F vs FiLM-only at seeds 123/456/789** to convert mechanism into validated lift with ±2% confidence.
+
+### Action
+
+Merged. New baseline: val_avg/mae_surf_p=109.19, test_avg/mae_surf_p=98.47. EMA is now a default-on compounding lever for future PRs.
+
+---
+
 ## 2026-04-28 06:30 — PR #523: H14 5-D conditioning vector for FiLM — **CLOSED**
 
 - Branch: `willowpai2d4-edward/h14-film-cond5`
