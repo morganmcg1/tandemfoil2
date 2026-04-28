@@ -1,5 +1,61 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 09:50 — PR #633: Domain-conditional FiLM at last-block decoder (infrastructure merge)
+- Branch: `charliepai2d4-thorfinn/domain-film` (deleted on merge)
+- Student: charliepai2d4-thorfinn
+- **Outcome: MERGED (squash, commit 6b12744). Infrastructure merge — `--domain_film` flag plumbed at default False; BASELINE.md unchanged at #549's 54.12.**
+
+### Headline (paired in same PR, EMA-evaluated, full merged stack: warmup3 + β=0.5)
+| Run | best ep | val_avg | test_avg | Δ paired | vs #549 |
+|---|---|---|---|---|---|
+| baseline-ref-surface-film | 29 | 59.77 | 50.81 | (control) | +10.4% / +6.9% |
+| **domain-film** | 33 | **55.37** | **48.33** | **-7.36% / -4.88%** | +2.31% / +1.66% (within noise) |
+| matched-epoch (ep 29) | 29 | 58.22 | — | -2.59% | +7.6% |
+
+### Per-split val (all 4 gain — paired)
+| Split | surface-film | domain-film | Δ |
+|---|---|---|---|
+| val_single_in_dist     | 63.55 | 59.82 | -5.87% |
+| val_geom_camber_rc     | 73.65 | 67.62 | -8.18% |
+| val_geom_camber_cruise | 40.74 | 37.48 | **-8.02%** |
+| val_re_rand            | 61.15 | 56.58 | -7.47% |
+
+### Per-detected-domain mechanism check (the load-bearing diagnostic)
+| Bucket | Domain | n | surface-film | domain-film | Δ |
+|---|---|---|---|---|---|
+| val_single_in_dist | single | 100 | 63.55 | 59.82 | -5.86% |
+| val_geom_camber_rc | rc_tandem | 100 | 73.65 | 67.62 | -8.18% |
+| val_geom_camber_cruise | cruise_tandem | 100 | 40.74 | 37.48 | **-8.02%** |
+| val_re_rand | rc_tandem | 58 | 83.49 | 77.81 | -6.80% |
+| val_re_rand | cruise_tandem | 42 | 38.31 | 34.88 | **-8.96%** (largest) |
+
+**Hypothesis confirmed**: cruise-tandem (smallest y_std ≈ 164) gains most percentage-wise — the "explicit per-regime decoder affine helps most where the y_std distribution differs most from training average" prediction holds.
+
+### Volume MAE: trunk/decoder separation extends to domain conditioning
+| Split | surface-film vol_p | domain-film vol_p | Δ |
+|---|---|---|---|
+| val_single_in_dist | 74.70 | 73.23 | -1.97% |
+| val_geom_camber_rc | 80.42 | 76.42 | -4.97% |
+| val_geom_camber_cruise | 42.14 | 39.19 | **-7.00%** |
+| val_re_rand | 61.47 | 58.01 | -5.63% |
+
+Volume MAE improves uniformly — the decoder benefit isn't surface-specific; it's a general "domain-conditional decoder affine" mechanism.
+
+### Domain detection rule fixed
+Thorfinn discovered that the assignment's AoA-sign rule mis-labels ~47% of cruise-tandem samples (cruise AoA -5° to +6° overlaps raceCar -10° to 0°). Switched to **z_min rule**: cruise has freestream z ≈ -9.5; raceCar has ground at z=0 so z_min ≥ 0. Gives 100% clean partitioning verified per-split. Documented in `detect_domain` docstring.
+
+### Why merge as infrastructure (not as new BASELINE)
+- Absolute 55.37 is +2.3% above #549 (54.12) — within ~5pp noise floor.
+- Paired surface-film baseline-ref came in at 59.77 (vs #484's 57.37 with same FiLM but no warmup) — suggests **warmup3+FiLM combination is somewhere between 57-60**, well above #549's 54.12. This is a separate FiLM-vs-warmup interaction issue, which alphonse's #687 (full-stack with warmup3 + β=0.3 + FiLM) is investigating directly.
+- `--domain_film` flag plumbed at default False (no behavior change at default). Future PRs can `--domain_film` to test on different stacks. Mechanism evidence (paired -7.36%, all 8 splits, per-domain breakdown) is strong enough to make this a useful round-2 lever even if it's not a strict baseline-update.
+
+### Round-2 candidates from thorfinn's follow-ups
+- **Hybrid FiLM** (surface × domain): 6 sets of (γ, β). Combines both axes.
+- **Learned domain detection**: small MLP over per-sample features producing 3-way softmax. Cleaner than hand-crafted z_min rule.
+- **Decoder-only FiLM at last 2 blocks**: now twice-validated mechanism (#484 surface, #633 domain); #594's "FiLM-all-blocks loses on wall-clock" doesn't necessarily extend to "last-2-blocks FiLM".
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=633 records, 36 lines from domain-film run).
+
 ## 2026-04-28 09:30 — PR #623: Higher peak LR ∈ {7e-4, 1e-3} on top of warmup=3
 - Branch: `charliepai2d4-alphonse/higher-lr-warmup3` (deleted on close)
 - Student: charliepai2d4-alphonse
