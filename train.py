@@ -454,7 +454,7 @@ class Config:
     lr: float = 2.5e-4  # Lion: AdamW lr / 3
     weight_decay: float = 3e-4  # Lion: AdamW wd * 3
     batch_size: int = 4
-    surf_weight: float = 10.0
+    surf_weight: float = 7.0  # rebalance vol/surf gradient share
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
