@@ -1549,3 +1549,45 @@ With 20-epoch budget unlocked, every in-flight PR's expected delta widens. Round
 - Architecture (slice number, attention head count, hidden dim) — most untouched under Lion+compile regime.
 - Loss formulation (channel weighting, volume SmoothL1, physics-informed regularization).
 - Data augmentation, multi-scale slice attention, per-domain conditioning.
+
+## 2026-04-28 07:35 — PR #580 rebased: Lion lr 1.7e-4 → 1.2e-4 on post-#571 (charliepai2d1-askeladd) — **CLOSED (basin shifted upward under β2=0.999)**
+- Run config: `lr: 2.5e-4 → 1.2e-4` rebased onto post-#571 (β2=0.999, β=0.5). Single-line edit. **First measurement of β2=0.999 + lr=1.2e-4 combination.**
+
+### Headline metrics (best EMA epoch=14/50, timeout-cut)
+| metric | this run | baseline #571 | new baseline #394 |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` (EMA) | 53.236 | 52.116 (**+2.15 %**) | 43.677 (+22.0 %) |
+| `test_avg/mae_surf_p` | 45.792 | 45.413 (+0.83 %) | 36.920 (+24.0 %) |
+| best raw val | 63.945 (ep12) | 59.097 (ep14) | — |
+| Mean grad-norm ep4–14 | 25.91 | 18.25 | — |
+| Mean spread ep4–14 | −13.11 | −9.14 | — |
+
+### Mechanism finding (durable for the appendix β2 × lr interaction story)
+
+**β2=0.999 shifts the lr basin UPWARD.** The asymmetric basin from β2=0.99 does NOT survive the buffer-history shift:
+
+| run | lr | β2 | val (EMA) | regime |
+|-----|---:|---:|---:|---|
+| prior #580 (closed) | 1.2e-4 | 0.99 | 55.547 | basin (lower edge below 1.7e-4) |
+| #535-base | 1.7e-4 | 0.99 | 61.508 | reference |
+| #536 (merged) | 2.5e-4 | 0.99 | 60.478 | basin upper edge probe |
+| **#580 rebased (this)** | **1.2e-4** | **0.999** | **53.236** | **NOT in basin** |
+| #571 (merged) | 2.5e-4 | 0.999 | 52.116 | basin (post-shift) |
+
+**Mechanism**: smoother momentum buffer (β2=0.999) means fewer wasted sign-flips at high lr → shifts the basin's right edge further right → pulls the optimum up. β2=0.999 disproportionately helps the larger-lr regime.
+
+Per-split signature:
+- Val: uniform regression (0.66 % to 3.31 %), broad-based, no stationary-vs-non-stationary trade-off → general under-convergence at smaller lr (not regime-specific failure).
+- Test: mixed (single −4.38 % win, rc +5.48 % lose, cruise +2.84 % wash, re_rand −0.38 % wash) — single-test win is real but tandem variance dominates.
+- Late-epoch raw wobble (ep12=63.9 best → ep13=75.5 spike → ep14=64.8) is the canonical under-convergence signal; baseline #571 had clean monotone descent in the same window.
+
+### Decision: close
+- vs current baseline #394: +21.9 % val (past close threshold).
+- Experimental question answered cleanly: under β2=0.999 the lr basin shifted UP. No path forward at lr=1.2e-4.
+- Reassigned askeladd to **PR #631 (lion-weight-decay-1e-4)** — last unmapped Lion-side single-knob axis.
+
+## 2026-04-28 07:38 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #631 | askeladd | lion-weight-decay-1e-4 | Lion `weight_decay = 3e-4 → 1e-4` on merged #394 baseline | Last unmapped Lion-side single-knob axis. Closed #458 tested wd=5e-4 under AdamW (lose); Lion-side untouched. With +43 % more epochs in budget under compile, the under-converged model may benefit from less regularization. Honest band −6 % to +9 %. |
