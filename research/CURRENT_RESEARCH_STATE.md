@@ -1,61 +1,61 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 01:10 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
+- **Last update:** 2026-04-28 01:25 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
 - **Most recent human-team direction:** N/A — no team issues consulted (isolated replicate; only entrypoint-surfaced PRs in scope).
-- **Current baseline (merged): `val_avg/mae_surf_p = 101.350`** (PR #363 EMA-eval).
-  - PR #282 — Huber loss (δ=1.0) on normalized targets. `val_avg = 105.999`.
-  - PR #361 — NaN-safe eval workaround in `evaluate_split`. `test_avg = 97.957` (first finite measurement).
-  - PR #363 — EMA copy of weights (decay 0.999) for val/test eval. `val_avg = 101.350` (−4.39%); test_avg pending finite re-measurement post-merge (3-split mean was 100.03 with cruise NaN since #361 hadn't landed for that run).
+- **Current baseline (merged): `val_avg/mae_surf_p = 88.227`, `test_avg/mae_surf_p = 78.338`** (PR #391 SwiGLU FFN).
+  - PR #282 — Huber loss (δ=1.0). val_avg = 105.999.
+  - PR #361 — NaN-safe `evaluate_split` workaround. First finite test_avg = 97.957.
+  - PR #363 — EMA(decay 0.999) of weights for val/test + checkpoint. val_avg = 101.350 (−4.39% vs huber).
+  - PR #391 — LLaMA-style SwiGLU FFN inside `TransolverBlock`. **val_avg = 88.227 (−12.95% vs EMA), test_avg = 78.338 (−20.03% vs PR #361 finite measurement).** Param-matched (+1.3%).
 
 ## Current research focus
 
 Compound improvements on the round-1 huber baseline. Recover the paper-facing test metric. Test orthogonal levers (capacity, slice count, optimizer recipe, surface weighting, regularization, EMA, channel weighting) so round-3 can stack winners.
 
-## Round-1 outcomes (6 reviewed)
+## Outcomes to date (9 reviewed)
 
-| Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Δ vs 105.999 | Decision |
-|------|----|---------|------|--------------------------:|-------------:|----------|
-| 1 | #363 | thorfinn | ema-eval | **101.350** | −4.39% (current baseline) | **MERGED** |
-| 2 | #282 | edward | huber-loss | 105.999 | (huber baseline) | **MERGED** |
-| 2b | #361 | edward | nan-safe-eval | 108.103 (rerun) | +1.99% RNG noise | **MERGED** (metric-pipeline fix; first finite `test_avg = 97.957`) |
-| 3 | #386 | edward | re-fourier-8 | 109.131 | +2.96% (vs 105.999) / +7.7% (vs 101.350) | CLOSED (aliasing at high freq; salvageable at narrower band) |
-| 4 | #362 | tanjiro | surf-channel-on-huber [0.5,0.5,2.5] | 107.920 | +1.81% (vs 105.999) | CLOSED (channel-weight on huber, dead direction) |
-| 4 | #286 | frieren | surf-weight-25 | 108.222 | +2.10% (vs 105.999) | CLOSED |
-| 5 | #377 | fern | warmup-cosine-1e3-no-clip | 116.352 | +9.8% (vs 105.999) | CLOSED (T_max/budget mismatch, lr too hot) |
-| 6 | #284 | fern | warmup-cosine-1e3 | 123.135 | +16.2% | CLOSED (clip masked recipe) |
-| 7 | #291 | nezuko | dropout-0p1 | 128.896 | +21.6% | CLOSED |
-| 8 | #295 | tanjiro | pressure-channel-weight | 130.916 | +23.5% | CLOSED |
-| 9 | #281 | askeladd | slice-128 | 154.594 | +45.8% | CLOSED |
-| 10 | #297 | thorfinn | depth-8 | 168.836 | +59.3% | CLOSED |
+| Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Δ vs 88.227 (current) | Decision |
+|------|----|---------|------|--------------------------:|----------------------:|----------|
+| 1 | #391 | thorfinn | swiglu-mlp | **88.227** | (current baseline, MERGED) | MERGED |
+| 2 | #363 | thorfinn | ema-eval | 101.350 | +14.9% | MERGED (intermediate baseline) |
+| 3 | #282 | edward | huber-loss | 105.999 | +20.1% | MERGED (huber baseline) |
+| 3b | #361 | edward | nan-safe-eval | 108.103 (rerun) | n/a — RNG noise on same recipe | MERGED (metric-pipeline fix; first finite test_avg) |
+| 4 | #370 | askeladd | cosine-tmax-14 | 102.359 | +16.0% | CLOSED (T_max ↔ EMA non-additive) |
+| 5 | #362 | tanjiro | surf-channel-on-huber | 107.920 | +22.3% | CLOSED (channel-weight on huber dead direction) |
+| 6 | #286 | frieren | surf-weight-25 | 108.222 | +22.7% | CLOSED |
+| 7 | #392 | frieren | mlp-ratio-4 | 108.558 | +23.0% | CLOSED (per-split contradicts capacity-bottleneck) |
+| 8 | #386 | edward | re-fourier-8 | 109.131 | +23.7% | CLOSED (high-freq aliasing; salvageable at narrower band — see #418) |
+| 9 | #377 | fern | warmup-cosine-1e3-no-clip | 116.352 | +31.9% | CLOSED (T_max/budget mismatch, lr too hot) |
+| 10 | #284 | fern | warmup-cosine-1e3 | 123.135 | +39.6% | CLOSED (clip masked recipe) |
+| 11 | #291 | nezuko | dropout-0p1 | 128.896 | +46.1% | CLOSED |
+| 12 | #295 | tanjiro | pressure-channel-weight | 130.916 | +48.4% | CLOSED |
+| 13 | #281 | askeladd | slice-128 | 154.594 | +75.2% | CLOSED |
+| 14 | #297 | thorfinn | depth-8 | 168.836 | +91.4% | CLOSED |
 
 Per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`. Per-experiment JSONL summaries in `research/student_metrics/` (note: nezuko, askeladd & fern did not commit their training metrics files; their PR-comment numbers are recorded as JSONL summaries instead).
 
-## Round-1 still WIP (1 student)
 
-| PR | Student | Slug | Lever |
-|----|---------|------|-------|
-| #279 | alphonse | capacity-medium | n_hidden 128→192, n_layers 5→6, n_head 4→6 (branched off pre-huber; will be ranked against the EMA baseline 101.350) |
+## In flight from earlier rounds (4 students)
 
-## Round-2 in flight (2 students)
+These were branched **before** the SwiGLU merge — they will be ranked against the new SwiGLU baseline (88.227) when they return. A result < 88.227 wins; a result that beat its prior baseline but >88.227 means the lever helps on the older stack but hasn't compounded with SwiGLU.
 
-Branched off huber baseline (PR #282 + #361) **before** the EMA merge (#363). When they return, their absolute val_avg compares against the new EMA baseline (101.350); a result < 101.350 wins; a result < 105.999 but > 101.350 helps on huber-no-EMA but doesn't beat huber+EMA, and would need a follow-up to claim a compound win.
+| PR | Student | Slug | Lever | Predicted (vs base at submission) |
+|----|---------|------|-------|------------------------------------|
+| #279 | alphonse | capacity-medium | n_hidden 128→192, n_layers 5→6, n_head 4→6 — branched pre-huber | −5% to −12% |
+| #371 | nezuko | grad-accum-2 | gradient accumulation 2 (effective batch 8) with √2 lr scaling — branched on huber pre-EMA | −1% to −4% |
+| #411 | fern | huber-delta-2 | huber `δ=1.0 → 2.0` (smoother near optimum) — branched on EMA pre-SwiGLU | −1% to −3% |
+| #412 | tanjiro | per-channel-heads | replace shared output `mlp2` with three per-channel heads — branched on EMA pre-SwiGLU | −2% to −4% |
+| #418 | edward | re-fourier-4 | narrowed Fourier embedding of `log(Re)` (4 bands, max 2^3=8 rad/log_re_unit) — direct test of aliasing diagnosis from #386 | −1% to −4% |
 
-| PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
-|----|---------|------|-------|-------------------------------------|
-| #370 | askeladd | cosine-tmax-14 | align cosine `T_max` with actual budget; LR fully decays during 30-min run | −3% to −8% |
-| #371 | nezuko | grad-accum-2 | gradient accumulation 2 (effective batch 8) with √2 lr scaling | −1% to −4% |
+## Round-4 just-assigned (3 students)
 
-## Round-3 in flight (4 students)
-
-Built on the merged EMA+huber+NaN-safe baseline (101.350).
+Built on the merged SwiGLU baseline (88.227). All three are single-axis tests on top of the new stack.
 
 | PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
 |----|---------|------|-------|-------------------------------------|
-| #391 | thorfinn | swiglu-mlp | LLaMA-style SwiGLU FFN inside `TransolverBlock` (replaces 2-linear GELU MLP); per-block gating | −1% to −3% |
-| #392 | frieren | mlp-ratio-4 | Standard transformer FFN expansion: `mlp_ratio` 2→4 (MLP hidden 256→512); pure capacity in the per-token mixing layer | −2% to −5% |
-| #411 | fern | huber-delta-2 | Switch huber loss `δ=1.0 → 2.0` (smoother near optimum, MSE-like for typical errors, linear for outliers) | −1% to −3% |
-| #412 | tanjiro | per-channel-heads | Replace shared 3-channel output head with three separate per-channel heads (orthogonal to channel-loss-weighting, which is now disconfirmed) | −2% to −4% |
-| #418 | edward | re-fourier-4 | Narrowed Fourier embedding of `log(Re)`: 4 bands `[1,2,4,8] rad/log_re_unit` (highest freq 2^3 = ~5 cycles per corpus, vs ~80 at bands=8). Direct test of student's aliasing diagnosis on PR #386. | −1% to −4% |
+| #424 | thorfinn | swiglu-head | SwiGLU output head (`mlp2`) on top of merged SwiGLU FFN — aligns head's expressive form with the rest of the model | −0.5% to −2% |
+| #425 | frieren | input-noise-001 | Input feature noise augmentation (Gaussian noise std=0.01 on fun-features only, train-time only) — targets the *generalization* bottleneck frieren correctly diagnosed (val_geom_camber_rc, val_re_rand) rather than capacity | −1% to −3% |
+| #426 | askeladd | ema-decay-099 | EMA decay 0.999 → 0.99 (half-life ~0.18 epochs vs ~1.85 epochs) — student's follow-up #1 from PR #370; tests EMA decay sensitivity on the SwiGLU baseline | −0.5% to −2% (could regress) |
 
 ## Disconfirmed directions (do not retry on this branch)
 
