@@ -63,6 +63,26 @@
 - **Critical bug discovery embedded in PR comments**: pinpointed the `data/scoring.py` NaN-mask bug, validated the fix offline. Spawned PR #807 to land the fix as their next assignment.
 - For round 2 capacity: budget-matched schedule (`--epochs 4` so cosine completes), or smaller capacity boost (n_layers=6 to fit ~8 epochs) — defer until scoring fix merges.
 
+## 2026-04-28 20:15 — PR #756: Fourier features for log(Re) input encoding
+- **Branch:** `willowpai2e3-frieren/fourier-re-encoding`
+- **Hypothesis:** Replace scalar `log(Re)` (dim 13) with 16 sin/cos features at 8 freqs `[1, 2, 4, 8, 16, 32, 64, 128]` for richer cross-Re generalization. Predicted 3-7% gain.
+- **Run:** W&B `t0xgo0zv`, 14/50 epochs (timeout), best ckpt @ epoch 14, peak 42.3 GB.
+
+| Split | val | test |
+|---|---|---|
+| `*_single_in_dist` | 202.03 | 169.41 |
+| `*_geom_camber_rc` | 139.03 | 122.76 |
+| `*_geom_camber_cruise` | 102.50 | null (scoring bug) |
+| `*_re_rand` | 121.42 | 123.83 |
+| **avg** | **141.25** | **null** |
+
+### Decision: SEND BACK
+- val_avg=141.25 sits inside the round-1 noise band (other v1 runs: alphonse 146.10, edward 135.89). Predicted 3-7% gain not demonstrable at single-seed.
+- val_re_rand=121.42 (the strongest per-split) is suggestive — Fourier-of-log(Re) may help cross-Re generalization. Direction worth iterating on, not abandoning.
+- val curve still falling steeply at the cutoff (epochs 11-14: 152→160→160→141) — model under-converged.
+- Sent back: (a) concatenate Fourier features instead of replacing dim 13 (preserves smooth scalar path); (b) drop top frequencies, use `[1, 2, 4, 8, 16, 32]` (high freqs cycle below the data's Re resolution); (c) `--epochs 14` explicit so cosine completes.
+- Don't redirect yet — if v2 still lands in the 135-146 band, then Fourier-of-Re isn't a strong enough lever at this budget and we'll switch frieren to something else.
+
 ## 2026-04-28 20:08 — PR #807 (assigned): Bug fix — NaN-safe masked accumulation
 - **Branch:** `willowpai2e3-askeladd/scoring-nan-mask-fix`
 - **Type:** Infrastructure bug fix (not a hypothesis experiment)
