@@ -1,8 +1,8 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 09:35 (advisor branch `icml-appendix-charlie-pai2d-r2`)
+- **Last update:** 2026-04-28 09:48 (advisor branch `icml-appendix-charlie-pai2d-r2`)
 - **Most recent human-team direction:** N/A — no open human-tagged issues at this time.
-- **Current baseline (directly measured, all standalone)**: `val_avg/mae_surf_p` = **`61.872`** (PR #647 per-block temp schedule, BEST) / `62.747` (PR #640 per-group wd) / `62.879` (PR #601 δ=0.1) / `63.131` (PR #635 lr=6e-4) / `63.222` (PR #636 decaying noise). Test_avg = 54.555 / 54.512 / 54.561 / 55.026 / 54.900 respectively. **Combined-stack measurement (all 5 levers compounded) pending; expected to compound below 61.872 if all levers orthogonal.**
+- **Current baseline (directly measured, all standalone)**: `val_avg/mae_surf_p` = **`59.907`** (PR #630 cosine eta_min=2e-5, BEST) / `61.872` (PR #647 per-block temp) / `62.747` (PR #640 per-group wd) / `62.879` (PR #601 δ=0.1) / `63.131` (PR #635 lr=6e-4) / `63.222` (PR #636 decaying noise). Test_avg = 52.656 / 54.555 / 54.512 / 54.561 / 55.026 / 54.900. **Combined-stack measurement (all 6 levers compounded) pending; expected to compound below 59.907 if all levers orthogonal.**
 - **Stack throughput**: 17-18 epochs in 30-min budget under compile=True. Cosine T_max=11 → eta_min=0 at ep15, then cosine cycles back from ep16+.
 
 ## Merged compound stack (current advisor branch)
@@ -32,7 +32,8 @@
 23. PR #636 — Decaying feature-noise schedule (linear decay 0.0025→0 over 14 ep). val_avg = 63.222. test_avg = 54.900.
 24. PR #640 — Per-parameter-group weight decay (attn=1e-4, mlp=1e-5, other=3e-5). val_avg = 62.747. test_avg = 54.512.
 25. PR #601 — Huber δ=0.25 → 0.10 (rebased on post-#562/#510 stack). val_avg = 62.879. test_avg = 54.561.
-26. **PR #647 — Per-block slice-temp init schedule [1.5, 1.875, 2.25, 2.625, 3.0]. val_avg = 61.872. test_avg = 54.555. Standalone. CURRENT BASELINE (combined stack pending).**
+26. PR #647 — Per-block slice-temp init schedule [1.5, 1.875, 2.25, 2.625, 3.0]. val_avg = 61.872. test_avg = 54.555.
+27. **PR #630 — Cosine eta_min 0 → 2e-5 (with periodic-rebound mechanism). val_avg = 59.907. test_avg = 52.656. Standalone. CURRENT BASELINE (combined stack pending).**
 
 ## Active experiments (WIP)
 
@@ -44,14 +45,14 @@
 | #646 | fern | batch-size-6 | batch_size 4 → 6 with compile (rebase onto post-#647 stack) | WIP (sent back, rebase) |
 | #673 | tanjiro | per-group-wd-extreme | wd_attn 1e-4→3e-4, wd_mlp 1e-5→3e-6 (push asymmetry harder) | WIP (just assigned) |
 | #696 | frieren | feature-noise-surface-only | Surface-only feature noise (dims 0-12 only, skip per-sample globals) | WIP (just assigned) |
-| #630 | nezuko | cosine-eta-min-2e-5 | cosine eta_min 0 → 2e-5 (extract gain from late-epoch budget under compile) | WIP |
+| #698 | nezuko | cosine-eta-min-5e-5 | cosine eta_min 2e-5 → 5e-5 (calibrate sweet spot, bigger rebound) | WIP (just assigned) |
 | #674 | thorfinn | huber-delta-0p05 | Huber δ=0.10 → 0.05 (push δ profile toward L1) | WIP (just assigned) |
 
 ## Current research focus
 
 **Hyperparameter closure + profile extension on multiple active axes.** The merged stack now includes 21 improvements (latest: PR #510 compile = +28.6% epochs in budget compounds with everything); we are bracketing the remaining open directions:
 
-1. **Cosine LR floor** (nezuko #630, eta_min=2e-5): replaces closed EMA-decay-target axis. Probe whether epochs 12–18 (now at LR≈0 under compile + T_max=11) extract more gain when LR has a positive floor.
+1. **Cosine eta_min sweep** (nezuko #698, 5e-5): PR #630 just merged with -7.4% gain (val=59.907). Profile is (0 → 64.824, 2e-5 → 59.907, 5e-5 → ?). Mechanism finding: eta_min is NOT a floor, the cosine rebounds in second half-cycle and half the gain comes from the unintended SGDR-like rebound.
 2. **Huber δ profile push** (thorfinn #674, δ=0.05): δ=0.10 just merged with -3.00% same-stack gain; profile still descending. δ=0.05 should shift the linear-regime fraction from ~29% to ~50-60%, more outlier-robust gradient at risk of higher gradient noise.
 3. **Surface-only feature noise** (frieren #696): apply decaying noise schedule only to per-node positional/SDF dims 0-12; skip per-sample globals (log_re, AoA, NACA, gap, stagger). Mechanism: per-sample noise on conditioning labels may have been destabilizing; isolating to geometry features may unlock more headroom.
 4. **Per-parameter-group wd** (tanjiro #640): single-scalar wd axis is closed at 3e-5; explore module-type-differential wd to capture the OOD asymmetry (attn higher to help camber_rc, mlp lower to help re_rand).
