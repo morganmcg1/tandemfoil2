@@ -484,6 +484,18 @@ for epoch in range(MAX_EPOCHS):
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
 
+        # Surface-node feature noise on geometric dims 0-11 only (regularisation).
+        if model.training:
+            surf_mask_train = mask & is_surface
+            n_surf_train = int(surf_mask_train.sum().item())
+            if n_surf_train > 0:
+                noise = torch.zeros_like(x)
+                noise[surf_mask_train] = torch.randn(
+                    n_surf_train, x.shape[-1], device=x.device, dtype=x.dtype
+                ) * 0.0025
+                noise[..., 12:] = 0.0
+                x = x + noise
+
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
