@@ -537,7 +537,7 @@ for epoch in range(MAX_EPOCHS):
             (pred_p_log - y_p_log).abs() * surf_mask
         ).sum() / surf_mask.sum().clamp(min=1)
 
-        LOG_P_AUX_WEIGHT = 0.25   # was 0.5 in PR #551 (closed)
+        LOG_P_AUX_WEIGHT = 0.0    # PR #702: testing redundancy with layer scale (PR #657)
         loss = vol_loss + cfg.surf_weight * surf_loss + LOG_P_AUX_WEIGHT * log_p_aux
 
         optimizer.zero_grad()
