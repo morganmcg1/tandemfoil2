@@ -386,6 +386,32 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    augment_zmirror: float = 0.0  # probability per-sample of z-mirror augmentation
+
+
+def zmirror_augment(x_raw, y_raw, is_surface, mask, p=0.5):
+    """Per-sample z-mirror with sign-consistent feature/target flips.
+
+    Flips z position, saf[1] (z-aligned arc-length component), AoA on both
+    foils, and Uy. Leaves x, saf[0], dsdf, NACA digits, gap, and stagger
+    unchanged — see PR Research section for sign-convention analysis.
+    """
+    if p <= 0.0:
+        return x_raw, y_raw, is_surface, mask
+    B = x_raw.shape[0]
+    flip = torch.rand(B, device=x_raw.device) < p
+    s = torch.where(flip, -1.0, 1.0).view(B, 1, 1)
+
+    x = x_raw.clone()
+    x[..., 1:2] = x[..., 1:2] * s    # z position
+    x[..., 3:4] = x[..., 3:4] * s    # saf[1] (z-component, corr=1.0 with z)
+    x[..., 14:15] = x[..., 14:15] * s  # AoA foil 1 (radians)
+    x[..., 18:19] = x[..., 18:19] * s  # AoA foil 2 (radians)
+
+    y = y_raw.clone()
+    y[..., 1:2] = y[..., 1:2] * s    # Uy (z-velocity)
+
+    return x, y, is_surface, mask
 
 
 cfg = sp.parse(Config)
@@ -483,6 +509,11 @@ for epoch in range(MAX_EPOCHS):
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
+
+        if cfg.augment_zmirror > 0.0:
+            x, y, is_surface, mask = zmirror_augment(
+                x, y, is_surface, mask, p=cfg.augment_zmirror
+            )
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
