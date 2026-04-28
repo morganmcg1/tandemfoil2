@@ -1,8 +1,10 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 00:10 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
+- **Last update:** 2026-04-28 00:15 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
 - **Most recent human-team direction:** N/A — no team issues consulted (isolated replicate; only entrypoint-surfaced PRs in scope).
-- **Round-1 baseline (merged):** PR #282 — Huber loss (δ=1.0) on normalized targets. `val_avg/mae_surf_p = 105.999` at epoch 14. `test_avg/mae_surf_p = NaN` (scoring/data issue, fix in flight as PR #361).
+- **Current baseline (merged):**
+  - PR #282 — Huber loss (δ=1.0) on normalized targets. `val_avg/mae_surf_p = 105.999` (recipe high-water mark, target to beat).
+  - PR #361 — NaN-safe eval. `test_avg/mae_surf_p = 97.957` (first finite paper-facing measurement; same recipe, RNG-noise val drift to 108.103 not used as bar).
 
 ## Current research focus
 
@@ -13,6 +15,7 @@ Compound improvements on the round-1 huber baseline. Recover the paper-facing te
 | Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Δ vs 105.999 | Decision |
 |------|----|---------|------|--------------------------:|-------------:|----------|
 | 1 | #282 | edward | huber-loss | **105.999** | (baseline) | **MERGED** |
+| 1b | #361 | edward | nan-safe-eval | 108.103 (rerun, RNG noise) | +1.99% | **MERGED** (metric-pipeline fix; unlocks finite `test_avg = 97.957`) |
 | 2 | #284 | fern | warmup-cosine-1e3 | 123.135 | +16.2% | CLOSED (clip masked recipe) |
 | 3 | #291 | nezuko | dropout-0p1 | 128.896 | +21.6% | CLOSED |
 | 4 | #295 | tanjiro | pressure-channel-weight | 130.916 | +23.5% | CLOSED |
@@ -32,16 +35,16 @@ These were branched off the **pre-huber** advisor and test isolated levers witho
 
 ## Round-2 in flight (6 students)
 
-All built on the merged huber baseline (PR #282).
+All built on the merged huber baseline (PR #282 + #361).
 
 | PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
 |----|---------|------|-------|-------------------------------------|
-| #361 | edward | nan-safe-eval | filter non-finite-`y` samples in `evaluate_split` before `accumulate_batch` | 0 (recovers `test_avg`, not `val_avg`) |
 | #362 | tanjiro | surf-channel-on-huber | per-channel surf loss weights `[0.5, 0.5, 2.5]` on top of huber | −3% to −10% |
 | #363 | thorfinn | ema-eval | EMA copy of weights (decay 0.999) for val/test evaluation | −2% to −5% |
 | #370 | askeladd | cosine-tmax-14 | align cosine `T_max` with actual budget; LR fully decays during 30-min run | −3% to −8% |
 | #371 | nezuko | grad-accum-2 | gradient accumulation 2 (effective batch 8) with √2 lr scaling | −1% to −4% |
 | #377 | fern | warmup-cosine-1e3-no-clip | round-1 warmup+cosine+lr=1e-3+betas recipe, **no grad clip** (huber bounds per-element gradient) | −3% to −8% |
+| #386 | edward | re-fourier-8 | Fourier embedding of `log(Re)` (8 bands → 16 dims) concatenated to input features inside the model | −2% to −5% (with disproportionate help on `val_re_rand` and `val_single_in_dist`) |
 
 ## Test-metric NaN (cross-PR issue)
 
