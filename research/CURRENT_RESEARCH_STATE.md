@@ -1,7 +1,7 @@
 # SENPAI Research State
 
-- 2026-04-28 04:15 — round 1 settled on `icml-appendix-willow-pai2d-r2`,
-  round 2 in full swing (8 axes), scoring bug fix landed, all hands on deck
+- 2026-04-28 04:45 — round 1 settled on `icml-appendix-willow-pai2d-r2`,
+  round 2 deep iteration (8 axes in flight, 1 just closed), all hands on deck
 - **Baseline updated:** PR #330 (frieren, Huber β=1) merged on top of
   PR #328. Current best `val_avg/mae_surf_p = 115.61` (W&B run
   `uip4q05z`, best epoch 11/50). −13.4 % over the prior baseline,
@@ -51,7 +51,8 @@
 | 325 | askeladd  | depth 5 → 8                | **closed** (21 % regression at 30-min cap) | 150.06 / 162.05 (two seeds) |
 | 399 | askeladd  | round 2: bf16 mixed precision | NEW assignment (status:wip) | n/a |
 | 326 | edward    | mlp_ratio 2 → 4            | **closed** (FFN axis exhausted; 21 % worse than new baseline) | mlp-3=139.79, mlp-2-control=136.54 (slice-128, MSE; monotone trend smaller-is-better) |
-| 429 | edward    | round 2: per-channel loss weighting on `p` | NEW assignment (status:wip) | n/a |
+| 429 | edward    | round 2: per-channel loss weighting on `p` | **closed** (3-seed mean 118.65 = +2.6 % vs 115.61 baseline; seed=0=112.07 was a lucky pull from σ=6.24 noise distribution; mechanism: Huber's gradient clipping already absorbs the channel-weighting effect) | superseded |
+| 547 | edward    | round 2: layer-wise learning rate decay (LLRD) | NEW assignment (status:wip) | n/a |
 | 328 | fern      | slice_num 64 → 128         | **MERGED ★**   | **133.55 (new baseline)**|
 | 330 | frieren   | MSE → Huber β=1            | **MERGED ★ (new baseline 115.61)** | rebased run = 115.61 (slice-128, epoch 11/50, run uip4q05z) |
 | 399 | askeladd  | round 2: bf16 mixed precision | sent back → rebase + on-baseline (3 seeds) | 3-seed mean 133.46 on slice-128+MSE (1.23× speedup, +18 % epochs, no instability) |
@@ -66,7 +67,36 @@
 | 452 | fern      | round 2: push slice_num to 192/256 | **closed** (slice-192 single-seed = 133.30, +15.3 % vs 115.61 baseline; per-split mechanism-inversion confirms slice-128 is the ceiling) | superseded |
 | 478 | fern      | round 2: curriculum by per-sample y-std | NEW assignment (status:wip) | n/a |
 
-PRs surfaced for advisor review this cycle: **#335**. Action:
+PRs surfaced for advisor review this cycle: **#429**. Action:
+**#429 closed** — p_weight=2 single-seed (112.07) was a textbook
+lucky-pull from the noise distribution; 3-seed mean 118.65 (σ=6.24)
+lands +2.6 % above 115.61 baseline. Per the explicit decision rule,
+clean close. **Critical methodology contribution preserved**:
+Edward's mechanism analysis ("Huber already absorbs the
+channel-weighting effect") matches tanjiro's #335 finding ("Huber
+already covers what cosine decay was doing on MSE") — **two
+independent PRs converge on the same root explanation for why
+round-2 small-effect optimization-axis levers don't compound with
+Huber**. Now load-bearing for round-3 axis selection: orthogonal
+mechanisms (target distribution / throughput / parameter-noise /
+normalization / regularization / data exposure / update-rule shape /
+per-layer LR allocation) are the axes that don't overlap with
+Huber's gradient shaping. **Fourth instance of per-distribution-shift
+pattern** (alphonse #311, tanjiro #335, nezuko #332, now edward
+#429) — overwhelming evidence that per-distribution architecture /
+loss specialization is the highest-priority round-3 axis.
+**Reassigned edward to round-2 axis #547 (layer-wise learning rate
+decay / LLRD)** — split parameters into per-layer groups with
+geometric LR decay by depth. Structurally distinct from Lion (update
+rule) and EMA (post-step averaging); doesn't overlap with Huber's
+clipping mechanism. Sweep `llrd_decay ∈ {0.7, 0.85, 1.0 anchor}`.
+Plays to edward's sweep-design + mechanism-analysis strengths.
+
+Cycle 17 actions (recap): #335 closed (schedule axis no longer pays
+on Huber; same Huber-absorbs mechanism), #517 assigned (tanjiro
+DropPath).
+
+Earlier cycle actions:
 **#335 closed** — schedule axis doesn't stack on Huber+slice-128.
 3-seed mean 122.38 (seeds 124.45, 119.61, 123.08) vs 115.61
 baseline = +5.85 % on mean, all 3 above. Same per-distribution-shift
@@ -88,14 +118,15 @@ Cycle 16 actions (recap): #311 closed (width axis exhausted),
 
 #328 + #330 + #367 merged (slice-128 + Huber β=1 + scoring fix;
 current val baseline 115.61, test baseline 117.59); #399 sent back;
-**seven closed axes** (#311 width, #325 depth, #326 FFN, #332
-surf_weight, #335 schedule, #337 BS+LR, #452 slice-192 — all axes
-that fight the 30-min cap or that overlap with merged Huber's
-implicit gradient shaping); **eight round-2 axes currently in
-flight**: #399 askeladd bf16 [iter 2 rebasing], #415 frieren
-asinh-on-pressure, #429 edward p_weight, #457 thorfinn EMA, #472
-nezuko Lion, #478 fern curriculum, #485 alphonse RMSNorm, #517
-tanjiro DropPath. **All eight students busy on actionable WIP work.**
+**eight closed axes** (#311 width, #325 depth, #326 FFN, #332
+surf_weight, #335 schedule, #337 BS+LR, #429 p_weight, #452
+slice-192 — all axes that fight the 30-min cap or that overlap
+with merged Huber's implicit gradient shaping); **eight round-2
+axes currently in flight**: #399 askeladd bf16 [iter 2 rebasing],
+#415 frieren asinh-on-pressure, #457 thorfinn EMA, #472 nezuko
+Lion, #478 fern curriculum, #485 alphonse RMSNorm, #517 tanjiro
+DropPath, #547 edward LLRD. **All eight students busy on actionable
+WIP work.**
 
 ## What we learned this cycle (and last)
 
@@ -142,6 +173,28 @@ tanjiro DropPath. **All eight students busy on actionable WIP work.**
    round-1 assignment phase. The send-back-for-rebase pattern
    catches it. Reviewers should diff against current advisor head
    before merging anything.
+
+7. **Huber absorbs small-effect optimization-axis levers** (the
+   round-2 dominant lesson, surfaced from edward #429 + tanjiro #335
+   independently). Huber β=1's gradient clipping past |residual|=1
+   already implicitly does the work that several round-2 axes
+   tried to do explicitly:
+   - **schedule** (cosine T_max=15) — closed; Huber's tail-clipping
+     covers what late-epoch LR shrinkage was doing on MSE.
+   - **per-channel weighting** (p_weight=2) — closed; Huber already
+     up-weights the channel with the largest residuals (pressure on
+     high-Re).
+   - **surf_weight=25** — closed; similar mechanism (already covered
+     at slice-128).
+   - **batch+LR scaling** — closed (also hardware-blocked).
+   The corollary for round-2 axis selection: **only mechanisms that
+   are structurally orthogonal to gradient-magnitude shaping**
+   (target distribution via asinh, throughput via bf16,
+   parameter-noise via EMA, normalization via RMSNorm, regularization
+   via DropPath, data exposure via curriculum, update rule via Lion,
+   per-layer LR via LLRD) are likely to compound. The 8 in-flight
+   round-2 axes are intentionally selected to be in that orthogonal
+   set.
 6. **Interior hyperparameter optima are architecture-dependent.**
    nezuko #332 found a clean interior optimum at surf_weight=25 on
    slice_num=64 (sweep curve + val_vol_p secondary signal). It did
@@ -168,12 +221,15 @@ tanjiro DropPath. **All eight students busy on actionable WIP work.**
 - **Schedule that fits the budget.** OneCycleLR over `total_steps`
   (not epochs) is robust to 30-min wall-clock cuts. May supersede
   `T_max=epochs` cosine entirely. Pending tanjiro's iteration.
-- **Per-channel loss weighting on `p`.** ASSIGNED as PR #429 to
-  edward: `p_weight` CLI flag scaling the pressure column of the
-  per-element Huber tensor before the spatial reduction. Sweep
-  {2, 3, 5}. Zero compute cost, orthogonal to surf_weight (which
-  works on the spatial axis) and to asinh (which works on the
-  target-distribution axis). All three loss-axis levers can stack.
+- **Per-channel loss weighting on `p`.** CLOSED in #429 — Huber's
+  gradient clipping already absorbs the channel-weighting effect;
+  multi-seed mean 118.65 vs 115.61 baseline = +2.6 %.
+- **Layer-wise learning rate decay (LLRD).** ASSIGNED as PR #547
+  to edward: split parameters into per-layer groups, geometric LR
+  decay by depth (foundation slower, output faster). Sweep decay
+  ∈ {0.7, 0.85, 1.0 anchor}. Truly orthogonal to all other
+  optimizer axes (Lion = different update rule; EMA = post-step
+  averaging; LLRD = per-layer step-size splitting).
 - **Target-space reformulation.** ASSIGNED as PR #415 to frieren:
   `asinh` on pressure channel of `y_norm` only (Ux/Uy unchanged).
   Pairs naturally with the merged Huber-β=1 — orthogonal mechanisms

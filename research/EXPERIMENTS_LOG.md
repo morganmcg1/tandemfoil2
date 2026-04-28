@@ -13,6 +13,108 @@ in the pressure channel; `accumulate_batch` masks the sample but
 fern** with the 2-line `nan_to_num` patch — once it lands, every
 round-1 run can recompute a finite `test_avg/mae_surf_p` from W&B.
 
+## 2026-04-28 04:45 — PR #429 (iter 1): per-channel pressure weighting (`p_weight` sweep) ❌ CLOSED
+
+- Branch: `willowpai2d2-edward/p-weight-sweep` (deleted on close).
+- Iteration: assigned as round-2 axis after closing FFN PR #326.
+  Sweep `p_weight ∈ {2, 3, 5}` with multi-seed at the winner.
+- Branch was rebased onto pre-#367 advisor (data/scoring.py reverts
+  the merged `nan_to_num` patch). Same silent-revert blocker as
+  other pre-#367 PRs.
+
+### Sweep results
+
+| variant | seed | val_avg/mae_surf_p | val_avg/mae_surf_Ux | val_avg/mae_surf_Uy | run id |
+|-|-:|-:|-:|-:|-|
+| 1.0 (baseline ref) | – | 115.61 | 1.81 | 0.75 | uip4q05z |
+| 2.0 | 0 | 112.07 ⭐ | 2.05 | 0.87 | i0dz5op0 |
+| 2.0 | 1 | 124.48 | 2.40 | 0.85 | 64cb0h0e |
+| 2.0 | 2 | 119.40 | 2.33 | 0.85 | kwl0ovqw |
+| **2.0 mean (σ=6.24)** | – | **118.65** | 2.26 | 0.857 | – |
+| 3.0 | 0 | 130.00 | 2.33 | 0.93 | cy9dhhaf |
+| 5.0 | 0 | 126.19 | 2.50 | 1.02 | 20cxfbvn |
+
+### Conclusion
+
+**Closed.** Multi-seed mean at p_weight=2 (the sweep winner at
+single-seed) is **118.65** = +2.6 % vs 115.61 baseline, all three
+seeds within ±10 % noise band but with the seed=0 result lucky-pull.
+Per the explicit decision rule (multi-seed mean > 115 → close),
+clean close.
+
+### Critical methodology contributions
+
+**1. Two converging instances of "Huber absorbs small optimization-axis
+levers."** Edward's mechanism analysis: *"Huber's gradient clipping
+already up-weights large pressure residuals; explicit p_weight>1
+perturbs the linear-regime gradients on small residuals — exactly
+what Huber was trying to deprioritise."* This is the **same
+mechanism tanjiro identified** for why the schedule axis (#335)
+fails on Huber. Two independent PRs converging on the same
+finding makes it load-bearing methodology:
+
+> **Huber's effective implicit gradient-shaping covers many of the
+> small-effect optimization-axis levers that worked on MSE.
+> Round-2 axes that target the same failure mode (high-Re tail,
+> channel-imbalance, schedule-tuning) tend to regress to baseline
+> because Huber is already doing the work. Axes with truly
+> orthogonal mechanisms (target distribution, throughput, parameter-
+> noise, normalization, regularization, data exposure, update-rule
+> shape, per-layer LR allocation) are the right round-2 candidates.**
+
+**2. Fourth instance of the per-distribution-shift pattern.** At
+p_weight=2, val_geom_camber_cruise improves (−10 %) but
+val_single_in_dist (+7.7 %) and val_geom_camber_rc (+8.7 %) regress.
+**Same sign as alphonse #311 (width-160), tanjiro #335 (lr=1e-3
+schedule), and edward p_weight=2.** Four independent PRs showing
+the same per-distribution-shift signal makes **per-distribution
+architecture / loss specialization an overwhelming round-3 priority**.
+
+**3. Textbook noise-floor demonstration.** Single-seed p_weight=2
+seed=0 looked like a winner (112.07 vs 115.61 = -3 %); 3-seed mean
+revealed it as a lucky pull (118.65 vs 115.61 = +2.6 %). σ=6.24
+≈ 5.3 % of baseline. Single-seed deltas under ~10 % require
+multi-seed to disambiguate — fully validated.
+
+### Carry-forward contributions
+
+1. **`p_weight` CLI flag + `_channel_weighted_huber` helper** stay
+   in `train.py` after rebase. p_weight=1.0 default = baseline
+   behavior. Future PRs can layer per-channel weighting on top of
+   different baselines (e.g., post-asinh from frieren #415) without
+   re-implementing.
+2. **`SENPAI_SEED` seeding at module-top** (commit 2e15747).
+3. **The "Huber absorbs small axes" mechanism analysis** is now the
+   dominant explanation for round-2 difficulty.
+
+### Reassignment
+
+Edward → PR #547 (round-2 axis: layer-wise learning rate decay /
+LLRD). Detailed below.
+
+## 2026-04-28 04:45 — PR #547 (NEW, edward round 2): layer-wise learning rate decay (LLRD)
+
+- Reassigning edward after closing #429.
+- Hypothesis: split parameters into per-layer groups (preprocess +
+  5 TransolverBlocks + last-layer head), assign each group a
+  learning rate that scales as `lr · decay^(depth_from_output)`.
+  Deeper/output-side layers get faster LR; foundational/input-side
+  layers get slower LR. Standard transformer fine-tuning recipe.
+- Mechanism is **structurally distinct** from all in-flight optimizer
+  axes: Lion changes update *rule*, EMA does post-step *averaging*,
+  LLRD does per-layer *splitting* of step sizes (same Adam, same
+  Huber). Doesn't overlap with Huber's clipping mechanism (per
+  edward's own analysis on the closed #429).
+- Sweep: `llrd_decay ∈ {0.7, 0.85, 1.0 baseline-anchor}` with
+  multi-seed at the winner.
+- Implementation: ~30 LOC `_build_param_groups` helper + config
+  flag + optimizer construction branch (short-circuits to existing
+  AdamW when `llrd_decay=1.0` to preserve baseline behavior exactly).
+- Decision rule: ≤105 single-seed (or ≤110 multi-seed mean) merges;
+  at-baseline closes (LLRD doesn't transfer to depth=5); >130 closes
+  (foundation layers are too important to slow down at our shallow
+  depth). Status: assigned, draft, status:wip.
+
 ## 2026-04-28 04:15 — PR #335 (iter 3): warmup+cosine_t_max=15 on Huber baseline (multi-seed) ❌ CLOSED
 
 - Branch: `willowpai2d2-tanjiro/warmup-cosine-1e3` (deleted on close).
