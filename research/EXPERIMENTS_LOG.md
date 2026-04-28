@@ -1,5 +1,66 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 06:45 — PR #539: Huber β finer sweep — β=0.3 wins, **NEW BASELINE**
+- Branch: `charliepai2d4-askeladd/huber-beta-finer` (deleted on merge)
+- Student: charliepai2d4-askeladd
+- **Outcome: MERGED (squash, commit 893ea4c). NEW BASELINE: val_avg=55.43 with β=0.3, -3.4% vs #484 on val, -2.0% on test.**
+
+### Headline (3-arm sweep + paired ref, EMA-evaluated)
+| β | best epoch | val_avg | test_avg | Δ vs paired ref |
+|---|---|---|---|---|
+| **0.3** | 34 | **55.43** | **47.98** | **-6.2% val / -4.9% test** |
+| 0.5 (paired ref) | 33 | 59.12 | 50.46 | (control) |
+| 0.7 | 33 | 60.32 | 52.19 | +2.0% val / +3.4% test |
+
+### Combined 5-point β grid (this PR + #467)
+| β | val_avg | test_avg |
+|---|---|---|
+| **0.3** | **55.43** | **47.98** |
+| 0.5 | 57.50 | 50.51 (#467) |
+| 0.7 | 60.32 | 52.19 |
+| 1.0 | 63.13 | 55.16 (#467) |
+| 2.0 | 68.53 | 60.44 (#467) |
+
+**Strict monotone β trend toward L1.** No interior optimum.
+
+### Per-channel mechanism (val_geom_camber_cruise — biggest gain split)
+| β | mae_surf_Ux | mae_surf_Uy | mae_surf_p |
+|---|---|---|---|
+| **0.3** | 0.451 | 0.278 | **36.67** |
+| 0.5-ref | 0.495 | 0.314 | 41.46 |
+
+β=0.3 wins on all 3 channels. Pressure gain -11.6% — largest, consistent with heavy-tailed residuals benefiting most from L1-leaning shape.
+
+### Stability check
+- Last-6 EMA val_avg std: β=0.3 = **1.32**, β=0.5-ref = 1.48, β=0.7 = 1.54.
+- β=0.3 is the **smoothest** of the three. Discontinuous-curvature concern from PR body did NOT materialize.
+
+### Config default flip — verified
+A no-flag `python train.py --epochs 50` run produces `config.yaml` with `huber_beta: 0.5` (proof committed in PR). Default flipped from 1.0 to 0.5 successfully.
+
+### Cross-axis caveat
+Branch is post-#467 but pre-#484 (FiLM landed in between). β=0.3 measurement at 55.43 is **without FiLM**. vs current merged baseline #484 (57.37 val with β=0.5 + FiLM): β=0.3 wins -3.4% on val even without FiLM. Combined β=0.3 + FiLM (the post-merge config when reproduced explicitly) should compound to ~54-55 range.
+
+### Cumulative round-1 trajectory
+| PR | val_avg | Δ from prior best |
+|---|---|---|
+| #287 | 126.67 | (first baseline) |
+| #308 | 106.40 | -16.2% |
+| #381 |  98.85 |  -7.1% |
+| #401 |  66.89 | -32.3% |
+| #289 |  63.33 |  -5.3% |
+| #368 |  62.94 |  -0.6% |
+| #467 |  57.50 |  -8.7% |
+| #484 |  57.37 |  -0.2% (val); test -3.1% |
+| #539 |  **55.43** |  -3.4% (val); test -2.0% |
+| **Cumulative** | | **-56.2% from #287, -59.2% from published-baseline-equivalent** |
+
+### Open questions / follow-ups
+- **β finer-still grid {0.1, 0.2, 0.4}**: monotone trend says optimum may be even further toward L1 (β→0+). Saturation likely; smallest predicted gain. Assigning next.
+- **Per-channel β**: pressure has fattest tails so might want sharpest β. Smaller predicted gain but mechanism-clean. Round-2 candidate.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=539 records, 36 lines for the β=0.3 best run).
+
 ## 2026-04-28 06:30 — PR #512: Fourier n_freqs sweep — n=4 wins, mechanism partially confirmed
 - Branch: `charliepai2d4-edward/fourier-nfreqs-sweep` (still in flight after revision)
 - Student: charliepai2d4-edward
