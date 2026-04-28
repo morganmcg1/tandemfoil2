@@ -739,7 +739,16 @@ for epoch in range(MAX_EPOCHS):
         y_norm = (y_for_loss - stats["y_mean"]) / stats["y_std"]
         with amp_ctx:
             pred = model({"x": x_norm})["preds"]
-            sq_err = (pred - y_norm) ** 2
+
+            # Equalize per-sample gradient contribution: divide sq err by per-sample,
+            # per-channel std of the targets over masked nodes. Keeps high-Re
+            # extremes from dominating the loss.
+            m = mask.unsqueeze(-1).float()
+            denom = m.sum(dim=1, keepdim=True).clamp(min=1.0)
+            y_mean_b = (y_norm * m).sum(dim=1, keepdim=True) / denom
+            y_var_b = ((y_norm - y_mean_b) ** 2 * m).sum(dim=1, keepdim=True) / denom
+            y_std_b = y_var_b.clamp(min=1e-2).sqrt()
+            sq_err = ((pred - y_norm) / y_std_b) ** 2
 
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
