@@ -1,5 +1,83 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 04:41 — PR #506 (MERGED): NUM_FOURIER_FREQS 8 → 12
+- Branch: `charliepai2d3-nezuko/l1ff12-ema-cos14-lr-7p5e-4`
+- Hypothesis: bracket the proven spatial FF lever upward from 8 to 12
+  octaves. Predicted −1% to −3%.
+- Config: post-#462 advisor (L1+FF+EMA+clip baked in), single-line code
+  change `NUM_FOURIER_FREQS = 8 → 12`, CLI `--epochs 14 --lr 7.5e-4`.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs current baseline (PR #462, 80.06) |
+|--------|--------:|-------------------------------------:|
+| `val_avg/mae_surf_p` | **78.80** | **−1.57%** (in predicted band) |
+| `test_avg/mae_surf_p` | **69.13** | **−1.30%** |
+| Param count | 674,647 | +4,096 (= 16 × 256 in `linear_pre`) |
+
+### Per-split val — wins on all 4 splits
+
+| split | this PR | PR #462 baseline | Δ |
+|-------|--------:|-----------------:|--:|
+| val_single_in_dist | 92.73 | 93.59 | −0.92% |
+| val_geom_camber_rc | 89.86 | 92.33 | **−2.67%** (largest gain) |
+| val_geom_camber_cruise | 57.32 | 57.74 | −0.73% |
+| val_re_rand | 75.30 | 76.57 | −1.66% |
+
+### Per-split test (best-val checkpoint)
+
+| split | this PR | PR #462 | Δ |
+|-------|--------:|--------:|--:|
+| test_single_in_dist | 78.60 | 82.41 | **−4.62%** |
+| test_geom_camber_rc | 80.12 | 79.66 | +0.58% (val/test divergence) |
+| test_geom_camber_cruise | 49.29 | 49.50 | −0.42% |
+| test_re_rand | 68.50 | 68.56 | −0.09% |
+
+### Decision
+
+**Merged.** Eighth merge of round 3, seventh proven stacked lever
+(refines lever #2 spatial FF from 8 to 12 frequencies).
+
+### Caveat — confounded with EMA addition
+
+PR #462 baseline (80.06) was measured pre-EMA at default lr=5e-4.
+This PR's measurement uses post-#447 advisor (with EMA) + lr=7.5e-4 +
+matched cosine. The −1.57% headline conflates the FF=8→12 marginal
+with the post-merge advisor improvements. Edward's PR #524 (canonical
+6-lever stack at FF=8 with EMA, in flight) provides the reference
+that disambiguates the FF marginal cleanly.
+
+### Round-3 narrative — FF dose response
+
+The FF lever now has multi-point dose-response:
+- 8 freqs: PR #400 (val 91.87 vs L1 baseline 102.64 = −10.5%)
+- 12 freqs: this PR (val 78.80 on full stack; clean win above 8)
+- 4 freqs: frieren PR #533 in flight
+- 16 freqs: nezuko's next assignment
+
+Once #533 (FF=4) and edward #524 (FF=8 reference on full stack) land,
+we'll have a clean dose-response curve. Round-5 may explore further
+upward bracketing if FF=16 wins.
+
+### Round-3 baseline lineage updated (now 8 merges)
+
+| PR | val | test | lever |
+|----|----:|-----:|-------|
+| 280 | 102.64 | 97.73 | + L1 surface |
+| 400 | 91.87 | 81.11 | + 8-freq spatial FF |
+| 447 | 82.97 | 73.58 | + EMA |
+| 461 | 80.28 | 70.92 | + lr=7.5e-4 |
+| 462 | 80.06 | 70.04 | + grad clipping |
+| **506** | **78.80** | **69.13** | + NUM_FOURIER_FREQS=12 |
+
+(PR #389 matched cosine omitted from this table since matched cosine
+is a CLI flag, not a code change. It's used for all measurements
+since merging.)
+
+Cumulative −41.7% on val, −43.9% on test from PR #306 reference.
+
+---
+
 ## 2026-04-28 04:19 — PR #476 (CLOSED, schedule × EMA interference): matched cosine + EMA
 - Branch: `charliepai2d3-fern/l1ff-ema-cos14` (deleted on close)
 - Hypothesis: stack matched cosine `--epochs 14` onto L1+FF+EMA(0.999).

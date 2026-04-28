@@ -15,19 +15,21 @@ help across at least three of the four tracks.
 
 ## Round 3 focus
 
-**Current measured baseline (merged 2026-04-28 03:31):**
-PR #462 (edward) — **L1+FF + matched cosine + grad clipping
-(`max_norm=1.0`)**, `--epochs 14`, default lr=5e-4.
-`val_avg/mae_surf_p = 80.06`, `test_avg/mae_surf_p = 70.04`.
-Marginal val win (within seed noise) but unambiguous test win and
-uniform per-split improvements.
+**Current measured baseline (merged 2026-04-28 04:41):**
+PR #506 (nezuko) — **L1 + 12-freq spatial FF + EMA(0.999) + matched
+cosine + lr=7.5e-4 + grad clipping (max_norm=1.0)**.
+`val_avg/mae_surf_p = 78.80`, `test_avg/mae_surf_p = 69.13`. Wins on
+all 4 val splits, 3 of 4 test splits. Eighth merge of round 3.
 
-**Caveat**: PR #462 was branched off pre-#447 advisor (no EMA) and
-used default lr=5e-4. The post-merge advisor includes EMA + the
-clipping code. The actual round-3-best six-lever-stack
-(L1+FF+EMA + matched cosine + lr=7.5e-4 + clip) on the post-merge
-advisor is **untested** — running with `--epochs 14 --lr 7.5e-4`
-should land below 80.06.
+**Cumulative round-3 improvement: −41.7% on val, −43.9% on test**
+from the PR #306 reference (val 135.20, test 123.15).
+
+**Caveat**: PR #506 was the first measurement on the post-#462 advisor
+with EMA + clipping. PR #462 baseline (80.06) was pre-EMA at default
+lr=5e-4. The −1.57% headline conflates the FF=8→12 marginal effect
+with the post-EMA advisor improvements. Edward PR #524 (canonical
+6-lever-stack at FF=8 with EMA, in flight) will provide the
+disambiguation reference.
 
 **Round-3 baseline lineage:**
 | Round | best val | best test | lever | Δ vs prior |
@@ -38,16 +40,17 @@ should land below 80.06.
 | PR #389 |  90.90 |  80.84 | + matched cosine (CLI) | −1.06% / −0.33% |
 | PR #447 |  82.97 |  73.58 | + EMA(0.999) | **−8.7% / −9.0%** |
 | PR #461 |  80.28 |  70.92 | + lr=7.5e-4 (CLI) | **−3.2% / −3.6%** |
-| **PR #462** | **80.06** | **70.04** | **+ grad clipping max_norm=1.0** | −0.27% / **−1.24%** |
+| PR #462 |  80.06 |  70.04 | + grad clipping max_norm=1.0 | −0.27% / −1.24% |
+| **PR #506** | **78.80** | **69.13** | **+ NUM_FOURIER_FREQS=12** | **−1.57% / −1.30%** |
 
-**Round-3 proven levers (cumulative, six stacked)**:
+**Round-3 proven levers (cumulative, seven stacked)**:
 1. L1 surface loss (PR #280)
-2. 8-freq spatial Fourier features (PR #400)
+2. 8→12-freq spatial FF (PR #400 → PR #506)
 3. Matched cosine `--epochs 14` (PR #389, CLI)
 4. EMA-of-weights, decay=0.999 (PR #447)
 5. Peak LR `lr=7.5e-4` (PR #461, CLI)
-6. **Gradient clipping max_norm=1.0** (PR #462) — clip fires throughout
-   training (grad norms ~27× max_norm even at epoch 14).
+6. Gradient clipping max_norm=1.0 (PR #462)
+7. **NUM_FOURIER_FREQS=12** (PR #506) — refinement of lever #2.
 
 Recommended reproduce: `python train.py --epochs 14 --lr 7.5e-4`.
 
@@ -145,8 +148,9 @@ composition even if they don't outright beat 102.64:**
    re-tested on the new advisor:
    - PR #383 — alphonse: L1 + 3× pressure channel weight in surface loss
      *(loss focus)* — branched off L1-only.
-   - PR #506 — nezuko: L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
-     **NUM_FOURIER_FREQS=12** — spatial FF frequency-count bracket up.
+   - PR (nezuko, new): L1+FF(16 freqs)+EMA + `--epochs 14` + `lr=7.5e-4` —
+     **NUM_FOURIER_FREQS=16** spatial FF frequency-count bracket
+     further up (round-3-best is now FF=12; tests if 16 extracts more).
    - PR #515 — tanjiro: L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
      **3× pressure-channel weight in volume loss**.
    - PR #516 — askeladd: L1+FF+EMA + `--epochs 14` + **`lr=8e-4`** —
