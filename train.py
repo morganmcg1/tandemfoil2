@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -217,7 +218,20 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def per_element_loss(pred, target, loss_type: str, huber_delta: float = 1.0):
+    """Elementwise regression loss, no reduction.
+
+    For ``"huber"`` returns ``F.huber_loss(reduction='none')`` with the given
+    delta — 0.5*x^2 for |x|<delta, delta*(|x|-0.5*delta) otherwise. For
+    ``"mse"`` returns the unreduced squared error matching the original baseline.
+    """
+    if loss_type == "huber":
+        return F.huber_loss(pred, target, reduction="none", delta=huber_delta)
+    return (pred - target) ** 2
+
+
+def evaluate_split(model, loader, stats, surf_weight, device,
+                   loss_type: str = "mse", huber_delta: float = 1.0) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -240,15 +254,15 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
-            sq_err = (pred - y_norm) ** 2
+            err = per_element_loss(pred, y_norm, loss_type, huber_delta)
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
-                (sq_err * vol_mask.unsqueeze(-1)).sum()
+                (err * vol_mask.unsqueeze(-1)).sum()
                 / vol_mask.sum().clamp(min=1)
             ).item()
             surf_loss_sum += (
-                (sq_err * surf_mask.unsqueeze(-1)).sum()
+                (err * surf_mask.unsqueeze(-1)).sum()
                 / surf_mask.sum().clamp(min=1)
             ).item()
             n_batches += 1
@@ -386,9 +400,13 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    loss: str = "mse"  # "mse" or "huber"
+    huber_delta: float = 1.0  # delta for Huber loss in normalized target space
 
 
 cfg = sp.parse(Config)
+if cfg.loss not in ("mse", "huber"):
+    raise ValueError(f"--loss must be 'mse' or 'huber', got '{cfg.loss}'")
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
@@ -463,6 +481,27 @@ model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
 
+metrics_dir = Path("metrics")
+metrics_dir.mkdir(parents=True, exist_ok=True)
+metrics_token = _sanitize_artifact_token(cfg.wandb_name or cfg.agent or "tandemfoil")
+metrics_path = metrics_dir / f"{metrics_token}-{run.id}.jsonl"
+
+
+def _log_jsonl(record: dict) -> None:
+    with open(metrics_path, "a") as f:
+        f.write(json.dumps(record, default=float) + "\n")
+
+
+_log_jsonl({
+    "event": "config",
+    "run_id": run.id,
+    "wandb_name": cfg.wandb_name,
+    "agent": cfg.agent,
+    "config": asdict(cfg),
+    "model_config": model_config,
+    "n_params": n_params,
+})
+
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
 global_step = 0
@@ -487,12 +526,12 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+        err = per_element_loss(pred, y_norm, cfg.loss, cfg.huber_delta)
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        vol_loss = (err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+        surf_loss = (err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
@@ -512,7 +551,8 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                             cfg.loss, cfg.huber_delta)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -534,6 +574,17 @@ for epoch in range(MAX_EPOCHS):
     for k, v in val_avg.items():
         log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
     wandb.log(log_metrics)
+    _log_jsonl({
+        "event": "epoch",
+        "epoch": epoch + 1,
+        "epoch_time_s": dt,
+        "lr": scheduler.get_last_lr()[0],
+        "train/vol_loss": epoch_vol,
+        "train/surf_loss": epoch_surf,
+        "val/loss": val_loss_mean,
+        **{f"{n}/{k}": v for n, m in split_metrics.items() for k, v in m.items()},
+        **{f"val_{k}": v for k, v in val_avg.items()},
+    })
 
     tag = ""
     if avg_surf_p < best_avg_surf_p:
@@ -580,7 +631,8 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                                 cfg.loss, cfg.huber_delta)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
@@ -596,6 +648,12 @@ if best_metrics:
             test_log[f"test_{k}"] = v
         wandb.log(test_log)
         wandb.summary.update(test_log)
+        _log_jsonl({
+            "event": "test",
+            "best_epoch": best_metrics["epoch"],
+            "best_val_avg/mae_surf_p": best_avg_surf_p,
+            **test_log,
+        })
 
     save_model_artifact(
         run=run,
