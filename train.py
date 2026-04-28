@@ -81,6 +81,26 @@ class MLP(nn.Module):
         return self.linear_post(x)
 
 
+class SwiGLU_MLP(nn.Module):
+    """LLaMA-style SwiGLU feed-forward block.
+
+    Computes: out = W3( SiLU(W1 x) * (W2 x) )
+    Intermediate dim follows the LLaMA convention: round (hidden * 2/3 * mlp_ratio)
+    up to the nearest multiple of 8.
+    """
+    def __init__(self, n_input: int, n_hidden: int, n_output: int, mlp_ratio: int):
+        super().__init__()
+        intermediate = int(n_hidden * mlp_ratio * 2 / 3)
+        intermediate = ((intermediate + 7) // 8) * 8
+        self.intermediate = intermediate
+        self.w1 = nn.Linear(n_input, intermediate, bias=False)
+        self.w2 = nn.Linear(n_input, intermediate, bias=False)
+        self.w3 = nn.Linear(intermediate, n_output, bias=False)
+
+    def forward(self, x):
+        return self.w3(F.silu(self.w1(x)) * self.w2(x))
+
+
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
@@ -147,8 +167,7 @@ class TransolverBlock(nn.Module):
             dropout=dropout, slice_num=slice_num,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
-        self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
-                       n_layers=0, res=False, act=act)
+        self.mlp = SwiGLU_MLP(hidden_dim, hidden_dim, hidden_dim, mlp_ratio=mlp_ratio)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
@@ -439,7 +458,11 @@ model_config = dict(
 model = Transolver(**model_config).to(device)
 ema = WeightEMA(model, decay=0.999)
 n_params = sum(p.numel() for p in model.parameters())
-print(f"Model: Transolver ({n_params/1e6:.2f}M params) + EMA(decay=0.999)")
+swiglu_inter = model.blocks[0].mlp.intermediate
+print(
+    f"Model: Transolver ({n_params/1e6:.2f}M params) + EMA(decay=0.999) "
+    f"[SwiGLU MLP intermediate={swiglu_inter}]"
+)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
