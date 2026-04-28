@@ -1,85 +1,85 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 03:30 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
+- **Last update:** 2026-04-28 04:00 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
 - **Most recent human-team direction:** N/A — no team issues consulted (isolated replicate; only entrypoint-surfaced PRs in scope).
-- **Current baseline (merged): `val_avg/mae_surf_p = 72.414`, `test_avg/mae_surf_p = 63.082`** (PR #463 huber δ=0.25 on the EMA(0.99)+SwiGLU+DropPath stack — pre-DropPath measurement, post-merge stack expected at-or-better).
+- **Current baseline (merged): conservative target `val_avg/mae_surf_p < 72.414`** (fern's pre-DropPath standalone measurement). Latest stack also includes nezuko's β₂=0.95 (PR #480, +6.34% on its own starting baseline). Combined-stack actual val_avg pending round-6 measurement.
   - PR #282 — Huber loss (δ=1.0). val_avg = 105.999.
   - PR #361 — NaN-safe `evaluate_split` workaround. First finite test_avg = 97.957.
   - PR #363 — EMA(decay 0.999). val_avg = 101.350.
   - PR #391 — LLaMA-style SwiGLU FFN. val_avg = 88.227. Param-matched.
   - PR #426 — EMA decay 0.999 → 0.99. val_avg = 83.223.
   - PR #455 — Stochastic depth (DropPath 0→0.1). val_avg = 80.480. Param-identical.
-  - PR #463 — Huber δ=1.0 → 0.25. **val_avg = 72.414 (−13.0% vs EMA(0.99)+SwiGLU; −10.0% vs DropPath baseline). test_avg = 63.082 (−14.6%, all 4 splits finite).** All 4 val splits improved 10–18%. Cruise canary gained MOST (−17.88%). Largest single-PR delta of the entire research programme.
+  - PR #463 — Huber δ=1.0 → 0.25. **val_avg = 72.414 (−13.0% vs EMA(0.99)+SwiGLU; −10.0% vs DropPath baseline). test_avg = 63.082.** All 4 val splits improved 10–18%. Cruise canary gained MOST (−17.88%). Largest single-PR delta of the programme.
+  - PR #480 — AdamW betas (0.9, 0.999) → (0.9, 0.95). Standalone on EMA(0.99)+SwiGLU pre-DropPath: val_avg = 77.951 (−6.34%). Mechanism: faster β₂ (half-life ~14 steps vs ~700) tracks rapidly-changing gradient distribution under our 13-epoch under-trained regime. Orthogonal to δ=0.25 (loss curvature vs optimizer 2nd-moment). MERGED as compound — combined-stack val_avg unmeasured.
 
 ## Current research focus
 
 Compound improvements on the round-1 huber baseline. Recover the paper-facing test metric. Test orthogonal levers (capacity, slice count, optimizer recipe, surface weighting, regularization, EMA, channel weighting) so round-3 can stack winners.
 
-## Outcomes to date (26 reviewed)
+## Outcomes to date (28 reviewed)
 
-| Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Δ vs 72.414 (current) | Decision |
-|------|----|---------|------|--------------------------:|----------------------:|----------|
-| 1 | #463 | fern | huber-delta-025 | **72.414** | (current baseline, MERGED) | MERGED — biggest single-PR delta |
-| 2 | #455 | thorfinn | stochastic-depth-01 | 80.480 | +11.1% | MERGED (DropPath intermediate) |
-| 3 | #460 | frieren | per-sample-feature-noise | 81.437 | +12.5% | CLOSED (diagnosis confirmed; doesn't beat current) |
-| 4 | #426 | askeladd | ema-decay-099 | 83.223 | +14.9% | MERGED (intermediate) |
-| 5 | #456 | edward | layerscale-1e4 | 83.544 | +15.4% | CLOSED |
-| 6 | #454 | askeladd | ema-bias-correction (0.999) | 84.645 | +16.9% | CLOSED |
-| 7 | #439 | fern | huber-delta-05 | 87.265 | +20.5% | CLOSED |
-| 8 | #440 | tanjiro | silu-everywhere | 88.128 | +21.7% | CLOSED |
-| 9 | #391 | thorfinn | swiglu-mlp | 88.227 | +21.8% | MERGED (SwiGLU baseline) |
-| 10 | #459 | tanjiro | swiglu-preprocess | 88.299 | +21.9% | CLOSED (SwiGLU at input prunes physical signal) |
-| 11 | #425 | frieren | input-noise-001 | 89.984 | +24.2% | CLOSED |
-| 12 | #424 | thorfinn | swiglu-head | 90.298 | +24.7% | CLOSED |
-| 13 | #450 | alphonse | rmsnorm-everywhere (nn.RMSNorm) | 91.342 | +26.1% | CLOSED (per-step won; ATen wall-clock penalty) |
-| 11 | #363 | thorfinn | ema-eval | 101.350 | +25.9% | MERGED (intermediate) |
-| 12 | #282 | edward | huber-loss | 105.999 | +31.7% | MERGED (huber baseline) |
-| 12b | #361 | edward | nan-safe-eval | 108.103 (rerun) | n/a — RNG | MERGED (metric-pipeline fix) |
-| 5 | #440 | tanjiro | silu-everywhere | 88.128 | +5.9% | CLOSED (null result; activation choice below noise floor) |
-| 5b | #424 | thorfinn | swiglu-head | 90.298 | +8.5% | CLOSED (head SwiGLU lacks residual buffer; OOD splits regress) |
-| 5c | #425 | frieren | input-noise-001 | 89.984 | +8.1% | CLOSED (per-node noise broke per-sample feature consistency on dims 13–23) |
-| 6 | #370 | askeladd | cosine-tmax-14 | 102.359 | +23.0% | CLOSED (T_max ↔ EMA non-additive) |
-| 7 | #412 | tanjiro | per-channel-heads | 105.580 | +26.9% | CLOSED (capacity-in-head falsified) |
-| 7b | #411 | fern | huber-delta-2 | 107.609 | +29.3% | CLOSED (δ=1 sweet spot) |
-| 8 | #362 | tanjiro | surf-channel-on-huber | 107.920 | +29.7% | CLOSED (channel-weight dead direction) |
-| 9 | #286 | frieren | surf-weight-25 | 108.222 | +30.0% | CLOSED |
-| 10 | #392 | frieren | mlp-ratio-4 | 108.558 | +30.4% | CLOSED |
-| 11 | #386 | edward | re-fourier-8 | 109.131 | +31.1% | CLOSED (high-freq aliasing) |
-| 12 | #418 | edward | re-fourier-4 | 102.916 | +23.7% | CLOSED (Fourier-Re partial recovery; doesn't beat SwiGLU) |
-| 13 | #377 | fern | warmup-cosine-1e3-no-clip | 116.352 | +39.8% | CLOSED |
-| 14 | #284 | fern | warmup-cosine-1e3 | 123.135 | +47.9% | CLOSED |
-| 15 | #291 | nezuko | dropout-0p1 | 128.896 | +54.9% | CLOSED |
-| 16 | #295 | tanjiro | pressure-channel-weight | 130.916 | +57.3% | CLOSED |
-| 17 | #279 | alphonse | capacity-medium | 142.446 | +71.2% | CLOSED (compute-infeasible) |
-| 18 | #281 | askeladd | slice-128 | 154.594 | +85.8% | CLOSED |
-| 18b | #371 | nezuko | grad-accum-2 | 123.997 | +49.0% | CLOSED (rebased on SwiGLU; halving step count under fixed wall-clock catastrophic) |
-| 19 | #297 | thorfinn | depth-8 | 168.836 | +102.9% | CLOSED |
+Sorted by val_avg ascending (best first). Δ column references the current 72.414 conservative target. Full per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`.
+
+| Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Δ | Decision |
+|------|----|---------|------|--------------------------:|--:|----------|
+| 1 | #463 | fern | huber-delta-025 | **72.414** | — | MERGED — biggest single-PR delta |
+| 2 | #480 | nezuko | adamw-betas-095 | 77.951 (on EMA(0.99)+SwiGLU baseline) | +7.6% standalone | MERGED — orthogonal compound (β₂=0.95) |
+| 3 | #455 | thorfinn | stochastic-depth-01 | 80.480 | +11.1% | MERGED (DropPath intermediate) |
+| 4 | #460 | frieren | per-sample-feature-noise | 81.437 | +12.5% | CLOSED (diagnosis confirmed; doesn't beat current) |
+| 5 | #426 | askeladd | ema-decay-099 | 83.223 | +14.9% | MERGED (intermediate) |
+| 6 | #456 | edward | layerscale-1e4 | 83.544 | +15.4% | CLOSED |
+| 7 | #488 | alphonse | rmsnorm-manual | 84.149 | +16.2% | CLOSED (eager-mode wall-clock issue; needs torch.compile) |
+| 8 | #454 | askeladd | ema-bias-correction (0.999) | 84.645 | +16.9% | CLOSED |
+| 9 | #439 | fern | huber-delta-05 | 87.265 | +20.5% | CLOSED |
+| 10 | #440 | tanjiro | silu-everywhere | 88.128 | +21.7% | CLOSED (null result) |
+| 11 | #391 | thorfinn | swiglu-mlp | 88.227 | +21.8% | MERGED (SwiGLU baseline) |
+| 12 | #459 | tanjiro | swiglu-preprocess | 88.299 | +21.9% | CLOSED (SwiGLU at input prunes signal) |
+| 13 | #425 | frieren | input-noise-001 | 89.984 | +24.2% | CLOSED (per-node noise broke per-sample globals) |
+| 14 | #424 | thorfinn | swiglu-head | 90.298 | +24.7% | CLOSED (no residual buffer for the head) |
+| 15 | #450 | alphonse | rmsnorm-everywhere (nn.RMSNorm) | 91.342 | +26.1% | CLOSED (ATen wall-clock penalty) |
+| 16 | #363 | thorfinn | ema-eval | 101.350 | +39.9% | MERGED (intermediate) |
+| 17 | #370 | askeladd | cosine-tmax-14 | 102.359 | +41.4% | CLOSED (T_max ↔ EMA non-additive) |
+| 18 | #418 | edward | re-fourier-4 | 102.916 | +42.1% | CLOSED (Fourier-Re partial recovery) |
+| 19 | #412 | tanjiro | per-channel-heads | 105.580 | +45.8% | CLOSED (capacity-in-head falsified) |
+| 20 | #282 | edward | huber-loss | 105.999 | +46.4% | MERGED (huber baseline) |
+| 20b | #361 | edward | nan-safe-eval | 108.103 (rerun) | n/a — RNG | MERGED (metric-pipeline fix) |
+| 21 | #411 | fern | huber-delta-2 | 107.609 | +48.6% | CLOSED (δ profile peak at 2 falsified) |
+| 22 | #362 | tanjiro | surf-channel-on-huber | 107.920 | +49.0% | CLOSED (channel-weight dead) |
+| 23 | #286 | frieren | surf-weight-25 | 108.222 | +49.4% | CLOSED |
+| 24 | #392 | frieren | mlp-ratio-4 | 108.558 | +49.9% | CLOSED |
+| 25 | #386 | edward | re-fourier-8 | 109.131 | +50.7% | CLOSED (high-freq aliasing) |
+| 26 | #377 | fern | warmup-cosine-1e3-no-clip | 116.352 | +60.7% | CLOSED |
+| 27 | #284 | fern | warmup-cosine-1e3 | 123.135 | +70.0% | CLOSED (clip masked recipe) |
+| 28 | #371 | nezuko | grad-accum-2 | 123.997 | +71.2% | CLOSED (halved step count under fixed wall-clock) |
+| 29 | #291 | nezuko | dropout-0p1 | 128.896 | +78.0% | CLOSED |
+| 30 | #295 | tanjiro | pressure-channel-weight | 130.916 | +80.8% | CLOSED |
+| 31 | #279 | alphonse | capacity-medium | 142.446 | +96.7% | CLOSED (compute-infeasible) |
+| 32 | #281 | askeladd | slice-128 | 154.594 | +113.5% | CLOSED |
+| 33 | #297 | thorfinn | depth-8 | 168.836 | +133.2% | CLOSED |
 
 Per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`. Per-experiment JSONL summaries in `research/student_metrics/` (note: nezuko, askeladd & fern did not commit their training metrics files; their PR-comment numbers are recorded as JSONL summaries instead).
 
 
 
-## Round-5 in flight (2 students)
-
-Branched on EMA(0.99)+SwiGLU baseline (83.223) pre-DropPath and pre-fern. Will be ranked against the now-current huber(δ=0.25) baseline (72.414) when they return.
+## Round-5 in flight (1 student)
 
 | PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
 |----|---------|------|-------|-------------------------------------|
-| #479 | askeladd | bias-corrected-ema-099 | EMA `decay_target=0.99, warmup_steps=10` | −0.5% to −1.5% |
-| #480 | nezuko | adamw-betas-095 | AdamW betas (0.9, 0.999) → (0.9, 0.95) | −0.5% to −1.5% |
+| #479 | askeladd | bias-corrected-ema-099 | EMA `decay_target=0.99, warmup_steps=10` (branched pre-fern; will be ranked against current 72.414 conservative) | −0.5% to −1.5% |
 
-## Round-6 in flight (6 students)
+## Round-6 in flight (7 students)
 
-Built on the merged DropPath+EMA(0.99)+SwiGLU baseline (80.480) pre-fern; will be ranked against the now-current huber(δ=0.25) baseline (72.414) when they return.
+Built on the merged baseline (huber-δ=0.25 + EMA(0.99) + SwiGLU + DropPath + AdamW betas (0.9, 0.95) + NaN-safe). Conservative target val_avg < 72.414.
 
 | PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
 |----|---------|------|-------|-------------------------------------|
 | #486 | thorfinn | drop-path-02 | Push `drop_path_max` 0.1 → 0.2 | −0.5% to −2% |
 | #487 | edward | layerscale-1e2 | LayerScale init 1e-4 → 1e-2 | −0.5% to −1.5% |
-| #488 | alphonse | rmsnorm-manual | RMSNorm with manual nn.Module (fix wall-clock penalty) | −0.5% to −1.5% |
 | #493 | fern | huber-delta-01 | Push δ profile further: 0.25 → 0.1 (saturation test) | −1% to −5% |
 | #494 | tanjiro | weight-decay-3e-4 | AdamW weight_decay 1e-4 → 3e-4 (orthogonal regularization knob) | −0.5% to −1.5% |
-| #495 | frieren | feature-noise-002 | Sweep semantics-aware feature noise std 0.01 → 0.02 (her own follow-up #1) | −0.5% to −2% |
+| #495 | frieren | feature-noise-002 | Sweep semantics-aware feature noise std 0.01 → 0.02 | −0.5% to −2% |
+| #510 | alphonse | torch-compile-baseline | Wrap model in `torch.compile(mode='reduce-overhead')` — speeds up baseline, opens door to RMSNorm fusion | −1% to −3% |
+| #511 | nezuko | adamw-beta2-090 | AdamW betas (0.9, 0.95) → (0.9, 0.90) — push β₂ profile further | −0.5% to −1.5% (could regress) |
 
 ## Disconfirmed directions (do not retry on this branch)
 
