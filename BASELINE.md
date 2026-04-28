@@ -5,9 +5,16 @@
 | Metric | Value | Run | PR |
 |--------|-------|-----|----|
 | `val_avg/mae_surf_p` | **99.2257** | `m46h5g4s` | #754 |
-| `test_avg/mae_surf_p` | **NaN** (3-split mean: 99.34) | `m46h5g4s` | #754 |
+| `test_avg/mae_surf_p` | **92.6101** ✓ unblocked | `2hcmefh9` | #797 |
 | Best epoch | 12 / 50 (timeout @ ep 14) | | |
 | Wall time | 30.77 min | | |
+
+Note: `val_avg` and `test_avg` are reported from different runs of the
+same merged code path. `train.py` does not seed torch/numpy/sampler, so
+val_avg drifts ~5–10% across runs without any code change. The 99.23
+val number is from `m46h5g4s` (PR #754); the 92.61 test number is from
+`2hcmefh9` (PR #797 rebased — same code, different seed init). Tracking
+seeding as a separate priority for the next PR.
 
 ## Per-split val (epoch 12, run `m46h5g4s`)
 
@@ -19,18 +26,17 @@
 | `val_re_rand` | 91.279 | 1.850 | 0.693 |
 | **val_avg** | **99.226** | **1.789** | **0.693** |
 
-## Per-split test (best checkpoint, epoch 12)
+## Per-split test (post-#797 unblock, run `2hcmefh9`, epoch 14)
 
-| Split | mae_surf_p |
-|-------|-----------|
-| `test_single_in_dist` | 106.775 |
-| `test_geom_camber_rc` | 104.872 |
-| `test_geom_camber_cruise` | **NaN** (cruise GT bug, fix in flight at #797) |
-| `test_re_rand` | 86.370 |
-| **test_avg (3 finite splits)** | **99.34** |
-| `test_avg/mae_surf_p` (all 4) | NaN — blocked by cruise NaN bug |
+| Split | mae_surf_p | nonfinite_pred | nonfinite_gt |
+|-------|-----------|----------------|--------------|
+| `test_single_in_dist` | 117.771 | 0 | 0 |
+| `test_geom_camber_rc` | 99.491 | 0 | 0 |
+| `test_geom_camber_cruise` | **65.287** | 0 | **1** (filtered) |
+| `test_re_rand` | 87.891 | 0 | 0 |
+| **test_avg/mae_surf_p (all 4 splits)** | **92.610** | 0 | 1 |
 
-## Configuration (post-#754)
+## Configuration (post-#797)
 
 | Knob | Value |
 |------|-------|
@@ -51,6 +57,8 @@
 | Sampler | `WeightedRandomSampler` over balanced domain groups |
 | `epochs` | 50 (capped) |
 | Timeout | 30 min |
+| **NaN guards** | **active in `evaluate_split` (#797)** — drops cruise sample 000020 from accumulator |
+| Seed | **NONE** (val_avg drifts ~5-10% across runs; seed PR is next priority) |
 
 ## Delta vs prior baseline (PR #752 L1)
 
@@ -76,10 +84,18 @@ python train.py --agent willowpai2e4-fern \
 
 ## Open issues
 
-- **Cruise-test NaN bug:** `test_geom_camber_cruise/000020.pt` has 761 NaN
-  values in the GT p-channel (out of 225K nodes). The cruise-test
-  prediction for that sample also goes Inf in some runs. Both paths feed
-  through `data/scoring.py:accumulate_batch` where `NaN * 0 = NaN`
-  propagates into the channel-sum. Fix in flight at PR #797 (askeladd, scope
-  expanded to handle both paths). Until guarded, `test_avg/mae_surf_p` is
-  unreportable.
+- **Run-to-run val variance:** `train.py` does not set torch/numpy/sampler
+  seeds. Across two runs of the merged code (m46h5g4s vs 2hcmefh9), val_avg
+  drifted 99.23 → 105.22, almost entirely on `val_single_in_dist`. The
+  diagnostic counts confirm the NaN-guard #797 was no-op on val (so the
+  drift is not caused by the merge), but it does mean baseline comparisons
+  are noisy. **Adding a seed is the next priority** — askeladd assigned.
+- **Cruise-test `-Inf` GT (resolved by #797 workaround):** Confirmed by
+  askeladd: `test_geom_camber_cruise/000020.pt` has **761 `-Inf` values**
+  in the `p` channel (all in volume nodes; surface MAE not directly
+  affected). The merged guard filters this sample from
+  `accumulate_batch`. The dataset itself is read-only. One residual
+  display-only NaN in `cruise/loss` (cosmetic) traced to `nan_to_num`
+  default args overflowing through `channel_weights[2]=3` — fix is a
+  one-line argument addition (`nan=0.0, posinf=0.0, neginf=0.0`); will
+  ride along with the next `evaluate_split`-touching PR.

@@ -1,9 +1,9 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-28 ~22:10 (round 2 mid-flight; FiLM #816 + Fourier PE #820 both sent back for rebase — both strong winners)
+- **As of:** 2026-04-28 ~22:20 (NaN-guard merged; seed PR launched as priority infra)
 - **Most recent human direction:** none yet for this track
 - **Branch:** `icml-appendix-willow-pai2e-r4`
-- **Current best:** `val_avg/mae_surf_p = 99.226` (PR #754, L1 + ch=[1,1,3] merged)
+- **Current best:** `val_avg/mae_surf_p = 99.226` (#754) and `test_avg/mae_surf_p = 92.610` ✓ (#797 unblock, run `2hcmefh9`)
 
 ## Current research focus
 
@@ -19,14 +19,14 @@ weight signal.
 | PR | Student | Lever | Outcome |
 |---|---|---|---|
 | #752 | askeladd | L1 loss | **merged** (101.93, prior baseline) |
-| #754 | fern | Per-channel `p` ×3 on L1 | **MERGED — new baseline 99.23** |
+| #754 | fern | Per-channel `p` ×3 on L1 | **MERGED — val baseline 99.23** |
+| #797 | askeladd | NaN/Inf guards in evaluate_split | **MERGED — test_avg unblocked (92.61)** |
 | #758 | tanjiro | lr=1e-3 + 10% warmup | **closed** (L1 retest +9.7% worse) |
 | #749 | alphonse | Capacity 256×8 | **closed** (no convergence in 30-min budget) |
 | #755 | frieren | slice_num 128 | **closed** (+33% epoch cost cancels gain) |
 | #760 | thorfinn | batch_size 8 | **closed** (BS=8 viable but no L1 retest) |
 | #753 | edward | surf_weight 20/30/50 | wip (round 1, L1+ch retest) |
 | #757 | nezuko | 5% warmup + cosine on L1+ch=[1,1,3] | wip (sent back to retest on new baseline) |
-| #797 | askeladd | NaN/Inf guard (model + GT) | wip (canonical fix; expanded scope) |
 
 ### Round 2 in flight (orthogonal, on top of L1 + ch=[1,1,3] = 99.23)
 
@@ -34,6 +34,7 @@ weight signal.
 |---|---|---|---|---|
 | #816 | alphonse | FiLM conditioning of LayerNorm (#2) | -5 to -12% | **rebase + rerun (96.61 on L1-only → -2.6% on new baseline expected)** |
 | #820 | thorfinn | Fourier PE on (x, z) coords (#3) | -4 to -10% | **rebase + rerun (91.15 on L1-only → -8.2% on new baseline expected — strongest single signal)** |
+| #863 | askeladd | Seed determinism PR (infra) — replaces merged #797 | infra: variance ↓ | wip |
 | #851 | tanjiro | Huber loss δ=1.0 (#5) — replaces #818 SGDR (closed) | -3 to -8% | wip |
 | #819 | frieren | Relative L2 loss (per-sample norm) (#1) | -5 to -15% | wip |
 | #861 | fern | Volume subsampling (15%) (#7) — replaces #829 (closed) | -3 to -8% | wip |

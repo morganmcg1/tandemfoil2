@@ -1,5 +1,56 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-28 22:15 — PR #797: NaN/Inf guards in evaluate_split — **MERGED (infra unblock)**
+
+- Branch: `willowpai2e4-askeladd/nan-guard-on-L1` (squashed)
+- Student: willowpai2e4-askeladd
+- W&B run: [`2hcmefh9`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/2hcmefh9) (rebased run on top of #754)
+
+**Hypothesis.** Add `nan_to_num(pred)` and a per-sample `y_finite` filter
+in `evaluate_split` to recover a reportable `test_avg/mae_surf_p` blocked
+by two interacting bugs: model-side `Inf` (init-dependent) on cruise
+samples, and `-Inf` in the GT p-channel of `test_geom_camber_cruise/000020.pt`
+(761 of 225K nodes, all volume).
+
+**Results (rebased on #754, best epoch 14, 30.8 min wall)**
+
+| Metric | This run (`2hcmefh9`) | Prior baseline (`m46h5g4s`) | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | 105.22 | 99.23 | **+6.0% noise** |
+| **`test_avg/mae_surf_p`** | **92.61 ✓** | NaN (blocked) | **NEW finite metric** |
+| `test_single_in_dist` | 117.77 | 106.78 | run-to-run noise |
+| `test_geom_camber_rc` | 99.49 | 104.87 | run-to-run noise |
+| `test_geom_camber_cruise` | **65.29 ✓** | NaN | **first finite cruise test** |
+| `test_re_rand` | 87.89 | 86.37 | run-to-run noise |
+| nonfinite_pred (all splits) | 0 | — | guard 1 unused on this seed |
+| nonfinite_gt_samples (cruise test only) | **1** | — | guard 2 fired exactly as expected |
+
+**Analysis.** This is an **infra unblock**, not a val improvement. With
+both diagnostic counts at 0 on every val split, the val pass is bit-
+identical to a guard-less run. The val_avg drift (99.23 → 105.22) is
+purely run-to-run init/sampler variance: `train.py` does not seed any
+RNG. Same code, two seeds, 6% drift — almost entirely on
+`val_single_in_dist`.
+
+**The headline win:** `test_avg/mae_surf_p = 92.61` is the **first
+reportable test number on this branch**. Before this PR, every PR's
+W&B summary showed `None` for the headline test metric because cruise's
+`-Inf` GT poisoned the float64 accumulator via IEEE 754 `Inf * 0 = NaN`.
+The per-sample `y_finite` filter dropped the bad sample cleanly.
+
+Askeladd also identified a residual cosmetic issue: `cruise/loss = NaN`
+(display-only) traced to `nan_to_num(y_norm)` with default args
+overflowing through `channel_weights[2]=3` to `+Inf`, then `Inf * 0 = NaN`.
+One-line fix (`nan=0.0, posinf=0.0, neginf=0.0`) will ride along with
+next `evaluate_split`-touching PR — not worth a 30-min retrain.
+
+**Decision.** Merged. BASELINE.md updated with the new test_avg=92.61
+unblock and a note about the run-to-run val variance from missing seeds.
+Reassigned askeladd → seed PR (#863) — their own #1 follow-up suggestion.
+This is the highest-leverage infra fix on the branch right now: without
+seeding, ablation legibility is broken (3% lever effects are within
+6% run-to-run noise).
+
 ## 2026-04-28 22:05 — PR #820: Fourier PE on (x, z) coordinates — **SENT BACK (rebase)**
 
 - Branch: `willowpai2e4-thorfinn/fourier-pe-coords`
