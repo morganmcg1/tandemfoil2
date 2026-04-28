@@ -1,8 +1,8 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 10:35 (advisor branch `icml-appendix-charlie-pai2d-r2`)
+- **Last update:** 2026-04-28 10:45 (advisor branch `icml-appendix-charlie-pai2d-r2`)
 - **Most recent human-team direction:** N/A — no open human-tagged issues at this time.
-- **Current baseline (directly measured, all standalone)**: `val_avg/mae_surf_p` = **`59.907`** (PR #630 cosine eta_min=2e-5, BEST) / `61.245` (PR #696 surface-only noise) / `61.872` (PR #647 per-block temp) / `62.747` (PR #640 per-group wd) / `62.879` (PR #601 δ=0.1) / `63.131` (PR #635 lr=6e-4) / `63.222` (PR #636 decaying noise). Test_avg = 52.656 / 53.605 / 54.555 / 54.512 / 54.561 / 55.026 / 54.900. **Combined-stack measurement (all 7 levers compounded) pending; expected to compound below 59.907 if all levers orthogonal.**
+- **Current baseline (directly measured, all standalone)**: `val_avg/mae_surf_p` = **`58.742`** (PR #698 eta_min=5e-5, BEST — direct compound on PR #630) / `59.907` (PR #630 eta_min=2e-5) / `60.5905` (PR #661 TF32 infra) / `61.245` (PR #696 surface-only noise) / `61.872` (PR #647 per-block temp) / `62.747` (PR #640 per-group wd) / `62.879` (PR #601 δ=0.1) / `63.131` (PR #635 lr=6e-4) / `63.222` (PR #636 decaying noise). Test_avg = 50.789 / 52.656 / 53.404 / 53.605 / 54.555 / 54.512 / 54.561 / 55.026 / 54.900.
 - **Stack throughput**: 17-18 epochs in 30-min budget under compile=True. Cosine T_max=11 → eta_min=0 at ep15, then cosine cycles back from ep16+.
 
 ## Merged compound stack (current advisor branch)
@@ -35,7 +35,8 @@
 26. PR #647 — Per-block slice-temp init schedule [1.5, 1.875, 2.25, 2.625, 3.0]. val_avg = 61.872. test_avg = 54.555.
 27. PR #630 — Cosine eta_min 0 → 2e-5 (with periodic-rebound mechanism). val_avg = 59.907. test_avg = 52.656.
 28. PR #696 — Surface-only feature noise (dims 0-12 only, skip per-sample globals). val_avg = 61.245. test_avg = 53.605.
-29. **PR #661 — TF32 matmul precision (infrastructure: +16.7% epochs in budget). val_avg = 60.5905 standalone (on PR #510 baseline). 21 epochs / 86.8 s/epoch. CURRENT BASELINE (combined stack pending).**
+29. PR #661 — TF32 matmul precision (infrastructure: +16.7% epochs in budget). val_avg = 60.5905 standalone (on PR #510 baseline). 21 epochs / 86.8 s/epoch.
+30. **PR #698 — Cosine eta_min 2e-5 → 5e-5 (descent-phase mechanism). val_avg = 58.742. test_avg = 50.789. Direct compound on PR #630. CURRENT BASELINE.**
 
 ## Active experiments (WIP)
 
@@ -47,14 +48,14 @@
 | #646 | fern | batch-size-6 | batch_size 4 → 6 with compile (rebase onto post-#647 stack) | WIP (sent back, rebase) |
 | #673 | tanjiro | per-group-wd-extreme | wd_attn 1e-4→3e-4, wd_mlp 1e-5→3e-6 (sent back: rebase onto post-#630 stack) | WIP (sent back, rebase) |
 | #719 | frieren | feature-noise-surface-only-005 | Surface-only base_std 0.0025 → 0.005 (push magnitude under clean per-node arm) | WIP (just assigned) |
-| #698 | nezuko | cosine-eta-min-5e-5 | cosine eta_min 2e-5 → 5e-5 (calibrate sweet spot, bigger rebound) | WIP (just assigned) |
+| #726 | nezuko | cosine-eta-min-1e-4 | cosine eta_min 5e-5 → 1e-4 (push profile, bracket from above) | WIP (just assigned) |
 | #709 | thorfinn | huber-per-channel-delta | Per-channel δ (δ_p=0.05, δ_Ux=δ_Uy=0.10) | WIP (just assigned) |
 
 ## Current research focus
 
 **Hyperparameter closure + profile extension on multiple active axes.** The merged stack now includes 21 improvements (latest: PR #510 compile = +28.6% epochs in budget compounds with everything); we are bracketing the remaining open directions:
 
-1. **Cosine eta_min sweep** (nezuko #698, 5e-5): PR #630 just merged with -7.4% gain (val=59.907). Profile is (0 → 64.824, 2e-5 → 59.907, 5e-5 → ?). Mechanism finding: eta_min is NOT a floor, the cosine rebounds in second half-cycle and half the gain comes from the unintended SGDR-like rebound.
+1. **Cosine eta_min push** (nezuko #726, 1e-4): PR #698 just merged with -1.94% gain (val=58.742). Profile (0/2e-5/5e-5) is monotone-improving with diminishing returns. Mechanism shifted from rebound (PR #630) to descent phase (PR #698). First soft signal of overshoot at eta_min=5e-5 (ep18 slightly worse than ep17). Pushing 1e-4 brackets from above.
 2. **Per-channel huber δ** (thorfinn #709): scalar δ axis saturated at 0.10 (PR #674); the `p` channel has lowest lin fraction (37% at thr=0.05). Apply δ_p=0.05 + δ_Ux=δ_Uy=0.10 to focus outlier downweighting where it matters most.
 3. **Surface-only noise magnitude push** (frieren #719, base_std=0.005): PR #696 just merged with -1.01% gain. With per-sample destabilizing arm removed, the magnitude ceiling that capped PR #669 (90% clip rate at full 0.005) may have lifted under clean per-node arm.
 4. **Per-parameter-group wd** (tanjiro #640): single-scalar wd axis is closed at 3e-5; explore module-type-differential wd to capture the OOD asymmetry (attn higher to help camber_rc, mlp lower to help re_rand).
