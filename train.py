@@ -240,9 +240,12 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+            if _USE_AMP:
+                with torch.amp.autocast("cuda", dtype=_AMP_DTYPE):
+                    pred = model({"x": x_norm})["preds"]
+                pred = pred.float()
+            else:
                 pred = model({"x": x_norm})["preds"]
-            pred = pred.float()
 
             sq_err = torch.nan_to_num(
                 F.smooth_l1_loss(pred, y_norm, reduction="none", beta=1.0),
@@ -393,11 +396,17 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    amp_dtype: str = "bf16"  # "fp32" | "bf16" | "fp16"
 
 
 cfg = sp.parse(Config)
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
+
+_AMP_DTYPE = {"fp32": None, "bf16": torch.bfloat16, "fp16": torch.float16}[cfg.amp_dtype]
+_USE_AMP = _AMP_DTYPE is not None
+_USE_GRAD_SCALER = cfg.amp_dtype == "fp16"
+scaler = torch.amp.GradScaler("cuda") if _USE_GRAD_SCALER else None
 
 SEED = int(os.environ.get("SENPAI_SEED", "0"))
 torch.manual_seed(SEED)
@@ -409,8 +418,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
 if torch.cuda.is_available():
     bf16_ok = torch.cuda.is_bf16_supported()
-    print(f"GPU: {torch.cuda.get_device_name(0)} | bf16 supported: {bf16_ok} | seed: {SEED}")
-    if not bf16_ok:
+    print(
+        f"GPU: {torch.cuda.get_device_name(0)} | bf16 supported: {bf16_ok} | "
+        f"amp_dtype: {cfg.amp_dtype} | seed: {SEED}"
+    )
+    if cfg.amp_dtype == "bf16" and not bf16_ok:
         raise RuntimeError("bf16 autocast requested but GPU does not natively support it.")
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
@@ -464,7 +476,7 @@ run = wandb.init(
         "n_params": n_params,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
-        "amp_dtype": "bf16",
+        "amp_dtype": cfg.amp_dtype,
         "seed": SEED,
     },
     mode=os.environ.get("WANDB_MODE", "online"),
@@ -506,9 +518,12 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        if _USE_AMP:
+            with torch.amp.autocast("cuda", dtype=_AMP_DTYPE):
+                pred = model({"x": x_norm})["preds"]
+            pred = pred.float()
+        else:
             pred = model({"x": x_norm})["preds"]
-        pred = pred.float()
         sq_err = F.smooth_l1_loss(pred, y_norm, reduction="none", beta=1.0)
 
         vol_mask = mask & ~is_surface
@@ -518,8 +533,13 @@ for epoch in range(MAX_EPOCHS):
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if _USE_GRAD_SCALER:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
@@ -553,6 +573,8 @@ for epoch in range(MAX_EPOCHS):
         "peak_GB": peak_gb,
         "global_step": global_step,
     }
+    if _USE_GRAD_SCALER:
+        log_metrics["amp/grad_scale"] = scaler.get_scale()
     for split_name, m in split_metrics.items():
         for k, v in m.items():
             log_metrics[f"{split_name}/{k}"] = v
