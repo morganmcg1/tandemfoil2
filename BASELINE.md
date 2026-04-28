@@ -21,10 +21,9 @@ Lower is better on **`val_avg/mae_surf_p`** (equal-weight mean surface-pressure 
   |---|---:|
   | `test_single_in_dist` | 111.75 |
   | `test_geom_camber_rc` | 117.86 |
-  | `test_geom_camber_cruise` | **NaN** (pre-existing bug — model emits non-finite predictions on at least one sample) |
+  | `test_geom_camber_cruise` | (recomputable now via the eval bug-fix in commit `32b5b40` — was NaN in the original W&B run) |
   | `test_re_rand` | 108.73 |
-  | **test_avg** | NaN (because of `test_geom_camber_cruise`) |
-  | mean of 3 valid test splits | 112.78 |
+  | mean of 3 valid splits | 112.78 |
 
 - **W&B run:** `w3mjq2ua` in group `lr-warmup-sweep` (project `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r3`)
 - **Reproduce:**
@@ -36,5 +35,5 @@ Lower is better on **`val_avg/mae_surf_p`** (equal-weight mean surface-pressure 
   ```
 - **Notes:**
   - All Round-1 sweep runs hit the 30-min `SENPAI_TIMEOUT_MINUTES` at ~epoch 14 of 50; cosine never fully annealed. Comparisons across PRs in this round are at this same truncated budget.
-  - The test_avg NaN is due to non-finite predictions on at least one sample in `test_geom_camber_cruise` — same NaN at all three peak_lr values, so it's lr-independent. **Open issue** — flagged for follow-up.
+  - **Test_avg NaN bug RESOLVED** in commit `32b5b40` (cherry-picked from PR #319, frieren). Root cause: `test_geom_camber_cruise/000020.pt` has `-inf` values in ground-truth pressure, and `data/scoring.py`'s zero-mask multiplication produces `0 * inf = NaN` which poisons the per-split aggregator. Fix lives in `train.py`'s `evaluate_split` (data/scoring.py is read-only): drop samples with non-finite GT from the mask before any arithmetic. PRs after this commit will have correct test metrics on every checkpoint.
   - Hyperparameter snapshot at this baseline: `peak_lr=1e-3, warmup_epochs=2, weight_decay=1e-4, batch_size=4, surf_weight=10.0, epochs=50, n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2`.

@@ -1,5 +1,27 @@
 # SENPAI Research Results — `icml-appendix-willow-pai2d-r3`
 
+## 2026-04-28 00:55 — PR #319: Deeper Transolver, n_layers 5→8 — **CLOSED (bug fix cherry-picked)**
+
+- Branch: `willowpai2d3-frieren/deeper-n-layers-8` (deleted post-close)
+- **Hypothesis:** Increase depth from 5 → 8 for hierarchical feature processing; predicted Δ on `val_avg/mae_surf_p` of −3% to −8%.
+
+### Sweep results (group `deeper-n-layers`, against the OLD baseline lr=5e-4)
+
+| n_layers | params | epochs done | best ep | val_avg/mae_surf_p | test_avg/mae_surf_p (post-bugfix) | W&B run |
+|---:|---:|---:|---:|---:|---:|---|
+| **6** | 0.78M | 12 / 50 | 12 (last) | **143.33** | **130.37** | `cjhgf7os` |
+| 8 | 1.03M | 9 / 50 | 9 (last) | 147.32 | 133.87 | `m8l7qi00` |
+| 10 | 1.27M | 8 / 50 | 7 | 191.87† | 155.36 | `wqhb8qoq` |
+
+† Student reported 168.39 in the PR comment but W&B summary shows 191.87 — likely a stale earlier-epoch number. Doesn't affect ranking (n_layers=10 still loses).
+
+### Decision: **CLOSED** (depth experiment) + **CHERRY-PICKED** (bug fix)
+
+- **Depth experiment is compute-confounded at this budget.** All three runs were still descending at the 30-min cap; n_layers=6 got 12 epochs while n_layers=10 got only 8 (a 50% step-budget gap). Frieren's own analysis correctly identified this — the experiment can't adjudicate depth without compute-matching. At the post-PR-#320 baseline of 115.84, even n_layers=6 (143.33) is below the bar. Closed rather than asking for a re-run because frieren's slot is more valuable on a fresh axis.
+- **Bug-fix cherry-picked into commit `32b5b40` on advisor branch.** Frieren independently diagnosed the NaN bug as `0 * inf = NaN` from `-inf` values in `test_geom_camber_cruise/000020.pt`'s ground-truth pressure (more precise than the prior framing of "model emits NaN"), and submitted a clean train-side safety net (drop non-finite GT samples from the mask before any arithmetic). This unblocks `test_avg/mae_surf_p` for all sibling Round-1 PRs once they rebase.
+- **Frieren reassigned** to OneCycleLR follow-up (PR #409) — natural extension of the warmup result on the merged baseline.
+- **PR #397 (nezuko, original NaN-fix assignment) closed** — its safety-net work is now upstream; nezuko reassigned to EMA of weights (PR #410).
+
 ## 2026-04-28 00:38 — PR #323: FFN expressivity, mlp_ratio 2 → 4 — **SENT BACK FOR REBASE**
 
 - Branch: `willowpai2d3-thorfinn/mlp-ratio-4`

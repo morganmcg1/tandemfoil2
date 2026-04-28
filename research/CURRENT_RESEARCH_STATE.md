@@ -9,9 +9,11 @@
 
 First Round-1 winner merged: **PR #320** (linear warmup + peak LR 1e-3) drops `val_avg/mae_surf_p` from 147.55 → **115.84** (−21.5%, uniform across all 4 val splits). This sets the in-track baseline.
 
-**Rebase warning is now active:** all in-flight Round-1 PRs were drafted against the OLD baseline (`lr=5e-4`, no warmup). PR #323 (thorfinn, mlp_ratio=4) just confirmed the lever direction is real (−4.7% vs ratio=2 in-sweep) but its absolute number 136.96 is below the new 115.84 bar — so it was sent back for rebase + re-run on top of the merged baseline. Expect the same need for the other six in-flight PRs once their results arrive: each must demonstrate that its lever still wins on top of `peak_lr=1e-3, warmup_epochs=2`.
+**Test-aggregate NaN bug RESOLVED.** Frieren independently diagnosed the same root cause as thorfinn (`0 * inf = NaN` from `-inf` values in `test_geom_camber_cruise/000020.pt`'s ground-truth pressure) and submitted a clean train-side safety net. Cherry-picked into advisor as commit `32b5b40`. All sibling Round-1 PRs now produce finite `test_avg/mae_surf_p` once they pull the rebased baseline.
 
-**Test-aggregate bottleneck:** thorfinn's NaN root-cause analysis was more precise — the offending file is `test_geom_camber_cruise/000020.pt` (761 NaN values in **ground-truth pressure**, not predictions). The bug is in `data/scoring.py`'s zero-mask-then-multiply pattern (`0.0 * NaN == NaN`) which fails to skip non-finite GT samples as documented. `data/scoring.py` is read-only, so the fix lives in the trainer's eval wrapper. nezuko PR #397 is in flight to land this safety net centrally.
+**Rebase warning is still active for in-flight Round-1 PRs:** all PRs (#294, #315, #316, #317, #322) drafted against the OLD baseline must demonstrate their lever still wins on top of `peak_lr=1e-3, warmup_epochs=2`. PR #323 was first to be sent back; PR #319 (depth) was closed as compute-confounded at this budget; PR #397 (nezuko's original NaN follow-up) was closed because the safety-net work is now upstream.
+
+**Round 2 already begun in the LR-schedule lane:** frieren reassigned to OneCycleLR (PR #409) and nezuko reassigned to EMA of weights (PR #410) — both compound on the merged warmup baseline along the training-recipe axis.
 
 ## Round 1 — orthogonal axes assigned (2026-04-27)
 
@@ -21,7 +23,7 @@ First Round-1 winner merged: **PR #320** (linear warmup + peak LR 1e-3) drops `v
 | askeladd | [#315](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/315) | **Width** — `n_hidden` 128 → 192 (sweep 160/192/256) | wip | — |
 | edward | [#316](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/316) | **Slice count** — `slice_num` 64 → 128 (sweep 96/128/192) | wip | — |
 | fern | [#317](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/317) | **Surface-vs-volume balance** — `surf_weight` sweep {5, 20, 40, 80} | wip | — |
-| frieren | [#319](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/319) | **Depth** — `n_layers` 5 → 8 (sweep 6/8/10) | wip | — |
+| frieren | [#319](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/319) | **Depth** — `n_layers` 5 → 8 (sweep 6/8/10) | **CLOSED** | Compute-confounded at 30-min budget (deeper = fewer epochs); n_layers=6 wins in-sweep at 143.33, below new bar. Bug fix cherry-picked. |
 | nezuko | [#320](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/320) | **LR schedule** — linear warmup + peak LR ∈ {5e-4, 1e-3, 2e-3} | **MERGED** | **−21.5%** (147.55 → 115.84); peak_lr=1e-3 wins |
 | tanjiro | [#322](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/322) | **Channel weighting** — upweight pressure in surface loss (sweep p_w ∈ {1, 2, 3, 5}) | wip | — |
 | thorfinn | [#323](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/323) | **FFN expressivity** — `mlp_ratio` 2 → 4 (sweep 2/4/6) | **rebase + re-run** | In-sweep −4.7% (143.75→136.96, ratio=4 wins, ratio=6 regresses); abs below new bar — sent back to re-run on merged baseline |
@@ -35,9 +37,14 @@ These eight axes were chosen for **orthogonality** so that improvements compound
 - Hyperparams: `peak_lr=1e-3, warmup_epochs=2, weight_decay=1e-4, batch_size=4, surf_weight=10.0, epochs=50, n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2`.
 - All Round-1 sweep runs hit the 30-min timeout at ~epoch 14 of 50; cosine never fully annealed at this budget.
 
-## Follow-ups in flight
+## Round 2 — training-recipe extensions (2026-04-28)
 
-- **nezuko PR [#397](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/397)** — Diagnose + fix `test_geom_camber_cruise` NaN predictions (gradient clipping + W&B-visible safety net). Unblocks `test_avg/mae_surf_p` for *all* in-flight Round-1 PRs.
+| Student | PR | Lever | Predicted Δ |
+|---|---|---|---|
+| frieren | [#409](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/409) | **OneCycleLR** — onecycle_peak_lr ∈ {1e-3, 2e-3, 3e-3}, pct_start=0.1 | −2 to −5% |
+| nezuko | [#410](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/410) | **EMA of weights at eval time** — sweep decay ∈ {0.99, 0.999, 0.9995} | −1 to −5% |
+
+Both compound on the merged warmup baseline along the training-recipe axis; predicted to be orthogonal to each other and to the in-flight Round-1 architecture/loss experiments.
 
 ## Potential next research directions
 
