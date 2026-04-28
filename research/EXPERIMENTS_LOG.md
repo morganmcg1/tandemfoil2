@@ -129,6 +129,35 @@ Round-1 reviews. Primary ranking metric: `val_avg/mae_surf_p` (lower is better).
 - **Key student diagnosis**: 8 geometric bands up to `2^7 = 128 rad/log_re_unit` is too aggressive for a 4-decade `log(Re)` span (≈ 80 cycles across the corpus). The highest frequencies produce per-Re fingerprints rather than smooth Re-functions, which hurts cross-Re generalization specifically — exactly the failure mode observed on `val_re_rand`. Failure pattern is structured (matches aliasing prediction), not RNG noise.
 - Decision: **CLOSE** standalone. Direction has real signal (single_in_dist −3.86% val, −8.06% test is too large to be RNG drift), but the chosen frequency band is wrong. **Salvageable** with narrower band — round-3 follow-up should test `re_fourier_bands=4` (frequencies up to 2^3=8 rad/log_re_unit) which preserves the low-frequency content (smooth Re-trend) while removing the aliasing pressure.
 
+## 2026-04-28 01:15 — PR #391: SwiGLU MLP in TransolverBlock (LLaMA-style FFN) — **WINNER**
+
+- Branch: `charliepai2d2-thorfinn/swiglu-mlp` — metrics committed.
+- Hypothesis: replace 2-linear GELU MLP inside `TransolverBlock` with LLaMA-style SwiGLU (gate × value, bias-free). Per-token gating gives the FFN capacity to suppress channels that aren't useful per-node, especially on irregular meshes. Predicted −1% to −3%.
+- Result: best `val_avg/mae_surf_p = 88.227` at epoch 13. **−12.95% vs EMA baseline (101.350)**, far exceeding the predicted range. **test_avg = 78.338** (−20.03% vs PR #361 finite test 97.957). Param-matched (+1.3%, 670K vs 660K).
+- Per-split val MAE for `p`: **all 4 splits improved** — single_in_dist 106.40 (−15.78%), geom_camber_rc 100.41 (−8.23%), geom_camber_cruise 64.41 (−16.34%), re_rand 81.70 (−11.86%).
+- Per-split test MAE for `p`: single_in_dist=96.44, geom_camber_rc=88.06, **geom_camber_cruise=54.01**, re_rand=74.84.
+- **Striking observation**: the previously-flat `val_geom_camber_rc` (−0.07% under EMA) finally moved (−8.23%) — supports the per-token-role-specific-gating mechanism. Loss descent was monotonic and steeper than the EMA baseline run; every epoch up to the cap was a new best — model is still under-trained.
+- Decision: **MERGE.** New baseline `val_avg/mae_surf_p = 88.227`. SwiGLU stacks cleanly on top of EMA.
+
+## 2026-04-28 01:15 — PR #392: Increase mlp_ratio from 2 to 4
+
+- Branch: `charliepai2d2-frieren/mlp-ratio-4` — metrics committed.
+- Hypothesis: doubling FFN hidden width adds capacity where the model is most under-capacity for a complex regression task. Predicted −2% to −5%.
+- Result: best `val_avg/mae_surf_p = 108.558` at epoch 13. **+7.1% vs EMA baseline.** Equal-epoch comparison (epoch 13 vs epoch 13): +2.6% (105.83 vs 108.56). +50% more params yielded *negative* marginal returns.
+- Per-split val MAE for `p`: single_in_dist=137.48 (+8.83%), geom_camber_rc=118.36 (+8.18%), geom_camber_cruise=82.33 (+6.94%), re_rand=96.06 (+3.64%).
+- **Per-split signature contradicts the capacity-bottleneck hypothesis**: the two highest-baseline-MAE splits (single_in_dist, camber_rc) regressed *most* (+8.8%, +8.2%). If raw FFN capacity were the limit, those should be where extra FFN params help — they aren't. Bottleneck on those splits is **generalization** (held-out cambers, distribution shift), not capacity.
+- Decision: **CLOSE.** Single-axis FFN scaling is now disconfirmed; the +50% params slows convergence under the wallclock cap and doesn't address the actual bottleneck (generalization on OOD splits). Combined with the SwiGLU win (architectural change at param-matched cost), it is now clear that **architectural quality matters more than raw MLP capacity** on this problem.
+
+## 2026-04-28 01:15 — PR #370: Align cosine T_max with actual epoch budget (T_max=14)
+
+- Branch: `charliepai2d2-askeladd/cosine-tmax-14` — student rebased onto post-EMA advisor; metrics committed.
+- Hypothesis: cosine `T_max=14` aligns LR decay with the actual reachable epoch count under the 30-min cap, letting the LR fully decay during training. Predicted −3% to −8%.
+- Result: best `val_avg/mae_surf_p = 102.359` at epoch 14. **vs original huber baseline (105.999): −3.43% (matches predicted range).** vs EMA baseline (101.350): **+1.00% (slight regression).** test_avg=93.052 (−5.0% vs PR #361 finite test 97.957) — **all 4 test splits finite**, three of four improve.
+- Per-split val MAE for `p` (vs EMA): single_in_dist=123.96 (−1.87%), geom_camber_rc=108.98 (−0.39%), geom_camber_cruise=81.76 (+6.20%), re_rand=94.73 (+2.21%).
+- LR trajectory: best epoch (14) ran with `lr ≈ 1.3% of peak` — confirms the premise that best-val coincides with the low-lr tail.
+- **Student's analytical insight (excellent)**: cosine T_max=14 and EMA(decay 0.999) interact non-additively. EMA half-life ≈ 693 steps ≈ 1.85 epochs at our batch count; with T_max=14, the last 5–7 epochs run at lr ≤ 28% of peak (and the final 2 at <2% of peak), so the EMA averages weights that are barely moving. We get the cosine sharp-minimum effect *and* the EMA smoothing, but the EMA contribution shrinks because there's nothing left for it to smooth. Levers are not orthogonal.
+- Decision: **CLOSE.** +1.00% vs current EMA baseline; further behind after the SwiGLU merge (would be ~+16% vs 88.227). Direction is not dead — student's follow-up #1 (smaller-decay EMA, e.g. 0.99, half-life ~0.2 epochs) would let cosine annealing's low-lr tail dominate the final EMA state without the "averaged stillness" effect — worth queuing if other levers stall.
+
 ## Test-metric NaN follow-up (cross-PR)
 
 All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the student diagnoses:
