@@ -570,7 +570,7 @@ for epoch in range(MAX_EPOCHS):
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+        vol_loss = (smooth_l1 * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)  # SmoothL1 β=0.5 (was MSE in #394)
         surf_loss = (smooth_l1 * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
