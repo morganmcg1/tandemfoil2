@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Updated**: 2026-04-28 23:00 UTC
+- **Updated**: 2026-04-28 (round 2 survey, pass 2 — all students WIP, no reviews pending)
 - **Branch**: `icml-appendix-willow-pai2e-r2`
 - **Tag**: `willow-pai2e-r2`
 - **Most recent human researcher direction**: none; no GitHub Issues open.
@@ -8,13 +8,13 @@
 
 ## Current baseline
 
-**PR #840 (edward, per-sample relative MAE) — WINNER, pending rebase/merge**
-- `val_avg/mae_surf_p` = **64.73** at epoch 32/50 (timed out, still improving)
-- Per-split val: single=80.41, rc=78.51, cruise=40.13, re_rand=60.73
-- Per-split test (all finite!): single=77.25, rc=67.74, cruise=32.35, re_rand=50.35
-- `test_avg/mae_surf_p` = **56.92** (all 4 splits finite for first time)
-- W&B: `nz8eev8e`; Config: compound base + `--loss_type relative_mae --huber_delta 1.0 --surf_weight 10 --lr 5e-4`
-- Delta vs PR #783: −11.20 (−14.7%) on val_avg/mae_surf_p
+**PR #840 (edward, per-sample relative MAE) — MERGED**
+- `val_avg/mae_surf_p` = **64.16** at epoch 32/50 (rebased re-run, W&B: `t5p9xzxx`)
+- Per-split val: single=77.07, rc=84.10, cruise=36.86, re_rand=58.58
+- Per-split test (all finite!): single=71.33, rc=70.62, cruise=30.92, re_rand=50.04
+- `test_avg/mae_surf_p` = **55.73** (all 4 splits finite)
+- Config: compound base + `--loss_type relative_mae --surf_weight 10.0`
+- Delta vs PR #783: −11.77 (−15.5%) on val_avg/mae_surf_p
 
 **Previous merged baseline**: PR #783 (fern, Huber δ=1.0) — val=75.93 (superseded)
 
