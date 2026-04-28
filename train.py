@@ -420,6 +420,7 @@ class Config:
     huber_beta: float = 0.5  # round-1 winner from PR #467; baseline reproduces with no flag
     epochs: int = 50
     cosine_epochs: int = 50  # CosineAnnealing T_max — defaults to MAX_EPOCHS; override for shorter horizons
+    warmup_epochs: int = 0  # Linear warmup over the first N epochs; 0 = no warmup (matches merged baseline)
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
@@ -507,7 +508,24 @@ def update_ema() -> None:
 
 
 optimizer = torch.optim.AdamW(_model_base.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.cosine_epochs)
+if cfg.warmup_epochs > 0:
+    # Linear warmup from lr*1e-3 → lr over warmup_epochs, then cosine over the
+    # remainder. Cosine T_max = cosine_epochs - warmup_epochs so the cosine tail
+    # lands at the same epoch as the no-warmup baseline.
+    warmup = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=1e-3, end_factor=1.0,
+        total_iters=cfg.warmup_epochs,
+    )
+    main_schedule = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(cfg.cosine_epochs - cfg.warmup_epochs, 1)
+    )
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[warmup, main_schedule],
+        milestones=[cfg.warmup_epochs],
+    )
+else:
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.cosine_epochs)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
