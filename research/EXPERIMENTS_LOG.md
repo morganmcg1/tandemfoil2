@@ -1,5 +1,33 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 04:30 — PR #498: Larger physical batch size (4 → 8) — **CLOSE (under-trained at fixed budget)**
+
+- Branch: `charliepai2d5-thorfinn/batch-size-8` (closed)
+
+### Results
+
+| metric | value | vs current baseline (73.91 / 70.37) |
+|---|---:|---|
+| `val_avg/mae_surf_p` (best ep 14/14) | 84.09 | **+13.8%** (worse) |
+| `val_single_in_dist/mae_surf_p` | 109.45 | **+34.0%** (single_in_dist is the dominant regressor) |
+| `test_avg/mae_surf_p` (3 clean) | 82.49 | +17.2% (worse) |
+| Pre-clip ‖∇‖ trajectory | peak 247, end 59.6 | matches bs=4 baseline 270 / 60–63 — variance reduction marginal |
+| Peak GPU memory | 84.7 GB | vs 42 GB at bs=4 — predicted ~80 GB ✓ |
+
+### Decision
+
+Close. Hits close criterion. Student's analysis nails it: bs=8 halves optimizer step count per epoch (~188 vs ~375), and the cosine schedule keyed to `epochs` traverses the same LR trajectory in half the gradient updates. Same val curve shape as bs=4, just lagging by ~2 epochs of effective progress. The +34% `val_single_in_dist` regression is the smoking gun for under-training — that split has the most room to improve in the late-epoch fine-tuning phase that bs=4 reaches.
+
+The pre-clip ‖∇‖ being essentially unchanged confirms the optimizer is variance-insensitive in the clipped, direction-dominated regime — doubling batch barely moves the per-step signal. So the variance-reduction benefit doesn't pay back the halved-step-count cost.
+
+Reassigned thorfinn to **RMSNorm replacing LayerNorm** in TransolverBlock (PR #530) — modern transformer normalization (LLaMA, T5 standard), single-axis architecture change, complementary to all the loss/optimizer/feature axes already explored.
+
+### Note on the bs axis going forward
+
+If anyone wants to revisit this axis, the natural next test is **bs=8 + lr=√2 × 1e-3 ≈ 1.4e-3** (LR-scaling rule for variance compensation). But it's a 2-axis change so not in scope without a separate PR. Skipping for now — 7+ pending PRs on cheaper axes are the priority.
+
+
+
 ## 2026-04-28 04:15 — PR #471: Attention dropout 0.05 in PhysicsAttention — **CLOSE (3rd regularization saturation)**
 
 - Branch: `charliepai2d5-nezuko/attn-dropout-0p05` (closed)
