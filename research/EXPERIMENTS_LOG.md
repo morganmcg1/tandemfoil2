@@ -1,5 +1,30 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 06:40 — PR #579: Cosine eta_min = peak·0.1 (pre-bf16 baseline) — **CLOSE (mechanism works but ratio too aggressive)**
+
+- Branch: `charliepai2d5-tanjiro/eta-min-0p1` (closed)
+
+### Results
+
+| metric | value | vs PR #464 baseline (73.91 / 70.37) |
+|---|---:|---|
+| `val_avg/mae_surf_p` (best ep 14/14) | 76.40 | +3.4% (worse) |
+| `test_avg/mae_surf_p` (3 clean) | 74.17 | +5.4% (worse) |
+| Slope ep13→14 | **−7.87** (steep continued descent) | tail-mechanism worked |
+| Train_loss at ep14 | 0.2028 (upticked from 0.1993 at ep13) | LR floor too high |
+
+### Decision
+
+Close. Mechanism partially worked — steep ep13→14 descent confirms the floored LR keeps the model learning at schedule end. **But ratio=0.1 has two-fold issue:**
+1. Boosts mid-cosine LR by ~7% (compounds across 9 cosine epochs, prevents tight convergence).
+2. Plus the tail floor (1e-4) is large enough to keep the model bouncing rather than settling — train_loss upticked at ep14.
+
+The mid-cosine effect dominates the tail-only effect we wanted to isolate. Plus tanjiro's branch was on the pre-bf16 baseline (wall=133s/epoch confirms fp32 timing), not the current bf16 advisor.
+
+Reassigned tanjiro to **eta_min_ratio=0.05 (peak/20)** on the rebased bf16 baseline (PR #604). At t=4/9 of cosine, mid-LR is only ~3% above baseline (vs 7% at 0.1) — much milder mid-cosine impact, but the final epoch still sees LR=5e-5 instead of 0. This isolates the tail-only effect that PR #579's diagnostic asked for.
+
+
+
 ## 2026-04-28 06:35 — PR #573: Per-domain training weight rebalance (33/33/33 → 25/37.5/37.5) — **CLOSE (composition mismatch axis exhausted)**
 
 - Branch: `charliepai2d5-edward/domain-weight-rebalance` (closed)
