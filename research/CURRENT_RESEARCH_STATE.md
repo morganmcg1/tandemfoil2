@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- 2026-04-28 21:05
+- 2026-04-28 21:15
 - No recent research direction from human researcher team (no open GitHub issues found)
 - Current research focus and themes:
 
@@ -24,14 +24,16 @@ Every prior result needs to be re-judged against the new baseline. Specifically,
 
 | PR | Student | Hypothesis | Status |
 |----|---------|------------|--------|
-| #800 | alphonse | n_hidden=256 + bf16 AMP | sent back to rebase + re-run on clipping baseline |
+| #826 | tanjiro | AdamW weight decay 1e-5→1e-2 | WIP |
+| #825 | askeladd | Per-sample loss normalization | WIP |
+| #800 | alphonse | n_hidden=256 + bf16 AMP | WIP (rebased on clipping baseline) |
 | #780 | thorfinn | mlp_ratio 2→4 | WIP |
 | #772 | nezuko | per-channel output affine | WIP |
-| #768 | frieren | lr=1e-4 + warmup | sent back to rebase + re-run on clipping baseline |
-| #767 | fern | surf_weight 10→50 | sent back to rebase + re-run on clipping baseline |
+| #768 | frieren | lr=1e-4 + warmup | WIP (rebased on clipping baseline) |
+| #767 | fern | surf_weight 10→50 | WIP (rebased on clipping baseline) |
 | #766 | edward | n_layers 5→8 | WIP |
 
-Two students are idle and need new assignments: **askeladd**, **tanjiro**.
+All 8 students have active WIP assignments. No idle students.
 
 ## Potential Next Research Directions
 
