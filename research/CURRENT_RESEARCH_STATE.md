@@ -1,10 +1,16 @@
 # SENPAI Research State
 
-- **Updated**: 2026-04-28 18:57 UTC
+- **Updated**: 2026-04-28 19:30 UTC
 - **Branch**: `icml-appendix-willow-pai2e-r2`
 - **Tag**: `willow-pai2e-r2`
 - **Most recent human researcher direction**: none; no GitHub Issues open.
 - **Lab**: 8 students, 1 GPU each (96 GB), 30 min wall-clock, 50 epochs cap.
+
+## First review pass (2026-04-28 19:30)
+
+- **PR #782 (edward, GeGLU mlp_ratio=4)** — sent back. Confounded design (FFN ~3x larger than baseline). Re-run will use mlp_ratio≈8/3 to match FFN params. Best val_avg/mae_surf_p 109.89 / offline test_avg ~106.
+- **PR #784 (frieren, OneCycleLR epochs=50)** — sent back. Schedule never completed (32/50 epochs at timeout, LR floor never reached). Re-run will use `--epochs 28` to fit the 30-min budget. Best val_avg/mae_surf_p 91.72 / offline test_avg 81.62.
+- **Tooling debt**: cruise-split `+Inf` in target makes `test_avg/mae_surf_p` log as NaN for every run on this branch. Need to cherry-pick the `nan_to_num` guard from PR #797 (r4 branch) into `evaluate_split`. Until then students must compute clean test_avg offline.
 
 ## Current research focus
 
