@@ -6,9 +6,30 @@ SPDX-PackageName: senpai
 
 # Baseline Metrics — TandemFoilSet (pai2e-r5)
 
-## Current Best: PR #738 — surf_weight=20 (charliepai2e4-edward/higher-surf-weight-20)
+## 2026-04-28 21:00 — PR #798: L1 loss: align training objective with MAE metric
 
-**Primary metric: `val_avg/mae_surf_p` = 128.8320** (best checkpoint, epoch 13/14)
+- **Surface MAE:** Ux=1.3095, Uy=0.5908, p=**97.4483** (val_avg)
+- **val_avg/mae_surf_p:** 97.4483 (best checkpoint, epoch 14/50)
+- **Metric summary:** `metrics/charliepai2e5-alphonse-l1-loss-2dl6j00h.jsonl`
+- **Reproduce:** `cd target/ && python train.py --surf_weight 20.0`
+
+### Per-split validation (best checkpoint, epoch 14)
+
+| Split | surf Ux | surf Uy | surf p |
+|-------|--------:|--------:|-------:|
+| val_single_in_dist     | — | — | 126.6157 |
+| val_geom_camber_rc     | — | — | 110.4532 |
+| val_geom_camber_cruise | — | — |  65.8819 |
+| val_re_rand            | — | — |  86.8424 |
+| **avg**                | **1.3095** | **0.5908** | **97.4483** |
+
+**Improvement over previous baseline:** 128.8320 → 97.4483 (−24.4%)
+
+---
+
+## Previous Best: PR #738 — surf_weight=20 (charliepai2e4-edward/higher-surf-weight-20)
+
+**Primary metric: `val_avg/mae_surf_p` = 128.8320** (best checkpoint, epoch 13/14) — *superseded by PR #798*
 
 ### Model configuration (baseline)
 
