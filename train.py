@@ -83,6 +83,26 @@ class MLP(nn.Module):
         return self.linear_post(x)
 
 
+class SwiGLU(nn.Module):
+    """SwiGLU FFN: drop-in replacement for ``MLP(hidden, hidden*ratio, hidden)``.
+
+    Sized to match the original FFN parameter count: with ``mlp_ratio=2`` the
+    standard MLP has params ~ 2 * hidden * (hidden*ratio) = 4*hidden^2.
+    SwiGLU with two projections at intermediate = hidden * ratio * 2/3 has
+    params ~ hidden * (2 * hidden * ratio * 2/3) + hidden * (hidden * ratio * 2/3)
+    = 2 * hidden^2 * ratio = same.
+    """
+    def __init__(self, hidden_dim: int, mlp_ratio: int = 2):
+        super().__init__()
+        intermediate = int(hidden_dim * mlp_ratio * 2 / 3)
+        self.w_value = nn.Linear(hidden_dim, intermediate)
+        self.w_gate = nn.Linear(hidden_dim, intermediate)
+        self.w_out = nn.Linear(intermediate, hidden_dim)
+
+    def forward(self, x):
+        return self.w_out(F.silu(self.w_gate(x)) * self.w_value(x))
+
+
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
@@ -149,8 +169,7 @@ class TransolverBlock(nn.Module):
             dropout=dropout, slice_num=slice_num,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
-        self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
-                       n_layers=0, res=False, act=act)
+        self.mlp = SwiGLU(hidden_dim, mlp_ratio=mlp_ratio)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
