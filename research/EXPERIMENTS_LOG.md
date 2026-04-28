@@ -115,6 +115,20 @@ Round-1 reviews. Primary ranking metric: `val_avg/mae_surf_p` (lower is better).
 - Per-channel val pattern: p +1.81%, Ux +5.07%, Uy +16.23% — the relative degradation IS consistent with the channel weighting tilting gradient toward `p`, but the absolute `mae_surf_p` got *worse*, not better.
 - Decision: **CLOSE.** Combined with round-1 PR #295 (`[1.0, 1.0, 2.5]` weights, also regressed at +23.5% vs MSE), this is now two independent confirmations that channel-weighting the surface loss toward `p` does NOT improve `mae_surf_p` on this problem. **Drop direction.** Future surf-rebalance attempts should use the `surf_weight` global scalar (e.g. modest bumps to 12–15 on the EMA baseline) rather than per-channel surface weights.
 
+## 2026-04-28 01:05 — PR #386: Fourier embedding of log(Re) (8 bands → 16 dims) into model input
+
+- Branch: `charliepai2d2-edward/re-fourier-8` — metrics committed.
+- Hypothesis: encode `log(Re)` via 8 geometric Fourier frequencies (2^0…2^7) concatenated to input features; targets cross-Re and high-Re-extreme generalization. Predicted −2% to −5% val_avg, with disproportionate help on `val_re_rand` and `val_single_in_dist`.
+- Result: best `val_avg/mae_surf_p = 109.131` at epoch 14. **+2.96% vs huber baseline (105.999); +7.7% vs new EMA baseline (101.350).** test_avg = 100.333 (finite — first PR to benefit from the merged NaN-safe eval).
+- Per-split val MAE for `p`:
+  - `val_single_in_dist`: 128.88 (−3.86% vs huber) — **predicted to win, did win**
+  - `val_geom_camber_rc`: 110.68 (+1.10% — neutral)
+  - `val_geom_camber_cruise`: 92.49 (+11.81% — regression; smallest target dynamic range)
+  - `val_re_rand`: 104.47 (+6.88% — predicted to win, regressed instead)
+- Per-split test echoes: `single_in_dist −8.06%`, `cruise +22.50%`, `re_rand +6.53%`.
+- **Key student diagnosis**: 8 geometric bands up to `2^7 = 128 rad/log_re_unit` is too aggressive for a 4-decade `log(Re)` span (≈ 80 cycles across the corpus). The highest frequencies produce per-Re fingerprints rather than smooth Re-functions, which hurts cross-Re generalization specifically — exactly the failure mode observed on `val_re_rand`. Failure pattern is structured (matches aliasing prediction), not RNG noise.
+- Decision: **CLOSE** standalone. Direction has real signal (single_in_dist −3.86% val, −8.06% test is too large to be RNG drift), but the chosen frequency band is wrong. **Salvageable** with narrower band — round-3 follow-up should test `re_fourier_bands=4` (frequencies up to 2^3=8 rad/log_re_unit) which preserves the low-frequency content (smooth Re-trend) while removing the aliasing pressure.
+
 ## Test-metric NaN follow-up (cross-PR)
 
 All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the student diagnoses:
