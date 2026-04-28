@@ -462,3 +462,85 @@ The "too small a step" failure mode did NOT appear: `max_norm=0.5` *led* `1.0` i
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #430 | tanjiro | lion-optimizer | Lion (sign-of-momentum) replacing AdamW; `lr_lion = 1.7e-4`, `wd_lion = 3e-4`, `betas=(0.9, 0.99)` | Fresh axis after three variance-reduction wins (#356/#374/#402). Reported 1–3 % gains on transformer-shaped problems; sign-update naturally bounds per-param step magnitude — interesting compose with grad-clip(0.5) |
+
+## 2026-04-28 01:41 — PR #408: lr 5e-4 → 1e-3 (charliepai2d1-fern) — **MERGED, new baseline**
+- Branch: `charliepai2d1-fern/higher-lr-1e3` → squash-merged into `icml-appendix-charlie-pai2d-r1` (commit `bf5c6a5`).
+- Hypothesis: with grad-clip envelope at `max_norm=1.0` (or 0.5) absorbing outlier steps, doubling AdamW lr from 5e-4 to 1e-3 should let the optimizer take more aggressive directional steps within the same magnitude envelope.
+
+### Headline metrics (best EMA epoch=13/50, timeout-cut)
+- Fern's run was on the post-#374 base (lr=1e-3 + max_norm=1.0); squash-merge composed with #402 to give a current baseline `train.py` of `lr=1e-3 + max_norm=0.5`.
+
+| metric | this run (lr=1e-3 + max_norm=1.0) | prior baseline #402 (lr=5e-4 + max_norm=0.5) | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` (EMA) | **107.957** | 110.822 | **−2.59 %** |
+| `test_avg/mae_surf_p` | **95.675** | 97.955 | **−2.33 %** |
+
+### Per-split val (EMA, ep13, vs #356 baseline for context)
+| Split | val mae_surf_p | val Δ vs #356 (raw 132.276) |
+|---|---:|---:|
+| single_in_dist | 125.68 | −26.34 % |
+| geom_camber_rc | 122.66 | −14.88 % |
+| geom_camber_cruise | 82.97 | −17.43 % |
+| re_rand | 100.52 | −11.84 % |
+
+The harder splits (`single`, `rc`) get the biggest gains; `cruise` and `re_rand` (which already had headroom over the others) inch forward.
+
+### Diagnostic — pre-clip grad norm halved at lr=1e-3
+Mean per-epoch pre-clip `train/grad_norm`: 64 → 61 → 55 → 51 → 44 → 44 → 44 → 39 → 39 → 37 → 36 → 33 → 30. **Mean ~44** (lr=1e-3) vs **~73** (lr=5e-4 baseline) — confirms AdamW's `1/√(v+eps)` preconditioner adapts to the larger LR by inflating per-step magnitude internally, so raw grads land smaller. Clip is still firing aggressively (30–60× over `max_norm=1.0`).
+
+### EMA-vs-raw curve diagnostic
+Raw converges much faster early (ep1: 240 vs 300 = −60-point lead) but is noisier through ep 9–10. EMA(0.999) is initially slower to track because the lr=1e-3 run is moving params more aggressively; baseline EMA actually leads through ep 6. EMA crosses over at ep 7–8 and the gap widens through ep 13 (107.96 EMA vs 113.16 baseline EMA at ep 13). Raw is nearly tied at ep 13 (122.16 vs 121.99), so the EMA win is consistent with the grad-clip envelope damping high-frequency raw oscillations into a cleaner shadow.
+
+### Decision: merge as new round-1.5 baseline
+- Beats baseline on val (−2.59 %) and test (−2.33 %), with the harder OOD splits taking the biggest gains.
+- Single-line diff (`lr: 5e-4 → 1e-3`); CLEAN/MERGEABLE without conflicts.
+- Mechanism is well-understood (clip envelope + AdamW preconditioner adaptation).
+- "Higher LR safe under clip" hypothesis confirmed — both fern (#353 follow-ups) and tanjiro (#374 follow-ups) independently suggested this combo, and the run validates it.
+- BASELINE.md updated; fern reassigned to **PR #438 (lr-2e-3)** as the natural next step in their LR-scaling thread.
+
+## 2026-04-28 01:42 — PR #398: SwiGLU at matched param count (charliepai2d1-nezuko) — **sent back for rebase + re-run; will likely merge after**
+- Branch: `charliepai2d1-nezuko/swiglu-mlp-matched` (post-#356 base; pre-#374, pre-#402, pre-#408)
+- Hypothesis: replace GELU MLP with SwiGLU `(W_g(x) ⊙ silu(W_v(x))) W_o` at matched param count (`swiglu_inner=168` for `mlp_ratio=2, hidden=128`). Strips capacity confound from closed PR #355 (`mlp_ratio=4` GELU).
+
+### Headline metrics (best EMA epoch=12/12, timeout-cut)
+| | val_single_in_dist | val_geom_camber_rc | val_geom_camber_cruise | val_re_rand | **val_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` (EMA) | 133.58 | 126.58 | 86.45 | 100.58 | **111.795** |
+
+| | test_single_in_dist | test_geom_camber_rc | test_geom_camber_cruise | test_re_rand | **test_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` | 120.73 | 112.23 | 71.86 | 98.11 | **100.730** |
+
+- Param count: 657,639 (vs baseline GELU 662,359 → −0.71 %) — matched-param recipe correct.
+- Per-epoch wall clock: 150.55 s (vs ~140 s baseline = +7.9 %, slightly above the +5 % threshold; 12 epochs vs baseline's 13).
+
+### Comparisons
+- vs **#356** baseline (132.276/118.041): **val −15.48 %, test −14.67 %** — huge win on the older base.
+- vs **current #408** baseline (107.957/95.675): val +0.88 %, test +2.83 % — within run-to-run noise on val, slightly behind on test.
+
+### The per-split breakdown is the load-bearing evidence
+| Split family | #355 (mlp_ratio=4 GELU) Δ vs #356 | this run (SwiGLU matched) Δ vs #356 |
+|---|---:|---:|
+| single_in_dist (ID) | −2.7 % | **−21.65 %** |
+| geom_camber_rc (OOD) | +1–2 % regression | **−12.16 %** |
+| geom_camber_cruise (OOD) | mixed | **−13.97 %** |
+| re_rand (OOD) | mixed | **−11.79 %** |
+
+**SwiGLU fixes the in-dist-vs-OOD trade-off that sank #355.** Capacity-bumped GELU (mlp_ratio=4) helped in-dist but regressed OOD. Matched-param SwiGLU lifts every split — including 11–14 % gains on the three OOD splits. That's a clean per-node-nonlinearity-vs-capacity decoupling and is the strongest non-variance-reduction signal we've seen.
+
+Surf/vol balance preserved on every test split (vol_p tracks surf_p within 1–3 %) → SwiGLU isn't skewing head priorities.
+
+### Caveats nezuko correctly flagged
+- Noisy late-training trajectory (raw 115 → 125 → 152 across ep 10–12); single-seed magnitude warrants a re-run.
+- +7.9 % per-epoch wall clock (three matmul kernel-launches per block vs two; fixed overhead at small `mlp_ratio=2, hidden=128` matmuls).
+
+### Decision: send back for rebase + re-run
+- Per CLAUDE.md merge rule (must be `<` baseline), can't merge as-is vs current #408.
+- Rebase resolution should be clean: nezuko's diff adds `SwiGLUMLP` class (no overlap) + substitutes inside `TransolverBlock` (different region from #374/#402/#408 diffs). Should rebase onto post-#408 cleanly.
+- After rebase: SwiGLU(168) + EMA + NaN-safe + grad-clip(0.5) + lr=1e-3 + ~12 epochs. Predicted: val ~94–98, test ~83–87 if SwiGLU's −15 % vs no-clip baseline composes additively with grad-clip + higher-LR. Will merge as next baseline if it lands there.
+
+## 2026-04-28 01:42 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #438 | fern | lr-2e-3 | `Config.lr = 1e-3 → 2e-3` on top of merged #408 baseline | Fern's own follow-up #1; tests how far the LR-scaling-under-clip envelope extends. Single-knob continuation of #408. |

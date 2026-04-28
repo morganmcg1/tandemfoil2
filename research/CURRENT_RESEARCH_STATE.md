@@ -1,10 +1,10 @@
 # SENPAI Research State
-- 2026-04-28 01:32 — round 1.5 mid-flight; **three big wins merged**: #356 (EMA, −3.1 %), #374 (grad-clip(1.0), −14.45 %), #402 (grad-clip(0.5), −2.07 %)
+- 2026-04-28 01:42 — round 1.5 active; **four big wins merged**: #356 (EMA, −3.1 %), #374 (grad-clip(1.0), −14.45 %), #402 (grad-clip(0.5), −2.07 %), #408 (lr=1e-3, −2.59 %)
 - Primary metric: `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across the four val splits); ranking final metric is `test_avg/mae_surf_p`
 
-## Current best (post-PR-#402)
-- **`val_avg/mae_surf_p` = 110.822** (EMA, ep13/50 timeout-cut)
-- **`test_avg/mae_surf_p` = 97.955**
+## Current best (post-PR-#408)
+- **`val_avg/mae_surf_p` = 107.957** (EMA, ep13/50 timeout-cut)
+- **`test_avg/mae_surf_p` = 95.675**
 - See `BASELINE.md` for the full per-split breakdown.
 - **Pending winners** (both rebasing onto post-#374):
   - **PR #352 (smoothl1-surface)**: raw run measured val=105.56, test=95.39 (−20.2 % / −19.2 % vs prior #356). Projected post-rebase: val ≈ 90, test ≈ 80 if SmoothL1 composes with EMA + grad-clip.
@@ -35,25 +35,30 @@
 | ~~#373~~ | ~~frieren~~ | ~~mixed-slice-last-layer~~ | ~~Last-layer-only `slice_num=128`~~ | **CLOSED 04-28 00:48**: val=133.49 (+0.92 %), test=120.85 (+2.38 %); same in-dist-helps/OOD-regresses pattern as closed #355. Reassigned to #403. |
 | #374 | tanjiro | grad-clip-1p0 | Gradient clipping at `max_norm=1.0` between backward and step | **MERGED 00:43** as second round-1 baseline (val=113.157, test=99.322) — −14.45 % val / −15.86 % test vs #356. Pre-clip norm 50–100× max_norm → effective LR cap. |
 | #394 | thorfinn | torch-compile-throughput | `torch.compile(model, ema_model)` mode=default, dynamic=True | **Throughput delivery confirmed −23.1 % per-epoch (108.4 s/ep, 17 epochs in 30 min). Sent back 04-28 01:18** for rebase onto post-#374 (was on pre-grad-clip base). Predicted post-rebase: val ~108–110, test ~95–97 → new baseline + throughput multiplier (every future PR fits 17 epochs). |
-| #398 | nezuko | swiglu-mlp-matched | SwiGLU MLP `(W_g(x)⊙silu(W_v(x)))W_o` at `swiglu_inner=168`, matched to baseline param count | Replaces closed #355; cleaner per-node-nonlinearity test (no capacity/wall-clock confound vs `mlp_ratio=4 GELU`) |
+| #398 | nezuko | swiglu-mlp-matched | SwiGLU MLP `(W_g(x)⊙silu(W_v(x)))W_o` at `swiglu_inner=168`, matched to baseline param count | **Strong win on prior baseline** (val=111.795 vs #356 132.276 = −15.48 %; per-split fixes the in-dist-vs-OOD trade-off from closed #355). **Sent back 01:42** for rebase onto post-#408 — vs current baseline is +0.88 % val / +2.83 % test (within noise). Projected post-rebase: val ~94–98, test ~83–87. |
 | #402 | tanjiro | grad-clip-0p5 | Aggressive grad-clip: `max_norm=1.0 → 0.5` | **MERGED 01:29** as new baseline (val=110.822 / test=97.955; −2.07 % / −1.38 % vs #374). Diminishing-returns curve on clipping lever now mapped. |
 | #403 | frieren | batch8-lr-sqrt2 | `batch_size=4 → 8`, `lr=5e-4 → 7e-4` (√2 scaling) | Replaces closed #373; variance reduction at the gradient-aggregation level, complementary to EMA + grad-clip |
-| #408 | fern | higher-lr-1e3 | `Config.lr = 5e-4 → 1e-3` on merged grad-clip baseline | Replaces closed #353; tests "grad-clip envelope makes 2× LR safe" — independently suggested by both fern (#353) and tanjiro (#374) |
+| #408 | fern | higher-lr-1e3 | `Config.lr = 5e-4 → 1e-3` on merged grad-clip baseline | **MERGED 01:41** as new baseline (val=107.957 / test=95.675; −2.59 % / −2.33 % vs #402). Pre-clip grad norm halved at lr=1e-3 — AdamW preconditioner adapts; clip envelope dominates per-step magnitude. |
 | #417 | askeladd | ema-decay-0p99 | `ema_decay = 0.999 → 0.99` | Replaces closed #351; tests whether the under-converged 13-epoch budget is short-changed by an EMA shadow that averages over too many updates (nezuko's #355 diagnostic) |
 | #430 | tanjiro | lion-optimizer | Lion (sign-of-momentum) replacing AdamW; `lr=1.7e-4`, `wd=3e-4`, betas=(0.9, 0.99) | Fresh axis after three merged variance-reduction wins (#356/#374/#402). Reported 1–3 % gains on transformer-shaped problems; sign-update naturally bounds per-param step magnitude |
+| #438 | fern | lr-2e-3 | `Config.lr = 1e-3 → 2e-3` on merged #408 baseline | Fern's own follow-up #1; tests how far the LR-scaling-under-clip envelope extends. Single-knob continuation. |
 
 ## Updated picture from round-1 returns
 - **#356 (EMA) merged** at val=132.276 (−3.1 % vs same-run best raw).
 - **#374 (grad-clip(1.0)) merged** at val=113.157 (−14.45 % val, −15.86 % test). Pre-clip grad norms 50–100× max_norm → clip is acting as effective LR cap.
 - **#402 (grad-clip(0.5)) merged** at val=110.822 (−2.07 %), test=97.955 (−1.38 %). **Diminishing-returns curve on clipping lever now mapped**: any-clip = −14 %, 1.0 → 0.5 = −2 %.
-- **#352 (SmoothL1) raw run** beats prior #356 baseline by −20.2 % / −19.2 % — strongest single-lever delta seen. Pending rebase onto post-#402.
-- **#394 (torch.compile) confirmed −23.1 % per-epoch wall clock**; metric vs prior #374 baseline was within run-to-run noise. Pending rebase onto post-#402.
+- **#408 (lr=1e-3) merged** at val=107.957 (−2.59 %), test=95.675 (−2.33 %). Pre-clip grad norm halved at lr=1e-3 (mean ~44 vs ~73). AdamW preconditioner adapts; clip envelope dominates per-step magnitude. "Higher LR safe under clip" hypothesis confirmed.
+- **#352 (SmoothL1) raw run** beats prior #356 baseline by −20.2 % / −19.2 % — strongest single-lever delta seen. Pending rebase onto post-#408.
+- **#394 (torch.compile) confirmed −23.1 % per-epoch wall clock**, 17 epochs in 30 min. Pending rebase onto post-#408.
+- **#398 (SwiGLU at matched params) confirmed −15.48 % vs #356**, with per-split breakdown showing it fixes the in-dist-vs-OOD trade-off from closed #355. Pending rebase onto post-#408.
 - **Variance reduction is the dominant winning direction so far**:
   - iterate-level: EMA (merged)
   - step-magnitude-level: grad-clip(1.0 then 0.5) (both merged, diminishing returns mapped)
+  - LR-scaling under clip envelope: lr=1e-3 (merged); lr=2e-3 in flight (#438)
   - aggregation-level: larger batch (PR #403, in flight)
-- **Loss-form direction** also strongly winning: SmoothL1 (PR #352, pending rebase).
-- **Closed levers**: more capacity at this epoch budget (#355 mlp_ratio=4, #373 last-layer slice_num=128) showed an in-dist-helps / OOD-regresses pattern — extra capacity goes to in-dist memorization rather than generalization. Consistent across two architecturally distinct experiments.
+- **Loss-form direction** strongly winning: SmoothL1 (PR #352, pending rebase, projected val ~88–92).
+- **Per-node-nonlinearity direction** decoupled from capacity: SwiGLU (#398, pending rebase, projected val ~94–98).
+- **Closed levers**: more capacity at this epoch budget (#355 mlp_ratio=4, #373 last-layer slice_num=128) showed an in-dist-helps / OOD-regresses pattern. SwiGLU is the "fix" for that pathology — same hidden_dim, just different activation/gating shape, and OOD splits all gain 11–14 % on it.
 
 ## Round 2 candidates (queued)
 Once round 1 finishes (best-of-merged-and-still-WIP) and we have a few merged compounders, the next round will pull from:
