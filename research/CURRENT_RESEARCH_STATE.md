@@ -36,6 +36,10 @@ Every prior result needs to be re-judged against the new baseline. Specifically,
 
 All 8 students have active WIP assignments. No idle students. Checked 2026-04-28 22:00 — PR #768 (frieren/lower-lr-warmup) closed as dead-end: warmup+clipping are substitutes, warmup costs 6-10 units post-clipping. frieren re-assigned to schedule-to-budget-cosine (PR #875).
 
+Label fix applied 2026-04-28: PR #875 had label `student:frieren` corrected to `student:charliepai2e2-frieren` to align with STUDENT_NAMES.
+
+Note: tanjiro has two WIP PRs (#826 AdamW WD, #856 EMA). #826 was assigned first; #856 queued as follow-up. Student will work through sequentially.
+
 ## Potential Next Research Directions
 
 Now that gradient clipping is in baseline, the search space opens up:
