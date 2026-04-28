@@ -512,6 +512,10 @@ for p in ema_model.parameters():
     p.requires_grad_(False)
 print(f"EMA shadow built (decay={ema_decay})")
 
+model = torch.compile(model, mode="default", dynamic=True)
+ema_model = torch.compile(ema_model, mode="default", dynamic=True)
+print("torch.compile applied to model and ema_model (dynamic=True, mode=default; reduce-overhead OOM'd at epoch 1 step 9 — 9 distinct CUDA graphs held 68GB private pool)")
+
 optimizer = Lion(model.parameters(), lr=cfg.lr, betas=(0.9, 0.999), weight_decay=cfg.weight_decay)
 print(f"Lion optimizer: lr={cfg.lr}, betas=(0.9, 0.999), weight_decay={cfg.weight_decay}")
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
@@ -624,7 +628,7 @@ for epoch in range(MAX_EPOCHS):
             "raw_val_avg/mae_surf_p": raw_avg_surf_p,
             "raw_per_split": raw_split_metrics,
         }
-        torch.save(ema_model.state_dict(), model_path)
+        torch.save(ema_model._orig_mod.state_dict(), model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
@@ -665,7 +669,7 @@ if best_metrics:
 
     # Saved checkpoint contains EMA weights -> loading into the live model object
     # gives us the EMA-evaluated test numbers per the PR.
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    model._orig_mod.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
 
     test_metrics = None
