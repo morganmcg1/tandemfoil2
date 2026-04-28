@@ -586,3 +586,39 @@ All four val splits improve; `geom_camber_rc` (the harder OOD geom split) gains 
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #445 | askeladd | ema-decay-0p95 | `ema_decay = 0.99 → 0.95` on top of merged #417 baseline | Askeladd's own follow-up #1; tests where the responsiveness curve bottoms out. At 0.95 the half-life is ~14 batches ≈ 0.04 epochs — possibly too noisy under balanced-domain sampling, possibly captures even more recent signal. Honest band −1 % to +5 %. |
+
+## 2026-04-28 02:11 — PR #403: batch=8 + lr=7e-4 (√2 LR scaling) (charliepai2d1-frieren) — **CLOSED**
+- Branch: `charliepai2d1-frieren/batch8-lr-sqrt2` (closed + branch deleted)
+- Hypothesis: variance reduction at the gradient-aggregation level via larger batch + √2 LR scaling.
+
+### Headline metrics (best EMA epoch=14/50, run cut by 30-min timeout)
+| | val_single_in_dist | val_geom_camber_rc | val_geom_camber_cruise | val_re_rand | **val_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` (EMA) | 269.80 | 186.06 | 107.24 | 128.76 | **172.97** |
+
+| | test_single_in_dist | test_geom_camber_rc | test_geom_camber_cruise | test_re_rand | **test_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` | 232.07 | 167.72 | 91.71 | 121.33 | **153.21** |
+
+- vs prior baseline #374 (113.16/99.32): val **+52.9 %**, test **+54.3 %**.
+- vs current baseline #417 (98.581/87.881): val **+75 %**, test **+74 %**.
+- Per-epoch wall clock: 138 s (vs ~140 s baseline); 14 epochs in 30 min (vs baseline's 13).
+- Peak VRAM: 84.21 GB.
+- Mean pre-clip grad_norm: 61.61 (vs baseline 73.40 = −16.1 %).
+
+### Analysis (frieren's writeup is exceptional; recording the key points)
+- **Variance-reduction lever real** (per-step grad norm down 16 %).
+- **Throughput parity confirmed** (138 vs 140 s/epoch, +1 epoch in budget).
+- **Step-count starvation dominates the result.** batch=8 halves optimizer steps per epoch (188 vs 375); √2 LR scaling under-compensates because total integrated LR is `14/13 × 188/375 × √2 ≈ 0.77×` baseline aggregate optimization. Plus cosine T_max keyed to epochs not steps, so each step at b=8 sits at the same cosine fraction.
+- **`single_in_dist` regressed by +99–102 %** (the canary): hardest, most steps-hungry split, hit hardest by the missing late-training updates. Auditable mechanism: at every matched epoch from ep5 onward, the b=8 raw curve sits ~20–30 % above b=4 baseline raw and the gap widens slightly through the cut.
+
+### Decision: close, reassign to weight-decay-5e-4
+- Clear >5 % regression on both val and test (+75 % / +74 % vs current baseline). Per CLAUDE.md close criteria.
+- Lever isn't disproven — frieren's analysis correctly notes that `b=8 + lr=2e-3` (linear scaling, not √2) at the current baseline lr=1e-3 would land somewhere near baseline and would be the "right fix" for this hypothesis. Holding that as a round-2 follow-up if fern's lr=2e-3 (#438) wins at b=4.
+- **Three closures in a row for frieren** (#354, #373, #403). Reassigning to a low-risk single-knob regularization sweep (`weight_decay=1e-4 → 5e-4`) for confidence-building + ablation-table coverage. **PR #458 (weight-decay-5e-4)**.
+
+## 2026-04-28 02:14 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #458 | frieren | weight-decay-5e-4 | `Config.weight_decay = 1e-4 → 5e-4` on top of merged #417 baseline | Replaces closed #403; standard regularization sweep. Plausibly helps the OOD splits where the closed capacity bumps (#355 / #373) showed in-dist-helps / OOD-regresses. Honest band −1 % to +2 %. |
