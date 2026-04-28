@@ -18,11 +18,13 @@ Usage:
 from __future__ import annotations
 
 import os
+import random
 import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import numpy as np
 import simple_parsing as sp
 import torch
 import torch.nn as nn
@@ -45,6 +47,12 @@ from data import (
     load_test_data,
     pad_collate,
 )
+
+SENPAI_SEED = int(os.environ.get("SENPAI_SEED", "0"))
+torch.manual_seed(SENPAI_SEED)
+torch.cuda.manual_seed_all(SENPAI_SEED)
+random.seed(SENPAI_SEED)
+np.random.seed(SENPAI_SEED)
 
 # ---------------------------------------------------------------------------
 # Transolver model
@@ -446,6 +454,7 @@ run = wandb.init(
         "n_params": n_params,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
+        "senpai_seed": SENPAI_SEED,
     },
     mode=os.environ.get("WANDB_MODE", "online"),
 )
