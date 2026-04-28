@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 02:30 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
+- **Last update:** 2026-04-28 02:40 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
 - **Most recent human-team direction:** N/A — no team issues consulted (isolated replicate; only entrypoint-surfaced PRs in scope).
 - **Current baseline (merged): `val_avg/mae_surf_p = 83.223`, `test_avg/mae_surf_p = 73.904`** (PR #426 EMA(0.99) on SwiGLU baseline).
   - PR #282 — Huber loss (δ=1.0). val_avg = 105.999.
@@ -13,7 +13,7 @@
 
 Compound improvements on the round-1 huber baseline. Recover the paper-facing test metric. Test orthogonal levers (capacity, slice count, optimizer recipe, surface weighting, regularization, EMA, channel weighting) so round-3 can stack winners.
 
-## Outcomes to date (17 reviewed)
+## Outcomes to date (18 reviewed)
 
 | Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Δ vs 83.223 (current) | Decision |
 |------|----|---------|------|--------------------------:|----------------------:|----------|
@@ -22,6 +22,7 @@ Compound improvements on the round-1 huber baseline. Recover the paper-facing te
 | 3 | #363 | thorfinn | ema-eval | 101.350 | +21.8% | MERGED (intermediate) |
 | 4 | #282 | edward | huber-loss | 105.999 | +27.4% | MERGED (huber baseline) |
 | 4b | #361 | edward | nan-safe-eval | 108.103 (rerun) | n/a — RNG noise | MERGED (metric-pipeline fix) |
+| 4c | #439 | fern | huber-delta-05 | 87.265 | +4.9% | CLOSED (-1.1% vs SwiGLU baseline 88.227, but +4.9% vs current; δ profile shows diminishing returns) |
 | 5 | #440 | tanjiro | silu-everywhere | 88.128 | +5.9% | CLOSED (null result; activation choice below noise floor) |
 | 5b | #424 | thorfinn | swiglu-head | 90.298 | +8.5% | CLOSED (head SwiGLU lacks residual buffer; OOD splits regress) |
 | 5c | #425 | frieren | input-noise-001 | 89.984 | +8.1% | CLOSED (per-node noise broke per-sample feature consistency on dims 13–23) |
@@ -50,16 +51,13 @@ Per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`. Per-experiment JS
 |----|---------|------|-------|------------------------------------|
 | #371 | nezuko | grad-accum-2 | gradient accumulation 2 (effective batch 8) with √2 lr scaling — branched on huber pre-EMA, will be ranked against the EMA(0.99)+SwiGLU baseline (83.223) when it returns | −1% to −4% |
 
-## Round-4 in flight (2 students)
-
-Branched off SwiGLU pre-EMA(0.99); will be ranked against the EMA(0.99)+SwiGLU baseline (83.223) when they return.
+## Round-4 in flight (1 student)
 
 | PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
 |----|---------|------|-------|-------------------------------------|
-| #439 | fern | huber-delta-05 | huber `δ=1.0 → 0.5` — closer to L1 in normalized space | −1% to −3% |
-| #450 | alphonse | rmsnorm-everywhere | replace `nn.LayerNorm` with `RMSNorm` in all 3 norm sites in `TransolverBlock` | −0.5% to −1.5% |
+| #450 | alphonse | rmsnorm-everywhere | replace `nn.LayerNorm` with `RMSNorm` in all 3 norm sites in `TransolverBlock` (branched on SwiGLU pre-EMA(0.99); will be ranked against current 83.223) | −0.5% to −1.5% |
 
-## Round-5 in flight (5 students)
+## Round-5 in flight (6 students)
 
 Built on the merged EMA(0.99)+SwiGLU baseline (83.223).
 
@@ -70,6 +68,7 @@ Built on the merged EMA(0.99)+SwiGLU baseline (83.223).
 | #456 | edward | layerscale-1e4 | CaiT-style LayerScale: per-branch scalar gates initialized to 1e-4 | −1% to −2% |
 | #459 | tanjiro | swiglu-preprocess | replace preprocess MLP with `SwiGLU_MLP` (LLaMA-everywhere completion); per-token gating at the input projection | −0.5% to −2% |
 | #460 | frieren | per-sample-feature-noise | semantics-aware noise: per-node on dims 0–12 (positions, saf, dsdf, is_surface) + per-sample broadcast on dims 13–23 (per-sample globals: Re, AoA, NACA, gap, stagger). Direct correction of PR #425's failure mode | −1% to −3% |
+| #463 | fern | huber-delta-025 | huber `δ → 0.25` on EMA(0.99)+SwiGLU baseline. Tests whether the monotone δ profile (2→1→0.5: 107.6 → 88.2 → 87.3) saturates or keeps improving toward L1, and whether δ=0.25 stacks with EMA(0.99) | −0.5% to −1.5% (could regress if profile saturated) |
 
 ## Disconfirmed directions (do not retry on this branch)
 
