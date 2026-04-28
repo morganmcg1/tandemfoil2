@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- 2026-04-28 01:30 — round 1 mostly settled on `icml-appendix-willow-pai2d-r2`,
+- 2026-04-28 01:45 — round 1 mostly settled on `icml-appendix-willow-pai2d-r2`,
   round 2 starting in parallel
 - **Baseline updated:** PR #330 (frieren, Huber β=1) merged on top of
   PR #328. Current best `val_avg/mae_surf_p = 115.61` (W&B run
@@ -53,24 +53,24 @@
 | 332 | nezuko    | surf_weight 10 → 25 (sweep)| sent back → rebase + on-baseline + multi-seed | sweep done: surf-15=137.42, **surf-25=133.19**, surf-40=142.59 (clean interior optimum at 25; absolute level inside ±10 % noise of baseline) |
 | 335 | tanjiro   | warmup + cos, peak 1e-3    | sent back → cosine_t_max sweep | 154.57 (epoch 13/14) |
 | 337 | thorfinn  | BS 4→8, lr 7e-4            | sent back → rebase + BS=16/lr=1e-3 (+ multi-seed if budget) | 139.39 / 153.19 (2-seed mean 146.29; ~9.5 % worse than baseline on mean) |
-| 367 | fern      | bug fix: cruise-NaN scoring| **wip (new)**  | n/a (bug fix, not experiment) |
+| 367 | fern      | bug fix: cruise-NaN scoring| sent back → rebase + Huber-aware reapplication | patch verified (test_avg: NaN → 125.05) but on pre-Huber base |
 
-PRs surfaced for advisor review this cycle: **#330**. Action:
-**#330 MERGED ★** as the round-1 second winner. New baseline
-**115.61** (Huber β=1 on top of slice_num=128). −13.4 % over prior
-baseline, outside ±10 % noise floor, robust mechanism (high-Re tail
-story confirmed twice on different architectures).
-**Reassigned frieren to round-2 axis #415 (asinh on pressure target)**
-— pairs naturally with the just-merged Huber β=1: both target the
-high-Re tail of the pressure distribution but from different angles
-(distribution flattening vs gradient clipping). If asinh stacks on
-Huber, that's a 3–8 % round-2 win on top of 115.61.
+PRs surfaced for advisor review this cycle: **#367**. Action:
+**#367 sent back for rebase** — bug-fix patch is technically correct
+(test_avg/mae_surf_p: NaN → 125.05, val_avg replicates baseline
+within seed noise) and represents the third independent confirmation
+of the same root cause (after edward #326 + askeladd #325). But the
+branch was created pre-#330 (Huber merge happened mid-flight on this
+PR), so train.py reverts the merged Huber loss and needs Huber-aware
+reapplication of the `nan_to_num` wrap. Detailed conflict-resolution
+instructions in the send-back. Once landed, every PR's `test_avg/
+mae_surf_p` becomes finite for the first time on this branch.
 
-Earlier cycle actions (recap): #328 merged (slice-128 winner,
-133.55 baseline → superseded); #326 + #335 + #311 + #332 + #337
-sent back with specific follow-up instructions; #367 bug-fix PR
-assigned to fern (in flight); #325 closed (depth-8 regression);
-#399 assigned to askeladd (round-2 bf16 throughput axis).
+Earlier cycle actions (recap): #328 + #330 merged (slice-128 +
+Huber β=1, current baseline 115.61); #326 + #335 + #311 + #332 +
+#337 sent back with specific follow-up instructions; #325 closed
+(depth-8 regression, 21 % worse than then-baseline); #399 + #415
+assigned (askeladd round-2 bf16, frieren round-2 asinh).
 
 ## What we learned this cycle (and last)
 

@@ -13,6 +13,51 @@ in the pressure channel; `accumulate_batch` masks the sample but
 fern** with the 2-line `nan_to_num` patch — once it lands, every
 round-1 run can recompute a finite `test_avg/mae_surf_p` from W&B.
 
+## 2026-04-28 01:45 — PR #367: Bug fix — guard accumulate_batch + evaluate_split against non-finite values
+
+- Branch: `willowpai2d2-fern/scoring-nan-fix` (created post-#328 but
+  pre-#330; same rebase pattern as the round-1 cohort).
+- Patch verified working: `data/scoring.py::accumulate_batch` `err`
+  wrapped in `torch.nan_to_num(..., nan=0.0, posinf=0.0, neginf=0.0)`
+  before the per-channel sum. Defense-in-depth on top of the
+  existing `y_finite` mask: `mask=False` zeros sample-20's
+  contribution from the denominator, `nan_to_num` neutralizes the
+  `0.0 * NaN = NaN` poisoning of the numerator.
+- Verification (run `mzrlvccy`, branch state = MSE on slice-128):
+  - `test_geom_camber_cruise/mae_surf_p`: NaN → **101.70** (finite!)
+  - `test_avg/mae_surf_p`: NaN → **125.05** (finite for the first
+    time on this branch)
+  - `val_avg/mae_surf_p = 133.46` ≈ pre-Huber baseline 133.55
+    (replication within run-to-run noise)
+
+### Conclusion
+
+**Send back for rebase.** The bug fix is technically correct and
+well-verified. But the branch is pre-#330 (Huber β=1 just merged
+minutes before this PR was reviewed), so:
+
+1. `train.py::evaluate_split` and the training loop both have `(pred -
+   y_norm) ** 2` (MSE) instead of the merged `F.smooth_l1_loss(...)` —
+   direct squash would silently revert the −13.4 % Huber win.
+2. `nan_to_num` was applied to the MSE expression; after rebase, the
+   `nan_to_num` needs to wrap the Huber `F.smooth_l1_loss(...)` instead.
+3. Stale doc reverts (BASELINE.md, research/) need to be discarded.
+
+Sent back with explicit conflict-resolution instructions. After
+rebase, expect:
+- `data/scoring.py`: `nan_to_num` wrap on `err` (unchanged).
+- `train.py::evaluate_split`: `nan_to_num(F.smooth_l1_loss(...), ...)`.
+- Optional defense-in-depth on training-loop Huber.
+- Verification: `val_avg ~ 115.61` (replicating Huber baseline) AND
+  finite `test_avg` (the bug fix's actual target).
+
+### Three independent confirmations of the bug
+
+This is the third independent diagnosis (after edward #326 + askeladd
+#325) of the same root cause and equivalent patch. Convergent evidence
+makes me very confident the fix is right; the only remaining work is
+landing it on the right base.
+
 ## 2026-04-28 01:30 — PR #330 (rebased): Round 1 axis: loss formulation — MSE → Huber (β=1) ★ MERGED ★
 
 - Branch: `willowpai2d2-frieren/huber-loss` (rebased onto current
