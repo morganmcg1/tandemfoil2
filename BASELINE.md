@@ -2,11 +2,15 @@
 
 Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pressure MAE across the four val splits). Paper-facing metric is `test_avg/mae_surf_p` from the best-val checkpoint.
 
-## 2026-04-28 03:55 — PR #480: AdamW betas (0.9, 0.95) — orthogonal compound lever
+## 2026-04-28 04:15 — PR #479: Bias-corrected EMA (decay_target=0.99, warmup_steps=10) — orthogonal compound lever
 
 - **Best `val_avg/mae_surf_p`** (target to beat — conservative): **72.414** (fern's δ=0.25 measurement on EMA(0.99)+SwiGLU pre-DropPath)
-- **β₂=0.95 standalone measurement**: 77.951 on the same EMA(0.99)+SwiGLU baseline (−6.34% vs 83.223). Orthogonal to δ=0.25 (different mechanism: optimizer 2nd-moment vs loss curvature).
-- **Recipe**: huber(δ=0.25) + EMA(decay=0.99) + SwiGLU FFN + DropPath(0→0.1) + **AdamW betas (0.9, 0.95)** + NaN-safe. Single-line change vs prior baseline.
+- **Bias-corrected EMA standalone measurement**: 81.251 on EMA(0.99)+SwiGLU pre-DropPath baseline (−2.37% vs 83.223). Strict superset of the existing EMA(0.99) — `warmup_steps=0` reduces to current behavior.
+- **Recipe**: huber(δ=0.25) + **bias-corrected EMA (decay_target=0.99, warmup_steps=10)** + SwiGLU FFN + DropPath(0→0.1) + AdamW betas (0.9, 0.95) + NaN-safe. The EMA constructor signature changed to accept `warmup_steps`.
+
+## 2026-04-28 03:55 — PR #480: AdamW betas (0.9, 0.95) — earlier orthogonal compound
+
+- **β₂=0.95 standalone measurement**: 77.951 on EMA(0.99)+SwiGLU baseline (−6.34% vs 83.223).
 - **Caveat**: post-merge baseline number not directly measured — both fern's δ=0.25 (72.414) and nezuko's β₂=0.95 (77.951) were measured on the same pre-DropPath, single-axis stack. The combined stack (δ=0.25 + DropPath + β₂=0.95 + ...) will be measured by round-6/7 PRs. Predicted combined val_avg: ~67–72 if levers compound additively, ~72 if partially redundant.
 - **Reproduce**:
   ```bash

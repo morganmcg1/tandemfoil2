@@ -1,8 +1,8 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 04:00 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
+- **Last update:** 2026-04-28 04:15 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
 - **Most recent human-team direction:** N/A — no team issues consulted (isolated replicate; only entrypoint-surfaced PRs in scope).
-- **Current baseline (merged): conservative target `val_avg/mae_surf_p < 72.414`** (fern's pre-DropPath standalone measurement). Latest stack also includes nezuko's β₂=0.95 (PR #480, +6.34% on its own starting baseline). Combined-stack actual val_avg pending round-6 measurement.
+- **Current baseline (merged): conservative target `val_avg/mae_surf_p < 72.414`** (fern's pre-DropPath standalone measurement). Stack now includes 3 orthogonal compound levers: nezuko's β₂=0.95 (#480), askeladd's bias-corrected EMA (#479), and the prior huber/SwiGLU/DropPath/EMA stack. Combined-stack actual val_avg unmeasured.
   - PR #282 — Huber loss (δ=1.0). val_avg = 105.999.
   - PR #361 — NaN-safe `evaluate_split` workaround. First finite test_avg = 97.957.
   - PR #363 — EMA(decay 0.999). val_avg = 101.350.
@@ -10,7 +10,8 @@
   - PR #426 — EMA decay 0.999 → 0.99. val_avg = 83.223.
   - PR #455 — Stochastic depth (DropPath 0→0.1). val_avg = 80.480. Param-identical.
   - PR #463 — Huber δ=1.0 → 0.25. **val_avg = 72.414 (−13.0% vs EMA(0.99)+SwiGLU; −10.0% vs DropPath baseline). test_avg = 63.082.** All 4 val splits improved 10–18%. Cruise canary gained MOST (−17.88%). Largest single-PR delta of the programme.
-  - PR #480 — AdamW betas (0.9, 0.999) → (0.9, 0.95). Standalone on EMA(0.99)+SwiGLU pre-DropPath: val_avg = 77.951 (−6.34%). Mechanism: faster β₂ (half-life ~14 steps vs ~700) tracks rapidly-changing gradient distribution under our 13-epoch under-trained regime. Orthogonal to δ=0.25 (loss curvature vs optimizer 2nd-moment). MERGED as compound — combined-stack val_avg unmeasured.
+  - PR #480 — AdamW betas (0.9, 0.999) → (0.9, 0.95). Standalone on EMA(0.99)+SwiGLU pre-DropPath: val_avg = 77.951 (−6.34%). Orthogonal to δ=0.25.
+  - PR #479 — Bias-corrected EMA (decay_target=0.99, warmup_steps=10). Standalone on EMA(0.99)+SwiGLU pre-DropPath: val_avg = 81.251 (−2.37%). Cold-start gain transferred AND fast-tracking preserved. Strict superset of EMA(0.99). MERGED as compound.
 
 ## Current research focus
 
@@ -61,20 +62,13 @@ Per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`. Per-experiment JS
 
 
 
-## Round-5 in flight (1 student)
+
+## Round-6 in flight (5 students)
+
+Built on the merged baseline (huber-δ=0.25 + bias-corrected EMA(0.99) + SwiGLU + DropPath + AdamW betas (0.9, 0.95) + NaN-safe). Conservative target val_avg < 72.414.
 
 | PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
 |----|---------|------|-------|-------------------------------------|
-| #479 | askeladd | bias-corrected-ema-099 | EMA `decay_target=0.99, warmup_steps=10` (branched pre-fern; will be ranked against current 72.414 conservative) | −0.5% to −1.5% |
-
-## Round-6 in flight (7 students)
-
-Built on the merged baseline (huber-δ=0.25 + EMA(0.99) + SwiGLU + DropPath + AdamW betas (0.9, 0.95) + NaN-safe). Conservative target val_avg < 72.414.
-
-| PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
-|----|---------|------|-------|-------------------------------------|
-| #486 | thorfinn | drop-path-02 | Push `drop_path_max` 0.1 → 0.2 | −0.5% to −2% |
-| #487 | edward | layerscale-1e2 | LayerScale init 1e-4 → 1e-2 | −0.5% to −1.5% |
 | #493 | fern | huber-delta-01 | Push δ profile further: 0.25 → 0.1 (saturation test) | −1% to −5% |
 | #494 | tanjiro | weight-decay-3e-4 | AdamW weight_decay 1e-4 → 3e-4 (orthogonal regularization knob) | −0.5% to −1.5% |
 | #495 | frieren | feature-noise-002 | Sweep semantics-aware feature noise std 0.01 → 0.02 | −0.5% to −2% |
