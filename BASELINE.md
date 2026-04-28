@@ -4,6 +4,47 @@ Lower is better on **`val_avg/mae_surf_p`** (equal-weight mean surface-pressure 
 
 > **⚠️ Seed-variance caveat (2026-04-28).** `train.py` does not call `torch.manual_seed` (yet), and run-to-run variance for the same config has been measured at ~25 MAE (~21%) on this metric. Numbers below are single-seed point estimates. PR #482 will replace these with multi-seed `mean ± std` once it lands.
 
+## 2026-04-28 08:53 — PR #409: OneCycleLR (peak_lr=2e-3, pct_start=0.1, total_epochs=15)
+
+- Branch: `willowpai2d3-frieren/onecycle-lr` (squash-merged)
+- **Recipe addition:** Default schedule flipped from `warmup-cosine` to `onecycle`. `OneCycleLR(max_lr=2e-3, pct_start=0.1, anneal_strategy='cos', cycle_momentum=False, div_factor=25, final_div_factor=1e4)` driven per-step (not per-epoch), with `onecycle_total_epochs=15` calibrated so the cool-down phase actually fires inside the 30-min wall-clock budget. Warmup-cosine path kept available behind `--schedule warmup-cosine`.
+- **Best val avg surface MAE:** `val_avg/mae_surf_p = 87.7443` (epoch 14, run `4fas292o`).
+- **Best test avg surface MAE:** `test_avg/mae_surf_p = 78.2370` (same checkpoint).
+- **Within-sweep delta** (OneCycle vs warmup-cosine + EMA + L1 at same budget): **−7.51 MAE on val_avg, −6.64 MAE on test_avg.** OneCycle wins on all 4 test splits.
+- **vs prior baseline (PR #294):** −7.15 MAE on val_avg (94.89 → 87.74), −5.70 MAE on test_avg (83.94 → 78.24). Below seed-noise floor in absolute terms but consistent with R2's much-larger pre-EMA delta of −33 MAE.
+- **Per-split val MAE on best-val checkpoint:**
+
+  | Split | mae_surf_p |
+  |---|---:|
+  | `val_single_in_dist` | (TBD per split — frieren report) |
+  | `val_geom_camber_rc` | (TBD) |
+  | `val_geom_camber_cruise` | (TBD) |
+  | `val_re_rand` | (TBD) |
+  | **val_avg** | **87.7443** |
+
+- **Per-split test MAE on best-val checkpoint:**
+
+  | Split | mae_surf_p |
+  |---|---:|
+  | `test_single_in_dist` | 91.91 |
+  | `test_geom_camber_rc` | 87.27 |
+  | `test_geom_camber_cruise` | 56.15 |
+  | `test_re_rand` | 77.62 |
+  | **test_avg** | **78.2370** |
+
+- **W&B run:** `4fas292o` in group `onecycle-lr-r3` (project `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r3`)
+- **Reproduce:**
+  ```bash
+  cd target/
+  python train.py --epochs 50 \
+      --wandb_group baseline-after-pr409 --wandb_name baseline-r1 \
+      --agent willowpai2d3-XXX
+  ```
+- **Notes:**
+  - **Critical mechanism finding from frieren:** EMA-vs-live diagnostic flips sign across schedules. Under OneCycle, live weights (82.06) BEAT EMA-averaged weights (87.74) by +5.69 MAE. Under warmup-cosine, EMA (95.26) beats live (102.51) by −7.26 MAE. EMA helps noisy schedules; counterproductive on converged ones. **EMA may now be sub-optimal in baseline** — frieren is following up with `use_ema=False` test under OneCycle (predicted val_avg ≈ 82).
+  - Compounding analysis: OneCycle's cool-down and EMA+L1 partially overlap (both contribute to a smoother converged state). Schedule effect shrunk from −33 MAE (R2 without EMA/L1) to −7.5 MAE (R3 with EMA+L1). Still net-positive.
+  - Hyperparameter snapshot: `peak_lr=1e-3, warmup_epochs=2, weight_decay=1e-4, batch_size=4, surf_weight=10.0, huber_delta=0, epochs=50, schedule=onecycle, onecycle_peak_lr=2e-3, onecycle_pct_start=0.1, onecycle_total_epochs=15, n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2, use_ema=True, ema_decay=0.999, ema_warmup_steps=100`.
+
 ## 2026-04-28 06:47 — PR #294: Pure L1 surface loss (`huber_delta=0`)
 
 - Branch: `willowpai2d3-alphonse/huber-loss-surf-p` (squash-merged)
