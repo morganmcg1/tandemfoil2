@@ -41,7 +41,7 @@
 | Student | PR | Hypothesis | Status |
 |---------|-----|-----------|--------|
 | askeladd | #847 | Huber delta=0.5 sweep | WIP (informational vs L1 win — delta→0 confirms L1 ordering) |
-| thorfinn | #815 | FiLM conditioning per-block on log(Re) | WIP |
+| thorfinn | #815 | FiLM conditioning per-block on log(Re) | WIP — v1b: −3.0% vs founding baseline (val=118.50), rebase onto L1 pending |
 | nezuko | #858 | Focal surface loss gamma=1.0 (L1 base) | WIP |
 | fern | #751 | Dropout 0.05 + drop_path 0.05 (v2, rebase pending) | WIP |
 | edward | #750 | LR warmup + cosine v2 (rebase pending) | WIP |

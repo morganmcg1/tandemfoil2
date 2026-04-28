@@ -25,6 +25,35 @@
 
 ---
 
+## 2026-04-28 22:30 — PR #815 v1b: FiLM conditioning per-block on log(Re)
+- **Branch:** `willowpai2e3-thorfinn/film-re-conditioning`
+- **Hypothesis:** Add FiLM (γ, β) conditioning on log(Re) to each Transolver block — explicit per-layer regime adaptation across Reynolds ranges. Predicted −5 to −15% with biggest gains on Re-stratified and OOD-camber splits.
+- **Run (v1b):** W&B `ujkwztbk`, **14/14 epochs (clean finish)**, val_avg still falling at epoch 14, peak 44.6 GB. +42.5K params (+6.4% over baseline). Pre-#761 branch (no L1).
+
+| Split | Baseline `8cvp4x6r` | FiLM v1b | Δ |
+|---|---|---|---|
+| `val_single_in_dist` | 143.36 | 141.12 | −1.6% |
+| `val_geom_camber_rc` | 124.20 | 132.08 | +6.3% |
+| `val_geom_camber_cruise` | 109.42 | **93.92** | **−14.2%** |
+| `val_re_rand` | 111.63 | **106.87** | **−4.3%** |
+| **val_avg** | **122.15** | **118.50** | **−3.0%** |
+| **test_avg** | NaN (pre-fix) | **107.76** | n/a |
+
+### Decision: SEND BACK FOR REBASE (onto post-#761 advisor)
+- **Hypothesis directionally confirmed.** The two splits FiLM should help most are exactly the ones that improved: `val_re_rand` (Re-stratified holdout) and `val_geom_camber_cruise` (widest Re range, 110K-5M). `−14.2%` on cruise is the largest single-split gain seen on this branch from any architecture experiment.
+- **Absolute number doesn't beat new baseline (92.63).** Branch predates #761 L1 merge. v1b at 118.50 is +27.9% above current best, but FiLM is orthogonal to L1's loss-shape change — should stack.
+- **Single split regressed** (`val_geom_camber_rc` +6.3% / +9.2% test). Single-seed in narrow-Re-band domain — likely noise but flagged for v2 follow-up.
+- val curve still falling at epoch 14 — gain has more to give with rebase.
+- `(1+γ)·h+β` zero-init worked: training stable through every epoch, FiLM started as identity.
+- **Sent back:** rebase onto current advisor (which has L1), no code changes to FiLM itself, re-run with `--epochs 14`. Predicted: 92.63 × 0.97 ≈ 89.85 if mechanisms stack.
+
+### Round-3 follow-ups queued (post-merge)
+1. **Pre-block FiLM** — modulate hidden state *before* attention/mlp blocks (currently after).
+2. **Layer-targeted FiLM** — only last 2 blocks; tests whether full per-block is necessary.
+3. **Investigate `val_geom_camber_rc` regression** — multi-seed re-run of baseline + FiLM; could be real coupling issue or noise.
+
+---
+
 ## 2026-04-28 22:25 — PR #743 v2: Per-channel surface loss [1.0, 0.5, 2.0] on Huber base
 - **Branch:** `willowpai2e3-alphonse/channel-weighted-surface-loss`
 - **Hypothesis:** Apply per-channel weights `[Ux=1.0, Uy=0.5, p=2.0]` to the surface loss to align training emphasis with the `mae_surf_p` metric. v1 was blocked by NaN poisoning; v2 adds the Huber base (matching PR #814) with normalized channel weighting.
