@@ -1,23 +1,28 @@
 # SENPAI Research State
 
-- 2026-04-28 01:15 — round 1 in progress on `icml-appendix-willow-pai2d-r2`
-- **Baseline anchored:** PR #328 (slice_num=128) merged. Current best
-  `val_avg/mae_surf_p = 133.55` (W&B run `s1p2qs7l`, best epoch 11/50).
-  Default config now: `n_hidden=128 n_layers=5 n_head=4 slice_num=128
-  mlp_ratio=2 lr=5e-4 weight_decay=1e-4 batch_size=4 surf_weight=10.0
-  epochs=50`.
-- **Pending merge candidates** (all need on-baseline confirmation;
-  all pre-#328, sent back for rebase):
-  - **PR #330** (frieren, Huber β=1): `val_avg/mae_surf_p = 109.47`
-    on slice_num=64. 18 % over baseline — outside ±10 % noise band,
-    very likely a real signal.
-  - **PR #311** (alphonse, width-160): `val_avg/mae_surf_p = 126.18`
-    on slice_num=64. 5.5 % over baseline — inside ±10 % noise floor,
-    needs on-baseline + multi-seed to disambiguate.
-  - **PR #332** (nezuko, surf_weight=25): `val_avg/mae_surf_p = 133.19`
-    on slice_num=64. 0.27 % over baseline — far inside noise floor,
-    but sweep curve + val_vol_p both support the interior optimum
-    qualitatively. Needs on-baseline + multi-seed.
+- 2026-04-28 01:30 — round 1 mostly settled on `icml-appendix-willow-pai2d-r2`,
+  round 2 starting in parallel
+- **Baseline updated:** PR #330 (frieren, Huber β=1) merged on top of
+  PR #328. Current best `val_avg/mae_surf_p = 115.61` (W&B run
+  `uip4q05z`, best epoch 11/50). −13.4 % over the prior baseline,
+  outside ±10 % noise floor. Default config now: `n_hidden=128
+  n_layers=5 n_head=4 slice_num=128 mlp_ratio=2 lr=5e-4
+  weight_decay=1e-4 batch_size=4 surf_weight=10.0 epochs=50` plus
+  `loss=Huber(beta=1.0)` on normalized residuals.
+- **Round 2 candidates in flight:**
+  - **PR #415** (frieren, asinh on pressure target): NEW
+    assignment. Pairs with merged Huber β=1 — orthogonal
+    mechanism on the same high-Re-tail failure mode.
+  - **PR #399** (askeladd, bf16 mixed precision): throughput unlock
+    for the 30-min cap.
+- **Pending round-1 merge candidates** (all need on-baseline
+  confirmation; all pre-#330, on-baseline + multi-seed):
+  - **PR #311** (alphonse, width-160): 126.18 on slice_num=64 (now
+    11.7 % WORSE than the new 115.61 baseline — needs to land below
+    115.61 to be a winner, well outside the ±10 % noise band).
+  - **PR #332** (nezuko, surf_weight=25): 133.19 on slice_num=64
+    (now 15.2 % WORSE than the new baseline). Bar is even higher
+    after the Huber merge.
 - **Noise floor: ±10 % at single seed.** Thorfinn (PR #337) ran the same
   config twice (kon60q79=153.19, nphltrz9=139.39) — a ~10 % spread
   purely from random seed / data-order randomness. **This is a
@@ -42,29 +47,30 @@
 | 399 | askeladd  | round 2: bf16 mixed precision | NEW assignment (status:wip) | n/a |
 | 326 | edward    | mlp_ratio 2 → 4            | sent back → mlp_ratio=3 | 137.83 (epoch 11/13) |
 | 328 | fern      | slice_num 64 → 128         | **MERGED ★**   | **133.55 (new baseline)**|
-| 330 | frieren   | MSE → Huber β=1            | sent back → rebase + re-run | **109.47** (epoch 14/50, on slice_num=64; merge-candidate after rebase) |
+| 330 | frieren   | MSE → Huber β=1            | **MERGED ★ (new baseline 115.61)** | rebased run = 115.61 (slice-128, epoch 11/50, run uip4q05z) |
+| 399 | askeladd  | round 2: bf16 mixed precision | wip            | n/a (assigned this cycle) |
+| 415 | frieren   | round 2: asinh on pressure target | NEW assignment | n/a (assigned this cycle) |
 | 332 | nezuko    | surf_weight 10 → 25 (sweep)| sent back → rebase + on-baseline + multi-seed | sweep done: surf-15=137.42, **surf-25=133.19**, surf-40=142.59 (clean interior optimum at 25; absolute level inside ±10 % noise of baseline) |
 | 335 | tanjiro   | warmup + cos, peak 1e-3    | sent back → cosine_t_max sweep | 154.57 (epoch 13/14) |
 | 337 | thorfinn  | BS 4→8, lr 7e-4            | sent back → rebase + BS=16/lr=1e-3 (+ multi-seed if budget) | 139.39 / 153.19 (2-seed mean 146.29; ~9.5 % worse than baseline on mean) |
 | 367 | fern      | bug fix: cruise-NaN scoring| **wip (new)**  | n/a (bug fix, not experiment) |
 
-PRs surfaced for advisor review this cycle: **#325**. Action:
-**#325 closed** (21 % regression at 30-min cap; depth axis is
-fundamentally compute-disadvantaged at fixed wall-clock).
-**Reassigned askeladd to round-2 axis #399 (bf16 mixed precision)** —
-the next-tier throughput unlock identified by alphonse, building
-on alphonse's careful failure-mode diagnosis at fp16. If bf16 lands
-cleanly, it unblocks every heavier round-2 stack (deeper / wider /
-larger batch).
+PRs surfaced for advisor review this cycle: **#330**. Action:
+**#330 MERGED ★** as the round-1 second winner. New baseline
+**115.61** (Huber β=1 on top of slice_num=128). −13.4 % over prior
+baseline, outside ±10 % noise floor, robust mechanism (high-Re tail
+story confirmed twice on different architectures).
+**Reassigned frieren to round-2 axis #415 (asinh on pressure target)**
+— pairs naturally with the just-merged Huber β=1: both target the
+high-Re tail of the pressure distribution but from different angles
+(distribution flattening vs gradient clipping). If asinh stacks on
+Huber, that's a 3–8 % round-2 win on top of 115.61.
 
-Bonus: askeladd's cruise-NaN debug + patch in #325 was the third
-independent confirmation of the same root cause (after edward and
-fern). Strong cross-validation that #367 is correct.
-
-Earlier cycle actions (recap): #328 merged (round-1 winner, new
-baseline 133.55); #326 + #335 + #330 + #337 + #311 + #332 sent back
-with specific follow-up instructions; #367 bug-fix PR assigned to
-fern for cruise-NaN scoring (in flight).
+Earlier cycle actions (recap): #328 merged (slice-128 winner,
+133.55 baseline → superseded); #326 + #335 + #311 + #332 + #337
+sent back with specific follow-up instructions; #367 bug-fix PR
+assigned to fern (in flight); #325 closed (depth-8 regression);
+#399 assigned to askeladd (round-2 bf16 throughput axis).
 
 ## What we learned this cycle (and last)
 
@@ -134,9 +140,12 @@ fern for cruise-NaN scoring (in flight).
 - **Per-channel loss weighting on `p`.** Metric only cares about
   pressure; loss currently weights all 3 channels equally. Pairs with
   surf_weight winner (nezuko's sweep).
-- **Target-space reformulation.** `asinh` / per-sample-std
-  normalization on the pressure channel — pairs naturally with Huber
-  (now that Huber-β=1 has confirmed the high-Re-tail story).
+- **Target-space reformulation.** ASSIGNED as PR #415 to frieren:
+  `asinh` on pressure channel of `y_norm` only (Ux/Uy unchanged).
+  Pairs naturally with the merged Huber-β=1 — orthogonal mechanisms
+  on the same high-Re-tail failure mode (distribution flattening vs
+  gradient clipping). per-sample-std normalization is a separate
+  follow-up if asinh doesn't capture the gain.
 - **Geometry-preserving augmentation.** x-flip for the ground-effect
   raceCar domain (mirror y-coord and corresponding flow components).
 - **Curriculum.** Sort batches by per-sample y std, warmup the

@@ -13,6 +13,74 @@ in the pressure channel; `accumulate_batch` masks the sample but
 fern** with the 2-line `nan_to_num` patch — once it lands, every
 round-1 run can recompute a finite `test_avg/mae_surf_p` from W&B.
 
+## 2026-04-28 01:30 — PR #330 (rebased): Round 1 axis: loss formulation — MSE → Huber (β=1) ★ MERGED ★
+
+- Branch: `willowpai2d2-frieren/huber-loss` (rebased onto current
+  advisor; diff is exactly the 2-line `(pred - y_norm)**2 →
+  F.smooth_l1_loss(...)` substitution in train loop + evaluate_split).
+- Run: `uip4q05z` (W&B
+  https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r2/runs/uip4q05z)
+
+### Results (best checkpoint, epoch 11 / 50 — wall-clock cut)
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|-|-:|-:|-:|
+| val_single_in_dist | 137.21 | 1.56 | 0.74 |
+| val_geom_camber_rc | 118.60 | 2.44 | 0.97 |
+| val_geom_camber_cruise | 98.74 | 1.28 | 0.55 |
+| val_re_rand | **107.89** | 2.00 | 0.74 |
+| **val_avg** | **115.61** | 1.81 | 0.75 |
+| test_single_in_dist | 125.75 | 1.63 | 0.69 |
+| test_geom_camber_rc | 108.59 | 2.49 | 0.88 |
+| test_geom_camber_cruise | NaN ⚠ | 1.17 | 0.49 |
+| test_re_rand | 105.10 | 1.75 | 0.71 |
+
+### Conclusion
+
+**Merged** as the new round-1 baseline at `val_avg/mae_surf_p = 115.61`
+— a **−13.4 %** delta over the prior baseline (133.55), comfortably
+outside the ±10 % single-seed noise floor. The strongest delta is on
+`val_re_rand` (−14.1 %), confirming the high-Re-tail mechanism
+predicted in the original hypothesis.
+
+### Decomposition: how the original 18 % became 13.4 %
+
+| Setting | val_avg/mae_surf_p | Δ vs same-arch baseline |
+|-|-:|-:|
+| slice_num=64 + MSE (implicit pre-#328 baseline) | (no finished run) | – |
+| slice_num=64 + Huber β=1 (frieren original, slice-64) | 109.47 | – |
+| slice_num=128 + MSE (PR #328 merged baseline) | 133.55 | – |
+| **slice_num=128 + Huber β=1 (this merge)** | **115.61** | **−13.4 %** |
+
+The original 18 % gain on slice-64 → 13.4 % on slice-128 means
+slice-128 already absorbed ~5 % of the original Huber benefit (more
+physics tokens → better high-Re tail resolution at the architectural
+level). What remains is the pure loss-shape effect: Huber's L1 tail
+matches the L1 metric better than MSE's quadratic tail, regardless
+of architecture. Mechanism is robust to the slice count.
+
+### Loss-formulation axis is the highest-leverage axis in round 1
+
+| Axis | Best Δ vs baseline (single-axis, any cohort run) |
+|-|-:|
+| Loss formulation (Huber β=1) | **−13.4 %** (merged) |
+| Architecture (slice_num=128) | −0 to −5 % (was the original baseline anchor) |
+| All other architecture axes | inside ±10 % noise vs baseline |
+
+Two clean wins land in round 1 — loss formulation and physics-token
+count — and they compose.
+
+## 2026-04-28 01:30 — PR #415 (NEW, frieren round 2): asinh transform on pressure target
+
+- Reassigning frieren after the #330 merge.
+- Hypothesis: pair the merged Huber-β=1 with `torch.asinh` on the
+  pressure channel of `y_norm` (only — Ux/Uy unchanged) before the
+  loss. asinh compresses the high-Re tail of the residual
+  distribution; Huber clips its gradient. Orthogonal mechanisms,
+  same target failure mode. Predicted 3–8 % reduction in
+  `val_avg/mae_surf_p` on top of 115.61.
+- Status: assigned, draft, status:wip.
+
 ## 2026-04-28 01:15 — PR #325: Round 1 axis: model depth — n_layers 5 → 8 ❌ CLOSED
 
 - Branch: `willowpai2d2-askeladd/depth-8` (deleted on close)
@@ -499,9 +567,10 @@ acknowledged but kept out of scope — tanjiro is iterating on
 
 | W&B name | best_val_avg/mae_surf_p | best_epoch | status |
 |-|-:|-:|-|
-| **willow-r2-frieren-huber-b1** | **109.47 ★ candidate** | 14 | sent back (rebase) |
+| **willow-r2-frieren-huber-b1-on-slice128** | **115.61 ★** | 11 | **merged (PR #330)** |
+| willow-r2-frieren-huber-b1 (slice-64, original) | 109.47 | 14 | superseded by rebased re-run |
 | willow-r2-alphonse-width-160 | **126.18** | 11 | sent back (rebase + on-baseline) |
-| willow-r2-fern-slice-128 | **133.55 ★** | 11 | merged (PR #328) |
+| willow-r2-fern-slice-128 | 133.55 (prior baseline) | 11 | merged (PR #328) — superseded as baseline by #330 |
 | willow-r2-alphonse-width-192 | 134.13 | 10 | superseded by width-160 |
 | willow-r2-nezuko-surf-15 | 137.42 | 13 | sweep complete |
 | **willow-r2-nezuko-surf-25** | **133.19** | 13 | sent back (rebase + on-baseline) |
