@@ -419,8 +419,8 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 # EMA of model weights — used for validation, checkpoint, and test eval.
-ema_decay = 0.999
-grad_clip_max_norm = 1.0
+ema_decay = 0.995
+grad_clip_max_norm = 10.0
 ema_model = copy.deepcopy(model)
 for p in ema_model.parameters():
     p.requires_grad_(False)
