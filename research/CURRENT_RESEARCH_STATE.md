@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-28 ~23:25 (Fourier PE K=4 merged at 89.71; #816 alphonse FiLM rebase #1 sent back for rebase #2 onto post-#820 baseline)
+- **As of:** 2026-04-28 ~23:38 (Fourier PE K=4 merged at 89.71; #816 alphonse FiLM and #819 frieren rel-L2 mix both sent back for rebase #2 onto post-#820 baseline)
 - **Most recent human direction:** none yet for this track
 - **Branch:** `icml-appendix-willow-pai2e-r4`
 - **Current best:** `val_avg/mae_surf_p = 89.714` (#820) and `3-split test mean = 88.16` (run `w9xbc0wl`)
@@ -38,7 +38,7 @@ on L1-only baseline). The compounding mechanism is well-understood.
 | #816 | alphonse | FiLM conditioning of LayerNorm (#2) | -5 to -12% | **rebase #1 returned val=91.82 (-7.47%) on PRE-#820 baseline; sent back for rebase #2 onto post-Fourier-PE 89.71** |
 | #820 | thorfinn | Fourier PE on (x, z) coords (#3) | **−9.59%** | **MERGED — val baseline 89.71 (new best)** |
 | #863 | askeladd | Seed determinism PR (infra) — replaces merged #797 | infra: variance ↓ | wip |
-| #819 | frieren | Relative L2 mix α=0.5 (sent back from pure α=1.0, +1.07%) | -1 to -4% target | wip retry |
+| #819 | frieren | Relative L2 mix α=0.5 (rebase #1 returned val=98.01 / test=88.78 on PRE-#820 base) | -1 to -4% target | **rebase #2 onto post-#820; predicted val ≤88.6 to merge** |
 | #888 | fern | Stratified vol subsample by distance-to-surface — replaces #861 (closed mask-only DropConnect) | -1 to -4% | wip |
 | #872 | nezuko | Domain-ID embedding 3-class (#8) — replaces #757 (closed) | -2 to -6% | wip |
 | #873 | edward | EMA model weights (Polyak) — replaces #753 (closed) | -1 to -3% | wip |

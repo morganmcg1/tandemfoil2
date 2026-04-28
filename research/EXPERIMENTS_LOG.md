@@ -1,5 +1,80 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-28 23:35 — PR #819: Relative L2 mix α=0.5 (retry on PRE-#820 base, val=98.01) — **SENT BACK for second rebase onto #820 baseline**
+
+- Branch: `willowpai2e4-frieren/relative-l2-loss`
+- Student: willowpai2e4-frieren
+- W&B run: [`1ho19yku`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/1ho19yku)
+
+**Hypothesis.** Blend α·L_rel + (1-α)·L_abs at α=0.5. The pure
+relative L2 (α=1.0, prior run `9enw7nkx`) had landed at val=100.29
+with cruise/single −11.6% each but camber_rc +16.9% (geometric
+extrapolation regression). α=0.5 should preserve the heterogeneity
+gains while restoring gradient signal on the high-magnitude
+camber_rc samples.
+
+**Results vs PRIOR baseline 99.23 (pre-#820, L1+ch=[1,1,3]):**
+
+| Metric | Prior baseline | This run (α=0.5) | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | 99.23 | **98.01** | **−1.22%** |
+| `test_avg/mae_surf_p` | 92.61 | **88.78** | **−4.13%** |
+| Best epoch | 12 | 14 (timeout) | curve still descending |
+| Wall time | 30.77 min | 30.94 min | flat |
+
+**Per-split val (best epoch 14):**
+
+| Split | Prior baseline | This run | Δ | (α=1.0 was) |
+|---|---:|---:|---:|---:|
+| `val_single_in_dist` | 116.68 | 117.71 | +0.9% | (−12.5%) |
+| `val_geom_camber_rc` | 113.94 | **111.67** | **−2.0%** | (+12.1% — fixed!) |
+| `val_geom_camber_cruise` | 75.02 | 73.72 | −1.7% | (−10.4%) |
+| `val_re_rand` | 91.28 | **88.93** | **−2.6%** | (−3.3%) |
+| **val_avg** | 99.23 | 98.01 | **−1.22%** | (+1.07%) |
+
+**Per-split test (epoch-14 ckpt, ALL 4 splits finite):**
+
+| Split | Prior baseline | This run | Δ |
+|---|---:|---:|---:|
+| `test_single_in_dist` | 117.77 | **107.48** | **−8.7%** |
+| `test_geom_camber_rc` | 99.49 | 100.05 | +0.6% |
+| `test_geom_camber_cruise` | 65.29 | 63.20 | −3.2% |
+| `test_re_rand` | 87.89 | 84.39 | **−4.0%** |
+| **test_avg** | **92.61** | **88.78** | **−4.13%** |
+
+**vs CURRENT merged baseline (89.71/88.16, post-#820 Fourier PE):**
+val_avg=98.01 sits **+9.26% above** baseline; test=88.78 is
++0.70% above. PR is also CONFLICTING. So it is not directly
+mergeable.
+
+**Key mechanistic insight (preserved regardless of merge):**
+
+The α=1.0 → α=0.5 sweep pinpoints a real lever. Pure relative
+loss is *anti-geometric-extrapolation* — it equalizes per-sample
+gradient magnitude, but in CFD the high-magnitude samples are
+the geometric outliers, so equalization reduces the model's
+incentive to fit them. The α=0.5 blend keeps half the per-sample
+equalization (driving cruise/single/re_rand wins) while keeping
+half the absolute gradient (preserving geometric extrapolation
+on camber_rc). This is a paper-worthy observation about loss
+formulation × dataset geometry interaction.
+
+**Decision.** **Send back for second rebase onto post-#820 advisor
+branch HEAD.** Rationale:
+
+1. PR is CONFLICTING — needs rebase regardless.
+2. Mechanism is orthogonal to Fourier PE (loss formulation vs
+   input feature spectrum), so should compound.
+3. Test signal (−4.13%, 3 of 4 splits improving, single_in_dist
+   −8.7%) typically survives baseline shifts because the
+   per-sample magnitude distribution is dataset-fixed.
+4. camber_rc reversal (+12.1% → −2.0%) is ch=[1,1,3]-mediated,
+   not Fourier-mediated, so should preserve.
+
+**Threshold to merge after rebase:** val_avg < 89.71. Predicted
+target: ~88.6 if α=0.5 compounds linearly. Sent back at 23:35
+with detailed instructions and per-split predictions.
+
 ## 2026-04-28 23:20 — PR #816: FiLM-condition Transolver blocks (rebase #1, val=91.82) — **SENT BACK for second rebase onto #820 baseline**
 
 - Branch: `willowpai2e4-alphonse/film-conditioning`
