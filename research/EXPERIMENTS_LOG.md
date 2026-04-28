@@ -61,7 +61,54 @@ warmup failed to compound (closed PR #758 at +9.7%) but nezuko's 5% warmup
 is mechanistically gentler (no peak-LR change), so the failure pattern
 doesn't necessarily transfer.
 
+## 2026-04-28 21:30 — PR #797: Non-finite guards for evaluate_split — **SENT BACK (rebase)**
 
+- Branch: `willowpai2e4-askeladd/nan-guard-on-L1`
+- Student: willowpai2e4-askeladd
+- W&B run: [`wewusbcj`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/wewusbcj)
+
+**Hypothesis.** Add `nan_to_num(pred)` and a per-sample `y_finite` filter in
+`evaluate_split` to (a) guard against model-side `Inf` predictions on certain
+cruise-test samples and (b) drop GT-NaN samples (specifically
+`test_geom_camber_cruise/000020.pt`, p-channel) before they poison the
+`accumulate_batch` accumulator via `NaN * 0 = NaN`.
+
+**Results (best epoch 14, 31.1 min wall, on L1 only — pre-#754 fork)**
+
+| Metric | This run (`wewusbcj`) | L1 baseline (`8lyryo5g`) | L1+ch baseline (`m46h5g4s`) |
+|---|---|---|---|
+| `val_avg/mae_surf_p` | 94.345 | 101.93 | 99.23 |
+| `test_avg/mae_surf_p` | **84.551 (FINITE!)** | NaN | NaN |
+| `test_single_in_dist/mae_surf_p` | 102.366 | 106.78 | 106.78 |
+| `test_geom_camber_rc/mae_surf_p` | 93.169 | 104.87 | 104.87 |
+| `test_geom_camber_cruise/mae_surf_p` | **59.334** | NaN | NaN |
+| `test_re_rand/mae_surf_p` | 83.337 | 86.37 | 86.37 |
+
+Diagnostic counts (per-split): `nonfinite_pred_count=0` everywhere (Bug 1
+didn't fire on this seed); `nonfinite_gt_samples=1` only on
+`test_geom_camber_cruise` (Bug 2 fired exactly once, matching fern's
+empirical scan).
+
+**Analysis.** This is the first run in the entire branch with a finite
+`test_avg/mae_surf_p`. The fix is the canonical infrastructure change for
+the paper-facing metric. The val drop (101.93 → 94.34) is init/sampler
+noise — student correctly notes that with all `nonfinite_*` counts zero on
+val splits, the val pass is bit-identical to a no-fix run. Without
+`torch.manual_seed`, run-to-run variance on this size run easily explains
+~5–7 points on `val_avg`.
+
+**Decision.** Sent back for **rebase**. Branch was created from L1 baseline
+#752 before the channel-weight #754 merged; the PR is now `CONFLICTING`
+because both touch the train loop. Asked askeladd to rebase, resolve the
+conflict (keep both: channel_weights in train loss, nan-guards in
+evaluate_split — they are orthogonal regions), and re-run on top of
+L1+ch=[1,1,3]. Expected after rebase: val_avg ≈ 99.23 ± noise; test_avg
+finite for the first time on the new baseline.
+
+This will be merged the moment the rebased run lands. Highest-priority
+infra fix on the branch — unblocks the paper-facing test metric.
+
+---
 
 - Branch: `willowpai2e4-askeladd/l1-loss`
 - Student: willowpai2e4-askeladd
