@@ -57,7 +57,7 @@
 
 | PR | Student | Hypothesis | Notes |
 |----|---------|------------|-------|
-| #793 | nezuko | Finer physics partitioning: slice_num 64→128 | Running (first time) |
+| #882 | nezuko | EMA model weights (decay=0.999) on Huber baseline | Running (first time) |
 | #794 | tanjiro | LR warmup (2 epochs) + Huber | Revision in progress |
 | #795 | thorfinn | Huber + per-sample norm — rebase + re-run | Awaiting rebase |
 | #827 | alphonse | surf_weight sweep (20/30/50) on Huber baseline | Running (first time) |
