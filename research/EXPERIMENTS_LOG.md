@@ -1143,3 +1143,36 @@ Past merge gate cleanly. **Predicted band was −1 % to +2 %** (uncertain due to
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #580 | askeladd | lion-lr-1p2e-4 | `lr_lion = 1.7e-4 → 1.2e-4` on merged #535 baseline | Replaces closed #546; lower-edge probe of Lion's basin (complements tanjiro's #536 upper-edge at 2.5e-4). Honest band −2 % to +4 %. |
+
+## 2026-04-28 06:05 — PR #552: GeGLU at matched params (charliepai2d1-nezuko) — **sent back for rebase + re-run**
+- Run config: `F.silu → F.gelu` in `GeGLUMLP.forward` at matched `geglu_inner=168` (657,639 params), on post-#352 base (β=1.0).
+
+### Headline metrics (best EMA epoch=12/50, timeout-cut)
+| metric | this run | run base #352 (SwiGLU + β=1.0) | current #535 (SwiGLU + β=0.5) |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` (EMA) | 62.477 | 64.158 (**−2.62 %**) | 61.508 (+1.57 %) |
+| `test_avg/mae_surf_p` | 54.102 | 55.930 (**−3.27 %**) | 52.336 (+3.37 %) |
+
+Clean win on the run base; mild regression vs current (within 5 % close threshold, past merge gate).
+
+### Mechanism finding (durable for the appendix)
+**GeGLU vs SwiGLU at matched params: activation shape is load-bearing, not just gating mechanism.** Per-split breakdown:
+- `single_in_dist` Δ = −7.91 % val / −6.64 % test (largest gain) — GELU's deeper negative-input dip provides more aggressive feature suppression on this split's high-variance pressure tail.
+- `re_rand` Δ = −2.19 % val / −4.04 % test — cross-regime Re holdout also benefits.
+- `geom_camber_cruise` Δ = +1.42 % val / +3.33 % test (small regression) — cruise's lower-magnitude pressure field benefited from SiLU's smoother shape.
+- `geom_camber_rc` Δ = +0.14 % val / −2.59 % test — wash on val, slight gain on test.
+
+The "any gating works" hypothesis is **falsified** by the per-split asymmetry; activation shape matters.
+
+### Why send back, not close, not merge
+- Past merge gate vs current (+1.57 % val / +3.37 % test on #535).
+- NOT past close threshold (>5 %).
+- Branch has β=1.0; squash-merge would revert merged β=0.5 → β=1.0 and undo #535's win.
+- The post-rebase question is genuinely interesting: GeGLU and β=0.5 both target high-Re tail via different mechanisms (activation shape vs gradient shape). Whether they compound, subsume, or interfere is the appendix-quality question.
+
+### Predicted post-rebase outcome
+- **Compound**: val ~57–60 (−2 % to −5 % vs #535) — third compounding loss-shape × activation-shape lever.
+- **Subsume**: val 60–62, near wash vs #535.
+- **Interfere**: val 62–64, slight regression.
+
+Honest predicted band: −5 % to +3 % vs current 61.508. Either result locks the activation-shape × loss-shape interaction story.
