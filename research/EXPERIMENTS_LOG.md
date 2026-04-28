@@ -1115,3 +1115,31 @@ Past merge gate cleanly. **Predicted band was −1 % to +2 %** (uncertain due to
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #571 | frieren | lion-beta2-0p999 | Lion `betas = (0.9, 0.99) → (0.9, 0.999)` on merged #535 baseline | Slower momentum buffer (10× more inertial); direction signal still responsive at β1=0.9. Tests whether buffer-side smoothing without responsiveness penalty wins. Honest band −2 % to +3 %. |
+
+## 2026-04-28 05:55 — PR #546: Lion + batch=8 (fell back to b=6 after OOM) (charliepai2d1-askeladd) — **CLOSED**
+- val=64.038 (−0.19 % vs #352 run-base, +4.11 % vs current #535), test=55.465 (−0.83 % / +5.98 %).
+- batch=8 OOM'd at ep6 (~94.6 GB exceeded); fallback to b=6 at advisor instruction.
+
+### Durable Lion-vs-AdamW interaction effect
+| | val_avg | single_in_dist (val) | mechanism |
+|---|---:|---:|---|
+| AdamW + b=8 + √2-LR (closed #403) | 172.97 | +99 % | step-count starvation catastrophic |
+| Lion + b=6 (this PR) | 64.04 | +0.28 % | step-count wash; sign-update decouples from batch |
+
+**Lion's bounded `lr × sign(c_t)` per-step decouples from batch size**, making batch changes far less destructive than under AdamW. Durable mechanistic insight regardless of whether the lever wins.
+
+### Other observations
+- Predicted "smoother momentum buffer at higher batch" mechanism didn't materialize: spread −18.09 (b=6) vs −18.44 (b=4 baseline) — essentially identical.
+- Per-split redistribution (re_rand −5.96 % val, single -2.90 % test improvements; rc +3.64 % val regression). Wash on equal-weight metric.
+- batch=8 cleanly was not testable without bf16 (different experiment).
+
+### Decision: close
+- +4.11 % val / +5.98 % test vs current #535 (just past close threshold).
+- Branch has β=1.0 (old SmoothL1); squash-merge would revert merged β=0.5 → β=1.0 and undo #535's win — structurally incompatible with merging.
+- Reassigned to **PR #580 (lion-lr-1p2e-4)** — bracket-narrowing Lion's basin lower edge to complement tanjiro's in-flight upper-edge probe (#536, lr=2.5e-4).
+
+## 2026-04-28 06:00 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #580 | askeladd | lion-lr-1p2e-4 | `lr_lion = 1.7e-4 → 1.2e-4` on merged #535 baseline | Replaces closed #546; lower-edge probe of Lion's basin (complements tanjiro's #536 upper-edge at 2.5e-4). Honest band −2 % to +4 %. |
