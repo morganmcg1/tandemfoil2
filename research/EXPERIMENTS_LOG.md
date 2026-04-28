@@ -1,5 +1,37 @@
 # SENPAI Research Results — `icml-appendix-willow-pai2d-r3`
 
+## 2026-04-28 09:30 — PR #609: Focal-L1 (per-node residual reweighting on top of L1) — **CLOSED (clean negative result + reusable team insight)**
+
+- Branch: `willowpai2d3-alphonse/focal-l1-surface` (deleted post-close)
+- **Hypothesis:** Per-node focal reweighting (γ>0) on top of L1 should up-weight hard residuals and improve fit on the worst nodes. Predicted Δ: −3 to −8% (borderline at noise floor).
+
+### Sweep results (group `focal-l1-surface`, on the post-#294 baseline)
+
+| γ | val_avg/mae_surf_p | Δ vs ctrl | test_avg/mae_surf_p | W&B run |
+|---|---:|---:|---:|---|
+| **0 (ctrl)** | **98.19** | — | **87.23** | `9l47599l` |
+| 0.5 | 102.71 | **+4.5** | 90.84 | `eoiyqw9p` |
+| 1.0 | 114.37 | **+16.2** | 102.60 | `pyd6uqt6` |
+| 2.0 | 212.08 | **+113.9** | 196.81 | `84n0uv2y` |
+
+### Decision: **CLOSED + reusable team insight**
+
+Within-sweep monotonic NEGATIVE result. The γ=0 control reproduced the merged baseline (98.19 vs 94.89, within seed noise) and the focal sweep monotonically degraded both val and test. Mechanism is the cleanest possible: **L1 was specifically chosen to NOT amplify large residuals; focal does the opposite. They directly cancel.**
+
+The focal_w distribution at γ=2.0 (max=973× the mean, p99/p50=54.4×) confirms the lever is doing what the math says — dumping all gradient into a handful of extreme residuals. No NaN despite the huge weights because L1's gradient is `sign(r)` (bounded magnitude regardless of weight) — the lever doesn't destabilize, just allocates capacity wrong.
+
+### **Reusable team insight (research-direction guideline)**
+
+This generalizes tanjiro's per-sample inverse-std finding (PR #508) to the per-node level:
+
+> **Residual-magnitude reweighting on the surface objective is the wrong axis once the loss is already the metric.**
+
+Both PR #508 (per-sample) and PR #609 (per-node) confirmed mechanism but failed to compound — both because reweighting by residual magnitude *fights* the metric we're optimizing for (MAE-aligned L1 already gives equal weight to all residuals by design). Future loss-formulation experiments should attack different mechanisms (smoothness penalties, derived-physics aux losses, robust-loss bounding) rather than residual-magnitude reweighting.
+
+**Per-split prediction directional check held at γ=0.5** (`val_geom_camber_rc` was the least-hurt split, +2.88 — exactly as predicted *if* hard-node focus were helping), but the magnitude is wrong-sign.
+
+Alphonse reassigned to **PR #691: saturated L1** — the *opposite-sign* lever, bounding pathological residuals' contribution rather than amplifying them. Predicted small effect (−1 to −4%).
+
 ## 2026-04-28 09:20 — PR #618: UNet-style skip from preprocess into last block — **SENT BACK (negative result + clean diagnostic, iterate to ReZero-gated)**
 
 - Branch: `willowpai2d3-edward/unet-skip-preprocess`
