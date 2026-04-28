@@ -59,6 +59,42 @@ def fourier_features(pos: torch.Tensor, num_freq: int = 8) -> torch.Tensor:
     return torch.cat([proj.sin(), proj.cos()], dim=-1).flatten(-2)  # [B, N, 4 * num_freq]
 
 
+class Lion(torch.optim.Optimizer):
+    """Lion optimizer (Chen et al. 2023). Sign-based update with momentum."""
+
+    def __init__(self, params, lr=1e-4, betas=(0.9, 0.99), weight_decay=0.0):
+        defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            beta1, beta2 = group['betas']
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+                state = self.state[p]
+                if 'exp_avg' not in state:
+                    state['exp_avg'] = torch.zeros_like(p)
+                exp_avg = state['exp_avg']
+
+                # Decoupled weight decay
+                p.data.mul_(1 - group['lr'] * group['weight_decay'])
+
+                # Compute update direction: sign(beta1 * momentum + (1 - beta1) * grad)
+                update = exp_avg * beta1 + p.grad * (1 - beta1)
+                p.data.add_(torch.sign(update), alpha=-group['lr'])
+
+                # Update momentum: beta2 * momentum + (1 - beta2) * grad
+                exp_avg.mul_(beta2).add_(p.grad, alpha=1 - beta2)
+        return loss
+
+
 # ---------------------------------------------------------------------------
 # Transolver model
 # ---------------------------------------------------------------------------
@@ -375,6 +411,7 @@ class Config:
     debug: bool = False
     skip_test: bool = False  # skip final test evaluation
     amp_bf16: bool = True  # use bfloat16 autocast for model forward; loss accumulator stays in fp32
+    optimizer_name: str = "adamw"     # one of {"adamw", "lion"}
 
 
 cfg = sp.parse(Config)
@@ -420,7 +457,11 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+if cfg.optimizer_name == "lion":
+    optimizer = Lion(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+else:
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+print(f"Optimizer: {cfg.optimizer_name}  (lr={cfg.lr}, weight_decay={cfg.weight_decay})")
 warmup_epochs = 5
 warmup = LinearLR(optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_epochs)
 cosine = CosineAnnealingLR(optimizer, T_max=max(MAX_EPOCHS - warmup_epochs, 1))
