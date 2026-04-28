@@ -1,5 +1,53 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 01:05 — PR #372: bf16 autocast on forward (throughput infrastructure)
+- Branch: `charliepai2d4-alphonse/bf16-autocast` (deleted on merge)
+- Student: charliepai2d4-alphonse
+- **Outcome: MERGED (squash, commit 91d8a4e). Infrastructure merge — BASELINE stays at #308's 106.40.**
+
+### Headline metrics (epoch 19 of 50, timeout-capped)
+| Metric | bf16+surf_w=25 (no EMA) | alphonse #287 (no bf16, surf_w=25, no EMA) | #308 baseline (EMA, surf_w=10) |
+|---|---|---|---|
+| `val_avg/mae_surf_p` | 108.93 | 126.67 | **106.40** |
+| `test_avg/mae_surf_p` | 99.16 | 114.88 | 93.99 |
+| Per-epoch wall-clock | **97.3 s** | 131.8 s | 141 s |
+| Epochs in 30-min cap | **19/50** | 14/50 | 13/50 |
+| Peak GPU memory | **33.0 GB** | 42.1 GB | 42.1 GB |
+
+### Why merge as infrastructure (not strict metric win)
+- 108.93 is +2.4% above the canonical baseline (106.40), but that's **within the ~5pp variance floor** established by askeladd's two Huber seeds.
+- Equal-config Δ vs alphonse #287: **-14%** on identical surf_weight=25/no-EMA setup. Clean throughput-axis win.
+- Three-way merge with #308's EMA composes cleanly — autocast wraps `model({"x": x_norm})["preds"]` which now applies to both live model (training) and EMA model (evaluation).
+- BASELINE.md keeps 106.40 as canonical metric; bf16 is now standing infrastructure in train.py.
+
+### Per-split val (epoch 19, no EMA)
+| Split | mae_surf_p | mae_vol_p |
+|---|---|---|
+| val_single_in_dist     | 134.11 | 155.67 |
+| val_geom_camber_rc     | 115.26 | 130.40 |
+| val_geom_camber_cruise |  84.19 | 108.35 |
+| val_re_rand            | 102.17 | 114.85 |
+
+### Per-split test (post-fix scoring)
+| Split | mae_surf_p |
+|---|---|
+| test_single_in_dist     | 118.15 |
+| test_geom_camber_rc     | 106.14 |
+| test_geom_camber_cruise |  72.74 |
+| test_re_rand            |  99.60 |
+
+### Analysis
+- **Throughput was the bottleneck, exactly as predicted.** 1.36× speedup (slightly below the 1.5-2× target — Transolver's softmax/layernorm stay in fp32 under autocast, and dataloader/host transfer don't accelerate). Memory drops 22% from halved bf16 activations.
+- **5 extra epochs of cosine-decayed training** is what produces the −14% equal-config improvement; the cosine tail does the heavy lifting.
+- **Run was still descending at epoch 19** (val_avg=108.93 was the last epoch and a new best). T_max=50 means we're seeing only 38% of the cosine decay; even more headroom.
+- alphonse correctly identified the cosine T_max retuning follow-up — set T_max ≈ achievable epoch count so the lr decay actually finishes.
+
+### Implications for in-flight PRs
+- **#381 nezuko, #382 frieren, #378 tanjiro, #379 thorfinn, #388 fern, #289/368 (rebasing askeladd/edward)**: depending on when each branch was created, they may or may not have bf16. New assignments after this merge inherit it automatically.
+- The throughput recovery makes round 2 PRs (compounding wins) much more attractive — we can now run more epochs and see the cosine schedule converge.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=372 records, 20 lines).
+
 ## 2026-04-28 00:55 — PR #289: SmoothL1 (Huber β=1.0) loss replacing MSE
 - Branch: `charliepai2d4-askeladd/huber-loss` (sent back to draft)
 - Student: charliepai2d4-askeladd

@@ -60,3 +60,4 @@ PR #287 (surf_weight=25) was merged independently before #308 landed; the artifa
 |---|---|---|
 | #287 (merged) | 126.67 | surf_weight 10→25, 14/50 epochs, timeout-capped. |
 | #308 (merged) | **106.40** | EMA(0.999) + grad clip 1.0, 13/50 epochs, EMA-evaluated. **-16.2% vs #287.** |
+| #372 (merged, infrastructure) | 108.93 (no EMA, surf_weight=25, 19 epochs) | **bf16 autocast** on the model forward in train + eval. Equal-config win: -14% vs #287 (same surf_weight=25, no EMA) at 19 vs 14 epochs. **Canonical baseline metric remains #308's 106.40 (EMA-evaluated).** Bf16 is now in `train.py` for all future runs; future PRs implicitly include bf16+EMA+clip+scoring fix. |
