@@ -390,6 +390,8 @@ def save_model_artifact(
         "use_ema": cfg.use_ema,
         "ema_decay": cfg.ema_decay,
         "ema_warmup_steps": cfg.ema_warmup_steps,
+        "inv_std_weight": cfg.inv_std_weight,
+        "inv_std_eps": cfg.inv_std_eps,
     }
 
     description = (
@@ -448,6 +450,8 @@ class Config:
     use_ema: bool = True
     ema_decay: float = 0.999
     ema_warmup_steps: int = 100
+    inv_std_weight: bool = True
+    inv_std_eps: float = 1.0
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -574,7 +578,32 @@ for epoch in range(MAX_EPOCHS):
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+
+        surf_w_stats: dict[str, float] | None = None
+        if cfg.inv_std_weight:
+            B = y_norm.shape[0]
+            surf_w = torch.zeros(B, device=pred.device)
+            for b in range(B):
+                sm = surf_mask[b]
+                if sm.any():
+                    surf_y = y_norm[b][sm]
+                    sd = surf_y.std()
+                    surf_w[b] = 1.0 / (sd ** 2 + cfg.inv_std_eps)
+            weighted_sq = sq_err * surf_mask.unsqueeze(-1) * surf_w[:, None, None]
+            weighted_mask_sum = (surf_mask * surf_w[:, None]).sum().clamp(min=1)
+            surf_loss = weighted_sq.sum() / weighted_mask_sum
+            with torch.no_grad():
+                nz = surf_w[surf_w > 0]
+                if nz.numel() > 0:
+                    surf_w_stats = {
+                        "diag/surf_w_min": nz.min().item(),
+                        "diag/surf_w_max": nz.max().item(),
+                        "diag/surf_w_mean": nz.mean().item(),
+                        "diag/surf_w_ratio_max_min": (nz.max() / nz.min().clamp(min=1e-9)).item(),
+                    }
+        else:
+            surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
@@ -583,11 +612,14 @@ for epoch in range(MAX_EPOCHS):
         if ema is not None:
             ema.update(model)
         global_step += 1
-        wandb.log({
+        log_step = {
             "train/loss": loss.item(),
             "lr": optimizer.param_groups[0]["lr"],
             "global_step": global_step,
-        })
+        }
+        if surf_w_stats is not None:
+            log_step.update(surf_w_stats)
+        wandb.log(log_step)
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
