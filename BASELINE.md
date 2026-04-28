@@ -88,3 +88,35 @@ Primary metric: `val_avg/mae_surf_p` (lower is better)
 - Best epoch was not the last — model had headroom; best=epoch 9 of 11.
 - Architecture: `n_hidden=192`, `n_layers=6`, `n_head=4`, `slice_num=64`, `mlp_ratio=2`.
 - Optimizer: AdamW, `lr=5e-4`, `weight_decay=1e-4`, `surf_weight=20`, cosine T_max=11.
+
+---
+
+## 2026-04-28 23:00 — PR #845: Combine per-sample norm loss with surf_weight=20 for additive gain
+
+- **Branch:** charliepai2e4-fern/per-sample-norm-loss-plus-surf-weight-20
+- **Best epoch:** 14 of 14 (final epoch best — smooth monotonic descent through full cosine anneal)
+- **Surface MAE (val, best ckpt):** Ux=1.5402, Uy=0.7110, **p=105.9649**
+- **Volume MAE (val, best ckpt):** Ux=4.7621, Uy=2.2293, p=120.9768
+- **val_avg/mae_surf_p: 105.9649** ← current best (was 112.9366, **−6.2%**)
+- **Metric summary:** `metrics/charliepai2e4-fern-per-sample-norm-loss-plus-surf-weight-20-0b1lixif.jsonl`
+- **Reproduce:** `cd target/ && python train.py --surf_weight 20.0 --epochs 14`
+
+### Per-split breakdown
+
+| Split | surf Ux | surf Uy | surf p | vol Ux | vol Uy | vol p |
+|---|---:|---:|---:|---:|---:|---:|
+| val_single_in_dist     | 1.5439 | 0.7060 | 130.9864 | 5.5467 | 2.3723 | 159.9004 |
+| val_geom_camber_rc     | 2.1869 | 0.9438 | 118.4032 | 5.6667 | 2.9503 | 125.0687 |
+| val_geom_camber_cruise | 0.9228 | 0.4906 |  79.1174 | 3.5359 | 1.4811 |  94.2555 |
+| val_re_rand            | 1.5073 | 0.7034 |  95.3524 | 4.2992 | 2.1133 | 104.6828 |
+| **avg**                | **1.5402** | **0.7110** | **105.9649** | **4.7621** | **2.2293** | **120.9768** |
+
+### Notes
+- Per-sample normalized loss (divides each sample's MSE by per-sample target variance) combined with `surf_weight=20`.
+- These two changes address orthogonal imbalances: sample-level Re-regime rebalancing (per-sample norm) + node-class surface emphasis (surf_weight).
+- Combination stacks additively: per-sample norm alone at sw=10 gave 110.37 (PR #747); sw=20 alone gave 128.83 (PR #738); combined gives 105.96.
+- `T_max=14` properly calibrated to run length — LR fully annealed to 0 at epoch 14 (vs PR #747 T_max=50 leaving LR high at cutoff).
+- Loss tag in JSONL config: `loss_kind: "per_sample_norm_mse"`.
+- Architecture unchanged: `n_hidden=128`, `n_layers=5`, `n_head=4`, `slice_num=64`, `mlp_ratio=2`.
+- Optimizer: AdamW, `lr=5e-4`, `weight_decay=1e-4`, `surf_weight=20.0`, cosine T_max=14.
+- `test_geom_camber_cruise` p NaN is pre-existing scoring pipeline issue (same as PRs #738, #747).
