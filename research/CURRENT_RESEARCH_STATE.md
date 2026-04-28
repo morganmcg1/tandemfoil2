@@ -1,8 +1,8 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 07:30 (advisor branch `icml-appendix-charlie-pai2d-r2`)
+- **Last update:** 2026-04-28 07:35 (advisor branch `icml-appendix-charlie-pai2d-r2`)
 - **Most recent human-team direction:** N/A — no open human-tagged issues at this time.
-- **Current baseline (directly measured): `val_avg/mae_surf_p = 66.149`, `test_avg/mae_surf_p = 57.654`** (PR #582, gradient clipping max_norm=10, epoch 14). All 4 test splits finite.
+- **Current baseline (directly measured): `val_avg/mae_surf_p = 64.696`, `test_avg/mae_surf_p = 55.879`** (PR #562 revision, cosine 3-ep warmup + T_max=11, start_factor=0.3, epoch 14). All 4 val and all 4 test splits finite.
 
 ## Merged compound stack (current advisor branch)
 
@@ -24,7 +24,8 @@
 16. PR #563 — Feature noise std=0.0025. val_avg = 66.841. test_avg = 58.488.
 17. PR #574 — PhysicsAttention temperature init=2.0. val_avg = 66.847. test_avg = 58.112.
 18. PR #575 — EMA decay_target 0.99 → 0.995. val_avg = 66.195. test_avg = 58.063.
-19. **PR #582 — Gradient clipping max_norm=10. val_avg = 66.149. test_avg = 57.654. CURRENT BASELINE.**
+19. PR #582 — Gradient clipping max_norm=10. val_avg = 66.149. test_avg = 57.654.
+20. **PR #562 — Cosine schedule revision (3-ep warmup + T_max=11, start_factor=0.3). val_avg = 64.696. test_avg = 55.879. CURRENT BASELINE.**
 
 ## Active experiments (WIP)
 
@@ -33,7 +34,7 @@
 | #510 | alphonse | torch-compile-baseline | torch.compile(model) speed-up | WIP — long-running |
 | #605 | edward | surf-weight-15 | surf_weight 10 → 15 (target primary metric) | WIP |
 | #608 | askeladd | slice-temp-2p5 | PhysicsAttention temperature init 2.0 → 2.5 (extend profile) | WIP (just assigned) |
-| #562 | fern | cosine-tmax-12-warmup-2 | T_max=12 + 2-ep warmup | WIP (sent back, rebase) |
+| #620 | fern | cosine-start-factor-02 | LinearLR start_factor 0.3 → 0.2 (push gentler-warmup direction) | WIP (just assigned) |
 | #554 | tanjiro | weight-decay-1e-5 | AdamW wd=3e-5 → 1e-5 (push wd profile) | WIP (sent back, rebase) |
 | #595 | frieren | feature-noise-zero-vs-schedule | feature noise std=0.0 (close direction) | WIP |
 | #600 | nezuko | ema-decay-target-0999 | EMA decay_target 0.995 → 0.999 (bracket UP direction) | WIP |
@@ -41,13 +42,13 @@
 
 ## Current research focus
 
-**Hyperparameter closure + profile extension on multiple active axes.** The merged stack now includes 19 improvements; we are bracketing the remaining open directions:
+**Hyperparameter closure + profile extension on multiple active axes.** The merged stack now includes 20 improvements (latest: PR #562 cosine revision = biggest win since PR #525); we are bracketing the remaining open directions:
 
 1. **EMA decay profile** (nezuko #600, 0.999): profile 0.95→75.655, 0.99→67.306, 0.995→66.195 is still descending — 0.999 brackets the upper end.
 2. **Huber δ profile** (thorfinn #601, 0.1): profile monotone toward L1 with non-diminishing returns. δ=0.1 is pseudo-L1 for ~95% of training gradients. NOTE: earlier test of δ=0.1 (PR #493) tied δ=0.25 on the pre-stack; on the full merged stack the result may differ.
 3. **Feature noise std** (frieren #595, 0.0): close direction to zero; optimum may be in (0, 0.0025].
 4. **Weight decay** (tanjiro #554, 1e-5): wd profile — 1e-4→70.814, 3e-5→66.149; 1e-5 continues the sweep.
-5. **LR schedule shape** (fern #562, T_max=12 + 2-ep warmup): warmup/cosine tradeoff bracket.
+5. **Warmup ramp aggressiveness** (fern #620, start_factor=0.2): direct probe of warmup-axis headroom following PR #562's revision win at start_factor=0.3.
 6. **surf_weight sweep** (edward #605, 15): primary surface pressure lever, not swept since early rounds.
 7. **Slice temperature init** (askeladd #608, 2.5): profile 1.0→71.699, 1.5→70.617, 2.0→66.847 shows accelerating improvement. Optimum not bracketed from above.
 8. **torch.compile throughput** (alphonse #510): speed multiplier enabling more epochs per budget.
@@ -71,6 +72,10 @@
 8. **Slice temperature init=3.0** — Profile: 1.0→71.699, 1.5→70.617, 2.0→66.847, 2.5→TBD (in flight). Optimum not bracketed from above.
 
 9. **Per-block learnable temperature** — PhysicsAttention temperature currently shared across blocks (single init). Making it per-block (5 independent scalars initialized at 2.0) could give different blocks different sharpness profiles. Low complexity.
+
+10. **Warmup ramp 4-ep + T_max=10 (start_factor=0.2)** — Push fern's gentler-warmup direction further. If 0.3→0.2 wins at 3+11, the next step is more warmup epochs at softer ramp.
+
+11. **LR peak bump** — fern's PR #562 revision suggested lr=6e-4 (1.2× current peak) might be safe under the gentler warmup ramp. Direct probe of whether peak LR was capped by basin-selection sensitivity.
 
 ## Disconfirmed directions (do not retry)
 
