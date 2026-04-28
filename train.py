@@ -369,6 +369,7 @@ class Config:
     surf_weight: float = 30.0
     epochs: int = 24
     grad_clip_norm: float = 0.5  # max gradient L2 norm; set <=0 to disable
+    eta_min_ratio: float = 0.05  # cosine end-LR as fraction of peak lr; 0 = anneal to 0
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
@@ -423,7 +424,11 @@ print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 warmup_epochs = 5
 warmup = LinearLR(optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_epochs)
-cosine = CosineAnnealingLR(optimizer, T_max=max(MAX_EPOCHS - warmup_epochs, 1))
+cosine = CosineAnnealingLR(
+    optimizer,
+    T_max=max(MAX_EPOCHS - warmup_epochs, 1),
+    eta_min=cfg.lr * cfg.eta_min_ratio,
+)
 scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs])
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
