@@ -1,5 +1,45 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 08:34 — PR #638 (CLOSED): surf_weight=15 (bracket up from default 10)
+- Branch: `charliepai2d3-tanjiro/surf-weight-15` (deleted)
+- Hypothesis: increase surface loss weight from 10 → 15 to put more gradient signal on the primary surface MAE metric.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | sw=15 (this PR) | current advisor PR #578 (sw=10) | Δ |
+|--------|---------------:|-------------------------------:|--:|
+| `val_avg/mae_surf_p` | 78.03 | 75.78 | **+2.97% REGRESSION** |
+| `test_avg/mae_surf_p` | 68.50 | 66.27 | +3.36% |
+
+### Per-split val (signature inversion)
+
+| split | sw=15 | baseline | Δ% |
+|-------|------:|---------:|---:|
+| val_single_in_dist     | 91.49 | 84.61 | **+8.13% ← worst regressor** |
+| val_geom_camber_rc     | 88.82 | 85.83 | +3.49% |
+| val_geom_camber_cruise | 56.82 | 58.09 | −2.19% (mild win) |
+| val_re_rand            | 74.98 | 74.58 | +0.54% (flat) |
+
+The two predicted-best splits (in-dist, rc-camber) are the worst regressors — exact inversion. Test mirrors val almost perfectly.
+
+### Analysis
+
+Mechanistic refinement: **the 10:1 vol:surf ratio in the current stack is already past the optimum, not under it**. The vol_loss likely acts as an implicit regulariser for high-magnitude surface predictions. Squeezing it further (sw=15) encourages over-fitting to easier (cruise) regimes at the expense of harder ones (in-dist, rc-camber).
+
+The cruise win is artefactual — it had the smallest baseline magnitude and was already near-optimal, while the splits with real headroom (in-dist y_std up to 2,077) regressed the most.
+
+Combined with PR #285 (sw=30 on MSE/no-EMA stack regressed to 125.53), the surf_weight axis is bracketed on the upward side: **optimum is at-or-below 10**. Both upward bracket points fail.
+
+### Decision: CLOSED
+
+Bracket DOWN (sw=6, sw=8) deferred — high information per unit compute but lower-EV than mechanistically-novel axes given the round-3 stack is at a local optimum on most knobs.
+
+Per-split surface weighting (suggestion #2) noted for round-5 — complex but high-EV if implemented as a sample-level weight.
+
+Reassigning tanjiro to **SiLU activation** (vs current GELU) — mechanistically-novel architectural axis untouched in round 3. SiLU/Swish is the activation in modern recipes (LLaMA, Mistral, DiT, Stable Diffusion 3); its slightly wider negative tail tends to help gradient flow on heavy-tailed targets. Two-line change.
+
+---
+
 ## 2026-04-28 08:27 — PR #626 (CLOSED): BF16 + broader FP32 pred cast (entire pred to FP32)
 - Branch: `charliepai2d3-edward/l1ff12-ema-cos14-lr-7p5e-4-bf16-broadguard` (deleted)
 - Hypothesis: BF16 autocast everywhere + FP32 cast on entire `pred` tensor for both surf_loss AND aux log-p (vs PR #606's narrow guard on `pred[..., 2]` only). Tests whether broader loss-side precision restoration is sufficient.

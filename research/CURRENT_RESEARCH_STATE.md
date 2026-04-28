@@ -176,7 +176,9 @@ Recommended reproduce: `python train.py --epochs 14 --lr 7.5e-4`.
    residual gating, γ_init=1e-4)** — per-channel learnable scalars on
    each residual branch. Mechanistically distinct architectural axis
    untouched in round 3.
-8. **One further pending PR** (tanjiro slot — confirm via survey).
+8. **PR #663** — tanjiro: L1+FF12+EMA + **SiLU activation**
+   (replaces GELU throughout backbone + head's mlp2 middle layer).
+   Mechanistically-novel architectural axis untouched in round 3.
 
 ## Compose pattern map — final round-3 picture
 
