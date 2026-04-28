@@ -1,8 +1,8 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 05:20 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
+- **Last update:** 2026-04-28 05:30 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
 - **Most recent human-team direction:** N/A — no team issues consulted (isolated replicate; only entrypoint-surfaced PRs in scope).
-- **Current baseline**: conservative target `val_avg/mae_surf_p < 71.6985` (PR #520 directly measured). Two more orthogonal compounds just merged on top: PR #527 wd=3e-5 (standalone 70.814) and PR #518 warmup_steps=50 (standalone 71.428). Combined-stack actual val_avg pending future measurement.
+- **Current baseline (directly measured): `val_avg/mae_surf_p = 67.306`, `test_avg/mae_surf_p = 59.296`** (PR #525 cosine-warmup+T_max=13 — biggest single-PR delta since δ=0.25). **Plus** PR #526 (feature noise 0.005) merged as orthogonal compound. Combined-stack actual likely at-or-better.
   - PR #282 — Huber loss (δ=1.0). val_avg = 105.999.
   - PR #361 — NaN-safe `evaluate_split` workaround. First finite test_avg = 97.957.
   - PR #363 — EMA(decay 0.999). val_avg = 101.350.
@@ -14,22 +14,26 @@
   - PR #479 — Bias-corrected EMA (decay_target=0.99, warmup_steps=10). Standalone: val_avg = 81.251 (−2.37%). MERGED as compound.
   - PR #520 — PhysicsAttention temperature init 0.5 → 1.0. **val_avg = 71.6985** (first directly-measured improvement). test_avg = 62.5824. Optimization-warmup mechanism.
   - PR #527 — AdamW weight_decay 1e-4 → 3e-5. Standalone on pre-slice-temp baseline: val_avg = 70.814 (−1.23%). wd profile monotone (3e-5 < 1e-4 < 3e-4); merged stack was over-regularized.
-  - PR #518 — Bias-corrected EMA warmup_steps 10 → 50. Standalone on pre-slice-temp baseline: val_avg = 71.428 (−0.38%). All 4 val splits improved; cruise/re_rand became biggest improvers (were flat under warmup=10).
+  - PR #518 — Bias-corrected EMA warmup_steps 10 → 50. Standalone on pre-slice-temp baseline: val_avg = 71.428 (−0.38%). All 4 val splits improved.
+  - PR #525 — Cosine schedule with 1-ep linear warmup + cosine T_max=13 (total=14 epochs aligned with budget). **val_avg = 67.306 (−7.05% vs 72.414). test_avg = 59.296 (−6.00%).** All 4 val splits improved 3–12%. Late-epoch slope shallows from 4.3 → 0.7 pts/epoch — fine-tuning regime achieved within the 14-epoch budget for the first time.
+  - PR #526 — Semantics-aware feature noise std 0.01 → 0.005. Standalone on pre-#525 baseline: val_avg = 71.359 (−1.46% vs reference). Sweep DOWN profile working: 0.005 < 0.01 (orig win) < 0.02 (regression).
 
 ## Current research focus
 
 Compound improvements on the round-1 huber baseline. Recover the paper-facing test metric. Test orthogonal levers (capacity, slice count, optimizer recipe, surface weighting, regularization, EMA, channel weighting) so round-3 can stack winners.
 
-## Outcomes to date (32 reviewed)
+## Outcomes to date (34 reviewed)
 
 Sorted by val_avg ascending (best first). Δ column references the current 72.414 conservative target. Full per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`.
 
 | Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Δ | Decision |
 |------|----|---------|------|--------------------------:|--:|----------|
-| 1 | #527 | tanjiro | weight-decay-3e-5 | 70.814 (standalone, pre-slice-temp) | −1.23% vs 71.6985 | MERGED — orthogonal compound |
-| 2 | #518 | askeladd | bias-corrected-ema-warmup-50 | 71.428 (standalone, pre-slice-temp) | −0.38% vs 71.6985 | MERGED — orthogonal compound |
-| 3 | #520 | thorfinn | slice-temp-1p0 | **71.6985** | (directly measured) | MERGED — first directly-measured win |
-| 4 | #463 | fern | huber-delta-025 | 72.414 | +1.00% | MERGED — biggest single-PR delta |
+| 1 | #525 | fern | cosine-warmup-tmax-aligned | **67.306** | (directly measured) | MERGED — biggest single-PR delta since δ=0.25 |
+| 2 | #527 | tanjiro | weight-decay-3e-5 | 70.814 | n/a — pre-#525 stack | MERGED — orthogonal compound |
+| 3 | #526 | frieren | feature-noise-005 | 71.359 | n/a — pre-#525 stack | MERGED — orthogonal compound |
+| 4 | #518 | askeladd | bias-corrected-ema-warmup-50 | 71.428 | n/a — pre-#525 stack | MERGED — orthogonal compound |
+| 5 | #520 | thorfinn | slice-temp-1p0 | 71.6985 | n/a — pre-#525 stack | MERGED |
+| 6 | #463 | fern | huber-delta-025 | 72.414 | n/a — pre-#525 stack | MERGED — biggest historical delta |
 | 2 | #480 | nezuko | adamw-betas-095 | 77.951 (on EMA(0.99)+SwiGLU baseline) | +7.6% standalone | MERGED — orthogonal compound (β₂=0.95) |
 | 3 | #455 | thorfinn | stochastic-depth-01 | 80.480 | +11.1% | MERGED (DropPath intermediate) |
 | 4 | #460 | frieren | per-sample-feature-noise | 81.437 | +12.5% | CLOSED (diagnosis confirmed; doesn't beat current) |
@@ -81,13 +85,13 @@ Built on the merged baseline. Conservative target val_avg < 72.414.
 
 | PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
 |----|---------|------|-------|-------------------------------------|
-| #525 | fern | cosine-warmup-tmax-aligned | 1-ep linear warmup + cosine T_max=13 (aligns LR decay with the 14-ep realistic budget) | −0.5% to −2% |
-| #526 | frieren | feature-noise-005 | Semantics-aware feature noise std 0.01 → 0.005 (sweep DOWN per #495 diagnosis) | −0.5% to −1.5% |
 | #540 | nezuko | ema-decay-target-095 | Bias-corrected EMA decay_target 0.99 → 0.95 | −0.5% to −1.5% (could regress) |
-| #548 | thorfinn | slice-temp-1p5 | PhysicsAttention temperature init 1.0 → 1.5 (push profile, characterize equilibrium asymmetry) | −0.5% to +1.0% |
-| #554 | tanjiro | weight-decay-1e-5 | AdamW weight_decay 3e-5 → 1e-5 (push wd profile further; profile monotone over 3e-5 < 1e-4 < 3e-4) | −0.5% to −1.5% (could bottom out) |
-| #555 | askeladd | bias-corrected-ema-warmup-100 | EMA warmup_steps 50 → 100 (push warmup profile further; monotone-improving so far at 10/50) | −0.3% to −1% |
-| #556 | edward | swiglu-mlp-ratio-3 | SwiGLU FFN mlp_ratio 2 → 3 (LLaMA-style capacity bump on the gated path; +23% params) | −0.5% to +2% |
+| #548 | thorfinn | slice-temp-1p5 | PhysicsAttention temperature init 1.0 → 1.5 | −0.5% to +1.0% |
+| #554 | tanjiro | weight-decay-1e-5 | AdamW weight_decay 3e-5 → 1e-5 (push wd profile further) | −0.5% to −1.5% |
+| #555 | askeladd | bias-corrected-ema-warmup-100 | EMA warmup_steps 50 → 100 (push warmup profile further) | −0.3% to −1% |
+| #556 | edward | swiglu-mlp-ratio-3 | SwiGLU FFN mlp_ratio 2 → 3 (LLaMA-style capacity bump on gated path) | −0.5% to +2% |
+| #562 | fern | cosine-tmax-12-warmup-2 | Cosine T_max 13 → 12 with 2-ep warmup (push LR decay further) | −0.5% to +0.5% |
+| #563 | frieren | feature-noise-0025 | Feature noise std 0.005 → 0.0025 (push profile down further) | −0.3% to −1% (could saturate) |
 
 ## Disconfirmed directions (do not retry on this branch)
 
