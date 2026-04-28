@@ -1,7 +1,7 @@
 # SENPAI Research State
 
-- 2026-04-28 02:00 — round 1 mostly settled on `icml-appendix-willow-pai2d-r2`,
-  round 2 starting in parallel
+- 2026-04-28 02:15 — round 1 mostly settled on `icml-appendix-willow-pai2d-r2`,
+  round 2 building momentum
 - **Baseline updated:** PR #330 (frieren, Huber β=1) merged on top of
   PR #328. Current best `val_avg/mae_surf_p = 115.61` (W&B run
   `uip4q05z`, best epoch 11/50). −13.4 % over the prior baseline,
@@ -45,7 +45,8 @@
 | 311 | alphonse  | width 128 → 192 → 160       | sent back → rebase + on-baseline (+ multi-seed if borderline) | width-160=**126.18** (epoch 11/50; inside ±10 % noise of baseline) |
 | 325 | askeladd  | depth 5 → 8                | **closed** (21 % regression at 30-min cap) | 150.06 / 162.05 (two seeds) |
 | 399 | askeladd  | round 2: bf16 mixed precision | NEW assignment (status:wip) | n/a |
-| 326 | edward    | mlp_ratio 2 → 4            | sent back → mlp_ratio=3 | 137.83 (epoch 11/13) |
+| 326 | edward    | mlp_ratio 2 → 4            | **closed** (FFN axis exhausted; 21 % worse than new baseline) | mlp-3=139.79, mlp-2-control=136.54 (slice-128, MSE; monotone trend smaller-is-better) |
+| 429 | edward    | round 2: per-channel loss weighting on `p` | NEW assignment (status:wip) | n/a |
 | 328 | fern      | slice_num 64 → 128         | **MERGED ★**   | **133.55 (new baseline)**|
 | 330 | frieren   | MSE → Huber β=1            | **MERGED ★ (new baseline 115.61)** | rebased run = 115.61 (slice-128, epoch 11/50, run uip4q05z) |
 | 399 | askeladd  | round 2: bf16 mixed precision | wip            | n/a (assigned this cycle) |
@@ -55,23 +56,30 @@
 | 337 | thorfinn  | BS 4→8, lr 7e-4            | sent back → rebase + BS=16/lr=1e-3 (+ multi-seed if budget) | 139.39 / 153.19 (2-seed mean 146.29; ~9.5 % worse than baseline on mean) |
 | 367 | fern      | bug fix: cruise-NaN scoring| sent back → rebase + Huber-aware reapplication | patch verified (test_avg: NaN → 125.05) but on pre-Huber base |
 
-PRs surfaced for advisor review this cycle: **#335**. Action:
-**#335 sent back for rebase** — `cosine_t_max` sweep
-qualitatively confirmed the schedule-fitting hypothesis decisively
-(both budget-matched variants beat the slice-64+MSE round-1 cohort
-middle by ~15 %; bowl-shape disqualifies the (c) outlier). But the
-branch is pre-#328 AND pre-#330, so all three runs were on slice-64
-+ MSE state. Need on-baseline re-run of variant (b) `lr=1e-3,
-cosine_t_max=15` on top of merged Huber+slice-128 to attribute
-cleanly. Detailed rebase conflict-resolution: keep `cosine_t_max`
-flag + warmup+SequentialLR scheduler; take advisor's slice-128 and
-F.smooth_l1_loss; discard doc reverts.
+PRs surfaced for advisor review this cycle: **#326**. Action:
+**#326 closed** — three FFN variants (mlp_ratio ∈ {2, 3, 4}) across
+two architectures all show smaller-is-better at the 30-min cap.
+Best variant 21 % worse than merged Huber baseline. Student
+explicitly recommended closing in their own follow-up #1.
+**Reassigned edward to round-2 axis #429 (per-channel loss
+weighting on pressure)** — zero compute cost, direct push on the
+metric we're ranked on (which only counts surface pressure but the
+loss weights all 3 channels equally), stacks naturally with all
+in-flight work. Sweep design: `p_weight ∈ {2, 3, 5}` with a
+`_channel_weighted_huber` helper.
+
+Bonus: edward's control re-run at identical config (136.54 vs
+published baseline 133.55 = 3-point spread) is the second
+independent corroboration of the ±10 % single-seed noise floor
+(after thorfinn #337). Two convergent measurements now anchor the
+methodology.
 
 Earlier cycle actions (recap): #328 + #330 merged (slice-128 +
-Huber β=1, current baseline 115.61); #326 + #311 + #332 + #337
-sent back; #367 sent back for Huber-aware reapplication; #325
-closed (depth-8 regression, 21 % worse than then-baseline); #399 +
-#415 assigned (askeladd round-2 bf16, frieren round-2 asinh).
+Huber β=1, current baseline 115.61); #311 + #332 + #335 + #337
+sent back; #367 sent back for Huber-aware reapplication; #325 +
+#326 closed (depth-8 + FFN axes exhausted at 30-min cap); #399 +
+#415 + #429 assigned (askeladd bf16, frieren asinh-on-pressure,
+edward p_weight — three round-2 axes in flight).
 
 ## What we learned this cycle (and last)
 
@@ -138,9 +146,12 @@ closed (depth-8 regression, 21 % worse than then-baseline); #399 +
 - **Schedule that fits the budget.** OneCycleLR over `total_steps`
   (not epochs) is robust to 30-min wall-clock cuts. May supersede
   `T_max=epochs` cosine entirely. Pending tanjiro's iteration.
-- **Per-channel loss weighting on `p`.** Metric only cares about
-  pressure; loss currently weights all 3 channels equally. Pairs with
-  surf_weight winner (nezuko's sweep).
+- **Per-channel loss weighting on `p`.** ASSIGNED as PR #429 to
+  edward: `p_weight` CLI flag scaling the pressure column of the
+  per-element Huber tensor before the spatial reduction. Sweep
+  {2, 3, 5}. Zero compute cost, orthogonal to surf_weight (which
+  works on the spatial axis) and to asinh (which works on the
+  target-distribution axis). All three loss-axis levers can stack.
 - **Target-space reformulation.** ASSIGNED as PR #415 to frieren:
   `asinh` on pressure channel of `y_norm` only (Ux/Uy unchanged).
   Pairs naturally with the merged Huber-β=1 — orthogonal mechanisms

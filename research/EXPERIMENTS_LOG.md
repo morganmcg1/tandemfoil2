@@ -13,6 +13,71 @@ in the pressure channel; `accumulate_batch` masks the sample but
 fern** with the 2-line `nan_to_num` patch — once it lands, every
 round-1 run can recompute a finite `test_avg/mae_surf_p` from W&B.
 
+## 2026-04-28 02:15 — PR #326 (iter 2): FFN ratio mlp_ratio={2, 3} on slice-128 ❌ CLOSED
+
+- Branch: `willowpai2d2-edward/mlp-ratio-4` (deleted on close).
+- Iteration: send-back asked for mlp_ratio=3 + control mlp_ratio=2 on
+  shared `--wandb_group "willow-r2-edward-ffn-v2"`.
+- Branch was rebased onto slice-128 (good) but pre-#330 (so MSE in
+  loss). Each step up in mlp_ratio costs ~30 % per-step → ~1 fewer
+  epoch in 30-min budget → ~3 mae_surf_p worse.
+
+| Variant | mlp_ratio | val_avg/mae_surf_p | best_epoch | run id |
+|-|-:|-:|-:|-|
+| Baseline reference (#328 winner) | 2 | 133.55 | 11 | s1p2qs7l |
+| (b) control re-run | 2 | 136.54 | 9 | r8bvfbvh |
+| (a) primary | 3 | 139.79 | 10 | 3k44156d |
+| (round-1 v1, slice-64) | 4 | 137.83 | 11 | ywy4j9e4 |
+
+### Conclusion
+
+**Closed.** Three FFN variants now tested across two architectures —
+clean monotone trend that *smaller is better at the 30-min cap*. The
+control re-run (b) lands 3 mae_surf_p worse than the published
+baseline at identical config (corroborates the ±10 % single-seed
+noise floor). Per-split signal is anti-stack: mlp_ratio=3 wins only
+on `val_single_in_dist` and loses on **all three OOD splits** — the
+opposite direction we'd expect if extra FFN capacity were generalizing.
+
+vs the merged Huber baseline (115.61), best variant (139.79) is
+21 % worse — well past the close threshold. Branch was also
+pre-#330, but the regression is severe enough that closing is right
+regardless of rebase.
+
+The student's own follow-up #1 explicitly recommended closing.
+
+### Bonus — corroboration of seed noise
+
+(b) control re-run vs published baseline: 136.54 vs 133.55 = 3-point
+spread at identical config. Same magnitude as thorfinn's #337
+replicate (153.19 vs 139.39 → ~14 points at higher absolute, ~9 %).
+Two independent same-config replicates now confirm the ±10 % noise
+floor that drove the merge decision rules on alphonse #311 and
+nezuko #332 send-backs.
+
+### Reassignment
+
+Edward → PR #429 (round-2 axis: per-channel loss weighting on
+pressure). Zero compute cost (vs FFN's per-step penalty), direct
+push on the metric we're ranked on, stacks naturally with all
+in-flight axes. Detailed below.
+
+## 2026-04-28 02:15 — PR #429 (NEW, edward round 2): per-channel loss weighting on pressure
+
+- Reassigning edward after closing #326.
+- Hypothesis: the loss currently weights all 3 target channels (Ux,
+  Uy, p) equally despite the metric only counting surface pressure.
+  Up-weighting `p` in the loss should mechanically push gradient
+  toward better pressure fidelity, with at most a small Ux/Uy
+  regression as the trade. Predicted 5–10 % reduction over the
+  merged Huber baseline (115.61).
+- Sweep: `p_weight ∈ {2.0, 3.0, 5.0}` on shared
+  `--wandb_group "willow-r2-edward-p-weight"`. Implementation:
+  `_channel_weighted_huber` helper that scales the pressure column
+  of the per-element Huber tensor before the spatial reduction.
+  MAE accumulation downstream is unweighted (untouched).
+- Status: assigned, draft, status:wip.
+
 ## 2026-04-28 02:00 — PR #335 (iter 2): LR schedule — cosine_t_max sweep on slice-64 + MSE
 
 - Branch: `willowpai2d2-tanjiro/warmup-cosine-1e3` (pre-#328 AND
@@ -681,7 +746,10 @@ acknowledged but kept out of scope — tanjiro is iterating on
 | willow-r2-nezuko-surf-15 | 137.42 | 13 | sweep complete |
 | **willow-r2-nezuko-surf-25** | **133.19** | 13 | sent back (rebase + on-baseline) |
 | willow-r2-nezuko-surf-40 | 142.59 | 12 | sweep complete (past optimum) |
-| willow-r2-edward-mlp-ratio-4 | 137.83 | 11 | sent back |
+| willow-r2-edward-mlp-ratio-4 | 137.83 | 11 | superseded by iter 2 |
+| willow-r2-edward-mlp-2-slice-128 (control) | 136.54 | 9 | **closed** (#326 — FFN axis exhausted) |
+| willow-r2-edward-mlp-3 | 139.79 | 10 | **closed** (#326 — FFN axis exhausted) |
+| willow-r2-edward-p-weight | – | – | NEW assignment (#429, round-2 axis) |
 | willow-r2-thorfinn-bs8-lr7e-4 | 139.39 / 153.19 (2 seeds) | 14 / 13 | sent back (rebase + BS=16) |
 | willow-r2-askeladd-depth-8 | 150.06 / 162.05 | 9 / 8 | **closed** (#325 — 21 % regression at 30-min cap) |
 | willow-r2-askeladd-bf16-amp | – | – | NEW assignment (#399, round-2 axis) |
