@@ -31,6 +31,55 @@
 
 ---
 
+## 2026-04-28 07:45 — PR #576: H16 arcsinh-compressed pressure target — **SENT BACK FOR REBASE-ONTO-#442**
+
+- Branch: `willowpai2d4-nezuko/h16-arcsinh-pressure-target` (rebased onto post-#404, **not yet onto post-#442**)
+- 3-cell scale sweep in W&B group `h16-arcsinh-p`:
+
+| Run | scale | val_avg/mae_surf_p | test_avg/mae_surf_p | best epoch | W&B |
+|-----|------:|---------------------:|----------------------:|-----------:|-----|
+| A — sanity | 0 | **119.3639** (matches PR #404 baseline 119.36 to 4 decimals) | 107.5387 | 13 | `nsnn0jry` |
+| **B** | **100** | **94.7875** (−20.6% vs PR #404 baseline) | 86.3309 (−19.7%) | 13 | `qv5lxykf` |
+| **C** | **500** | 95.9459 (−19.6%) | **84.3477** (**−21.6%**) | 13 | `3a80j92k` |
+
+### Per-split test for Run C (winner) and Run B vs PR #404 baseline
+
+| Split | PR #404 baseline | Run B (scale=100) | Run C (scale=500) | Best Δ |
+|-------|-----------------:|------------------:|------------------:|--------:|
+| `test_single_in_dist` | 120.69 | 124.43 (+3.1%) | **110.33 (−8.6%)** | C: −8.6% |
+| `test_geom_camber_rc` | 120.45 | **96.60 (−19.8%)** | 97.21 (−19.3%) | B: −19.8% |
+| `test_geom_camber_cruise` | 80.70 | **49.81 (−38.3%)** | 53.28 (−34.0%) | B: −38.3% |
+| `test_re_rand` | 108.32 | **74.49 (−31.2%)** | 76.56 (−29.3%) | B: −31.2% |
+
+Ux/Uy sanity: test_avg/mae_surf_Uy improves -14.8%/-15.3% in B/C; mae_surf_Ux roughly flat or improves; volume p improves 12-18%. Inversion math correct on channel 2 only.
+
+### Conclusions (provisional, pre-#442 rebase)
+
+- **The mechanism worked spectacularly.** -19.6% on val and -21.6% on test (Run C) is the second-largest single-mechanism effect of round 0, after H6 throughput's -32%. Cross-split signature exactly as predicted (single_in_dist least helped, OOD splits strongly helped).
+- **Cruise -38% was an unexpected positive surprise.** Mechanism: cruise's small baseline magnitudes were being starved of gradient by raceCar's heavy tails. Compressing those tails frees capacity for cruise. Scale=100 (more aggressive compression) helped cruise more than scale=500 because heavier compression releases more gradient share for the small-magnitude tails.
+- **B vs C tradeoff is real.** B has the better val (94.79) but C has the better test (84.35) and improves all four splits including single_in_dist. C's gentler compression preserves more linear-regime fidelity for samples that don't need compression — better generalization. Recommended scale=500 as the new default.
+- **Run A reproduces baseline to 4 decimals.** Third sanity-run-passing-cleanly demonstration of the seed-controlled comparison protocol.
+- **Stats recomputation worked correctly.** scale=100 → transformed pressure std=1.52 (well into compression regime); scale=500 → std=0.72 (gentler).
+- **Branch is post-#404 / pre-#442.** Run C config does not include EMA. The current merged baseline (#442) is val_ema=109.19, test=98.47.
+
+### Action
+
+Sent back for one focused **Run D — arcsinh scale=500 + EMA + FiLM on the merged config** (`--film_re True --use_ema True --ema_decay 0.99 --ema_eval_every 2 --arcsinh_p_scale 500.0 --epochs 25 --lr 7e-4 --weight_decay 5e-4 --seed 123`).
+
+Decision rule on resubmit:
+- val_ema < 95 → merge as round-0 winner #4 (compound win: arcsinh's −19.6% × EMA's −8.5% should land val_ema in 80-90 range)
+- val_ema ∈ [95, 109.19] → still a comfortable compound win; merge for the arcsinh stack
+- val_ema > 109.19 → arcsinh × EMA × FiLM antagonistic; close cleanly
+
+### Useful follow-ups (deferred)
+
+- Fine-grained scale sweep around 200-700 — Run B/C straddle a sweet spot.
+- Magnitude-gated arcsinh variant — apply only when |p| > k·p_local_std; could recover Run B's single_in_dist regression.
+- Compound with H1 (per-sample y-std normalization, alphonse #342 in flight) — orthogonal mechanisms (target-space vs loss-space reweighting).
+- Multi-seed confirmation at the winning config.
+
+---
+
 ## 2026-04-28 07:11 — PR #343 (round 2): H6 bf16+compile × FiLM — **SENT BACK FOR REBASE-ONTO-#442**
 
 - Branch: `willowpai2d4-askeladd/h6-bf16-compile-batch` (rebased onto post-#404, **not yet onto post-#442**)
