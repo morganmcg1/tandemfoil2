@@ -2,9 +2,21 @@
 
 Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pressure MAE across the four val splits). Paper-facing metric is `test_avg/mae_surf_p` from the best-val checkpoint.
 
-## 2026-04-28 03:25 — PR #463: Huber loss δ = 0.25 (squashed onto DropPath baseline)
+## 2026-04-28 03:55 — PR #480: AdamW betas (0.9, 0.95) — orthogonal compound lever
 
-- **Best `val_avg/mae_surf_p`** (target to beat): **72.414** (epoch 13, measured pre-DropPath; post-merge stack adds DropPath, expected at-or-better)
+- **Best `val_avg/mae_surf_p`** (target to beat — conservative): **72.414** (fern's δ=0.25 measurement on EMA(0.99)+SwiGLU pre-DropPath)
+- **β₂=0.95 standalone measurement**: 77.951 on the same EMA(0.99)+SwiGLU baseline (−6.34% vs 83.223). Orthogonal to δ=0.25 (different mechanism: optimizer 2nd-moment vs loss curvature).
+- **Recipe**: huber(δ=0.25) + EMA(decay=0.99) + SwiGLU FFN + DropPath(0→0.1) + **AdamW betas (0.9, 0.95)** + NaN-safe. Single-line change vs prior baseline.
+- **Caveat**: post-merge baseline number not directly measured — both fern's δ=0.25 (72.414) and nezuko's β₂=0.95 (77.951) were measured on the same pre-DropPath, single-axis stack. The combined stack (δ=0.25 + DropPath + β₂=0.95 + ...) will be measured by round-6/7 PRs. Predicted combined val_avg: ~67–72 if levers compound additively, ~72 if partially redundant.
+- **Reproduce**:
+  ```bash
+  cd target
+  python train.py --epochs 50 --experiment_name post-betas095 --agent <name>
+  ```
+
+## 2026-04-28 03:25 — Previous baseline (PR #463, huber δ=0.25)
+
+- **Best `val_avg/mae_surf_p`**: 72.414 (epoch 13, measured pre-DropPath; post-merge stack adds DropPath, expected at-or-better)
 - **`test_avg/mae_surf_p`** (paper-facing, all 4 splits finite): **63.082** (same caveat — pre-DropPath measurement; post-merge stack expected at-or-better)
 - **Per-split val MAE for `p` (pre-DropPath measurement)**:
   - `val_single_in_dist`: 87.914 (−11.03% vs EMA(0.99)+SwiGLU baseline)
