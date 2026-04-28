@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-28 ~23:00 (Fourier PE K=4 **merged** → new best val=89.71; thorfinn reassigned #883 band sweep)
+- **As of:** 2026-04-28 ~23:15 (Fourier PE K=4 merged at 89.71; #861 vol-subsample closed; fern reassigned #888 stratified subsample)
 - **Most recent human direction:** none yet for this track
 - **Branch:** `icml-appendix-willow-pai2e-r4`
 - **Current best:** `val_avg/mae_surf_p = 89.714` (#820) and `3-split test mean = 88.16` (run `w9xbc0wl`)
@@ -39,7 +39,7 @@ on L1-only baseline). The compounding mechanism is well-understood.
 | #820 | thorfinn | Fourier PE on (x, z) coords (#3) | **−9.59%** | **MERGED — val baseline 89.71 (new best)** |
 | #863 | askeladd | Seed determinism PR (infra) — replaces merged #797 | infra: variance ↓ | wip |
 | #819 | frieren | Relative L2 mix α=0.5 (sent back from pure α=1.0, +1.07%) | -1 to -4% target | wip retry |
-| #861 | fern | Volume subsampling (15%) (#7) — replaces #829 (closed) | -3 to -8% | wip |
+| #888 | fern | Stratified vol subsample by distance-to-surface — replaces #861 (closed mask-only DropConnect) | -1 to -4% | wip |
 | #872 | nezuko | Domain-ID embedding 3-class (#8) — replaces #757 (closed) | -2 to -6% | wip |
 | #873 | edward | EMA model weights (Polyak) — replaces #753 (closed) | -1 to -3% | wip |
 | #880 | tanjiro | LinearNO ELU+1 linear attention (#6) — replaces #851 Huber (closed) | -3 to -8% | wip (needs rebase to 89.71) |
@@ -64,6 +64,11 @@ on L1-only baseline). The compounding mechanism is well-understood.
   giving optimizer 3-10× weaker pressure on the residuals we want
   cleaned up. Direct mechanistic clash with L1+ch=[1,1,3] (whose merit
   is constant-magnitude gradient × per-channel weight).
+- #861 fern uniform vol subsample keep_frac=0.15 → val +0.37% (wash),
+  test −1.73% (DropConnect-style regularizer effect). Superseded by
+  #820 merge (89.71 baseline) — runs against 99.23 are no longer
+  competitive. Fern's per-split analysis surfaced the boundary-layer
+  density hypothesis → promoted to stratified variant (#888).
 
 **Note on rebasing after #820 merge:** All in-flight PRs (#816, #819, #861,
 #863, #872, #873, #880) are based on the old 99.23 baseline. They now need

@@ -1,5 +1,60 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-28 23:15 — PR #861: Volume subsampling keep_frac=0.15 — **CLOSED (superseded by #820 merge)**
+
+- Branch: `willowpai2e4-fern/volume-subsampling`
+- Student: willowpai2e4-fern
+- W&B run: [`lgdx6vqn`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/lgdx6vqn)
+
+**Hypothesis.** Uniform random volume subsampling at keep_frac=0.15 to
+shift effective surface fraction from ~8% → 30%, predicted to give
+−3 to −8% on val_avg/mae_surf_p plus 50–70% wall-clock saving from
+fewer tokens.
+
+**Results vs OLD baseline (99.23):**
+
+| Metric | OLD baseline | This run | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | 99.23 | 99.60 | +0.37% (wash) |
+| 3-split test mean | 99.34 | **97.63** | **−1.73%** |
+| Wall time per epoch | ~131s | 132.86s | flat (no compute saved) |
+
+**Vs NEW baseline 89.71 (#820 merged just before result landed):**
++11.0% on val, +10.7% on test → not mergeable.
+
+**Analysis (fern's mechanism — sharp and useful):**
+
+1. **Implementation was mask-only, not input-subsample.** The PR spec
+   masked nodes from the loss but Transolver still processed all N
+   tokens. So no wall-clock gain — predicted 50-70% drop didn't
+   materialize. Different experiment than the title suggested.
+
+2. **Effective surface fraction was 10.7%, not 30-40%.** Baseline
+   surface fraction is ~1.8% (not 8% as I assumed in PR body). Even
+   keep_frac=0.15 only triples the surface share. Math: PR-design
+   mathematically only testable at keep_frac<=0.05.
+
+3. **Val/test divergence is mechanistically clean.** Random per-sample
+   volume mask = DropConnect on input tokens for the loss = a
+   regularizer. Helps generalization on test more than fit on val.
+   With timeout at ep 14, regularization signal is partially
+   unrealized on val.
+
+4. **Per-split inversion on `val_single_in_dist`** (predicted biggest
+   gain, got biggest val regression of +4.6%). Mechanism: heavy-tail
+   pressure profiles need MORE volume context, not less — the volume
+   field around a foil with sharp pressure encodes the BL build-up
+   that propagates into surface predictions. Dropping 85% of those
+   tokens dilutes the BL signal.
+
+**Decision.** Closed. The mask-only DropConnect lever is sub-1% even
+when it works; can't recover the gap to 89.71. Promoted fern's own
+follow-up #3 (stratified volume subsampling weighted by
+distance-to-surface) to a fresh PR (#888) — tests the BL-density
+hypothesis cleanly: keep BL nodes (d<0.05), drop far-field nodes
+(d>0.3) at floor probability. Mechanistically distinct from Fourier
+PE — should compound.
+
 ## 2026-04-28 23:00 — PR #820: Fourier PE K=4 on (x, z) — **MERGED (-9.59%)**
 
 - Branch: `willowpai2e4-thorfinn/fourier-pe` (squash-merged)
