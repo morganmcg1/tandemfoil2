@@ -558,7 +558,7 @@ optimizer = torch.optim.AdamW(
     betas=(0.9, 0.95),
 )
 warmup_epochs = 3
-cosine_epochs = 11
+cosine_epochs = 14   # was 11 (extend cosine to align with realized 18-epoch compile budget)
 warmup = torch.optim.lr_scheduler.LinearLR(
     optimizer, start_factor=0.3, end_factor=1.0, total_iters=warmup_epochs,
 )
