@@ -47,7 +47,7 @@ from data import (
     pad_collate,
 )
 
-NUM_FOURIER_FREQS = 12
+NUM_FOURIER_FREQS = 16
 
 
 def fourier_pos_features(pos: torch.Tensor, num_freqs: int = NUM_FOURIER_FREQS) -> torch.Tensor:
