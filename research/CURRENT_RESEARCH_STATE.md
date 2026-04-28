@@ -51,11 +51,12 @@
 | #491 | fern | tf32-matmul-precision | `torch.set_float32_matmul_precision('high')` on merged #398 baseline | **Throughput delivery confirmed −13 % per-epoch (130.83 s/ep, 14 epochs in 30 min). Sent back 04:00 for rebase** onto post-#430 — Lion baseline moved to val=67.737. Predicted post-rebase: val ~63–66, test ~55–58. |
 | ~~#507~~ | ~~tanjiro~~ | ~~lion-lr-3p3e-4~~ | ~~`lr_lion = 1.7e-4 → 3.3e-4` on merged #430 baseline~~ | **CLOSED 04-28 04:35**: val +8.45 % / test +6.10 % vs #430 (+14.5 % / +12.8 % vs current #352). Lose mechanism: raw floor rises faster than EMA can smooth at higher Lion lr. Bracket: 1.7e-4 in basin, 3.3e-4 past it. Reassigned to #536. |
 | ~~#513~~ | ~~frieren~~ | ~~swiglu-mlp-dropout-0p05~~ | ~~Dropout p=0.1 → 0.05~~ | **CLOSED 04-28 04:48**: val +1.27 % vs #430 / +6.92 % vs current #352. Dropout dead under SwiGLU+Lion. Bracket fully mapped (p=0 wins, p=0.05/0.1 lose monotonically). Reassigned to #545. |
-| #514 | nezuko | swiglu-inner-192 | `swiglu_inner = 168 → 192` (+14 % MLP / +7 % total) on merged #430 baseline | Replaces closed #475; narrows the SwiGLU capacity bracket. Tests whether *any* upward bump from 168 wins at this budget. |
+| ~~#514~~ | ~~nezuko~~ | ~~swiglu-inner-192~~ | ~~`swiglu_inner = 168 → 192`~~ | **CLOSED 04-28 04:55**: val +1.61 % vs #430 / +7.28 % vs current #352. Combined with #475 (256, +5 %), gives clean curve: 168 (best) < 192 (wash) < 256 (lose). SwiGLU(168) is local optimum. Reassigned to #552 (GeGLU). |
 | #535 | edward | smoothl1-beta-0p5 | SmoothL1 β=1.0 → 0.5 on merged #352 baseline | Edward's own follow-up #1; β-sweep narrowing. Honest band −2 % to +2 %. |
 | #536 | tanjiro | lion-lr-2p5e-4 | Lion `lr=1.7e-4 → 2.5e-4` on merged #352 baseline | Tanjiro's bracket-narrowing midpoint. Honest band −2 % to +3 %. |
 | #545 | frieren | lion-beta1-0p95 | Lion `betas = (0.9, 0.99) → (0.95, 0.99)` on merged #352 baseline | Slower momentum decay; tests whether more inertial Lion direction smooths epoch-to-epoch raw variance. Honest band −1 % to +2 %. |
 | #546 | askeladd | lion-batch-8 | `batch_size = 4 → 8` on merged #352 baseline (no lr scaling) | First batch-side probe under Lion. Different math than #403's closed AdamW+batch=8 (Lion's bounded `lr × sign` per step). Honest band −2 % to +5 %. |
+| #552 | nezuko | geglu-mlp-matched | `silu(value) → gelu(value)` in gated MLP (same `geglu_inner=168`) | Gating-activation A/B at matched params after the SwiGLU capacity axis is locked. Tests whether silu-specific shape is load-bearing or any gating mechanism wins. Honest band −1 % to +1 %. |
 
 ## Updated picture from round-1 returns
 - **#356 (EMA) merged** at val=132.276 (−3.1 % vs same-run best raw).

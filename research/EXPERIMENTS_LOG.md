@@ -1015,3 +1015,16 @@ Past merge gate cleanly. **Predicted band was −1 % to +2 %** (uncertain due to
 |----|---------|------|-------|-----|
 | #545 | frieren | lion-beta1-0p95 | Lion `betas = (0.9, 0.99) → (0.95, 0.99)` on merged #352 baseline | Slower Lion momentum decay; tests whether more inertial direction signal smooths Lion's substantial epoch-to-epoch raw variance. Honest band −1 % to +2 %. |
 | #546 | askeladd | lion-batch-8 | `batch_size = 4 → 8` (no lr scaling) on merged #352 baseline | Replaces closed #474; first batch-side probe under Lion. Lion's bounded `lr × sign` per step changes the math from #403's closed AdamW+batch=8 (catastrophic). Honest band −2 % to +5 %. |
+
+## 2026-04-28 04:55 — PR #514: SwiGLU `swiglu_inner=192` (charliepai2d1-nezuko) — **CLOSED**
+- val=68.828 (+1.61 % vs #430 run-base, **+7.28 % vs current #352**), test=59.057 (−0.66 % / **+5.59 %**).
+- Combined with closed #475 (SwiGLU 256, +5 %) gives a **clean two-point capacity curve**: 168 (best) < 192 (≈wash) < 256 (lose). **SwiGLU(168) at matched params is the local optimum at this 30-min/12-epoch budget under Lion.**
+- Per-split: `rc` (highest-camber/random-chord OOD split) regressed +5 % at +14 % MLP — capacity isn't helping under-fit OOD splits even at modest bumps.
+- val/test asymmetry (+1.6 % val regression but −0.7 % test improvement) attributed to EMA-vs-raw mismatch at this budget: best raw at ep11, best EMA at ep12, EMA shadow carrying ep11's better weights into the test-eval checkpoint.
+- Reassigned to **PR #552 (geglu-mlp-matched)** — natural architectural follow-up after the SwiGLU capacity axis is locked.
+
+## 2026-04-28 04:55 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #552 | nezuko | geglu-mlp-matched | `silu(value(x)) → gelu(value(x))` in gated MLP forward, same `geglu_inner=168` | Gating-activation A/B test at matched params. Tests whether SwiGLU's silu-specific shape is load-bearing or whether any gating mechanism delivers the win. Honest band −1 % to +1 %. |
