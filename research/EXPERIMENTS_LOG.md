@@ -1,6 +1,67 @@
 # SENPAI Research Results — willow-pai2e-r4
 
-## 2026-04-28 19:55 — PR #752: L1 absolute-error loss aligned with MAE metric — **MERGED**
+## 2026-04-28 21:11 — PR #754: Per-channel pressure weight 3× ON L1 — **MERGED**
+
+- Branch: `willowpai2e4-fern/p-channel-3x` (squashed)
+- Student: willowpai2e4-fern
+- W&B run: [`m46h5g4s`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/m46h5g4s)
+
+**Hypothesis (L1 retest).** Whether `channel_weights = [1, 1, 3]` compounds
+on top of the merged L1 baseline (101.93). Original MSE-era result (130.87)
+left the question unanswered.
+
+**Results (best epoch 12, 30.77 min wall, on L1)**
+
+| Metric | fern channel-3x ON L1 | L1 baseline (#752) | Δ |
+|---|---|---|---|
+| `val_avg/mae_surf_p` | **99.226** | 101.93 | **−2.65%** |
+| 3-split test mean | 99.34 | 100.83 | −1.48% |
+| `val_single_in_dist/mae_surf_p` | 116.68 | 133.25 | −12.4% |
+| `val_geom_camber_rc/mae_surf_p` | 113.94 | 109.26 | +4.3% |
+| `val_geom_camber_cruise/mae_surf_p` | 75.02 | 76.13 | −1.5% |
+| `val_re_rand/mae_surf_p` | 91.28 | 89.07 | +2.5% |
+| `val_avg/mae_surf_Ux` | 1.789 | 1.429 | +25.2% |
+| `val_avg/mae_surf_Uy` | 0.693 | 0.611 | +13.4% |
+
+**Analysis.** The 3× pressure weight stacks with L1 — net pressure improvement
+with acceptable velocity-channel regression (we don't rank on velocity).
+Biggest gain on `val_single_in_dist` (heaviest-tail, where extreme pressure
+samples dominate). Two splits regressed slightly (rc, re_rand) but the net
+across all 4 is favorable. W&B verification: every per-split number matched
+fern's report exactly.
+
+**Decision.** Merged as new baseline at val_avg/mae_surf_p = **99.23**.
+fern reassigned to **channel-weight sweep continuation (5× and 10×)** —
+PR #829.
+
+## 2026-04-28 21:13 — PR #757: 5% linear warmup + cosine — **SENT BACK**
+
+- Branch: `willowpai2e4-nezuko/warmup-cosine`
+- Student: willowpai2e4-nezuko
+- W&B run: [`2ipmj9ct`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/2ipmj9ct)
+
+**Hypothesis.** Add 5% (2-epoch) linear warmup before cosine decay; expected
+benefit from gentler ramp at the start of training.
+
+**Results (MSE-era, best epoch 13/14, 30.7 min wall)**
+
+| Metric | nezuko 5% warmup (MSE) |
+|---|---|
+| `val_avg/mae_surf_p` | 128.19 |
+| 3-split test mean | ~126.86 |
+
+**Analysis.** Better than several MSE round-1 runs (alphonse 256x8 186.40,
+frieren slice=128 137.79, thorfinn BS=8 153.68, tanjiro lr=1e-3 151.60) but
+not directly comparable to the new baseline (99.23 on L1+ch=[1,1,3]).
+Independent confirmation of cruise-test NaN bug (fourth confirmation).
+
+**Decision.** Sent back. Asked nezuko to rebase onto current baseline and
+re-run with 5% warmup on top of L1 + ch=[1,1,3]. Tanjiro's lr=1e-3+10%
+warmup failed to compound (closed PR #758 at +9.7%) but nezuko's 5% warmup
+is mechanistically gentler (no peak-LR change), so the failure pattern
+doesn't necessarily transfer.
+
+
 
 - Branch: `willowpai2e4-askeladd/l1-loss`
 - Student: willowpai2e4-askeladd
@@ -299,16 +360,18 @@ idea #1, highest predicted impact (-5 to -15%). Addresses high-Re scale
 variation directly: per-sample loss normalization equalizes gradient
 contribution across the 4× spread in y_std within a split.
 
-## Round 1+2 status snapshot (2026-04-28 ~20:55)
+## Round 1+2 status snapshot (2026-04-28 ~21:15)
+
+**Current baseline:** `val_avg/mae_surf_p = 99.226` (PR #754, run `m46h5g4s`)
 
 | PR | Student | Topic | Status |
 |----|---------|-------|--------|
 | #749 | alphonse | Capacity scale-up (256×8) | **closed** (no convergence in budget) |
-| #752 | askeladd | L1 loss | **merged** (baseline 101.93) |
+| #752 | askeladd | L1 loss | **merged** (intermediate baseline 101.93) |
 | #753 | edward | surf_weight 20/30/50 | wip |
-| #754 | fern | Per-channel pressure 3× | sent back (retest on L1) |
+| #754 | fern | Per-channel pressure 3× (L1 retest) | **MERGED** (new baseline 99.23) |
 | #755 | frieren | slice_num 64→128 | **closed** (wall-clock cost cancels per-epoch gain) |
-| #757 | nezuko | 5% warmup + cosine | wip |
+| #757 | nezuko | 5% warmup + cosine | sent back (retest on baseline 99.23) |
 | #758 | tanjiro | lr=1e-3 + 10% warmup (L1 retest) | **closed** (+9.7% vs L1 baseline) |
 | #760 | thorfinn | batch_size 4→8 | closed (during send-back cycle) |
 | #797 | askeladd | NaN/Inf guard (scope expanded) | wip |
@@ -316,6 +379,7 @@ contribution across the 4× spread in y_std within a split.
 | #818 | tanjiro | **Round-2 #9:** SGDR warm restarts | wip |
 | #819 | frieren | **Round-2 #1:** Relative L2 loss | wip |
 | #820 | thorfinn | **Round-2 #3:** Fourier PE on (x,z) | wip |
+| #829 | fern | **Round-2:** p-channel weight sweep (5×, 10×) | wip |
 
 ## Round 1 status snapshot (2026-04-28 ~20:15)
 

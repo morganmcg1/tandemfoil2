@@ -1,32 +1,34 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-28 ~21:00 (round 1 closing, round 2 in flight)
+- **As of:** 2026-04-28 ~21:30 (round 1 closed, round 2 fully launched)
 - **Most recent human direction:** none yet for this track
 - **Branch:** `icml-appendix-willow-pai2e-r4`
-- **Current best:** `val_avg/mae_surf_p = 101.93` (PR #752, L1 loss merged)
+- **Current best:** `val_avg/mae_surf_p = 99.226` (PR #754, L1 + ch=[1,1,3] merged)
 
 ## Current research focus
 
-Round 1 has resolved into a clear picture: **L1 loss merged** as the new
-baseline (101.93). Other levers either failed to compound on top of L1
-(closed) or are still pending L1-retest results. The highest-impact
-round-2 ideas from the literature pass have now been launched.
+Round 1 has fully resolved. Two compounding wins reached the baseline:
+**L1 loss** (#752, 101.93) → **L1 + per-channel p×3** (#754, 99.23, −2.65%).
+The other round-1 levers either did not compound on L1 (closed) or have
+been sent back for L1-retest with the new baseline. All idle students are
+either on round-2 hypotheses or on a continuation of the merged channel-
+weight signal.
 
-### Round 1 outcomes (tags + decisions)
+### Round 1 outcomes (final)
 
 | PR | Student | Lever | Outcome |
 |---|---|---|---|
-| #752 | askeladd | L1 loss | **merged** (baseline 101.93) |
+| #752 | askeladd | L1 loss | **merged** (101.93, prior baseline) |
+| #754 | fern | Per-channel `p` ×3 on L1 | **MERGED — new baseline 99.23** |
 | #758 | tanjiro | lr=1e-3 + 10% warmup | **closed** (L1 retest +9.7% worse) |
-| #749 | alphonse | Capacity 256×8 | **closed** (no convergence in 30-min budget; infra reusable) |
-| #755 | frieren | slice_num 128 | **closed** (+33% epoch cost cancels per-epoch gain) |
-| #760 | thorfinn | batch_size 8 | **closed** (during send-back cycle; BS=8 viable but no L1 retest landed) |
-| #754 | fern | Per-channel pressure 3× | wip (L1 retest pending) |
-| #753 | edward | surf_weight 20/30/50 | wip |
-| #757 | nezuko | 5% warmup + cosine | wip |
-| #797 | askeladd | NaN/Inf guard (model + GT) | wip |
+| #749 | alphonse | Capacity 256×8 | **closed** (no convergence in 30-min budget) |
+| #755 | frieren | slice_num 128 | **closed** (+33% epoch cost cancels gain) |
+| #760 | thorfinn | batch_size 8 | **closed** (BS=8 viable but no L1 retest) |
+| #753 | edward | surf_weight 20/30/50 | wip (round 1, L1+ch retest) |
+| #757 | nezuko | 5% warmup + cosine on L1+ch=[1,1,3] | wip (sent back to retest on new baseline) |
+| #797 | askeladd | NaN/Inf guard (model + GT) | wip (canonical fix; expanded scope) |
 
-### Round 2 in flight (orthogonal, on top of L1)
+### Round 2 in flight (orthogonal, on top of L1 + ch=[1,1,3] = 99.23)
 
 | PR | Student | Round-2 idea | Predicted impact |
 |---|---|---|---|
@@ -34,6 +36,7 @@ round-2 ideas from the literature pass have now been launched.
 | #818 | tanjiro | SGDR Cosine Warm Restarts (#9) | -2 to -5% |
 | #819 | frieren | Relative L2 loss (per-sample norm) (#1) | -5 to -15% |
 | #820 | thorfinn | Fourier PE on (x, z) coords (#3) | -4 to -10% |
+| #829 | fern | Continuation: p-channel weight 5× / 10× sweep | -1 to -3% (5×); 10× could regress |
 
 ## Round 2 hypotheses ranked and ready
 
@@ -68,14 +71,19 @@ Best two-by-two interactions to test once round 1 winners are merged:
 - PCA output reparameterization × any winning loss
 - Surface oversampling × winning surf_weight from round 1
 
-## Open uncertainties (from researcher-agent)
+## Open uncertainties (from researcher-agent + #754 outcome)
 
 - Which lever contributes more: relative L2 loss vs. FiLM conditioning. They
   likely compound but the interaction is unknown.
+- **Where the channel-weight optimum sits.** 1× → 3× was −2.65%. The shape
+  of the curve at 5×/10× tells us whether the optimum is in [3, 5] or
+  beyond — fern's #829 sweep answers that.
 - Whether a PCA basis fit on training data transfers to OOD camber splits
   (`val_geom_camber_rc`, `val_geom_camber_cruise`).
 - Whether surface-node oversampling interacts adversely with the existing
   balanced-domain sampler.
+- Whether the velocity MAE regression at higher p-weight (1.43 → 1.79 surf
+  Ux at 3×) eventually starts hurting pressure too via gradient coupling.
 
 ## Notes / constraints
 
