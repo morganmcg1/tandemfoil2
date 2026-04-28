@@ -66,6 +66,42 @@ def fourier_features(xz: torch.Tensor) -> torch.Tensor:
 
 
 # ---------------------------------------------------------------------------
+# NACA camber bin embedding
+# ---------------------------------------------------------------------------
+# Discrete bin index for each per-node NACA-M value, shared across the front
+# foil (x[..., 15:18]) and the rear foil (x[..., 19:22]). The raw feature M
+# is `int(naca[0]) / 9.0` (see data/prepare_splits.py::parse_naca), so M=0..9
+# maps to {0/9, 1/9, ..., 9/9}. We multiply by NACA_M_DIVISOR and round to
+# recover the integer M.
+#
+# Bins layout:
+#   0..NACA_BIN_COUNT-1  : NACA-M values 0..NACA_BIN_COUNT-1 (M=0..10)
+#   NACA_BIN_COUNT       : sentinel for non-NACA / missing rear foil
+#                          ((M, P, T) all zero — file-3 specials and all
+#                          single-foil rear foils).
+NACA_BIN_COUNT = 11
+SPECIAL_BIN = NACA_BIN_COUNT
+NUM_CAMBER_BINS = NACA_BIN_COUNT + 1  # 12 embedding rows
+CAMBER_EMBED_DIM = 16
+NACA_M_DIVISOR = 9.0
+
+
+def camber_bin(naca_block_raw: torch.Tensor) -> torch.Tensor:
+    """Map raw [..., 3] NACA (M, P, T) values to discrete bin indices [...].
+
+    Real NACA M=0 (e.g. NACA 0012) has P=0 but T>0, so it is bin 0.
+    Non-NACA specials and missing rear foils have (0, 0, 0) and go to
+    SPECIAL_BIN, ensuring they get their own learnable representation.
+    """
+    M = naca_block_raw[..., 0]
+    P = naca_block_raw[..., 1]
+    T = naca_block_raw[..., 2]
+    is_special = (M == 0) & (P == 0) & (T == 0)
+    M_int = (M * NACA_M_DIVISOR).round().long().clamp(0, NACA_BIN_COUNT - 1)
+    return torch.where(is_special, torch.full_like(M_int, SPECIAL_BIN), M_int)
+
+
+# ---------------------------------------------------------------------------
 # Transolver model
 # ---------------------------------------------------------------------------
 
@@ -188,12 +224,21 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 camber_bin_count: int = NUM_CAMBER_BINS,
+                 camber_embed_dim: int = CAMBER_EMBED_DIM):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
+        self.camber_bin_count = camber_bin_count
+        self.camber_embed_dim = camber_embed_dim
+
+        # Per-node camber embedding shared across front + rear foils. Two
+        # lookups are concatenated to the per-node feature vector before the
+        # encoder MLP. fun_dim is set by the caller to include 2*camber_embed_dim.
+        self.camber_embed = nn.Embedding(camber_bin_count, camber_embed_dim)
 
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
@@ -223,9 +268,14 @@ class Transolver(nn.Module):
         elif isinstance(m, (nn.LayerNorm, nn.BatchNorm1d)):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
+        elif isinstance(m, nn.Embedding):
+            trunc_normal_(m.weight, std=0.02)
 
     def forward(self, data, **kwargs):
         x = data["x"]
+        front_emb = self.camber_embed(data["front_bin"])
+        rear_emb = self.camber_embed(data["rear_bin"])
+        x = torch.cat([x, front_emb, rear_emb], dim=-1)
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         for block in self.blocks:
             fx = block(fx)
@@ -255,13 +305,16 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            front_bin = camber_bin(x[..., 15:18])
+            rear_bin = camber_bin(x[..., 19:22])
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             ff = fourier_features(x_norm[..., :2])
             x_norm = torch.cat([x_norm, ff], dim=-1)
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
 
             with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
-                pred = model({"x": x_norm})["preds"]
+                pred = model({"x": x_norm, "front_bin": front_bin, "rear_bin": rear_bin})["preds"]
                 # Pure L1 (absolute) per-element loss; name kept for diff minimality.
                 sq_err = (pred - y_norm).abs()
                 vol_mask = mask & ~is_surface
@@ -485,7 +538,7 @@ val_loaders = {
 
 model_config = dict(
     space_dim=2,
-    fun_dim=X_DIM - 2 + 4 * FOURIER_K,
+    fun_dim=X_DIM - 2 + 4 * FOURIER_K + 2 * CAMBER_EMBED_DIM,
     out_dim=3,
     n_hidden=128,
     n_layers=5,
@@ -494,6 +547,8 @@ model_config = dict(
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
+    camber_bin_count=NUM_CAMBER_BINS,
+    camber_embed_dim=CAMBER_EMBED_DIM,
 )
 
 model = Transolver(**model_config).to(device)
@@ -539,6 +594,9 @@ run = wandb.init(
         "re_median_per_domain": re_median_per_domain,
         "ema_decay": ema_decay,
         "ema_val_interval": EMA_VAL_INTERVAL,
+        "camber_bin_count": NUM_CAMBER_BINS,
+        "camber_embed_dim": CAMBER_EMBED_DIM,
+        "camber_special_bin": SPECIAL_BIN,
     },
     mode=os.environ.get("WANDB_MODE", "online"),
 )
@@ -583,13 +641,16 @@ for epoch in range(MAX_EPOCHS):
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
 
+        front_bin = camber_bin(x[..., 15:18])
+        rear_bin = camber_bin(x[..., 19:22])
+
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         ff = fourier_features(x_norm[..., :2])
         x_norm = torch.cat([x_norm, ff], dim=-1)
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
 
         with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
-            pred = model({"x": x_norm})["preds"]
+            pred = model({"x": x_norm, "front_bin": front_bin, "rear_bin": rear_bin})["preds"]
             # Pure L1 (absolute) per-element loss; name kept for diff minimality.
             sq_err = (pred - y_norm).abs()
 
