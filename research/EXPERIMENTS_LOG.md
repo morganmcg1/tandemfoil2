@@ -1004,3 +1004,47 @@ All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the s
   2. **Explicit warm restart**: `CosineAnnealingWarmRestarts(T_0=11, T_mult=1, eta_min=2e-5)` — make the rebound an explicit SGDR feature.
   3. **Sweep eta_min ladder**: 1e-5, 2e-5, 5e-5, 1e-4 — calibrate sweet spot.
   4. Stretch T_max to match epoch budget (T_max=15 → 3+15=18 = compile budget exactly).
+
+## 2026-04-28 09:55 — PR #682: Steeper per-block slice-temp schedule [1.0, 1.5, 2.0, 2.5, 3.0]
+- Branch: `charliepai2d2-askeladd/slice-temp-per-block-steeper` (artifact: `model-slice-temp-per-block-steeper-20260428-091413`)
+- Hypothesis: range doubled (vs PR #647's 1.5), same mean (2.0). Block 0's drift signal in PR #647 suggested it wants to be softer.
+
+| metric | this run | PR #647 baseline | Δ |
+|---|---|---|---|
+| best `val_avg/mae_surf_p` | **62.247** (epoch 18) | 61.872 | **+0.61% regression** |
+| `test_avg/mae_surf_p` | **54.236** | 54.555 | **−0.58% improvement** |
+
+- Per-split val: in_dist +0.906, camber_rc +0.653, **camber_cruise −0.765**, re_rand +0.705. 3/4 regress; cruise improves.
+- Per-split test: in_dist +1.030, camber_rc −0.159, **camber_cruise −1.777 (−5.03% biggest)**, re_rand −0.369. 3/4 improve.
+- **Block 0 drift confirmation**: settled at 0.977 (drift -0.023, smallest among all blocks). Block 0 *does* prefer softer than 1.5 — but making it softer didn't improve val_avg.
+- **Critical confound**: PR #647 had range=1.5 mean=2.25; this PR has range=2.0 mean=2.0. Variance doubled BUT mean dropped. Likely the lower mean is the load-bearing cost. Mean=2.25 in PR #647 may have been doing more work than the variance.
+- Decision: **CLOSE** — schedule-range-with-lower-mean axis is closed. Cruise-friendly anchor (block 0=1.0 with higher mean) is the right disambiguation probe.
+
+## 2026-04-28 09:55 — PR #674: Huber δ=0.10 → 0.05 (push δ profile toward L1)
+- Branch: `charliepai2d2-thorfinn/huber-delta-0p05` (artifact: `model-charliepai2d2-thorfinn-huber-delta-0p05-20260428-090400`)
+- Hypothesis: profile still descending; δ=0.05 should shift linear-regime fraction from ~29% to ~50-60%.
+
+| metric | this run | PR #601 baseline (δ=0.10) | PR #640 baseline (per-group wd) | Δ |
+|---|---|---|---|---|
+| best `val_avg/mae_surf_p` | **62.760** (epoch 18) | 62.879 | 62.747 | **−0.19% / +0.02% (saturated)** |
+| `test_avg/mae_surf_p` | **54.274** | 54.561 | 54.512 | **−0.53% / −0.44%** |
+
+- Per-split val: in_dist **+1.92%**, camber_rc +0.11%, **camber_cruise −5.14%**, re_rand +0.52%. Same 3/4 down 1/4 up pattern as δ=0.1, but rotated: now cruise carries gain alone.
+- Loss-magnitude diagnostic at thr=0.05: aggregate lin = 46.14% (lower than predicted 50-60%); p channel = 36.54%; Ux = 52.55%; Uy = 49.33%.
+- **Critical mechanism finding**: at thr=0.10, residual fractions are essentially identical between δ=0.1 and δ=0.05 models (29.0% vs 28.83%). δ shapes optimization but **NOT** the converged residual distribution.
+- δ profile: 0.25 → 0.10 = **−3.00% step** vs 0.10 → 0.05 = **−0.19% step**. Diminishing returns are clear; δ axis is saturated.
+- Decision: **CLOSE** — δ axis closed at 0.10 for the val_avg metric. Per-channel δ (δ_p smaller, δ_Ux/Uy=0.10) is the right next probe — addresses p channel's lower lin fraction.
+
+## 2026-04-28 09:55 — PR #673: Per-group wd extreme (wd_attn 1e-4 → 3e-4, wd_mlp 1e-5 → 3e-6)
+- Branch: `charliepai2d2-tanjiro/per-group-wd-extreme` (artifact: `model-per-group-wd-extreme-20260428-090637`)
+- Hypothesis (per tanjiro): if asymmetric reg captures OOD asymmetry, exaggerating it should compound.
+
+| metric | this run | PR #640 baseline | current (PR #630) | Δ |
+|---|---|---|---|---|
+| best `val_avg/mae_surf_p` | **61.379** (epoch 18) | 62.747 | 59.907 | **−2.18% / +2.46% regression cross-stack** |
+| `test_avg/mae_surf_p` | **53.679** | 54.512 | 52.656 | **−1.53% / +1.94% regression cross-stack** |
+
+- **All 4 val splits improve** vs PR #640: in_dist **−2.001**, camber_rc **−2.000** (predicted target ✓), camber_cruise −0.837, re_rand **−0.634** (predicted target ✓).
+- All 4 test splits improve.
+- Profile still descending; both target OOD splits improved as predicted.
+- Decision: **SEND BACK FOR REBASE**. Standalone is robust on the post-#640 stack but this is a magnitude-push of an already-merged lever (#640) — needs current-stack verification. The asymmetry-magnitude may saturate under the heavier round-10 stack (huber δ=0.10 + per-block temp + eta_min=2e-5 rebound).
