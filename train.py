@@ -156,8 +156,11 @@ class TransolverBlock(nn.Module):
                 nn.Linear(hidden_dim, out_dim),
             )
 
-    def forward(self, fx):
-        fx = self.attn(self.ln_1(fx)) + fx
+    def forward(self, fx, film_gamma=None, film_beta=None):
+        normed = self.ln_1(fx)
+        if film_gamma is not None:
+            normed = film_gamma * normed + film_beta
+        fx = self.attn(normed) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
@@ -169,12 +172,14 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 use_film: bool = True):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
+        self.use_film = use_film
 
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
@@ -184,6 +189,7 @@ class Transolver(nn.Module):
                                   n_layers=0, res=False, act=act)
 
         self.n_hidden = n_hidden
+        self.n_layers = n_layers
         self.space_dim = space_dim
         self.blocks = nn.ModuleList([
             TransolverBlock(
@@ -193,8 +199,20 @@ class Transolver(nn.Module):
             )
             for i in range(n_layers)
         ])
+        if self.use_film:
+            # FiLM conditioning on log(Re): scalar -> per-block (gamma, beta).
+            # Identity at init via zero-init of the final linear (gamma=1, beta=0).
+            self.film_net = nn.Sequential(
+                nn.Linear(1, n_hidden // 4),
+                nn.SiLU(),
+                nn.Linear(n_hidden // 4, n_hidden * 2 * n_layers),
+            )
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
+        if self.use_film:
+            # Re-zero film_net's last layer after _init_weights so we start at identity.
+            nn.init.zeros_(self.film_net[-1].weight)
+            nn.init.zeros_(self.film_net[-1].bias)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -208,8 +226,20 @@ class Transolver(nn.Module):
     def forward(self, data, **kwargs):
         x = data["x"]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        for block in self.blocks:
-            fx = block(fx)
+        if self.use_film:
+            B = x.shape[0]
+            # log(Re) is dim 13 of normalized x and is constant across nodes within
+            # a sample. pad_collate right-pads, so node 0 is always real — read it
+            # directly to avoid mixing the padded-zero into a per-batch mean.
+            log_re = x[:, 0, 13:14]
+            film_params = self.film_net(log_re).view(B, self.n_layers, 2, self.n_hidden)
+            for i, block in enumerate(self.blocks):
+                gamma = 1.0 + film_params[:, i, 0, :].unsqueeze(1)
+                beta = film_params[:, i, 1, :].unsqueeze(1)
+                fx = block(fx, film_gamma=gamma, film_beta=beta)
+        else:
+            for block in self.blocks:
+                fx = block(fx)
         return {"preds": fx}
 
 
@@ -236,9 +266,27 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Sanitize ground truth: at least one test_geom_camber_cruise sample
+            # has Inf in y. The accumulator's per-sample skipping uses
+            # ``mask & sample_mask``; for skipped samples ``surf_mask=False``,
+            # but ``inf - finite = inf`` then ``inf * 0 = NaN`` (IEEE 754),
+            # poisoning mae_surf. Pre-replace non-finite y entries with 0 and
+            # exclude those samples from ``mask`` so they don't contribute to
+            # loss or MAE — equivalent semantics to the accumulator's intended
+            # skip, but without the NaN contamination.
+            B = y.shape[0]
+            y_finite_per_sample = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            if not y_finite_per_sample.all():
+                y = torch.where(torch.isfinite(y), y, torch.zeros_like(y))
+                mask = mask & y_finite_per_sample.view(B, 1)
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+            # Sanitize non-finite predictions for the same reason as above —
+            # belt-and-braces in case the model produces NaN/Inf early in
+            # training.
+            pred = torch.nan_to_num(pred, nan=0.0, posinf=1e6, neginf=-1e6)
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -386,6 +434,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    use_film: bool = True  # apply FiLM(log Re) conditioning to TransolverBlocks
 
 
 cfg = sp.parse(Config)
@@ -425,6 +474,7 @@ model_config = dict(
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
+    use_film=cfg.use_film,
 )
 
 model = Transolver(**model_config).to(device)
@@ -456,6 +506,8 @@ wandb.define_metric("val/*", step_metric="global_step")
 for _name in VAL_SPLIT_NAMES:
     wandb.define_metric(f"{_name}/*", step_metric="global_step")
 wandb.define_metric("lr", step_metric="global_step")
+if cfg.use_film:
+    wandb.define_metric("film/*", step_metric="global_step")
 
 model_dir = Path(f"models/model-{run.id}")
 model_dir.mkdir(parents=True, exist_ok=True)
@@ -533,6 +585,20 @@ for epoch in range(MAX_EPOCHS):
             log_metrics[f"{split_name}/{k}"] = v
     for k, v in val_avg.items():
         log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
+    # Track FiLM strength: how far has it departed from identity?
+    if cfg.use_film:
+        with torch.no_grad():
+            film_last = model.film_net[-1]
+            log_metrics["film/last_weight_l2"] = film_last.weight.norm().item()
+            log_metrics["film/last_bias_l2"] = film_last.bias.norm().item()
+            # Per-layer gamma/beta magnitude on a uniform sweep over the normalized
+            # log(Re) range typical of training data ([-2, 2] covers ~±2σ).
+            sweep = torch.linspace(-2.0, 2.0, 5, device=device).unsqueeze(1)
+            sweep_film = (
+                model.film_net(sweep).view(5, model.n_layers, 2, model.n_hidden)
+            )
+            log_metrics["film/gamma_dev_mean"] = sweep_film[:, :, 0, :].abs().mean().item()
+            log_metrics["film/beta_abs_mean"] = sweep_film[:, :, 1, :].abs().mean().item()
     wandb.log(log_metrics)
 
     tag = ""
