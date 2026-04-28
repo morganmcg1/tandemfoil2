@@ -1,5 +1,37 @@
 # SENPAI Research Results — `icml-appendix-willow-pai2d-r3`
 
+## 2026-04-28 02:55 — PR #323 (round 2): mlp_ratio rebased onto merged baseline — **CLOSED + critical variance finding**
+
+- Branch: `willowpai2d3-thorfinn/mlp-ratio-4` (deleted post-close)
+- **Hypothesis (round 2):** mlp_ratio=4 wins from r1 should compound with the warmup baseline. Thorfinn rebased onto merged advisor and re-ran with `peak_lr=1e-3, warmup_epochs=2`.
+
+### Sweep results (group `mlp-ratio-sweep-r2`, against the NEW merged baseline)
+
+| mlp_ratio | epochs done | best ep | val_avg/mae_surf_p | test_avg/mae_surf_p | W&B run |
+|---:|---:|---:|---:|---:|---|
+| **2 (control)** | **14** | **10** | **140.7015** | **126.4203** | `xklvptvl` |
+| 4 | 13 | 13 (last) | 145.3649 | 132.6583 | `eaprgj0f` |
+| 6 | 11 | 11 (last) | 154.4035 | 138.5408 | `vkvbnm52` |
+
+### Decision: **CLOSED** + research-infrastructure pivot
+
+**Within-sweep outcome:** mlp_ratio=2 wins on the rebased baseline. The r1 win at ratio=4 was an artifact of the OLD-LR schedule. Larger FFNs are training-budget-starved at the 30-min wall-clock cap — both ratio=4 and ratio=6 hit their best val at the very last completed epoch (still descending). Stacking with warmup did not happen; the levers actively interfere at this budget.
+
+### **Critical variance finding (research-blocking)**
+
+Thorfinn flagged that their r2 ratio=2 control landed at `val_avg=140.70`, while PR #320's same-config run `w3mjq2ua` produced `val_avg=115.84`. I verified: configs are byte-identical (`peak_lr=1e-3, warmup_epochs=2, weight_decay=1e-4, batch_size=4, surf_weight=10.0, model_config, n_params=662359, identical lr-ramp shape, runtime=1863s`). The only differences are bookkeeping (`agent` name, run name, group name). And `train.py` has **no seed control whatsoever** — `torch.manual_seed`, `np.random.seed`, `random.seed`, `torch.cuda.manual_seed` all absent.
+
+**Implications:**
+
+- The 25-point (~21%) gap is pure seed variance.
+- **PR #320's 115.84 was a single favorable seed**, not a robust baseline. The true baseline mean is likely ~130-145 with very wide variance.
+- All in-flight rebase decisions (#294, #317, #322) are operating against a single-seed bar that may be unrepresentative.
+- The "−21.5% from PR #320 merge" headline figure is now uncertain; the lever may have delivered closer to −5% with the rest being seed luck.
+
+### Pivot to research infrastructure
+
+Thorfinn reassigned to PR #482 (multi-seed baseline + deterministic seeding). 5 seeds of the merged config to establish `mean ± std`, plus add `torch.manual_seed` etc. to `train.py` so future runs are reproducible. ~2.5h of GPU; high operational value, unblocks confident decisions for every in-flight rebase PR.
+
 ## 2026-04-28 01:18 — PR #294: Huber surface loss, δ ∈ {0.5, 1.0, 2.0} — **SENT BACK FOR REBASE (strongest Round-1 candidate)**
 
 - Branch: `willowpai2d3-alphonse/huber-loss-surf-p`

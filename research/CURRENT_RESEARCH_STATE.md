@@ -7,7 +7,9 @@
 
 ## Current research focus
 
-First Round-1 winner merged: **PR #320** (linear warmup + peak LR 1e-3) drops `val_avg/mae_surf_p` from 147.55 → **115.84** (−21.5%, uniform across all 4 val splits). This sets the in-track baseline.
+**⚠️ CRITICAL UPDATE (2026-04-28 02:55):** A seed-variance investigation triggered by PR #323 r2 found that `train.py` has **no seed control at all** — `torch.manual_seed`, `np.random.seed`, `random.seed` all absent. PR #320's "baseline" of `val_avg/mae_surf_p = 115.84` was a single favorable seed; thorfinn's rebased control with byte-identical config produced 140.70 (a 25-point, ~21% gap). The true baseline mean is likely ~130-145 with very wide variance. **All in-flight rebase decisions are operating against a single-seed bar that may be unrepresentative.** Thorfinn reassigned to PR #482 (multi-seed baseline + deterministic seeding); the multi-seed `mean ± std` will replace 115.84 as the merge bar within the next ~2.5h of GPU.
+
+First Round-1 winner merged: **PR #320** (linear warmup + peak LR 1e-3) reportedly dropped `val_avg/mae_surf_p` from 147.55 → 115.84 (−21.5%, uniform across all 4 val splits) at a single seed. The 21.5% headline figure is now uncertain pending the multi-seed study.
 
 **Test-aggregate NaN bug RESOLVED.** Frieren independently diagnosed the same root cause as thorfinn (`0 * inf = NaN` from `-inf` values in `test_geom_camber_cruise/000020.pt`'s ground-truth pressure) and submitted a clean train-side safety net. Cherry-picked into advisor as commit `32b5b40`. All sibling Round-1 PRs now produce finite `test_avg/mae_surf_p` once they pull the rebased baseline.
 
@@ -26,7 +28,7 @@ First Round-1 winner merged: **PR #320** (linear warmup + peak LR 1e-3) drops `v
 | frieren | [#319](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/319) | **Depth** — `n_layers` 5 → 8 (sweep 6/8/10) | **CLOSED** | Compute-confounded at 30-min budget (deeper = fewer epochs); n_layers=6 wins in-sweep at 143.33, below new bar. Bug fix cherry-picked. |
 | nezuko | [#320](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/320) | **LR schedule** — linear warmup + peak LR ∈ {5e-4, 1e-3, 2e-3} | **MERGED** | **−21.5%** (147.55 → 115.84); peak_lr=1e-3 wins |
 | tanjiro | [#322](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/322) | **Channel weighting** — upweight pressure in surface loss (sweep p_w ∈ {1, 2, 3, 5}) | **rebase + re-run** | In-sweep −9.1% (138.87→126.18 at p_w=3); abs below new bar; clean U-shape with sharp optimum. |
-| thorfinn | [#323](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/323) | **FFN expressivity** — `mlp_ratio` 2 → 4 (sweep 2/4/6) | **rebase + re-run** | In-sweep −4.7% (143.75→136.96, ratio=4 wins, ratio=6 regresses); abs below new bar. |
+| thorfinn | [#323](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/323) | **FFN expressivity** — `mlp_ratio` 2 → 4 (sweep 2/4/6) | **CLOSED** | Round-2 rebased sweep: ratio=2 control (140.70) > ratio=4 (145.36) > ratio=6 (154.40). Lever does not stack. **Surfaced critical seed-variance finding**: PR #320's 115.84 was single favorable seed — true baseline mean unknown until PR #482 (multi-seed) lands. |
 
 These eight axes were chosen for **orthogonality** so that improvements compound when winners are merged sequentially: loss function, width, slice count, surface/volume balance, depth, LR schedule, channel weighting, and FFN expressivity touch nearly disjoint parts of the model and training stack.
 
@@ -44,6 +46,7 @@ These eight axes were chosen for **orthogonality** so that improvements compound
 | frieren | [#409](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/409) | **OneCycleLR** — onecycle_peak_lr ∈ {1e-3, 2e-3, 3e-3}, pct_start=0.1 | −2 to −5% |
 | nezuko | [#410](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/410) | **EMA of weights at eval time** — sweep decay ∈ {0.99, 0.999, 0.9995} | −1 to −5% |
 | edward | [#420](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/420) | **Random Fourier features for spatial coords** — sigma sweep {0.5, 1, 2, 5}, m=64 | −3 to −10% |
+| **thorfinn** | [#482](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/482) | **Multi-seed baseline + deterministic seeding** (research infrastructure) | 0% (characterizes baseline) |
 
 Each axis is orthogonal to the others and to the in-flight rebase PRs.
 
@@ -51,12 +54,11 @@ Each axis is orthogonal to the others and to the in-flight rebase PRs.
 
 | Student | PR | Lever | In-sweep Δ |
 |---|---|---|---|
-| **alphonse** | [#294](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/294) | **Huber surface loss δ=0.5** | **In-sweep result already beats new bar at OLD LR (106.36 < 115.84). Strongest signal so far.** |
-| fern | [#317](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/317) | `surf_weight=20` | −10.1% in-sweep, exceeded predicted band |
-| tanjiro | [#322](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/322) | `surf_p_weight=3.0` | −9.1% in-sweep, exceeded predicted band |
-| thorfinn | [#323](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/323) | `mlp_ratio=4` | −4.7% in-sweep, in predicted band |
+| **alphonse** | [#294](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/294) | **Huber surface loss δ=0.5** | In-sweep 106.36 at OLD LR (vs single-seed bar 115.84). With variance ~25 points known now, hard to call this a confident win pre-rebase, but it's the strongest signal we have. |
+| fern | [#317](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/317) | `surf_weight=20` | −10.1% in-sweep at OLD LR (143.93→129.41). Within-sweep delta is robust because all runs share their seed environment. |
+| tanjiro | [#322](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/322) | `surf_p_weight=3.0` | −9.1% in-sweep at OLD LR (138.87→126.18). Within-sweep delta is robust. |
 
-Each must demonstrate the lever still wins on top of `peak_lr=1e-3, warmup_epochs=2`. **Alphonse is the most exciting case** — already beats the new bar at OLD LR; rebase will tell us if Huber and warmup compound (likely) or overlap.
+**Decision shift after the variance finding:** within-sweep deltas (where all runs in a group share their seed-noise environment) remain the cleanest signal. Cross-PR comparisons against the 115.84 single-seed baseline are unreliable. Once PR #482 lands, in-flight rebase PRs will be evaluated against the multi-seed mean ± std.
 
 ## Potential next research directions
 
