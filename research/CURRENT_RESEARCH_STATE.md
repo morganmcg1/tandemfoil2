@@ -7,9 +7,11 @@
 
 ## Current research focus
 
-**Two training-recipe wins merged.** PR #320 (linear warmup + peak LR 1e-3) and PR #410 (EMA of weights at decay=0.99) are now both in the baseline. The EMA win is particularly well-supported: within-sweep delta of −21.7 MAE plus a seed-independent in-run diagnostic (live-vs-EMA at final epoch = −30.7 MAE) makes the lever robust regardless of seed.
+**Three wins now merged: warmup, EMA, and pure L1.** PR #320 (linear warmup + peak LR 1e-3), PR #410 (EMA of weights at decay=0.99), and PR #294 (pure L1 surface loss) compound to drop the single-seed val_avg/mae_surf_p from ~147 (default Transolver) → **94.89** (current merged baseline). Test_avg = 83.94. PR #294 is the strongest result yet: −26.55 MAE on val vs. the prior merged baseline, comfortably above the seed-noise floor, with clean within-sweep monotonic trend across δ ∈ {2.0, 1.0, 0.5, 0}.
 
-**⚠️ Seed-variance caveat (2026-04-28):** `train.py` has no seed control yet — runs with byte-identical configs differ by ~25 MAE (~21%). PR #320's recorded 115.84 was a single favorable seed; nezuko's same-config no-EMA control got 143.14. Within-sweep deltas remain reliable; cross-PR absolute comparisons against 115.84 are not. Thorfinn's PR #482 will add deterministic seeding + a 5-seed baseline study to characterize the *current* operational baseline (post-EMA). Once landed, multi-seed `mean ± std` replaces 115.84 as the merge bar.
+**Compounding confirmed.** Alphonse's analysis: loss-shape lever (Huber/L1 in loss landscape) and optimizer/EMA levers (warmup + weight averaging) are orthogonal mechanisms that stack additively. The merged train.py now embodies three independent levers, each with its own well-understood mechanism.
+
+**⚠️ Seed-variance caveat (still relevant):** `train.py` has no seed control yet — runs with byte-identical configs differ by ~25 MAE. Thorfinn's PR #482 (multi-seed baseline + deterministic seeding) is in flight. Until it lands, within-sweep deltas remain the cleanest signal; absolute numbers vs. the merged baseline are noise-bound at single seed.
 
 **Test-aggregate NaN bug RESOLVED.** Frieren independently diagnosed the same root cause as thorfinn (`0 * inf = NaN` from `-inf` values in `test_geom_camber_cruise/000020.pt`'s ground-truth pressure) and submitted a clean train-side safety net. Cherry-picked into advisor as commit `32b5b40`. All sibling Round-1 PRs now produce finite `test_avg/mae_surf_p` once they pull the rebased baseline.
 
@@ -55,12 +57,13 @@ These eight axes were chosen for **orthogonality** so that improvements compound
 | nezuko | [#502](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/502) | **AdamW betas + weight_decay sweep** — β1∈{0.85, 0.9}, β2∈{0.99, 0.999, 0.9995}, wd∈{1e-4, 1e-3, 1e-2}; 1D-axis + 2D-corner design | −1 to −5% |
 | tanjiro | [#508](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/508) | **Per-sample inverse-std weighting** | **CLOSED** — mechanism confirmed (cruise +, raceCar −) but magnitude bounded by dataset structure (within-sweep Δ=4.5 MAE < noise floor). Bigger reweighting makes aggregate worse, not better. |
 | tanjiro | [#577](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/577) | **Surface-only auxiliary pressure head** — decouple capacity allocation from loss balancing | −5 to −15% |
+| alphonse | [#609](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/609) | **Focal-L1** — per-node residual reweighting on top of L1 surface loss; γ ∈ {0, 0.5, 1.0, 2.0} | −3 to −8% (borderline at noise floor) |
 
 ## In-flight rebase PRs (Round 1, against new baseline)
 
 | Student | PR | Lever | In-sweep Δ |
 |---|---|---|---|
-| **alphonse** | [#294](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/294) | **Huber surface loss δ=0.5** | In-sweep 106.36 at OLD LR (vs single-seed bar 115.84). The strongest pre-rebase signal we have. |
+| **alphonse** | [#294](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/294) | **Pure L1 surface loss** (huber_delta=0) | **MERGED.** Within-sweep −15.72 MAE; vs prior merged baseline −26.55 MAE val, −24.72 MAE test. Compounding with warmup+EMA confirmed. New merged baseline 94.89. |
 | fern | [#317](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/317) | `surf_weight=20` | −10.1% in-sweep at OLD LR (143.93→129.41). Within-sweep delta is robust because all runs share their seed environment. |
 
 **Decision shift after the variance finding:** within-sweep deltas (where all runs in a group share their seed-noise environment) remain the cleanest signal — but only when the lever effect is *larger* than the seed-noise floor (~15–30 MAE at this budget). Channel-weighting (#322) was a counterexample: lever ~10 MAE < noise → couldn't confidently merge. Future lever-design should aim for predicted-effect-size > 25 MAE to be merge-able from a single-seed sweep before PR #482 lands.

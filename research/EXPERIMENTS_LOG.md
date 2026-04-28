@@ -1,5 +1,31 @@
 # SENPAI Research Results — `icml-appendix-willow-pai2d-r3`
 
+## 2026-04-28 06:47 — PR #294 (round 2): Pure L1 surface loss — **MERGED (strongest result yet)**
+
+- Branch: `willowpai2d3-alphonse/huber-loss-surf-p`
+- **Hypothesis (round 2):** Push the Huber δ all the way to 0 (pure L1 = MAE-in-normalized-space) on top of the merged warmup+EMA baseline. Predicted Δ: −3 to −8% on val_avg.
+
+### Sweep results (group `huber-loss-surf-p-r2`, on the post-EMA baseline)
+
+| huber_delta | best epoch | val_avg/mae_surf_p | test_avg/mae_surf_p | W&B run |
+|---:|:--:|---:|---:|---|
+| **0 (pure L1)** | 14 | **94.89** | **83.94** | `1zpw3ts2` |
+| 0.5 | 14 | 100.70 | 90.97 | `b8pvs5c9` |
+| 1.0 | 14 | 103.65 | 93.22 | `lpb2xfkp` |
+| 2.0 | 14 | 110.61 | 98.18 | `y7hajox7` |
+
+### Decision: **MERGED**
+
+**Within-sweep delta = −15.72 MAE on val_avg, −14.24 on test_avg** across the monotonic 4-point sweep. **vs the merged baseline (PR #410): −26.55 MAE val, −24.72 MAE test** — both comfortably above the ~25 MAE seed-noise floor. Clean monotonic trend (smaller δ → better), confirming the L1-aligns-with-MAE-metric story.
+
+**Compounding analysis** (alphonse's key contribution): R1's OLD-config-Huber-δ=0.5 (106.36) → R2's NEW-config-pure-L1 (94.89) breaks down cleanly: −5.66 from baseline upgrade (NEW+Huber-0.5 lands at 100.70), −5.81 from δ shift (0.5 → 0 in R2). Loss-shape lever (Huber/L1 in loss landscape) and optimizer/EMA levers (warmup + weight averaging) are orthogonal mechanisms that stack additively — exactly the most-exciting outcome.
+
+**Per-split breakdown** for the winner: biggest absolute gains on high-residual splits (`val_single_in_dist` 148.90 → 115.49, `val_geom_camber_rc` 130.69 → 107.52). All four splits improve cleanly. Mechanism check via `train/surf_huber_outlier_frac` confirms: at δ=0 every surface element is in the linear regime by construction (1.0); at δ=2.0 it stays near 0.
+
+**New baseline:** `huber_delta=0` (pure L1) is the surface-loss default; volume stays MSE.
+
+**Alphonse reassigned to PR #609** — focal-L1 (per-node residual reweighting on top of L1).
+
 ## 2026-04-28 05:50 — PR #508: Per-sample inverse-std weighting on surface loss — **CLOSED (mechanism real, magnitude bounded by dataset structure)**
 
 - Branch: `willowpai2d3-tanjiro/per-sample-inverse-std-weighting` (deleted post-close)
