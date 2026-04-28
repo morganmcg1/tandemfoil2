@@ -1,5 +1,113 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 04:00 — PR #492 (CLOSED, L1-vol × EMA destructively overlap): L1 volume on full lever stack
+- Branch: `charliepai2d3-tanjiro/l1ff-ema-cos14-lr-7p5e-4-voll1` (deleted on close)
+- Hypothesis: stack the validated L1-volume lever (PR #448, −5.18% on
+  L1+FF) onto the full proven-lever stack (L1+FF+EMA + matched cosine
+  + lr=7.5e-4). Predicted ~76 if additive.
+- Config: post-#447 advisor (had FF+EMA), changed vol_loss to L1
+  (your PR #448 change), `--epochs 14 --lr 7.5e-4`.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs current baseline (PR #462, 80.06) | vs PR #461 (your assigned-against, 80.28) |
+|--------|--------:|-------------------------------------:|------------------------------------------:|
+| `val_avg/mae_surf_p`  | 84.28 | **+5.27%** | +4.99% |
+| `test_avg/mae_surf_p` | 74.07 | **+5.76%** | +4.44% |
+
+### Per-split val — same lever, opposite direction on val_single_in_dist
+
+| split | L1+FF + L1-vol (PR #448) | this PR (L1-vol on EMA stack) | Δ vs current baseline |
+|-------|-------------------------:|------------------------------:|----------------------:|
+| val_single_in_dist | **−9.44%** (gain) | **+11.56%** (regression) | +11.56% |
+| val_geom_camber_rc | −4.18% | +4.49% | +4.49% |
+| val_geom_camber_cruise | −6.95% | −1.39% | mild improvement |
+| val_re_rand | +1.13% | +3.07% | +3.07% |
+
+The split where L1-volume helped most on the pre-EMA baseline is now
+the one it hurts most on the post-EMA baseline. **Strong overlap signal**.
+
+### Decision
+
+**Closed.** Above-threshold regression (+5.27% val).
+
+### Mechanistic read
+
+EMA's trajectory averaging already smooths the per-batch volume noise
+that L1-volume's loss-shape change targets. Switching MSE→L1 on volume
+also rebalances effective surface↔volume gradient scale (L1
+down-weights large per-cell volume errors relative to MSE), and on the
+EMA-smoothed trajectory this shifts the optimum toward a different
+basin worse on heavy-tail.
+
+### Round-3 narrative — third compose-failure with overlap signature
+
+| PR | lever | overlap with | mechanism |
+|----|-------|-------------|-----------|
+| #437 | wd=1e-3 + FF | rc-camber regularisation | magnitude-based regulariser overlap |
+| #446 | beta2=0.95 + FF | rc-camber regularisation | optimiser-side regulariser overlap |
+| #492 (this PR) | L1-vol + EMA | gradient-noise smoothing | sample-noise regulariser overlap |
+
+**Generalisation**: once one "noise/regularisation" lever is in the
+stack (FF, EMA), additional same-mechanism levers tend to interfere
+on the most-improved split.
+
+Re-assigning tanjiro to per-channel pressure weight in vol_loss
+(3× on p) — different axis than loss shape, doesn't overlap with EMA.
+
+Per-epoch metrics not centralised — branch deleted on close.
+
+---
+
+## 2026-04-28 03:59 — PR #489 (CLOSED, lr=1e-3 past optimum): L1+FF+EMA + matched cosine + lr=1e-3
+- Branch: `charliepai2d3-askeladd/l1ff-ema-cos14-lr-1e-3` (deleted on close)
+- Hypothesis: bracket peak LR upper end (7.5e-4 → 1e-3) on the
+  EMA-augmented stack. Predicted −2% to −5%.
+- Config: post-#447 advisor (had FF+EMA), `--epochs 14 --lr 1e-3`.
+
+### Headline
+
+| Metric | This PR | vs current (PR #462, 80.06) | vs PR #461 (80.28) |
+|--------|--------:|----------------------------:|-------------------:|
+| `val_avg/mae_surf_p` | 82.08 | +2.52% | +2.24% |
+| `test_avg/mae_surf_p` | 72.17 | +3.04% | +1.76% |
+
+### Per-split val — interior optimum below 1e-3
+
+| split | this PR | PR #461 | Δ |
+|-------|--------:|--------:|--:|
+| val_single_in_dist | 95.88 | 89.76 | **+6.82%** |
+| val_geom_camber_rc | 91.91 | 90.03 | +2.09% |
+| val_geom_camber_cruise | 61.62 | 62.42 | **−1.28%** |
+| val_re_rand | 78.89 | 78.92 | flat |
+
+Train losses smooth (`0.757 → 0.186` monotone), no NaN, no
+early-epoch bouncing. **Bottleneck is LR overshoot at peak, not
+warmup**.
+
+### Decision
+
+**Closed.** Above-zero regression on val and test, concentrated on
+the in-dist split. Student's analysis cleanly identifies interior
+LR optimum between 7.5e-4 and 1e-3.
+
+### Round-3 narrative addition
+
+LR sensitivity is **stack-dependent**:
+- On L1+FF + matched cosine (no EMA): lr=7.5e-4 was a clean win
+  (PR #461, val −3.2%).
+- On L1+FF+EMA + matched cosine: lr=7.5e-4 likely still wins (TBD via
+  fern PR #476's lr=5e-4 reference); lr=1e-3 is past optimum.
+- EMA's late-training trajectory averaging benefits from a slightly
+  more conservative LR; pushing peak too high moves the late-training
+  mean further from the in-dist minimum.
+
+Re-assigning askeladd to lr=8e-4 (interior bracket point).
+
+Per-epoch metrics not centralised — branch deleted on close.
+
+---
+
 ## 2026-04-28 03:35 — PR #432 (CLOSED, refuted hypothesis): L1+FF + log(Re) Fourier features
 - Branch: `charliepai2d3-nezuko/l1-ff-pos-logre-8freq` (deleted on close)
 - Hypothesis: extend the proven 8-freq spatial FF lever to the scalar

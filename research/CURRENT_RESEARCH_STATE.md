@@ -147,33 +147,43 @@ composition even if they don't outright beat 102.64:**
      *(loss focus)* — branched off L1-only.
    - PR #476 — fern: L1+FF+EMA + `--epochs 14` — four-lever-stack
      confirmation on post-#447 advisor.
-   - PR #489 — askeladd: L1+FF+EMA + `--epochs 14` + `lr=1e-3` —
-     LR bracket upper end (round-3-best config plus LR bump).
-   - PR #492 — tanjiro: L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
-     **L1 volume loss** — compose test of validated L1-volume lever
-     on post-#461 advisor.
    - PR #499 — edward: L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
      **`max_norm=0.5`** — tighter clipping bracket.
    - PR #500 — frieren: L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
      **`wd=5e-4`** — wd-sweet-spot compose on full proven-lever stack.
    - PR #501 — thorfinn: L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
      **DropPath 0.1** — mechanistically-different regulariser.
-   - PR (nezuko, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
-     **NUM_FOURIER_FREQS=12** — spatial FF frequency-count bracket
-     (their own PR #400 follow-up; tests whether the proven
-     input-encoding lever has further headroom at higher frequencies).
+   - PR #506 — nezuko: L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **NUM_FOURIER_FREQS=12** — spatial FF frequency-count bracket.
+   - PR (askeladd, new): L1+FF+EMA + `--epochs 14` + **`lr=8e-4`** —
+     interior LR bracket point between 7.5e-4 (works) and 1e-3 (past
+     optimum, PR #489).
+   - PR (tanjiro, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **3× pressure-channel weight in volume loss** — different axis
+     than L1-volume (which overlapped with EMA in PR #492); tests
+     whether channel-weighting the volume MSE captures the heavy-tail
+     benefit without overlapping with EMA's noise smoothing.
 
 ## Compose pattern map — final round-3 picture
 
-Round-3 PRs tested compose effects on top of L1+FF. The pattern:
+Round-3 PRs tested compose effects on top of L1+FF and the
+post-EMA stack. The pattern:
 
-| compose pattern | with FF | examples | cumulative impact |
+| compose pattern | with FF/EMA | examples | cumulative impact |
 |----------------|---------|----------|------------------:|
-| **Distributional** (broad gain across all splits) | additive | matched cosine + lr=7.5e-4 (PR #461), grad clipping (PR #462) | merged |
-| **Trajectory averaging** | clean orthogonal | EMA × FF (PR #447) | merged |
-| **L1-only-OOD-camber-targeted** at small dose | additive | wd=5e-4 (PR #469, validated, lost to current by merge timing) | re-assigned |
-| **L1-only-OOD-camber-targeted** at large dose | destructive on rc-camber | wd=1e-3 (PR #437), beta2=0.95 (PR #446) | closed |
-| **Input encoding on already-rich features** | net-flat or regression | log(Re) FF (PR #432) | closed |
+| **Distributional** (broad gain across all splits) | additive | matched cosine + lr=7.5e-4 (#461), grad clipping (#462) | merged |
+| **Trajectory averaging** | clean orthogonal | EMA × FF (#447) | merged |
+| **L1-only-OOD-camber-targeted** at small dose | additive | wd=5e-4 (#469, lost by merge timing) | re-assigned |
+| **L1-only-OOD-camber-targeted** at large dose | destructive on rc-camber | wd=1e-3 (#437), beta2=0.95 (#446) | closed |
+| **Input encoding on already-rich features** | net-flat or regression | log(Re) FF (#432) | closed |
+| **Loss-shape regulariser** | overlaps with EMA | L1-volume × EMA (#492) | closed |
+| **LR overshoot on EMA stack** | regression | lr=1e-3 × EMA (#489) | closed |
+
+**Generalisation observed across compose tests**: once one "noise/
+regularisation" lever is in the stack (FF, EMA), additional
+same-mechanism levers tend to interfere on the most-improved split.
+The pattern reproduces across magnitude-based (#437, #446), loss-shape
+(#492), and now LR-overshoot (#489) failure modes.
 
 **Input encoding compose insight (from PR #432 close)**: input-encoding
 levers compose with FF only when the targeted input dimension was
