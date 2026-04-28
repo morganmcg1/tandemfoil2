@@ -1,5 +1,46 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 07:21 — PR #614 (closed): grad_clip alone (max_norm=1.0) on L1+EMA+per-Re
+
+- branch: `willowpai2d1-nezuko/grad-clip-1.0-on-current` (deleted on close)
+- hypothesis: grad_clip might fire on outlier batches and dampen rare
+  large-norm steps. Predicted -0.5% to +0.5% (two-way). Pure L1 has
+  bounded per-element gradient (`sign(r)/N`), so naive expectation was
+  near-no-op.
+
+### Results
+
+| Metric | Value | vs PR #324 v4 (baseline) |
+|---|---|---|
+| Best `val_avg/mae_surf_p` | 54.13 (epoch 34 of 35) | **+3.86%** |
+| `test_avg/mae_surf_p` | 46.32 | +2.93% |
+| Per-epoch wall | ~50.7 s | ≈baseline |
+| Peak GPU memory | 24.1 GB | unchanged |
+| Clipped fraction | **100% on every epoch** (375/375 batches) | |
+| Pre-clip total grad L2 norm | mean ~30-54, p95 ~50-94, max ~158 | natural scale 30-50× above clip threshold |
+| W&B run | `836z0zxx` | |
+
+### Analysis & conclusions
+
+- **Closed.** Hypothesis premise was wrong: `clip_grad_norm_` measures L2
+  across **all model parameter gradients**, not per-element loss
+  gradient. Even if `∂loss/∂pred = sign(r)/N` is unit-magnitude per
+  element, backprop chains those through Jacobian-weighted accumulations
+  across hundreds of weight tensors, amplified 10× on the boundary by
+  surf_weight. **Natural scale is ~30-50.**
+- **Clipping at 1.0 = 30-50× effective LR reduction**. Run trained at
+  lr ≈ 1e-5 to 1e-6 instead of 5e-4.
+- **The convergence-lag widening pattern** (epoch 30 +0.42 vs baseline,
+  epoch 32 +0.69) confirms the LR-shrink interpretation: clipping
+  removes more learning signal as the loss landscape flattens — exactly
+  when L1's late-stage refinement is most valuable.
+- **No catastrophic gradient spikes** in the natural distribution.
+  L1+EMA+per-Re has smooth, well-controlled gradients; nothing for
+  grad_clip to clip in the rare-spike sense.
+- Followup: cosmetic NaN cleanup in `train.py::evaluate_split` (PR #634)
+  — operational issue flagged 8+ times across multiple students,
+  affecting `training_log_status`.
+
 ## 2026-04-28 07:14 — PR #570 (sent back): surf_weight=8 on pure L1
 
 - branch: `willowpai2d1-thorfinn/sw8-probe-on-pure-l1` (in flight as draft after send-back)
