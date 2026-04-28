@@ -32,32 +32,42 @@ The paper-facing rank is `test_avg/mae_surf_p`, computed once at the end of trai
 
 ## Best result
 
-**PR #387 — `grad-clip-1-on-fourier` (alphonse), merged 2026-04-28**
+**PR #464 — `grad-clip-0p5` (alphonse), merged 2026-04-28**
 
-- `val_avg/mae_surf_p` = **74.4437** (best epoch 14/14)
-- `test_avg/mae_surf_p` = **NaN** (4-split) / **72.137** (mean of 3 clean splits — same pre-existing `test_geom_camber_cruise` GT-NaN)
-- Per-split val: `val_single_in_dist=86.68`, `val_geom_camber_rc=85.92`, `val_geom_camber_cruise=53.29`, `val_re_rand=71.88`
-- Per-split test (3 clean): `test_single_in_dist=76.31`, `test_geom_camber_rc=76.96`, `test_re_rand=63.15`
-- Stacks on top of L1 (PR #293), warmup+cosine (PR #296), Fourier features (PR #365), and `surf_weight=30` (PR #301). **−2.92% val / −1.71% test** vs the previous baseline (PR #301). Strict monotone descent in val_avg across all 14 epochs (no oscillations).
-- Change: gradient clipping at `max_norm=1.0` between `loss.backward()` and `optimizer.step()`. Adds per-epoch grad-norm telemetry to JSONL. Zero per-epoch wall overhead.
+- `val_avg/mae_surf_p` = **73.9087** (best epoch 14/14)
+- `test_avg/mae_surf_p` = **NaN** (4-split) / **70.371** (mean of 3 clean splits — same pre-existing `test_geom_camber_cruise` GT-NaN)
+- Per-split val: `val_single_in_dist=81.66`, `val_geom_camber_rc=87.95`, `val_geom_camber_cruise=54.47`, `val_re_rand=71.55`
+- Per-split test (3 clean): `test_single_in_dist=71.95`, `test_geom_camber_rc=75.93`, `test_re_rand=63.24`
+- **−0.71% val / −2.45% test** vs the previous baseline (PR #387). Test improvement is the dominant signal — tighter clipping smooths small-batch L1 noise, payoff is larger on lower-noise test splits than on val.
+- Change: pure CLI/Config tweak — `grad_clip_norm` 1.0 → 0.5. Halves the per-step update magnitude in the (always-active) clipped regime.
 
-### Diagnostic finding (alphonse's gradient-norm telemetry)
+### Per-split note
 
-Pre-clip ‖∇‖ values (without clipping, just measured): peak 270.3 at epoch 2 (warmup top), monotone decay to 63.0 at epoch 14. Clipping is in pure direction-only mode throughout (ratio 63–270 : 1 vs the threshold of 1.0). Compared to the pre-Fourier run (peak 105, end 25), Fourier features ~2.5× the gradient norms — the richer input representation produces larger gradient signals. **Clipping is doing more work, not less, post-Fourier.** Suggests `grad_clip_norm=0.5` may be a productive next axis once this merges.
+The single_in_dist gain is large (−5.79% val) but two camber-OOD splits regressed slightly (val_geom_camber_rc +2.4%, val_geom_camber_cruise +2.2%). Net is positive on val_avg, and uniformly positive on test (where each split has 2× the samples and lower noise). Worth tracking on subsequent merges — if the camber-OOD regression compounds, may need to reverse this axis.
 
-Full reference config now: `n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2`, `fun_dim=54`, `lr=1e-3` (peak, linear warmup), `weight_decay=1e-4`, `batch_size=4`, `surf_weight=30.0`, `grad_clip_norm=1.0`, **L1** loss in normalized space, **SequentialLR(LinearLR warmup × 5 ep, CosineAnnealingLR T_max=epochs−5)**, `--epochs 14`, **8-band Fourier features on normalized (x, z)**.
+### Diagnostic finding
+
+Pre-clip ‖∇‖ trajectory matches PR #387's (peak ~270 at warmup top, end ~60–63) — confirming that clipping is a per-step magnitude bound, not a gradient-computation change. The optimizer sees identical gradients; just the applied update magnitude is halved when `max_norm=0.5` vs `1.0`. Clipping ratio is now 120–540 : 1, even more in pure direction-only mode.
+
+Full reference config now: `n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2`, `fun_dim=54`, `lr=1e-3` (peak, linear warmup), `weight_decay=1e-4`, `batch_size=4`, `surf_weight=30.0`, **`grad_clip_norm=0.5`**, **L1** loss in normalized space, **SequentialLR(LinearLR warmup × 5 ep, CosineAnnealingLR T_max=epochs−5)**, `--epochs 14`, **8-band Fourier features on normalized (x, z)**.
 
 Reproduce:
 ```bash
 cd target/ && python train.py \
   --agent charliepai2d5-alphonse \
-  --experiment_name grad-clip-1-on-fourier \
+  --experiment_name grad-clip-0p5 \
   --epochs 14
 ```
 
 (All other knobs are Config defaults.)
 
 ### Previous best
+
+**PR #387 — `grad-clip-1-on-fourier` (alphonse), merged 2026-04-28**
+
+- `val_avg/mae_surf_p` = 74.4437 (best epoch 14/14)
+- `test_avg/mae_surf_p` (3-split mean) = 72.137
+- Change: gradient clipping at `max_norm=1.0` between `loss.backward()` and `optimizer.step()`. Per-epoch grad-norm telemetry in JSONL.
 
 **PR #301 — `surf-weight-30-on-fourier` (nezuko), merged 2026-04-28**
 

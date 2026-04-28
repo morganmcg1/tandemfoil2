@@ -368,7 +368,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 30.0
     epochs: int = 50
-    grad_clip_norm: float = 1.0  # max gradient L2 norm; set <=0 to disable
+    grad_clip_norm: float = 0.5  # max gradient L2 norm; set <=0 to disable
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
