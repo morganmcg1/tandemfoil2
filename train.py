@@ -611,12 +611,12 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         if current_noise_std > 0.0:
             B, N, _ = x_norm.shape
-            # Per-node noise on dims 0..12 (positions, saf, dsdf, is_surface)
+            # Surface-only: per-node noise on dims 0..12 (positions, saf, dsdf, is_surface);
+            # per-sample globals (dims 13..23: log_re, AoA, NACA, gap, stagger) are NOT perturbed.
             noise_per_node = torch.randn(B, N, 13, device=x_norm.device, dtype=x_norm.dtype)
-            # Per-sample noise on dims 13..23 (per-sample globals: log_re, AoA*, NACA*, gap, stagger)
-            noise_per_sample = torch.randn(B, 1, 11, device=x_norm.device, dtype=x_norm.dtype).expand(B, N, 11)
-            noise = torch.cat([noise_per_node, noise_per_sample], dim=-1)   # [B, N, 24]
-            x_norm = x_norm + current_noise_std * noise
+            perturbation = torch.zeros_like(x_norm)
+            perturbation[:, :, :13] = current_noise_std * noise_per_node
+            x_norm = x_norm + perturbation
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
         err = F.huber_loss(pred, y_norm, delta=0.1, reduction='none')
