@@ -474,11 +474,11 @@ model_config = dict(
 )
 
 model = Transolver(**model_config).to(device)
-ema = WeightEMA(model, decay_target=0.99, warmup_steps=10)
+ema = WeightEMA(model, decay_target=0.99, warmup_steps=50)
 n_params = sum(p.numel() for p in model.parameters())
 swiglu_inter = model.blocks[0].mlp.intermediate
 print(
-    f"Model: Transolver ({n_params/1e6:.2f}M params) + EMA(decay_target=0.99, warmup_steps=10) "
+    f"Model: Transolver ({n_params/1e6:.2f}M params) + EMA(decay_target=0.99, warmup_steps=50) "
     f"[SwiGLU MLP intermediate={swiglu_inter}]"
 )
 
@@ -508,7 +508,7 @@ with open(model_dir / "config.yaml", "w") as f:
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
 train_start = time.time()
-ema_log_steps = {1, 10, 50, 100, 500}
+ema_log_steps = {1, 10, 50, 100, 500, 1000, 4000}
 
 for epoch in range(MAX_EPOCHS):
     if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
