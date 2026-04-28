@@ -1,5 +1,43 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 05:00 — PR #497: Mesh node random loss subsampling (keep 85%) — **CLOSE (3rd regularization-budget saturation)**
+
+- Branch: `charliepai2d5-fern/node-subsample-0p85` (closed)
+
+### Results
+
+| metric | value | vs current baseline (73.91 / 70.37) |
+|---|---:|---|
+| `val_avg/mae_surf_p` (best ep 14/14) | 74.83 | **+1.24%** (worse) |
+| `val_single_in_dist/mae_surf_p` | 84.90 | +3.97% (worse) |
+| `val_geom_camber_rc/mae_surf_p` | 87.91 | -0.05% (flat) |
+| `val_geom_camber_cruise/mae_surf_p` | 52.57 | **−3.49%** (improved) |
+| `val_re_rand/mae_surf_p` | 73.95 | +3.36% (worse) |
+| `test_avg/mae_surf_p` (3 clean) | 71.30 | +1.32% (worse) |
+| Train-vs-val L1 gap (surf, ep 14) | −18.3% | **WIDENED** vs baseline −12.8% |
+
+### Decision
+
+Close. Hits close criterion. **Three independent regularization-budget hypotheses now saturate identically on the full stack: wd=5e-4 (#385), EMA (#303), node subsampling (#497).** The collective signal is unambiguous.
+
+Student's mechanistic interpretation is exactly right: slice-attention is permutation-invariant but the model still *sees* every node in the forward pass and aggregates softmax-weighted features over all of them. Loss-mask subsampling decorrelates gradient signal at the per-node level, but doesn't change what the network learns to compute — much weaker than e.g. PointNet-style input-dropout. Combined with the small train-val gap (~12% baseline), there's no overfitting slack to absorb the noise.
+
+**Train-val gap WIDENING under regularization** is the most informative diagnostic of the round. It's the opposite of what successful regularization looks like, and consistent with the "underfitting" interpretation: more noise → worse train fit *and* worse val fit, no narrowing.
+
+Reassigned fern to **n_layers 5 → 6** (PR #550) — modest capacity bump (vs round-1's failed n_layers=8 at +60% capacity). Tests whether adding 1 block (~+20% per-epoch wall, ~11–12 epochs in budget) gives enough expressive power to beat the baseline despite the modest budget penalty. The fern train-val gap analysis style applied to capacity will tell us whether underfitting is the actual bottleneck.
+
+### Updated systemic finding
+
+The diminishing-returns regime now has a clear pattern:
+- Loss refinement (Huber both betas): saturated/lost
+- Regularization (wd, EMA, attn-dropout, node subsampling): all saturated, all widened the gap
+- SGD dynamics (bs=8 alone, lr=2e-3 with clip): redundant or under-trained
+- Fourier feature extensions (dsdf, Tancik): exhausted
+
+The remaining productive directions: **wall-clock attack** (alphonse #496 bf16), **eval-only** (nezuko #521 TTA), **architecture-side** (thorfinn #530 RMSNorm, edward #538 SiLU, fern #550 n_layers=6, askeladd #369 drop-path, frieren #380 ckpt-avg), **LR-scaled batch** (tanjiro #542). Of these, capacity-side bumps and bf16 are the highest-upside untested paths.
+
+
+
 ## 2026-04-28 04:50 — PR #473: lr=2e-3 with grad_clip_norm=1.0 — **CLOSE (redundant axis)**
 
 - Branch: `charliepai2d5-tanjiro/lr-2e-3-with-grad-clip` (closed)
