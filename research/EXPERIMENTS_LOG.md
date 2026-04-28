@@ -1,5 +1,40 @@
 # SENPAI Research Results
 
+## 2026-04-28 22:30 — PR #787: Fourier feature PE on (x,z) — compound base [CLOSED]
+- Branch: `willowpai2e2-thorfinn/compound-fourier-pe` (closed, branch deleted)
+- Hypothesis: Gaussian random Fourier features (Tancik 2020), m=8, sigma=1.0 on (x,z), concatenated to input before preprocess MLP. Should help slice attention partition geometry by surface-aware frequencies.
+- W&B run: `ph75483c` (project `senpai-charlie-wilson-willow-e-r2`).
+
+| metric | value |
+|---|---:|
+| best `val_avg/mae_surf_p` | **100.12** (epoch 27, baseline 40.93 → +59 / +144%) |
+| `test_avg/mae_surf_p` | 89.97 |
+| test_geom_camber_cruise/mae_surf_p | 69.28 |
+| test_geom_camber_rc/mae_surf_p | 101.01 |
+| test_re_rand/mae_surf_p | 92.95 |
+| test_single_in_dist/mae_surf_p | 96.63 |
+| wall clock | 30.9 min |
+
+- Outcome: **Closed** — decisive negative result. Confirmed across the uncompressed baseline (earlier exploration) and the compressed compound nl3/sn16/nh1 anchor. Likely mechanism: slice-token attention already learns coordinate-aware partitions, so a fixed random-frequency basis at the input crowds channels with redundant info and biases the slice partitioner toward Fourier-aligned cuts that don't align with airfoil structure (LE/TE, suction/pressure surfaces, wake direction). Coordinate encoding for Transolver should respect the slice abstraction, not bypass it — future work in this lane should target *inside-slicer* position info or structural priors (signed distance, surface-normal projection) rather than generic Fourier.
+
+## 2026-04-28 22:30 — PR #782 (round 2): GeGLU param-matched (h=168) on compound base [CLOSED]
+- Branch: `willowpai2e2-edward/compound-geglu` (closed, branch deleted)
+- Hypothesis: Round-2 retest of GeGLU controlling for FFN parameter count. hidden_inner=168 (mlp_ratio=1.3125), 0.986× param ratio vs GELU mlp_ratio=2 baseline. Clean activation-only A/B.
+- W&B run: `7hyra9fj` (project `senpai-charlie-wilson-willow-e-r2`); round-1 confounded run was `v9ruqc0v`.
+
+| metric | value |
+|---|---:|
+| best `val_avg/mae_surf_p` | **94.41** (epoch 21, baseline 40.93 → +53.5 / +131%) |
+| test_avg/mae_surf_p (W&B) | NaN (cruise-split Inf bug) |
+| offline avg of 3 finite test splits | ~92.47 |
+| test_geom_camber_rc/mae_surf_p | 100.66 |
+| test_re_rand/mae_surf_p | 84.36 |
+| test_single_in_dist/mae_surf_p | 92.40 |
+| wall clock | 30.5 min |
+
+- Outcome: **Closed** — decisive negative result with a clean param-match. Gating in the FFN does not help Transolver at this scale (H=128, 3 layers, sn=16). Mechanism hypothesis: slice-attention already provides token-level adaptive routing, so an FFN-internal multiplicative gate is redundant and harder to optimize at low capacity. LLaMA/PaLM benefits from GeGLU/SwiGLU at much larger H — the inductive prior doesn't transfer down. If gating is to be revisited it should go at the slicer (gated slice aggregation), not the FFN.
+- Tooling note: cruise-NaN bug now contaminates two consecutive runs' W&B test_avg. Per-sample finite-mask in test-eval scoring has been requested for the next student cleanup commit.
+
 ## 2026-04-28 19:30 — PR #782: GeGLU activation on compound base
 - Branch: `willowpai2e2-edward/compound-geglu`
 - Hypothesis: Replace GELU with GeGLU MLP at mlp_ratio=4 on the compound base (n_layers=3, slice_num=16, n_head=1, n_hidden=128) for richer FFN expressivity.
