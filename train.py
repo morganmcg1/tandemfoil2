@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -240,7 +241,10 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
-            sq_err = (pred - y_norm) ** 2
+            sq_err = (pred - y_norm) ** 2 * CHANNEL_WEIGHTS  # broadcast [3] over last dim
+            # Zero out sq_err at positions where y/y_norm is non-finite so masked
+            # multiplication doesn't propagate NaN (NaN * 0 = NaN).
+            sq_err = torch.where(torch.isfinite(sq_err), sq_err, torch.zeros_like(sq_err))
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
@@ -254,7 +258,19 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            # Filter samples with non-finite y *before* the accumulator to avoid
+            # NaN * 0 = NaN propagating through scoring.accumulate_batch's per-sample
+            # mask. (test_geom_camber_cruise[20] has 761 NaN in the pressure channel.)
+            y_finite = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)
+            if y_finite.all():
+                ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            elif y_finite.any():
+                keep = y_finite
+                ds, dv = accumulate_batch(
+                    pred_orig[keep], y[keep], is_surface[keep], mask[keep], mae_surf, mae_vol,
+                )
+            else:
+                ds, dv = 0, 0
             n_surf += ds
             n_vol += dv
 
@@ -427,6 +443,9 @@ model_config = dict(
     output_dims=[1, 1, 1],
 )
 
+# Up-weight pressure (channel 2) since `val_avg/mae_surf_p` is the eval metric.
+CHANNEL_WEIGHTS = torch.tensor([1.0, 1.0, 5.0], device=device)  # [Ux, Uy, p]
+
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
@@ -463,6 +482,30 @@ model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
 
+metrics_dir = Path("research/runs")
+metrics_dir.mkdir(parents=True, exist_ok=True)
+_run_tag = _sanitize_artifact_token(cfg.wandb_name or cfg.agent or run.id)
+metrics_path = metrics_dir / f"{_run_tag}-{run.id}.jsonl"
+
+
+def _log_jsonl(record: dict) -> None:
+    with metrics_path.open("a") as f:
+        f.write(json.dumps(record, default=float) + "\n")
+
+
+_log_jsonl({
+    "event": "config",
+    "run_id": run.id,
+    "run_name": run.name,
+    "agent": cfg.agent,
+    "wandb_name": cfg.wandb_name,
+    "git_commit": _git_commit_short(),
+    "n_params": n_params,
+    "channel_weights": CHANNEL_WEIGHTS.tolist(),
+    "model_config": model_config,
+    **asdict(cfg),
+})
+
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
 global_step = 0
@@ -487,7 +530,7 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+        sq_err = (pred - y_norm) ** 2 * CHANNEL_WEIGHTS  # broadcast [3] over last dim
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
@@ -555,6 +598,24 @@ for epoch in range(MAX_EPOCHS):
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
 
+    _log_jsonl({
+        "event": "epoch",
+        "epoch": epoch + 1,
+        "epoch_time_s": dt,
+        "peak_vram_gb": peak_gb,
+        "lr": scheduler.get_last_lr()[0],
+        "train/vol_loss": epoch_vol,
+        "train/surf_loss": epoch_surf,
+        "is_best": bool(tag),
+        "best_so_far_val_avg/mae_surf_p": best_avg_surf_p,
+        **{f"val_{k}": v for k, v in val_avg.items()},
+        **{
+            f"{split_name}/{k}": v
+            for split_name, m in split_metrics.items()
+            for k, v in m.items()
+        },
+    })
+
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
 
@@ -596,6 +657,17 @@ if best_metrics:
             test_log[f"test_{k}"] = v
         wandb.log(test_log)
         wandb.summary.update(test_log)
+
+        _log_jsonl({"event": "test", **test_log})
+
+    _log_jsonl({
+        "event": "final_summary",
+        "best_epoch": best_metrics["epoch"],
+        "best_val_avg/mae_surf_p": best_avg_surf_p,
+        "test_avg/mae_surf_p": (test_avg or {}).get("avg/mae_surf_p"),
+        "total_train_minutes": total_time,
+        "n_params": n_params,
+    })
 
     save_model_artifact(
         run=run,
