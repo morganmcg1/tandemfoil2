@@ -82,6 +82,25 @@ class MLP(nn.Module):
         return self.linear_post(x)
 
 
+class SwiGLUMLP(nn.Module):
+    """SwiGLU MLP at matched param count vs. a GELU MLP of the same `n_hidden`.
+
+    Standard recipe: gate and value linears project to an intermediate dim
+    `d_int`; the gate output is multiplied elementwise by silu(value), and a
+    final linear projects back to `n_hidden`. With 3 weight matrices instead
+    of GELU's 2, matched param count uses `d_int = 2/3 * (mlp_ratio * n_hidden)`.
+    """
+
+    def __init__(self, n_hidden: int, n_inner: int, n_output: int):
+        super().__init__()
+        self.gate = nn.Linear(n_hidden, n_inner)
+        self.value = nn.Linear(n_hidden, n_inner)
+        self.out = nn.Linear(n_inner, n_output)
+
+    def forward(self, x):
+        return self.out(F.silu(self.value(x)) * self.gate(x))
+
+
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
@@ -148,8 +167,11 @@ class TransolverBlock(nn.Module):
             dropout=dropout, slice_num=slice_num,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
-        self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
-                       n_layers=0, res=False, act=act)
+        # SwiGLU at matched param count: d_int = (2/3) * (mlp_ratio * hidden_dim).
+        # For mlp_ratio=2, hidden_dim=128: d_int = 170 -> round to 168 (multiple of 8).
+        swiglu_inner = int((mlp_ratio * hidden_dim * 2) / 3)
+        swiglu_inner = (swiglu_inner // 8) * 8  # round down to multiple of 8
+        self.mlp = SwiGLUMLP(hidden_dim, swiglu_inner, hidden_dim)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
