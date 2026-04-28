@@ -196,11 +196,9 @@ class Transolver(nn.Module):
         self.output_dims = output_dims or []
 
         if self.unified_pos:
-            self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
-                                  n_layers=0, res=False, act=act)
+            self.preprocess = SwiGLU_MLP(fun_dim + ref**3, n_hidden, n_hidden, mlp_ratio=2)
         else:
-            self.preprocess = MLP(fun_dim + space_dim, n_hidden * 2, n_hidden,
-                                  n_layers=0, res=False, act=act)
+            self.preprocess = SwiGLU_MLP(fun_dim + space_dim, n_hidden, n_hidden, mlp_ratio=2)
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
