@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- 2026-04-28 02:45 — round 1 mostly settled on `icml-appendix-willow-pai2d-r2`,
+- 2026-04-28 03:00 — round 1 mostly settled on `icml-appendix-willow-pai2d-r2`,
   round 2 in flight (5 axes), scoring bug fix landed
 - **Baseline updated:** PR #330 (frieren, Huber β=1) merged on top of
   PR #328. Current best `val_avg/mae_surf_p = 115.61` (W&B run
@@ -15,14 +15,15 @@
     mechanism on the same high-Re-tail failure mode.
   - **PR #399** (askeladd, bf16 mixed precision): throughput unlock
     for the 30-min cap.
-- **Pending round-1 merge candidates** (all need on-baseline
-  confirmation; all pre-#330, on-baseline + multi-seed):
+- **Pending round-1 merge candidates** (need on-baseline
+  confirmation; both pre-#330):
   - **PR #311** (alphonse, width-160): 126.18 on slice_num=64 (now
     11.7 % WORSE than the new 115.61 baseline — needs to land below
     115.61 to be a winner, well outside the ±10 % noise band).
-  - **PR #332** (nezuko, surf_weight=25): 133.19 on slice_num=64
-    (now 15.2 % WORSE than the new baseline). Bar is even higher
-    after the Huber merge.
+  - PR #332 (nezuko, surf_weight=25): **CLOSED** this cycle —
+    multi-seed mean 151.94 on slice-128 was 18 points above
+    baseline, ~11 SE outside noise band; surf_weight axis doesn't
+    stack with slice_num=128.
 - **Bug fix landed:** PR #367 (fern, scoring NaN `nan_to_num`)
   merged. `test_avg/mae_surf_p` is finite on the next run of every
   PR — paper-facing metric finally works.
@@ -52,43 +53,40 @@
 | 429 | edward    | round 2: per-channel loss weighting on `p` | NEW assignment (status:wip) | n/a |
 | 328 | fern      | slice_num 64 → 128         | **MERGED ★**   | **133.55 (new baseline)**|
 | 330 | frieren   | MSE → Huber β=1            | **MERGED ★ (new baseline 115.61)** | rebased run = 115.61 (slice-128, epoch 11/50, run uip4q05z) |
-| 399 | askeladd  | round 2: bf16 mixed precision | wip            | n/a (assigned this cycle) |
+| 399 | askeladd  | round 2: bf16 mixed precision | sent back → rebase + on-baseline (3 seeds) | 3-seed mean 133.46 on slice-128+MSE (1.23× speedup, +18 % epochs, no instability) |
 | 415 | frieren   | round 2: asinh on pressure target | NEW assignment | n/a (assigned this cycle) |
-| 332 | nezuko    | surf_weight 10 → 25 (sweep)| sent back → rebase + on-baseline + multi-seed | sweep done: surf-15=137.42, **surf-25=133.19**, surf-40=142.59 (clean interior optimum at 25; absolute level inside ±10 % noise of baseline) |
+| 332 | nezuko    | surf_weight 10 → 25 (sweep)| **closed** (3-seed mean 151.94 on slice-128 = +13.8 %, ~11 SE outside noise; vol_p also up; val curve oscillation) | superseded |
+| 472 | nezuko    | round 2: Lion optimizer    | NEW assignment (status:wip) | n/a |
 | 335 | tanjiro   | warmup + cos, peak 1e-3    | sent back → rebase + on-baseline re-run | sweep done on slice-64+MSE: best **(b) 113.96** at lr=1e-3, T_max=15 (a tied at 115.15, c@135.24 likely seed-unlucky); needs on-baseline confirmation |
 | 337 | thorfinn  | BS 4→8, lr 7e-4            | **closed** (hardware-blocked at BS≥8 on slice-128; BS=6 3-seed mean 162.63 is 41 % worse than 115.61) | superseded |
 | 457 | thorfinn  | round 2: EMA weight averaging | NEW assignment (status:wip) | n/a |
 | 367 | fern      | bug fix: cruise-NaN scoring| **MERGED ★** | rebased + verified on Huber baseline: test_avg: NaN → 117.59, cruise_p: NaN → 96.92 |
 | 452 | fern      | round 2: push slice_num to 192/256 | NEW assignment (status:wip) | n/a |
 
-PRs surfaced for advisor review this cycle: **#337**. Action:
-**#337 closed** — BS+LR scaling axis is hardware-blocked at slice-128
-(BS≥8 OOMs because slice-128 ate the 12 GB BS=8 headroom that
-existed at slice-64). Only BS=6 fits at 81.7 GB peak; 3-seed mean
-162.63 is 41 % worse than the merged 115.61 baseline. Student
-explicitly recommended closing in their suggested follow-up #1.
-**Reassigned thorfinn to round-2 axis #457 (EMA weight averaging)** —
-direct fit for the undertrained-at-30-min-cap regime, orthogonal
-to all loss/architecture/throughput axes in flight, plays to
-thorfinn's seed-variance methodology strength. Sweep `ema_decay ∈
-{0.9, 0.99, 0.999}`. Implementation: `torch.optim.swa_utils.
-AveragedModel` with custom `avg_fn`; per-epoch dual val (live +
-EMA), best-checkpoint selection picks per-epoch winner.
-
-Bonus methodology contributions from #337 carried forward:
-(a) `SENPAI_SEED` env-var pattern adopted by 5 PRs as the de facto
-multi-seed convention. (b) Third independent measurement of the
-±10 % single-seed noise floor (after thorfinn round 1 + edward #326
-control). (c) Hardware ceiling at slice-128 documented (BS ≤ 6),
-saving future iterations from re-running the OOM ladder.
+PRs surfaced for advisor review this cycle: **#332, #399**. Actions:
+**#332 closed** (3-seed mean 151.94 on slice-128 = +13.8 % vs prior
+baseline; surf_weight axis doesn't stack with slice-128 — physics
+explanation: surface bottleneck shifts when slice_num doubles). New
+methodology finding logged: **interior optima are
+architecture-dependent**.
+**#399 sent back** (askeladd bf16) for rebase + on-baseline run —
+throughput unlock confirmed (1.23×, +18 % epochs) but multi-seed
+mean was on the slice-128+MSE state. Updated decision rule allows
+**at-baseline-on-Huber merge as infrastructure** if the rebased
+multi-seed mean lands within ±10 % of 115.61 — bf16 is genuinely
+useful for downstream round-3 stacks even at-baseline metric.
+**Reassigned nezuko to round-2 axis #472 (Lion optimizer)** —
+sign-based update, ~30-line inline implementation, 3-value LR sweep
+({3e-5, 1e-4, 3e-4}) using nezuko's proven curve-shape methodology.
 
 Earlier cycle actions (recap): #328 + #330 + #367 merged (slice-128 +
 Huber β=1 + scoring fix; current val baseline 115.61, test baseline
-117.59); #311 + #332 + #335 sent back; #325 + #326 + #337 closed
-(depth-8, FFN, BS+LR axes exhausted at 30-min cap); #399 + #415 +
-#429 + #452 + #457 assigned (askeladd bf16, frieren asinh-on-p,
-edward p_weight, fern slice-push, thorfinn EMA — five round-2
-axes in flight).
+117.59); #311 + #335 sent back; #325 + #326 + #332 + #337 closed
+(depth-8, FFN, surf_weight, BS+LR axes exhausted under 30-min cap +
+slice-128); #399 + #415 + #429 + #452 + #457 + #472 assigned (six
+round-2 axes in flight: askeladd bf16 [iter 2], frieren
+asinh-on-pressure, edward p_weight, fern slice-push, thorfinn EMA,
+nezuko Lion).
 
 ## What we learned this cycle (and last)
 
@@ -131,13 +129,19 @@ axes in flight).
    `0.0 * NaN = NaN` in `accumulate_batch` defeats the `y_finite`
    mask). PR #367 puts up the 2-line `nan_to_num` fix.
 5. **Branches need rebases as soon as the advisor branch moves.**
-   Confirmed twice this cycle: frieren's #330 and thorfinn's #337
-   were both created pre-#328 and both would silently revert
-   slice_num=128 → 64 on direct squash-merge. The send-back-for-
-   rebase pattern catches it. **All other in-flight round-1 PRs
-   (alphonse, askeladd, edward, nezuko, tanjiro)** are pre-#328
-   too and will need the same rebase before merge. Reviewers should
-   diff against current advisor head before merging anything.
+   Confirmed across the round on every PR created during the
+   round-1 assignment phase. The send-back-for-rebase pattern
+   catches it. Reviewers should diff against current advisor head
+   before merging anything.
+6. **Interior hyperparameter optima are architecture-dependent.**
+   nezuko #332 found a clean interior optimum at surf_weight=25 on
+   slice_num=64 (sweep curve + val_vol_p secondary signal). It did
+   not transfer to slice_num=128 — multi-seed mean was 18 points
+   above baseline because the surface-pressure bottleneck shifted
+   when slice_num doubled. Future round-3 stacking decisions should
+   anticipate this: a hyperparameter winner found on one
+   architecture cannot be assumed to generalize across an
+   architecture change without re-tuning.
 
 ## Round 2 candidate stacks (post round-1 settle, will compound on the new baseline)
 
@@ -177,6 +181,11 @@ axes in flight).
   Decay sweep {0.9, 0.99, 0.999}. Direct fit for the undertrained-
   at-30-min-cap regime where every PR's val curve is still
   descending at the wall-clock cut.
+- **Lion optimizer.** ASSIGNED as PR #472 to nezuko: replaces
+  AdamW with a sign-based update + single momentum buffer (~33 %
+  optimizer-state memory savings). 3-value LR sweep
+  {3e-5, 1e-4, 3e-4}. Reported in literature to outperform AdamW
+  on transformers at smaller LR.
 
 ## Active blockers
 

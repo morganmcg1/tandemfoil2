@@ -13,6 +13,123 @@ in the pressure channel; `accumulate_batch` masks the sample but
 fern** with the 2-line `nan_to_num` patch — once it lands, every
 round-1 run can recompute a finite `test_avg/mae_surf_p` from W&B.
 
+## 2026-04-28 03:00 — PR #399 (iter 1): bf16 mixed precision (round 2 axis)
+
+- Branch: `willowpai2d2-askeladd/bf16-amp` (pre-#330 + pre-#367 — same
+  rebase pattern as everyone created during round 1).
+- Sent back for rebase + on-baseline confirmation.
+
+### Results — 3-seed sweep (run on slice-128 + MSE state, not Huber)
+
+| seed | val_avg/mae_surf_p | best_epoch | epoch_time_s | peak_GB |
+|-:|-:|-:|-:|-:|
+| 0 | 124.94 | 12 | 140.9 | 48.1 |
+| 1 | 134.30 | 13 | 140.7 | 48.1 |
+| 2 | 141.13 | 11 | 140.4 | 48.1 |
+| **mean** | **133.46** (σ=8.13) | – | 140.7 | 48.1 |
+
+vs the slice-128 + MSE baseline (133.55, the branch's anchor):
+- **Metric**: 0.07 % better — at-baseline within noise
+- **Throughput**: 1.23× per-step speedup (140.7s vs ~173s baseline)
+- **Epochs in budget**: 13 vs 11 (+18 %)
+- **Memory**: did NOT drop (48.1 vs ~42 GB) — student correctly
+  diagnosed: at small slice_num and small param count, activation
+  memory doesn't dominate; bf16 doesn't shrink the data buffers.
+
+### Conclusion
+
+**Send back for rebase + on-baseline run.** bf16 itself is safe: no
+NaN, no instability, loss-shape matches fp32. The hypothesis
+(throughput unlock for the 30-min cap) is confirmed at +18 % epochs
+in budget. The metric is at-baseline within noise on the
+slice-128+MSE state, but we need on-baseline (Huber) confirmation
+before merging because the branch reverts both Huber and the
+scoring fix.
+
+Updated decision rule for the rebased re-run:
+- ≤ 105 single-seed (or ≤ 110 multi-seed mean): merge as round-2
+  metric+infrastructure win.
+- 110–121 multi-seed mean (within ±10 % of 115.61): **merge as
+  infrastructure** — the throughput unlock + finite test_avg make
+  bf16 a strict positive even at-baseline metric.
+- > 130 multi-seed mean: close (throughput unlock at metric cost).
+
+Bonus: askeladd added per-epoch `peak_GB` to the W&B `wandb.log(...)`
+— useful single-line addition for every future training run.
+
+## 2026-04-28 03:00 — PR #332 (iter 2): surf_weight=25 multi-seed on slice-128 ❌ CLOSED
+
+- Branch: `willowpai2d2-nezuko/surf-weight-25` (deleted on close).
+- Iteration: send-back asked for rebase + 3-seed multi-seed at
+  surf_weight=25 on top of slice-128 (the merged #328 baseline).
+
+### Results — 3-seed multi-seed
+
+| seed | val_avg/mae_surf_p | val_avg/mae_vol_p | best_epoch | run id |
+|-:|-:|-:|-:|-|
+| 0 | 154.63 | 168.67 | 8 | `8tmdnfge` |
+| 1 | 152.13 | 172.53 | 10 | `omi56qls` |
+| 2 | 149.07 | 168.30 | 11 | `pf76ohnj` |
+| **mean** | **151.94** (σ=2.78) | 169.83 | – | – |
+
+vs the slice-128 + MSE baseline (133.55) the student compared
+against: **+18.4 absolute / +13.8 % over baseline**, ~11 SE outside
+the noise band.
+
+### Conclusion
+
+**Closed.** The surf_weight=25 axis does not stack with
+slice_num=128. Three pieces of evidence:
+
+1. Mean is ~11 SE above baseline (σ=2.78 → SE≈1.6, gap=18.4) —
+   this is decisively NOT a noise tie.
+2. **vol_p went up too** (169.83 vs slice-64+sw=25's 142.51) —
+   strictly worse operating point on both axes, not a Pareto-front
+   movement.
+3. **All three val curves oscillate after epoch ~8** (e.g. seed 0:
+   154.6 → 168.3 → 160.9 → 180.5) — optimizer instability that
+   wasn't present in the slice-64 sweep.
+
+Student's causal story is exactly right: at slice-64, surface-pressure
+error was bottlenecked by representational capacity (only 64 latent
+tokens for 242K-node meshes), so up-weighting surf_loss helped recruit
+gradient toward those representations. At slice-128, the surface
+representations are richer (128 tokens, finer slicing), and the
+bottleneck has shifted — up-weighting surf_loss now starves vol_loss
+without buying anything on the surface side.
+
+### Cross-cutting methodology finding
+
+**"Interior optima are architecture-dependent."** The surf_weight=25
+winner at slice-64 was real (clear curve shape + val_vol_p secondary
+signal), but it didn't transfer to slice-128. Worth flagging for any
+future round-3 stacking decisions: a hyperparameter optimum found on
+one architecture should not be assumed to generalize to another
+without re-tuning. Withdrawing my earlier recommendation that
+"surf_weight=25 stays as a default."
+
+### Reassignment
+
+Nezuko → PR #472 (round-2 axis: Lion optimizer). Detailed below.
+
+## 2026-04-28 03:00 — PR #472 (NEW, nezuko round 2): Lion optimizer
+
+- Reassigning nezuko after closing #332.
+- Hypothesis: Lion (Chen et al. 2023) replaces AdamW with a
+  sign-based update + single momentum buffer. Reported to outperform
+  AdamW on transformer benchmarks at smaller LR (typically 3–10×
+  smaller). Predicted 3–8 % reduction over the merged 115.61
+  baseline.
+- Sweep: `lr ∈ {3e-5, 1e-4, 3e-4}` on shared
+  `--wandb_group "willow-r2-nezuko-lion-lr"` — same 3-value
+  curve-shape methodology that worked on the surf_weight axis.
+- Implementation: ~30-line `Lion(torch.optim.Optimizer)` subclass
+  inlined in train.py (no new packages); `optimizer: str` config
+  flag selects between `"adamw"` and `"lion"`.
+- Decision rule: ≤105 single-seed (or ≤110 multi-seed mean) merges;
+  borderline → multi-seed; >115 → close (axis exhausted).
+- Status: assigned, draft, status:wip.
+
 ## 2026-04-28 02:45 — PR #337 (iter 2): BS+LR scaling on slice-128 ❌ CLOSED
 
 - Branch: `willowpai2d2-thorfinn/batch-8-lr-7e4` (deleted on close).
@@ -881,9 +998,11 @@ acknowledged but kept out of scope — tanjiro is iterating on
 | willow-r2-alphonse-width-160 | **126.18** | 11 | sent back (rebase + on-baseline) |
 | willow-r2-fern-slice-128 | 133.55 (prior baseline) | 11 | merged (PR #328) — superseded as baseline by #330 |
 | willow-r2-alphonse-width-192 | 134.13 | 10 | superseded by width-160 |
-| willow-r2-nezuko-surf-15 | 137.42 | 13 | sweep complete |
-| **willow-r2-nezuko-surf-25** | **133.19** | 13 | sent back (rebase + on-baseline) |
-| willow-r2-nezuko-surf-40 | 142.59 | 12 | sweep complete (past optimum) |
+| willow-r2-nezuko-surf-15 | 137.42 | 13 | sweep complete (slice-64) |
+| willow-r2-nezuko-surf-25 | 133.19 | 13 | superseded by iter 2 |
+| willow-r2-nezuko-surf-40 | 142.59 | 12 | sweep complete (past optimum, slice-64) |
+| willow-r2-nezuko-surf25-on-slice128 (3 seeds) | 154.63 / 152.13 / 149.07 (mean 151.94) | 8/10/11 | **closed** (#332 — axis doesn't stack with slice-128) |
+| willow-r2-nezuko-lion-lr | – | – | NEW assignment (#472, round-2 axis) |
 | willow-r2-edward-mlp-ratio-4 | 137.83 | 11 | superseded by iter 2 |
 | willow-r2-edward-mlp-2-slice-128 (control) | 136.54 | 9 | **closed** (#326 — FFN axis exhausted) |
 | willow-r2-edward-mlp-3 | 139.79 | 10 | **closed** (#326 — FFN axis exhausted) |
@@ -892,7 +1011,7 @@ acknowledged but kept out of scope — tanjiro is iterating on
 | willow-r2-thorfinn-bs6-lr6e-4-slice128 (3 seeds) | 156.15 / 174.69 / 157.05 (mean 162.63) | 8/10/11 | **closed** (#337 — hardware-blocked at BS≥8) |
 | willow-r2-thorfinn-ema-weights | – | – | NEW assignment (#457, round-2 axis) |
 | willow-r2-askeladd-depth-8 | 150.06 / 162.05 | 9 / 8 | **closed** (#325 — 21 % regression at 30-min cap) |
-| willow-r2-askeladd-bf16-amp | – | – | NEW assignment (#399, round-2 axis) |
+| willow-r2-askeladd-bf16-amp (3 seeds, slice-128 + MSE) | 124.94 / 134.30 / 141.13 (mean 133.46) | 12/13/11 | sent back (rebase + on-baseline) |
 | willow-r2-tanjiro-warmup-cos-1e3 | 154.57 | 13 | sent back |
 
 **Noise floor:** ±10 % at single seed (thorfinn replicate evidence).
