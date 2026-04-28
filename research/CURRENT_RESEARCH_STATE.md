@@ -1,6 +1,6 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 04:25
+- **Date:** 2026-04-28 04:40
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
@@ -27,7 +27,7 @@
 | alphonse | #372 | bf16-autocast | Throughput (bf16 autocast) | -10% to -20% | **MERGED** 91d8a4e (infra) → 1.36× speedup, 19/50 epochs |
 | alphonse | #401 | compile-bf16-emaclip | Throughput (torch.compile reduce-overhead, dynamic) | -5% to -15% | **MERGED** 5f2edca → val_avg=**66.89** (NEW BEST, -37.1%) |
 | alphonse | #435 | deeper8-droppath01-compile | Architecture (n_layers 5→8 + DropPath 0.1) | -5% to -10% | **CLOSED** — +30% (cosine T_max=50 mismatched with 22 reached epochs) |
-| alphonse | #466 | tmax32-cudagraph-skip | Infra (cosine_epochs flag + cudagraph_skip_dynamic_graphs robustness) | -1% to -5% | WIP |
+| alphonse | #466 | tmax32-cudagraph-skip | Infra (cosine_epochs flag + cudagraph_skip robustness) | -1% to -5% | **SENT BACK** — cudagraph_skip clean win; cosine_epochs=32 regresses +6.7% (model still bulk-learning); revert default to 50 + re-submit |
 | askeladd | #289 | huber-loss | Loss formulation (MSE→SmoothL1) | -5% to -10% | **MERGED** 906a2c1 → val_avg=**63.33** (NEW BEST, -5.31%) |
 | askeladd | #467 | huber-beta-sweep | Loss formulation (β ∈ {0.5, 1.0, 2.0} sweep) | β=0.5 predicted -1% to -4% | WIP |
 | edward   | #300 | wider-model | Width (192/96) | -5% to -10% | **CLOSED** — under-trained 9/50 |
@@ -64,7 +64,7 @@
 - **Memory headroom does NOT translate to throughput on this hardware.** Frieren #382 confirmed: GPU is compute-saturated at bs=4. Doubling batch ≈ doubles per-step time → net flat. Memory headroom should go to capacity (n_hidden, n_layers) or be cashed via bf16/compile (which actually drop per-step compute), not via bigger batches.
 - **The compile-driven epoch-budget recovery is the dominant mechanism behind the -37% jump in #401.** With cosine-tail finally reachable, EMA gets enough useful epochs to do its job. Round-1 ranking is now a 33-epoch exercise, not a 13-epoch one — past results may need re-evaluation.
 - **Clip is load-bearing as a per-batch dampener** (PR #421 attribution). At max_norm=10 and our AdamW/lr settings, the clip isn't catching runaway gradients (gn_max stays in 344-767 band with or without clipping); it's per-batch dampening that materially helps generalization, especially on the smallest-magnitude split (cruise camber, +22% regression without clip).
-- **Schedule mismatch is the next-largest source of suboptimality.** With compile-driven 33-epoch budget, the configured T_max=50 cosine never reaches its tail (LR ~0.27× peak at termination instead of ~0). Architectural-scale experiments are double-penalized: more wall per epoch + still-elevated LR at termination. PR #466 bundles the cosine T_max retune with the cudagraph robustness fix.
+- **Schedule mismatch hypothesis was wrong.** PR #466's clean A/B (held cudagraph flag constant) showed cosine_epochs=32 *regresses* val_avg by +6.7% — the model is in the bulk-learning regime at epoch 33 (lr~1.3e-4, dropping ~0.9 mae/epoch), NOT in a fine-tuning phase being cut off. T_max=50 default is correct for n_layers=5. Future levers: **eta_min > 0** (lift the LR floor instead of truncating the schedule).
 - **Compile flakiness needs addressing.** 2 of 4 launches at the rebased stack crashed with CUDAGraph private-pool blowup. The fix (`cudagraph_skip_dynamic_graphs=True`) drops ~10-15% throughput but eliminates the failure mode — net positive given how much architectural-side work remains.
 - **Independent diagnoses converged on the same scoring NaN bug** (6 students), now fixed (#358).
 - **Variance floor: ~5pp** between two Huber seeds (askeladd #289). Round-1 winners by less than ~5% on val_avg are within run-to-run noise.

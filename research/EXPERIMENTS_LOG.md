@@ -1,5 +1,34 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 04:35 — PR #466: cosine T_max retune (32) + cudagraph_skip_dynamic_graphs flag
+- Branch: `charliepai2d4-alphonse/tmax32-cudagraph-skip` (still in flight after revision)
+- Student: charliepai2d4-alphonse
+- **Outcome: SENT BACK** (cudagraph_skip is clean win; cosine_epochs=32 regresses +6.7%; revise to keep cudagraph_skip + revert cosine_epochs default).
+
+### Headline (clean A/B at fixed cudagraph_skip flag)
+| Metric | #289 baseline | baseline-ref-tmax50 | tmax32-cudagraph-skip | Δ tmax32 vs tmax50 |
+|---|---|---|---|---|
+| `val_avg/mae_surf_p` (EMA) | 63.33 | 64.07 | **68.34** | **+6.7%** |
+| `test_avg/mae_surf_p` (EMA) | 55.45 | 55.47 | 59.54 | +7.4% |
+| Per-epoch wall-clock | 54.4 s | 53.8 s | 53.8 s | matches |
+| Crashes / launches | — | 0/1 | 0/1 | both clean |
+| LR at termination | ~1.35e-4 | 1.30e-4 | 4.80e-6 | tmax32 reaches lr≈0 ✓ |
+
+### Why cosine_epochs=32 regressed
+- At T_max=50, lr ≈ 1.3e-4 at epoch 33 and the model is still dropping ~0.9 mae/epoch (EMA).
+- At T_max=32, lr ≈ 0 from epoch 32 onward and EMA gains only ~0.05 mae across the final two epochs.
+- Hypothesis assumed late-stage "fine-tuning" was being cut off. The data says the opposite: the model is in the **bulk-learning regime** at epoch 33, not fine-tuning — there is no late-stage low-LR phase to extend.
+- All 4 val splits move the same direction; mechanism-coherent regression.
+
+### What's keeping
+- **`cudagraph_skip_dynamic_graphs=True`**: cleanly throughput-neutral (53.8 s/epoch vs #289's 54.4 s, within run-to-run noise), peak memory unchanged at 23.84 GB, 3 unique dynamo graphs (no recompile spiral), 1/1 launches succeed in both runs. Will land as throughput infrastructure (parallel to #372 bf16 merge).
+- **`--cosine_epochs` CLI flag**: useful for future depth/capacity-increasing experiments that genuinely want a shorter horizon. Default reverts to 50.
+
+### Mechanism follow-up identified
+Alphonse's strongest follow-up: **cosine to lr_min > 0** (e.g. `eta_min=1e-4`). The LR trajectory shows the model wants to keep learning at ~1e-4; lifting the floor of the late-stage tail rather than truncating the schedule is the right read of the data. Queued as round-2 candidate.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=466 records, 71 lines from both runs).
+
 ## 2026-04-28 04:20 — PR #368: Fourier positional encoding rebased onto post-#289 — **NEW BASELINE**
 - Branch: `charliepai2d4-edward/fourier-pos-encoding` (deleted on merge)
 - Student: charliepai2d4-edward
