@@ -560,24 +560,34 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
-        abs_err = (pred - y_norm).abs()
-        # SmoothL1 (Huber) on surface: MSE-like inside |err|<beta, L1-like outside.
-        # beta=0.5 in normalized space (was 1.0 in #352).
-        beta = 0.5
-        smooth_l1 = torch.where(abs_err < beta, 0.5 * sq_err / beta, abs_err - 0.5 * beta)
+        with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16):
+            pred = model({"x": x_norm})["preds"]
+            sq_err = (pred - y_norm) ** 2
+            abs_err = (pred - y_norm).abs()
+            # SmoothL1 (Huber) on surface: MSE-like inside |err|<beta, L1-like outside.
+            # beta=0.5 in normalized space (was 1.0 in #352).
+            beta = 0.5
+            smooth_l1 = torch.where(abs_err < beta, 0.5 * sq_err / beta, abs_err - 0.5 * beta)
 
-        vol_mask = mask & ~is_surface
-        surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (smooth_l1 * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+            vol_mask = mask & ~is_surface
+            surf_mask = mask & is_surface
+            vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+            surf_loss = (smooth_l1 * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            loss = vol_loss + cfg.surf_weight * surf_loss
+
+        if epoch == 0 and n_batches == 0:
+            print(f"[bf16] pred.dtype inside autocast = {pred.dtype}, loss.dtype = {loss.dtype}")
 
         optimizer.zero_grad()
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
         optimizer.step()
+
+        if epoch == 0 and n_batches == 0:
+            grad_dtypes = {p.grad.dtype for p in model.parameters() if p.grad is not None}
+            print(f"[bf16] gradient dtype(s) after backward = {grad_dtypes}, loss.item()={loss.item():.6f}")
+        if epoch == 0 and n_batches % 10 == 0:
+            assert torch.isfinite(loss).item(), f"Non-finite loss at epoch 0 batch {n_batches}: {loss.item()}"
 
         with torch.no_grad():
             for p_ema, p in zip(ema_model.parameters(), model.parameters()):
