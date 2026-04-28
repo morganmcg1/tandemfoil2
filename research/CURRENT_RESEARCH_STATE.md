@@ -1,6 +1,6 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 06:50
+- **Date:** 2026-04-28 07:10
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
@@ -47,7 +47,8 @@
 | frieren  | #382 | batch8-lr7e-4 | Throughput (larger batch + sqrt-lr) | -5% to -15% | **CLOSED** — GPU compute-saturated at bs=4; +52% EMA artifact |
 | frieren  | #431 | wider160-bf16 | Architecture (n_hidden 128→160 under bf16) | -2% to -7% | **CLOSED** — within-noise +2.5% (same-epoch capacity supported but +14% per-epoch tax) |
 | frieren  | #477 | wider144-compile | Architecture (n_hidden 128→144 under post-#289) | -2% to -7% | **CLOSED** — +6.4% val (second paired confirmation that capacity loses to budget) |
-| frieren  | #528 | cosine-eta-min-sweep | Schedule (cosine eta_min ∈ {1e-5, 1e-4, 5e-4}) | -1% to -4% | WIP |
+| frieren  | #528 | cosine-eta-min-sweep | Schedule (cosine eta_min ∈ {1e-5, 1e-4, 5e-4}) | -1% to -4% | **CLOSED** — mechanism real but below 2pp noise floor; pre-#484 branch |
+| frieren  | #615 | layerscale-sweep | Architecture (LayerScale residual scaling ∈ {1e-5, 1e-4, 1.0}) | -1% to -3% | WIP |
 | nezuko   | #308 | ema-grad-clip | Optim (EMA 0.999 + clip 1.0) | -3% to -8% | **MERGED** 5bdb284 → val_avg=106.40 |
 | nezuko   | #381 | ema995-gradclip10 | Ablation (EMA 0.995 + clip 10) | -3% to -10% | **MERGED** a620ba1 → val_avg=**98.85** (NEW BEST, -7.1%) |
 | nezuko   | #421 | ema995-noclip | Ablation (EMA 0.995, NO clip — clean isolation) | ±5% | **CLOSED** — val_avg=109.99 (+11.3% vs #381), clip is load-bearing as dampener |
