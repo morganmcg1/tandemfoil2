@@ -1,5 +1,55 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 00:05 — PR #296 (rerun): Linear warmup → cosine, peak lr 1e-3, --epochs 14 — **MERGE (winner, new baseline)**
+
+- Branch: `charliepai2d5-fern/lr-warmup-1e3` (rebased onto post-L1 advisor)
+- Hypothesis: with the schedule matched to the wall-clock budget, warmup → cosine decay should let the model converge into a low-LR refinement regime that L1's plain cosine-over-50 can't reach.
+
+### Results (on top of L1 baseline)
+
+| metric | value |
+|---|---:|
+| `val_avg/mae_surf_p` (best ep 12/14) | **94.5397** |
+| `val_single_in_dist/mae_surf_p` | 114.295 |
+| `val_geom_camber_rc/mae_surf_p` | 105.456 |
+| `val_geom_camber_cruise/mae_surf_p` | 70.448 |
+| `val_re_rand/mae_surf_p` | 87.961 |
+| `test_avg/mae_surf_p` (4-split) | NaN |
+| `test_avg/mae_surf_p` (3 clean) | **91.853** |
+
+Best epoch landed at end-of-epoch-12, LR ≈ 2.5e-4 (mid-cosine-decay) — schedule worked exactly as designed.
+
+### Decision
+
+Merge. Beats the L1-only baseline by **−7.2% val** and **−10.5% test (3-clean-split)**. Two clean orthogonal axes (loss + schedule) now stacked. The `test_geom_camber_cruise/p` NaN is unchanged from the cohort-wide pre-existing data issue.
+
+Reassigned fern to `weight_decay 1e-4 → 5e-4` (PR #385) — single-axis test of whether stronger regularization helps the OOD camber splits.
+
+---
+
+## 2026-04-28 00:05 — PR #303: EMA weights (decay 0.999) — **REQUEST CHANGES (rebase onto L1+warmup)**
+
+- Branch: `charliepai2d5-tanjiro/ema-weights`
+- Hypothesis: per-step EMA of model weights with decay 0.999 should improve generalization by 2–5%.
+
+### Results (on pre-L1 MSE baseline — student honestly noted not rebased)
+
+| metric | value |
+|---|---:|
+| `val_avg/mae_surf_p` (best ep 14/50, EMA model) | **127.65** |
+| `test_avg/mae_surf_p` (3 clean) | **125.63** |
+| **EMA vs live diagnostic** | epoch 5: live wins by 32; epoch 10: **EMA wins by 4.66%** ✓ |
+
+The EMA-vs-live tracking confirmed the predicted 2–5% delta empirically. The hypothesis works mechanically — the issue is just that this run was on MSE not L1+warmup.
+
+### Decision
+
+Send back. EMA is loss/schedule-agnostic, so the 4–5% relative delta should stack on top of L1+warmup. Action: rebase onto the new advisor branch (which has L1 + warmup + `epochs=14` budget) and rerun with `--ema_decay 0.999 --lr 1e-3 --epochs 14`. Keep the every-5-epoch live-vs-EMA diagnostic — it's a great instrumentation choice we want to retain.
+
+Independent diagnosis of the cruise NaN matches the cohort-wide finding.
+
+
+
 ## 2026-04-27 23:30 — PR #293: L1 loss in normalized space (alignment with MAE eval metric) — **MERGE (winner)**
 
 - Branch: `charliepai2d5-edward/l1-loss`
