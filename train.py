@@ -276,12 +276,17 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device,
+                   amp: bool = False, amp_dtype: torch.dtype = torch.bfloat16) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
     ``score.py`` (float64, non-finite samples skipped).
+
+    With ``amp=True``, the model forward runs under ``torch.autocast`` for speed,
+    but predictions are cast back to fp32 before scoring so the float64 MAE
+    accumulator does not inherit bf16's lower mantissa precision.
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
@@ -295,10 +300,12 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
-            x_norm = (x - stats["x_mean"]) / stats["x_std"]
-            x_aug = add_derived_features(x_norm, x, is_surface, mask)
+            with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
+                x_norm = (x - stats["x_mean"]) / stats["x_std"]
+                x_aug = add_derived_features(x_norm, x, is_surface, mask)
+                pred = model({"x": x_aug})["preds"]
+            pred = pred.float()
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_aug})["preds"]
 
             # Per-sample finite-y guard. Some test ground-truth tensors contain
             # NaN entries (e.g. cruise sample 20 has 761 non-finite p values).
@@ -468,6 +475,8 @@ class Config:
     warmup_epochs: int = 5
     warmup_start_lr: float = 1e-4
     eta_min: float = 1e-6
+    amp: bool = True
+    amp_dtype: str = "bf16"   # "bf16" or "fp16"; bf16 strongly preferred for our extreme y values
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -482,6 +491,9 @@ MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
+
+AMP_DTYPE = torch.bfloat16 if cfg.amp_dtype == "bf16" else torch.float16
+print(f"AMP: enabled={cfg.amp}, dtype={cfg.amp_dtype}")
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -587,29 +599,40 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
 
+    nan_inf_events = 0
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
 
-        x_norm = (x - stats["x_mean"]) / stats["x_std"]
-        x_aug = add_derived_features(x_norm, x, is_surface, mask)
-        y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_aug})["preds"]
-        sq_err = (pred - y_norm) ** 2
+        with torch.autocast(device_type="cuda", dtype=AMP_DTYPE, enabled=cfg.amp):
+            x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            x_aug = add_derived_features(x_norm, x, is_surface, mask)
+            y_norm = (y - stats["y_mean"]) / stats["y_std"]
+            pred = model({"x": x_aug})["preds"]
+            sq_err = (pred - y_norm) ** 2
 
-        vol_mask = mask & ~is_surface
-        surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+            vol_mask = mask & ~is_surface
+            surf_mask = mask & is_surface
+            vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+            surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
-        loss.backward()
+        loss.backward()                # bf16 gradients flow back; no GradScaler needed for bf16
+        # Track gradient norm to surface bf16 reduction blow-ups (per PR failure-mode notes).
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), float("inf"))
+        loss_finite = torch.isfinite(loss).item()
+        if not loss_finite or not torch.isfinite(grad_norm).item():
+            nan_inf_events += 1
         optimizer.step()
         global_step += 1
-        wandb.log({"train/loss": loss.item(), "global_step": global_step})
+        wandb.log({
+            "train/loss": loss.item(),
+            "train/grad_norm": grad_norm.item(),
+            "global_step": global_step,
+        })
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
@@ -622,7 +645,8 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                             amp=cfg.amp, amp_dtype=AMP_DTYPE)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -633,6 +657,7 @@ for epoch in range(MAX_EPOCHS):
     log_metrics = {
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/nan_inf_events": nan_inf_events,
         "val/loss": val_loss_mean,
         "lr": scheduler.get_last_lr()[0],
         "epoch_time_s": dt,
@@ -690,7 +715,8 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                                 amp=cfg.amp, amp_dtype=AMP_DTYPE)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
