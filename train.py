@@ -280,13 +280,24 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device, amp_ctx=None) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device,
+                   amp_ctx=None,
+                   arcsinh_p_scale: float = 0.0) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
     ``score.py`` (float64, non-finite samples skipped). ``amp_ctx`` wraps the
     forward only — metric accumulation stays in fp64.
+
+    When ``arcsinh_p_scale > 0``, the target pressure channel is transformed to
+    ``arcsinh(p / scale)`` before the normalized loss is computed (so the
+    training-space loss is comparable to what the optimizer minimizes), and
+    the predicted pressure is mapped back via ``scale * sinh(p_t)`` before
+    ``accumulate_batch`` so the MAE stays in physical pressure space. The
+    inverse runs in fp32 (after the bf16 forward output is upcast via
+    ``.float()``) so ``sinh`` of large transformed predictions doesn't lose
+    precision at the heavy-tail extremes.
     """
     if amp_ctx is None:
         amp_ctx = nullcontext()
@@ -312,7 +323,12 @@ def evaluate_split(model, loader, stats, surf_weight, device, amp_ctx=None) -> d
             y_clean = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
-            y_norm = (y_clean - stats["y_mean"]) / stats["y_std"]
+            if arcsinh_p_scale > 0.0:
+                y_for_loss = y_clean.clone()
+                y_for_loss[..., 2] = torch.arcsinh(y_clean[..., 2] / arcsinh_p_scale)
+            else:
+                y_for_loss = y_clean
+            y_norm = (y_for_loss - stats["y_mean"]) / stats["y_std"]
             with amp_ctx:
                 pred = model({"x": x_norm})["preds"]
             pred = pred.float()
@@ -344,7 +360,17 @@ def evaluate_split(model, loader, stats, surf_weight, device, amp_ctx=None) -> d
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y_clean, is_surface, mask, mae_surf, mae_vol)
+            if arcsinh_p_scale > 0.0:
+                pred_phys = pred_orig.clone()
+                pred_phys[..., 2] = arcsinh_p_scale * torch.sinh(pred_orig[..., 2])
+                # Re-clean non-finite values that sinh of a large prediction
+                # could produce (sinh(x) overflows fp32 around |x|≈88).
+                pred_phys = torch.nan_to_num(
+                    pred_phys, nan=0.0, posinf=0.0, neginf=0.0
+                )
+            else:
+                pred_phys = pred_orig
+            ds, dv = accumulate_batch(pred_phys, y_clean, is_surface, mask, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
 
@@ -497,6 +523,13 @@ class Config:
     ema_decay: float = 0.999
     ema_warmup_steps: int = 100  # don't update EMA for the first N steps
     ema_eval_every: int = 1      # run EMA validation every N epochs (1 = every epoch)
+    # H16: arcsinh(p / arcsinh_p_scale) target for the pressure channel.
+    # 0 = disabled (target = p as in baseline). When >0, the loss trains MSE
+    # on the transformed target and evaluate_split inverts the prediction
+    # (scale * sinh(p_t)) on channel 2 before MAE so the metric stays in
+    # physical pressure space.
+    arcsinh_p_scale: float = 0.0
+    arcsinh_stats_samples: int = 200  # train samples used to recompute p stats
 
 
 cfg = sp.parse(Config)
@@ -523,6 +556,41 @@ print(f"AMP: {cfg.amp_dtype}  compile: {cfg.compile and not cfg.debug}  "
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
+
+# H16: when arcsinh-on-p is enabled, the *target* pressure becomes
+# arcsinh(p / scale) and the global y_mean/y_std for channel 2 must be
+# recomputed in transformed space so the model still sees a unit-normal
+# target. Sampling 200 train files is enough for stable mean/std (each
+# sample contributes ~150K nodes; total ~30M values). Runs ONCE here, before
+# both raw and EMA evaluate_split calls in the train loop and before the
+# end-of-run test eval — no duplicate stats handling anywhere else.
+arcsinh_p_stats_orig = (stats["y_mean"][2].item(), stats["y_std"][2].item())
+if cfg.arcsinh_p_scale > 0.0:
+    n_stats_samples = min(len(train_ds), cfg.arcsinh_stats_samples)
+    sums = sumsq = n_total = 0.0
+    for i in range(n_stats_samples):
+        _, y_sample, _ = train_ds[i]
+        p = y_sample[..., 2]
+        finite = torch.isfinite(p)
+        if not finite.any():
+            continue
+        p_t = torch.arcsinh(p[finite] / cfg.arcsinh_p_scale)
+        sums += float(p_t.sum().item())
+        sumsq += float((p_t ** 2).sum().item())
+        n_total += float(p_t.numel())
+    p_t_mean = sums / n_total
+    p_t_var = max(0.0, sumsq / n_total - p_t_mean ** 2)
+    p_t_std = max(1e-6, p_t_var ** 0.5)
+    stats["y_mean"] = stats["y_mean"].clone()
+    stats["y_std"] = stats["y_std"].clone()
+    stats["y_mean"][2] = p_t_mean
+    stats["y_std"][2] = p_t_std
+    print(
+        f"arcsinh_p_scale={cfg.arcsinh_p_scale}: pressure stats from "
+        f"{n_stats_samples} train samples ({int(n_total)} nodes) — "
+        f"mean {arcsinh_p_stats_orig[0]:.4f} -> {p_t_mean:.4f}, "
+        f"std {arcsinh_p_stats_orig[1]:.4f} -> {p_t_std:.4f}"
+    )
 
 loader_kwargs = dict(collate_fn=pad_collate, num_workers=4, pin_memory=True,
                      persistent_workers=True, prefetch_factor=2)
@@ -663,7 +731,12 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
-        y_norm = (y - stats["y_mean"]) / stats["y_std"]
+        if cfg.arcsinh_p_scale > 0.0:
+            y_for_loss = y.clone()
+            y_for_loss[..., 2] = torch.arcsinh(y[..., 2] / cfg.arcsinh_p_scale)
+        else:
+            y_for_loss = y
+        y_norm = (y_for_loss - stats["y_mean"]) / stats["y_std"]
         with amp_ctx:
             pred = model({"x": x_norm})["preds"]
             sq_err = (pred - y_norm) ** 2
@@ -720,7 +793,9 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device, amp_ctx=amp_ctx)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                             amp_ctx=amp_ctx,
+                             arcsinh_p_scale=cfg.arcsinh_p_scale)
         for name, loader in val_loaders.items()
     }
     val_avg_raw = aggregate_splits(split_metrics)
@@ -731,7 +806,9 @@ for epoch in range(MAX_EPOCHS):
     )
     if do_ema_eval:
         split_metrics_ema = {
-            name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device, amp_ctx=amp_ctx)
+            name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device,
+                                 amp_ctx=amp_ctx,
+                                 arcsinh_p_scale=cfg.arcsinh_p_scale)
             for name, loader in val_loaders.items()
         }
         val_avg_ema = aggregate_splits(split_metrics_ema)
@@ -848,7 +925,9 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, amp_ctx=amp_ctx)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                                 amp_ctx=amp_ctx,
+                                 arcsinh_p_scale=cfg.arcsinh_p_scale)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
