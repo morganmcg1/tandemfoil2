@@ -1,6 +1,6 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 00:30
+- **Date:** 2026-04-28 00:45
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
@@ -27,7 +27,8 @@
 | edward   | #300 | wider-model | Width (192/96) | -5% to -10% | **CLOSED** — under-trained 9/50 |
 | edward   | #358 | fix-scoring-nan-mask | Maintenance | n/a | **MERGED** 010235e |
 | edward   | #368 | fourier-pos-encoding | Input (8-freq Fourier on (x,z)) | -3% to -8% | WIP |
-| fern     | #304 | deeper-model-droppath | Depth (5→8 + DropPath 0.1) | -3% to -8% | WIP |
+| fern     | #304 | deeper-model-droppath | Depth (5→8 + DropPath 0.1) | -3% to -8% | **CLOSED** — 210 s/epoch, 9/50 epochs, equal-epoch worse |
+| fern     | #388 | arcsinh-pressure | Heavy-tail (arcsinh on p target only) | -5% to -15% | WIP |
 | frieren  | #307 | warmup-cosine-1e3 | Optim (warmup + lr 1e-3) | -2% to -6% | **CLOSED** — 134.58, 26% worse than #308 |
 | frieren  | #382 | batch8-lr7e-4 | Throughput (larger batch + sqrt-lr) | -5% to -15% | WIP |
 | nezuko   | #308 | ema-grad-clip | Optim (EMA 0.999 + clip 1.0) | -3% to -8% | **MERGED** 5bdb284 → val_avg=106.40 (NEW BEST) |
@@ -43,7 +44,7 @@
 - **Round 1 is a 14-epoch ranking exercise** — the cosine schedule's tail is unreached. Round-1 winners may need re-validation under longer training.
 - **EMA late-epoch smoothing is high-value** in this regime (PR #308 hit best on every one of 13 epochs). Decay=0.999 has a slow warmup; decay=0.995 should pay off earlier in the budget.
 - **Aggressive grad clipping is implicit lr dampening** — useful side-effect, but worth attributing cleanly.
-- **Architectural-scale changes need throughput-friendliness baked in** — wider (#300) and more-slices (#309) both lost epochs to per-step compute.
+- **Architectural-scale changes need throughput-friendliness baked in** — wider (#300), more-slices (#309), and deeper (#304) all lost epochs to per-step compute. We've now closed three PRs on the same axis pattern; the lesson is firmly priced in.
 - **Independent diagnoses converged on the same scoring NaN bug** (4 students), now fixed (#358).
 
 ## Potential next research directions
