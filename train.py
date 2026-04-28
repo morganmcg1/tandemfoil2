@@ -277,12 +277,13 @@ class Transolver(nn.Module):
 # ---------------------------------------------------------------------------
 
 def evaluate_split(model, loader, stats, surf_weight, device,
-                   amp: bool = False, amp_dtype: torch.dtype = torch.bfloat16) -> dict[str, float]:
+                   amp: bool = False, amp_dtype: torch.dtype = torch.bfloat16,
+                   huber_delta: float = 1.0) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
-    ``loss`` is the normalized-space loss used for training monitoring; the MAE
-    channels are in the original target space and accumulated per organizer
-    ``score.py`` (float64, non-finite samples skipped).
+    ``loss`` is the normalized-space Huber (smooth-L1) loss used for training
+    monitoring; the MAE channels are in the original target space and
+    accumulated per organizer ``score.py`` (float64, non-finite samples skipped).
 
     With ``amp=True``, the model forward runs under ``torch.autocast`` for speed,
     but predictions are cast back to fp32 before scoring so the float64 MAE
@@ -319,15 +320,15 @@ def evaluate_split(model, loader, stats, surf_weight, device,
             y_norm_safe = torch.where(
                 sample_mask.unsqueeze(-1), y_norm, torch.zeros_like(y_norm)
             )
-            sq_err = (pred - y_norm_safe) ** 2
+            huber_err = F.huber_loss(pred, y_norm_safe, reduction="none", delta=huber_delta)
             vol_mask = mask_eff & ~is_surface
             surf_mask = mask_eff & is_surface
             vol_loss_sum += (
-                (sq_err * vol_mask.unsqueeze(-1)).sum()
+                (huber_err * vol_mask.unsqueeze(-1)).sum()
                 / vol_mask.sum().clamp(min=1)
             ).item()
             surf_loss_sum += (
-                (sq_err * surf_mask.unsqueeze(-1)).sum()
+                (huber_err * surf_mask.unsqueeze(-1)).sum()
                 / surf_mask.sum().clamp(min=1)
             ).item()
             n_batches += 1
@@ -477,6 +478,7 @@ class Config:
     eta_min: float = 1e-6
     amp: bool = True
     amp_dtype: str = "bf16"   # "bf16" or "fp16"; bf16 strongly preferred for our extreme y values
+    huber_delta: float = 1.0  # Huber loss threshold in normalized space; <1.0 = MSE, >=1.0 = L1
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -611,12 +613,12 @@ for epoch in range(MAX_EPOCHS):
             x_aug = add_derived_features(x_norm, x, is_surface, mask)
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_aug})["preds"]
-            sq_err = (pred - y_norm) ** 2
+            huber_err = F.huber_loss(pred, y_norm, reduction="none", delta=cfg.huber_delta)
 
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
-            vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-            surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            vol_loss = (huber_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+            surf_loss = (huber_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
             loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
@@ -646,7 +648,8 @@ for epoch in range(MAX_EPOCHS):
     model.eval()
     split_metrics = {
         name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
-                             amp=cfg.amp, amp_dtype=AMP_DTYPE)
+                             amp=cfg.amp, amp_dtype=AMP_DTYPE,
+                             huber_delta=cfg.huber_delta)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -716,7 +719,8 @@ if best_metrics:
         }
         test_metrics = {
             name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
-                                 amp=cfg.amp, amp_dtype=AMP_DTYPE)
+                                 amp=cfg.amp, amp_dtype=AMP_DTYPE,
+                                 huber_delta=cfg.huber_delta)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
