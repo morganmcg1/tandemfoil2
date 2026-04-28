@@ -18,11 +18,13 @@ Usage:
 from __future__ import annotations
 
 import os
+import random
 import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import numpy as np
 import simple_parsing as sp
 import torch
 import torch.nn as nn
@@ -238,9 +240,10 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
-
-            sq_err = (pred - y_norm) ** 2
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16,
+                                enabled=torch.cuda.is_available()):
+                pred = model({"x": x_norm})["preds"]
+            sq_err = (pred.float() - y_norm) ** 2
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
@@ -253,7 +256,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             ).item()
             n_batches += 1
 
-            pred_orig = pred * stats["y_std"] + stats["y_mean"]
+            pred_orig = pred.float() * stats["y_std"] + stats["y_mean"]
             ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
@@ -386,11 +389,17 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    seed: int = 0
 
 
 cfg = sp.parse(Config)
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
+
+torch.manual_seed(cfg.seed)
+torch.cuda.manual_seed_all(cfg.seed)
+np.random.seed(cfg.seed)
+random.seed(cfg.seed)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
@@ -486,8 +495,11 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16,
+                            enabled=torch.cuda.is_available()):
+            pred = model({"x": x_norm})["preds"]
+        # Cast to fp32 before squaring — (bf16)**2 near 1e3 can overflow.
+        sq_err = (pred.float() - y_norm) ** 2
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
@@ -556,7 +568,9 @@ for epoch in range(MAX_EPOCHS):
         print_split_metrics(name, split_metrics[name])
 
 total_time = (time.time() - train_start) / 60.0
-print(f"\nTraining done in {total_time:.1f} min")
+peak_gb_full = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+print(f"\nTraining done in {total_time:.1f} min, peak VRAM {peak_gb_full:.1f} GB")
+wandb.summary["peak_vram_gb"] = peak_gb_full
 
 # --- Test evaluation + artifact upload ---
 if best_metrics:
