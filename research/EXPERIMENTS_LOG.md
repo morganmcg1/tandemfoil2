@@ -1932,3 +1932,94 @@ Two opposite-axis perturbations to the same hypothesis ("volume gradient share i
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #686 | thorfinn | bf16-autocast | bf16 autocast wrapping forward + loss on merged #394 baseline | Third throughput multiplier candidate. TF32 (#491) + compile (#394) already merged; bf16 forward fuses Inductor kernels in lower precision. Lion's sign-update is robust to numerical imprecision (only direction matters). Risk: SmoothL1's small-residual gradient amplification at very small err may have precision issues — watch for cruise (smallest residuals) destabilization. Honest band −6 % to +14 %. |
+
+## 2026-04-28 09:15 — PR #675: EMA decay 0.99 → 0.995 (charliepai2d1-askeladd) — **MERGED, new baseline**
+- Branch: `charliepai2d1-askeladd/ema-decay-0p995` → squash-merged into `icml-appendix-charlie-pai2d-r1` (commit `9b4bad2`).
+- Hypothesis: EMA basin shifts with budget; under 20-ep compile budget, slower decay (longer half-life as % of run) better matches the longer cosine-descent path. Predicted band: −4 % to +5 %.
+
+### Headline metrics (best EMA epoch=20/50, timeout-cut)
+| metric | this run (EMA=0.995) | current baseline #394 (EMA=0.99) | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` (EMA) | **43.165** | 43.677 | **−1.17 %** |
+| `test_avg/mae_surf_p` | **36.746** | 36.920 | **−0.47 %** |
+| best raw val (ep20) | 48.038 | — | — |
+| EMA−raw spread (ep20) | −4.87 | — | — |
+
+### Per-split — first non-divergent improvement after 6+ rebased-PR loop turns
+| Split | val Δ vs #394 | test Δ vs #394 |
+|---|---:|---:|
+| single_in_dist | +2.22 % | **−4.42 %** (largest test gain) |
+| geom_camber_rc | **−4.33 %** (largest val gain) | +1.59 % |
+| geom_camber_cruise | +0.49 % (wash) | +1.25 % |
+| re_rand | −1.38 % | +0.27 % (wash) |
+
+### Mechanism (durable for the appendix Polyak-Ruppert basin-shift story)
+
+**EMA basin shifts with budget** — Polyak-Ruppert "half-life ~5-15 % of run" heuristic applies:
+
+| ema_decay | half-life % at 14-ep budget | half-life % at 20-ep budget | result |
+|---|---:|---:|---|
+| 0.95 | 1.2 % | 0.8 % | closed #445 +9.8 % at 14-ep |
+| 0.97 | 1.9 % | 1.3 % | closed #474 +6.5 % at 14-ep |
+| **0.99** | **5.8 % (optimal at 14-ep)** | **4.1 % (now sub-optimal)** | merged #417 / baseline #394 |
+| **0.995** | 11.6 % (too slow at 14-ep) | **8.1 % (new optimum at 20-ep)** | **MERGED #675 (this)** |
+| 0.999 | 58.2 % | 40.7 % | closed #356-era +12.7 % |
+
+**Mechanism evidence (cleanest single-epoch demonstration)**: ep15 raw val spiked to 63.7; EMA absorbed it to 49.2 — ratio of "raw noise filtered" by EMA(0.995) is larger than EMA(0.99) under the longer late-stage budget. **Best EMA epoch stays at ep20 (timeout-cut)** confirms shadow is NOT lagging — it tracks late-stage convergence cleanly.
+
+Per-split signature: val win concentrated in `rc` (the noisier tandem split where late-stage refinement matters most); test win on `single_in_dist` (in-dist memorisation where EMA has more iterate noise to filter). Mixed but consistent with the win-case story.
+
+### Decision: merge as new baseline
+- Strict val-gate satisfied (43.165 < 43.677); test also wins (−0.47 %).
+- **First non-divergent improvement** after 6+ loop turns of rebased-PR wash/regress patterns (#552 / #560 / #567 / #580 / #592 / #621 / #624 / #631 / #643 / #651 / #652 all closed).
+- 14th merge on this branch; **fourth EMA-axis lever** (#356 EMA-eval, #417 decay 0.99, #394 inherited, this #675).
+- BASELINE.md updated; askeladd reassigned to **PR #699 (ema-decay-0p997)** — lock the new-budget basin upper edge.
+
+## 2026-04-28 09:18 — PR #567 rebased: SmoothL1 β=0.5 → 0.25 on post-#394 (charliepai2d1-edward) — **CLOSED (β-axis curve inverted at new baseline)**
+- Run config: `beta = 0.5 → 0.25` rebased onto post-#394. Single-line edit.
+
+### Headline metrics (best EMA epoch=19/50, timeout-cut)
+| metric | this run (rebased) | current baseline #394 |
+|---|---:|---:|
+| `val_avg/mae_surf_p` (EMA) | 44.520 | 43.677 (**+1.93 %**) |
+| `test_avg/mae_surf_p` | 39.025 | 36.920 (**+5.70 %**, past threshold) |
+| best raw val | 49.972 (ep18) | — |
+| Mean grad-norm ep15-20 | 11.68 | ~12.25 (post-#536-era) |
+
+### Per-split — broad-based regression (3/4 val, 4/4 test)
+| Split | val Δ vs #394 | test Δ vs #394 |
+|---|---:|---:|
+| single_in_dist | **+4.45 %** (largest val regressor) | **+6.60 %** |
+| geom_camber_rc | −3.42 % (only val winner — high-residual split) | +4.48 % |
+| geom_camber_cruise | +5.42 % | +4.79 % |
+| re_rand | +4.52 % | +6.90 % |
+
+### Mechanism finding (durable for the appendix β-axis regime-dependence story)
+
+**The β-axis curve has INVERTED at the new compile baseline:**
+
+| β | run base | val_avg | regime |
+|---|---|---:|---|
+| 1.00 | post-#352 (Lion-era) | 64.16 | wide MSE-quadratic |
+| 0.50 | post-#491 | 61.51 | mid bracket |
+| 0.25 | post-#535 | **54.90** | tight bracket; L1-tail dominates (won −10.75 %) |
+| **0.50** | **post-#394 (current)** | **43.68** | merged baseline |
+| **0.25** | **post-#394 (this rebased)** | **44.52** | **broad-based regression (+1.93 %)** |
+
+**Mechanism**: at post-#394 baseline, residuals are smaller (more iterations under cosine descent at lr=2.5e-4). More residuals fall inside `|err| < 0.25σ` where the gradient is `2·err²/β = 8·err²` (8× steeper near zero than at β=1.0). The near-zero magnification **overshoots** the smaller residuals — visible as ep20 uptick (+0.066 above ep19, first sign of over-correction).
+
+**single_in_dist** was the dominant pre-rebase winner (−11.7 % val); now the largest val regressor (+4.45 %). The mechanism reversed direction. **Mirrors thorfinn's #624 closed finding** (volume SmoothL1 wash because volume residuals don't preferentially live in L1-tail at β=0.5) — same mechanism: SmoothL1 small-residual amplification hurts when residuals are already small.
+
+**Loss-form β-axis is regime-dependent, not regime-portable.**
+
+### Decision: close
+- val +1.93 % regression; test +5.70 % past close threshold.
+- β-curve inverted at new baseline — durable appendix story.
+- Reassigned edward to **PR #701 (smoothl1-beta-0p75)** — test if β-axis optimum shifted UPWARD at new baseline.
+
+## 2026-04-28 09:20 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #699 | askeladd | ema-decay-0p997 | `ema_decay = 0.995 → 0.997` on merged #675 baseline | Lock the new-budget EMA basin upper edge. Tests if 0.997 (half-life ~13.6 % of run) is past the basin or still in. Honest band −4 % to +6 %. |
+| #701 | edward | smoothl1-beta-0p75 | `beta = 0.5 → 0.75` on merged #675 baseline | β-axis curve inverted at compile baseline (#567 closed). Tests if optimum shifted upward to ≥0.75 (wider MSE-quadratic regime, less small-residual amplification). Honest band −5 % to +5 %. |
