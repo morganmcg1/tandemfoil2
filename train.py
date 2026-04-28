@@ -386,6 +386,8 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    re_jitter_std: float = 0.0  # Gaussian jitter std on normalized log(Re) (dim 13) during training
+    aoa_jitter_std: float = 0.0  # Gaussian jitter std on normalized AoA foil-1 (dim 14) during training
 
 
 cfg = sp.parse(Config)
@@ -486,6 +488,22 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
+
+        # Re-jitter augmentation: per-sample Gaussian noise added to normalized
+        # log(Re) (dim 13) and optionally AoA foil-1 (dim 14). Re is a per-sample
+        # scalar so noise is sampled with shape [B, 1] and broadcast over nodes.
+        # Only applied to real (non-padding) nodes via mask.
+        if model.training and (cfg.re_jitter_std > 0 or cfg.aoa_jitter_std > 0):
+            B = x_norm.shape[0]
+            x_norm = x_norm.clone()
+            mask_f = mask.float()
+            if cfg.re_jitter_std > 0:
+                re_noise = torch.randn(B, 1, device=x_norm.device) * cfg.re_jitter_std
+                x_norm[..., 13] = x_norm[..., 13] + re_noise * mask_f
+            if cfg.aoa_jitter_std > 0:
+                aoa_noise = torch.randn(B, 1, device=x_norm.device) * cfg.aoa_jitter_std
+                x_norm[..., 14] = x_norm[..., 14] + aoa_noise * mask_f
+
         pred = model({"x": x_norm})["preds"]
         sq_err = (pred - y_norm) ** 2
 
