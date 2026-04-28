@@ -155,8 +155,6 @@ composition even if they don't outright beat 102.64:**
    re-tested on the new advisor:
    - PR #383 — alphonse: L1 + 3× pressure channel weight in surface loss
      *(loss focus)* — branched off L1-only.
-   - PR #543 — nezuko: L1+FF(16 freqs)+EMA + `--epochs 14` + `lr=7.5e-4` —
-     spatial FF frequency-count bracket up.
    - PR #558 — frieren: L1+FF12+EMA + `--epochs 14` + `lr=7.5e-4` +
      **slice_num=128** — retest of inconclusive PR #292 on cleaner stack.
    - PR (fern, new): L1+FF12+EMA(0.998) + `--epochs 14` + `lr=7.5e-4`
@@ -165,6 +163,10 @@ composition even if they don't outright beat 102.64:**
    - PR (askeladd, new): L1+FF12+EMA + `--epochs 14` + `lr=7e-4` —
      LR bracket DOWN on EMA-stack (optimum at-or-below 7.5e-4 per
      LR-curve triangulation).
+   - PR (nezuko, new): L1+FF12+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **input-space Gaussian noise** (sigma=0.05) — different
+     regularisation axis than FF; tests input-perturbation robustness
+     as a mechanistically-novel lever for round 5.
    - PR (tanjiro, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
      **auxiliary log-pressure loss** — different mechanism than
      channel weighting / loss shape; addresses heavy-tail via

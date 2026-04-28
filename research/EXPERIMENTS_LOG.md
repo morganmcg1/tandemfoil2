@@ -1,5 +1,56 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 05:24 — PR #543 (CLOSED, FF upper-bracket closure): NUM_FOURIER_FREQS=16
+- Branch: `charliepai2d3-nezuko/l1ff16-ema-cos14-lr-7p5e-4` (deleted)
+- Hypothesis: bracket FF dose upward from 12 to 16 freqs. Predicted
+  −0% to −2%.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs PR #506 (78.80) | vs current PR #534 (78.60) |
+|--------|--------:|-------------------:|---------------------------:|
+| `val_avg/mae_surf_p` | 81.26 | +3.13% | +3.39% |
+| `test_avg/mae_surf_p` | 71.92 | +4.04% | +6.13% |
+
+### Per-split — broad-spectrum regression
+
+All 4 val and all 4 test splits regressed (val +1.2% to +5.6%; test
++3.4% to +6.2%). No single-axis failure mode — pure
+representation-capacity-spent-on-noise pattern.
+
+### Mechanistic explanation
+
+At 16 freqs, the highest-frequency basis is `2^15 · π ≈ 102,944`
+cycles per normalised unit — far above any meaningful spatial scale
+in the meshes. Frequencies 12-15 alias on adjacent nodes and inject
+high-frequency noise into the input encoding rather than signal.
+The +4096 param cost is small (+0.6%) but the representation cost
+is real.
+
+### FF dose response curve characterised
+
+| freqs | val | source |
+|------:|---:|--------|
+| 4 | 81.31 | PR #533 (closed) |
+| 12 | **78.80** | PR #506 (merged) |
+| 16 | 81.26 | this PR |
+
+Concave with peak at-or-near 12. Round-5 should NOT continue bracketing
+FF up — mechanistic argument predicts regression worsens at 24+.
+
+### Decision
+
+**Closed.** Above-threshold regression. FF dose lever closed for
+round 3.
+
+Re-assigning nezuko to **input-space additive Gaussian noise**
+(sigma=0.05) — different regularisation axis than FF. Round-5 is
+moving past FF dose tuning toward mechanistically novel axes.
+
+Per-epoch metrics not centralised — branch deleted.
+
+---
+
 ## 2026-04-28 05:24 — PR #534 (MERGED): EMA_DECAY 0.999 → 0.997 — schedule × EMA interference fix
 - Branch: `charliepai2d3-fern/l1ff-ema997-cos14-lr-7p5e-4`
 - Hypothesis: tighten EMA decay to end averaging *before* cosine tail.
