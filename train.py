@@ -374,7 +374,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
-    cosine_epochs: int = 32  # CosineAnnealing T_max — set to realised epoch count, not MAX_EPOCHS
+    cosine_epochs: int = 50  # CosineAnnealing T_max — defaults to MAX_EPOCHS; override for shorter horizons
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
