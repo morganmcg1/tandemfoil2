@@ -2,9 +2,31 @@
 
 Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pressure MAE across the four val splits). Paper-facing metric is `test_avg/mae_surf_p` from the best-val checkpoint.
 
-## 2026-04-28 01:20 — PR #391: SwiGLU MLP in TransolverBlock (LLaMA-style FFN)
+## 2026-04-28 02:15 — PR #426: EMA decay 0.99 (shorter half-life) on top of SwiGLU baseline
 
-- **Best `val_avg/mae_surf_p`** (target to beat): **88.227** (epoch 13)
+- **Best `val_avg/mae_surf_p`** (target to beat): **83.223** (epoch 13)
+- **`test_avg/mae_surf_p`** (paper-facing, all 4 splits finite): **73.904**
+- **Per-split val MAE for `p`**:
+  - `val_single_in_dist`: 98.815 (−7.13% vs SwiGLU baseline)
+  - `val_geom_camber_rc`: 96.612 (−3.78% vs SwiGLU baseline)
+  - `val_geom_camber_cruise`: 61.160 (−5.04% vs SwiGLU baseline)
+  - `val_re_rand`: 76.304 (−6.60% vs SwiGLU baseline)
+- **Per-split test MAE for `p`**:
+  - `test_single_in_dist`: 89.833
+  - `test_geom_camber_rc`: 84.398
+  - `test_geom_camber_cruise`: 50.843
+  - `test_re_rand`: 70.541
+- **Recipe**: huber(δ=1.0) + EMA(decay=0.99 — was 0.999) + SwiGLU FFN inside `TransolverBlock` + NaN-safe `evaluate_split` filter. All other defaults unchanged.
+- **Mechanism**: under the default cosine `T_max=50` schedule with only 13 reachable epochs in the 30-min budget, EMA(0.999)'s ~1.85-epoch half-life means the EMA is heavily anchored to random-init weights for the first ~2 epochs. EMA(0.99) (half-life ~0.18 epochs) tracks the live model immediately, removing the bias-from-cold-start. Gain is uniform across all 4 val + test splits.
+- **Reproduce**:
+  ```bash
+  cd target
+  python train.py --epochs 50 --experiment_name ema-decay-099 --agent <name>
+  ```
+
+## 2026-04-28 01:20 — Previous baseline (PR #391, SwiGLU FFN)
+
+- **Best `val_avg/mae_surf_p`**: 88.227 (epoch 13)
 - **`test_avg/mae_surf_p`** (paper-facing, all 4 splits finite): **78.338**
 - **Per-split val MAE for `p`**:
   - `val_single_in_dist`: 106.398 (−15.78% vs EMA)
