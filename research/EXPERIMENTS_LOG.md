@@ -2,6 +2,25 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 00:58 — PR #331: Wider Transolver (h192, h6) bf16 retry — **CLOSED**
+- Branch: `willowpai2d5-askeladd/wider-h192-h6` (deleted; pre-#336, slice_num=64)
+- Hypothesis: 2.2× wider Transolver lifts `val_avg/mae_surf_p` ~5-10%
+
+| Run | Config | Epochs | val_avg/mae_surf_p | test_avg/mae_surf_p (post-fix re-eval) |
+|---|---|---:|---:|---:|
+| Round 1 | fp32, bs=4 | 9 | 154.011 | NaN (pre-fix) |
+| **Round 2 v1** | **bf16, bs=6** | **12** | **141.998** | **129.480** |
+| Round 2 v2 | bf16, bs=6 (seed 2) | 12 | 163.280 | 150.045 |
+| bs=8 attempt | bf16, bs=8 | OOM | — | — |
+
+- Decision: **closed**. v1 alone is +1.55% above baseline (within ±10-15% measured seed variance), v2 is +16.8% above baseline. 2-seed mean (152.6) crosses the 5% close threshold; v1's apparent win is not statistically separated from baseline.
+- **Cross-cutting findings preserved for round 1 going forward:**
+  - **bf16 buys ~26% per-epoch wall-time** with `clamp_count = 0` across all 8 splits (zero overflow risk at our dynamic range). Capacity-axis hypotheses should default to bf16.
+  - **bs=8 OOMs at n_hidden=192** even with bf16 (cruise meshes saturate >94 GB). bs=6 is the practical ceiling.
+  - **±10-15% seed variance at 12 epochs** is a cross-cutting concern: many round-1 single-seed apparent wins may not be statistically separated from baseline. Going forward, asking winning candidates for 2-seed confirmation before merge.
+  - askeladd's train.py-side y-guard duplicates edward's #375 canonical fix; not bringing forward.
+- Askeladd reassigned to Huber/SmoothL1 loss for surface (PR #413) — directly attacks the heavy-tailed-pressure mechanism behind the seed variance.
+
 ## 2026-04-28 00:50 — PR #329: surf_weight sweep {20, 30, 50} — **SENT BACK (apples-to-apples needed)**
 - Branch: `willowpai2d5-alphonse/surf-weight-sweep` (sits on pre-#336 commit, slice_num=64)
 - Three runs (sw=20, 30, 50), all at 14 epochs, slice_num=64 (pre-#336 fork)
