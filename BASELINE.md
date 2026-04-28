@@ -2,6 +2,33 @@
 
 Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pressure MAE across the four val splits). Paper-facing metric is `test_avg/mae_surf_p` from the best-val checkpoint.
 
+## 2026-04-28 06:45 — PR #575: Bias-corrected EMA decay_target 0.99 → 0.995 (UP direction)
+
+- **Best `val_avg/mae_surf_p`**: **66.195** (epoch 14, −1.65% vs 67.306 reference / −0.98% vs #574's 66.847)
+- **`test_avg/mae_surf_p`** (paper-facing, all 4 splits finite): **58.063** (vs 58.112 prior, −0.08%)
+- **Per-split val MAE for `p`**:
+  - val_single_in_dist: 77.239 (−9.71% vs PR #548 reference)
+  - val_geom_camber_rc: 78.683 (−1.07% vs PR #548)
+  - val_geom_camber_cruise: 46.888 (−7.45% vs PR #548)
+  - val_re_rand: 61.972 (−7.13% vs PR #548)
+- **Per-split test MAE for `p`**:
+  - test_single_in_dist: 67.362
+  - test_geom_camber_rc: 71.301
+  - test_geom_camber_cruise: 38.809
+  - test_re_rand: 54.781
+- **Recipe**: huber(δ=0.25) + **bias-corrected EMA(0.995, warmup=50)** (was 0.99) + SwiGLU + DropPath(0.1) + AdamW betas (0.9, 0.95) + wd=3e-5 + PhysicsAttention temperature init=2.0 + cosine 1-ep warmup + T_max=13 + feature noise std=0.005 + NaN-safe.
+- **EMA decay profile** (monotone-improving, cap never reached within budget): 0.95 → 75.655, 0.99 → ~67.306, **0.995 → 66.195**. Profile still descending — 0.999 not yet probed.
+- **EMA decay trajectory** (warmup_steps=50, 14-epoch / ~5250-step budget): step 1→0.039, step 100→0.673, step 1000→0.953, step 4000→0.988. Cap of 0.995 not reached until step ~9750 (well beyond budget) — EMA stays in warmup-ramp regime throughout.
+- **Val curve**: smooth monotone descent epochs 1–14 (194.30→66.20), no per-epoch wobble or lag. EMA and live model converge by run end (cosine LR near zero).
+- **Mechanism**: Longer EMA memory (0.99→0.995) under cosine LR decay (T_max=13) compounds well: by epoch 14, LR is near zero so live model weights are stable — the slower-tracking EMA doesn't lag, it just averages over a longer window of the fine-tuning tail. Uniform improvement across all 4 splits consistent with generic smoothing knob, not split-specific effect.
+- **Confound caveat**: baseline reference (67.306) is on slice-temp=1.0 stack; this run uses slice-temp=2.0 (+feature-noise=0.005). The residual decay-only effect after subtracting the ~1.5% slice-temp contribution is small but likely real given the monotone profile shape.
+- **Metric summary**: `models/model-ema-decay-target-0995-20260428-055129/metrics.jsonl`
+- **Reproduce**:
+  ```bash
+  cd target
+  python train.py --epochs 50 --experiment_name ema-decay-target-0995 --agent <name>
+  ```
+
 ## 2026-04-28 06:35 — PR #574: Slice attention temperature init 1.5 → 2.0
 
 - **Best `val_avg/mae_surf_p`**: **66.847** (epoch 14, on post-#548+#526 stack; combined with feature-noise=0.0025 expected to beat 66.841)
