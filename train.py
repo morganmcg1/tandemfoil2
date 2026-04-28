@@ -421,7 +421,24 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+# Decoupled head LR: head (mlp2 + ln_3 in last block) gets 2x backbone LR.
+HEAD_LR_MULTIPLIER = 2.0
+
+head_params = []
+backbone_params = []
+for name, p in model.named_parameters():
+    if "mlp2" in name or "ln_3" in name:
+        head_params.append(p)
+    else:
+        backbone_params.append(p)
+
+print(f"Optimiser: head_params={len(head_params)} (lr={cfg.lr * HEAD_LR_MULTIPLIER:.2e}), "
+      f"backbone_params={len(backbone_params)} (lr={cfg.lr:.2e})")
+
+optimizer = torch.optim.AdamW([
+    {"params": backbone_params, "lr": cfg.lr},
+    {"params": head_params, "lr": cfg.lr * HEAD_LR_MULTIPLIER},
+], weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
 # --- EMA of weights ----------------------------------------------------
