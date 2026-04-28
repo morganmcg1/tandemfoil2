@@ -19,7 +19,7 @@ First Round-1 winner merged: **PR #320** (linear warmup + peak LR 1e-3) drops `v
 
 | Student | PR | Lever | Status | Result |
 |---|---|---|---|---|
-| alphonse | [#294](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/294) | **Loss alignment** — Huber surface loss (sweep δ ∈ {0.5, 1.0, 2.0}) | wip | — |
+| alphonse | [#294](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/294) | **Loss alignment** — Huber surface loss (sweep δ ∈ {0.5, 1.0, 2.0}) | **rebase + re-run** | **In-sweep δ=0.5 hits 106.36 — already beats the new bar (115.84) at OLD LR.** Strongest Round-1 signal so far; monotonic trend toward L1; rebase to test interaction with warmup, extend to δ=0. |
 | askeladd | [#315](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/315) | **Width** — `n_hidden` 128 → 192 (sweep 160/192/256) | wip | — |
 | edward | [#316](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/316) | **Slice count** — `slice_num` 64 → 128 (sweep 96/128/192) | **CLOSED** | Negative result: slice_num=64 baseline wins; matches Transolver paper ablation. Compute-budget bound. |
 | fern | [#317](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/317) | **Surface-vs-volume balance** — `surf_weight` sweep {5, 20, 40, 80} | **rebase + re-run** | In-sweep −10.1% (143.93→129.41 at sw=20); abs below new bar; clean U-shape, volume tradeoff visible. |
@@ -51,11 +51,12 @@ Each axis is orthogonal to the others and to the in-flight rebase PRs.
 
 | Student | PR | Lever | In-sweep Δ |
 |---|---|---|---|
+| **alphonse** | [#294](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/294) | **Huber surface loss δ=0.5** | **In-sweep result already beats new bar at OLD LR (106.36 < 115.84). Strongest signal so far.** |
 | fern | [#317](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/317) | `surf_weight=20` | −10.1% in-sweep, exceeded predicted band |
 | tanjiro | [#322](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/322) | `surf_p_weight=3.0` | −9.1% in-sweep, exceeded predicted band |
 | thorfinn | [#323](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/323) | `mlp_ratio=4` | −4.7% in-sweep, in predicted band |
 
-Each must demonstrate the lever still wins on top of `peak_lr=1e-3, warmup_epochs=2`. Predicted-band-exceeders (fern, tanjiro) have the strongest signal that the gain isn't just artifact of being below a strong baseline.
+Each must demonstrate the lever still wins on top of `peak_lr=1e-3, warmup_epochs=2`. **Alphonse is the most exciting case** — already beats the new bar at OLD LR; rebase will tell us if Huber and warmup compound (likely) or overlap.
 
 ## Potential next research directions
 

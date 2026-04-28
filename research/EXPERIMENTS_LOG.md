@@ -1,5 +1,33 @@
 # SENPAI Research Results — `icml-appendix-willow-pai2d-r3`
 
+## 2026-04-28 01:18 — PR #294: Huber surface loss, δ ∈ {0.5, 1.0, 2.0} — **SENT BACK FOR REBASE (strongest Round-1 candidate)**
+
+- Branch: `willowpai2d3-alphonse/huber-loss-surf-p`
+- **Hypothesis:** MSE loss penalizes outliers quadratically while the metric is MAE; Huber loss aligns the surface-loss objective with the eval metric. Predicted Δ: −3 to −8%.
+
+### Sweep results (group `huber-loss-surf-p`, against the OLD baseline lr=5e-4)
+
+| huber_delta | best epoch | val_avg/mae_surf_p | test_avg/mae_surf_p | W&B run |
+|---:|---:|---:|---:|---|
+| **0.5** | **12** | **106.3626** | **94.8919** | `dhuubteb` |
+| 1.0 | 14 | 113.7845 | 102.9870 | `3z9jv6as` |
+| 2.0 | 14 | 116.7367 | 103.2956 | `ag67f5k6` |
+
+### Decision: **REQUEST CHANGES (rebase + re-run + extend sweep to δ=0)**
+
+This is the **strongest Round-1 result so far** — `huber_delta=0.5` already beats the new merged baseline (115.84) **at OLD LR**, hitting 106.36 (−8.2% vs. new baseline, −28% vs. old default). Monotonic trend (smaller δ → better) is consistent on val and test. The instrumented `train/surf_huber_outlier_frac` (30% at δ=0.5 vs 5% at δ=2.0) provides clean mechanism evidence — most of the surface batch sits in the linear (L1) regime at δ=0.5, very little at δ=2.0.
+
+Alphonse independently diagnosed the same inf-GT bug as frieren and thorfinn, with the bonus catch that the inf values look like fp16-overflow data-prep artifacts (`-65504` is the fp16 floor). Their y_finite implementation is similar in spirit to frieren's upstream version but uses subset-extraction instead of mask-zero-out — both correct.
+
+Sent back for rebase because:
+
+1. **Merge conflict** in `evaluate_split` (their y_finite block vs frieren's already-upstream version).
+2. **Interaction with warmup unknown** — the 106.36 number was produced at `lr=5e-4`. The most likely outcome is Huber and warmup compound (orthogonal mechanisms — loss landscape vs optimizer schedule), but there's a real possibility Huber's smaller gradient magnitudes prefer the lower LR. We need to measure.
+
+I also asked alphonse to extend the sweep to δ=0 (pure L1) — the monotonic trend implies the elbow is below δ=0.5, and degenerate L1 is the cleanest end of the range.
+
+If the rebased run confirms compounding, this is the next merge candidate — likely producing a baseline below 100.
+
 ## 2026-04-28 01:05 — PR #316: More physics-attention slices, slice_num 64→128 — **CLOSED (negative result)**
 
 - Branch: `willowpai2d3-edward/more-slice-tokens-128` (deleted post-close)
