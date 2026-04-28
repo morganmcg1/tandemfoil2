@@ -255,3 +255,39 @@ Both runs hit 30-min timeout at epoch 14/50; peak VRAM 42-43 GB (no BF16 in this
 - **Implementation verified:** dropout in standard transformer-FFN location (between GELU and linear), model.eval() correctly called for val and test, attention dropout untouched. Negative result is not from a bug.
 - **Implication for regularization more broadly:** Until the model demonstrates overfitting (best_epoch < final_epoch by a wide margin), traditional regularizers (dropout, weight decay) have no benefit to provide. Schedule fix (#809) or batch-size scaling (#848) may unlock convergence first; only then does regularization become testable.
 - **Nezuko reassigned** to DropPath/stochastic depth — student's suggestion #3, different mechanism (drops entire residual branches, model-averaging interpretation, compute-efficient).
+
+---
+
+## 2026-04-28 22:44 — PR #810: Add EMA weight averaging for lower-variance OOD checkpointing — sent back
+
+- **Branch:** `willowpai2e5-thorfinn/ema-model-checkpoint` (sent back for post-warmup EMA + decay sweep)
+- **W&B run:** `g2yfau61` — group `ema-model-checkpoint`
+- **Hypothesis:** EMA decay=0.999 of model weights smooths over noisy gradient updates, especially helping OOD val splits. Validate and checkpoint with EMA shadow weights.
+
+### Results (against PRE-merge code; no BF16)
+
+| Split | EMA (this run) | Baseline #737 | Δ |
+|-------|----------------|---------------|------|
+| `val_single_in_dist` | 170.472 | 149.241 | +21.23 |
+| `val_geom_camber_rc` | 149.418 | 146.033 | +3.39 |
+| `val_geom_camber_cruise` | 106.842 | 96.362 | +10.48 |
+| `val_re_rand` | 121.037 | 119.852 | +1.19 |
+| **val_avg/mae_surf_p** | **136.942** | **127.872** | **+9.07 (+7.1%)** |
+
+| Test Split | EMA (this run) | #763 baseline |
+|-----------|----------------|---------------|
+| `test_single_in_dist` | 147.616 | 148.310 |
+| `test_geom_camber_rc` | 132.479 | 145.550 |
+| `test_geom_camber_cruise` | 88.305 | 91.017 |
+| `test_re_rand` | 120.607 | 121.362 |
+| **test_avg/mae_surf_p** | **122.252** | **126.560** |
+
+Best epoch = 13/50 (30-min timeout); peak VRAM 42.2 GB (no BF16 in this run).
+
+### Commentary & Conclusions
+
+- **Decision: Sent back (despite >5% val regression).** Strict close criterion would apply, but the student's diagnostic is so clear and the fix so simple that one more iteration is high-value.
+- **The mechanism appears to work — the timing is wrong.** Trajectory was monotonically improving; test_avg actually IMPROVED by 4.3 points relative to the last clean 4-split test (#763 → #810: 126.56 → 122.25). The EMA shadow lags the live model on val, but the smoothing effect on test geometry held up.
+- **Critical diagnostic from the student (worth recording):** With decay=0.999 and warmup_epochs=5, the shadow has effective memory ~1000 steps (~2.7 epochs). Of that, ~32% of the shadow mass at epoch 13 still sits on warmup-era weights (lr=1e-4 regime where the model is barely learning). The shadow is contaminated by warmup gibberish.
+- **Send-back instructions:** (1) defer EMA initialization until after warmup completes; (2) sweep decay ∈ {0.999, 0.995}; (3) rebase onto BF16 baseline (17 epochs instead of 14 = more post-warmup steps to amortize); (4) log both EMA and live val_avg per epoch to verify the gap closes.
+- **Implementation correctness verified:** deepcopy isolation, no live-model overwrite, EMA state correctly checkpointed.
