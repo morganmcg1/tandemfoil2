@@ -1,5 +1,63 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 10:36 — PR #678 (closed): AoA × NACA-M interaction features
+
+- branch: `willowpai2d1-thorfinn/aoa-x-naca-interaction` (deleted on close)
+- hypothesis: bilinear AoA × NACA-M features capture wake-coupling
+  structure for tandem foils. Predicted -0% to -2%.
+
+### Results
+
+| Metric | Value | vs PR #634 baseline |
+|---|---|---|
+| Best `val_avg/mae_surf_p` | **54.64** (epoch 34 of 35) | **+5.69%** |
+| `test_avg/mae_surf_p` | 46.26 | +5.10% |
+| **val_geom_camber_rc** | 70.69 | **+8.59%** (predicted beneficiary, regressed worst!) |
+| W&B run | `zuy719xj` | |
+
+### Implementation issue diagnosis (the keeper)
+
+**Spec bug**: bilinear features computed in **normalized** space rather
+than raw space. For single-foil samples, raw rear AoA/M are 0, but after
+normalization they become `(0 − μ)/σ`, so the rear-interaction product
+becomes a **fixed constant μ/σ** rather than the intended inactive-zero.
+This contaminates single-foil samples with a spurious constant signal —
+matches the +3.80% single-foil regression cleanly.
+
+### Round-3 rc-camber rule consolidation (4 PRs of evidence)
+
+| PR | Intervention | rc-camber Δ | val_avg Δ |
+|---|---|---|---|
+| #644 | NACA camber bin embedding | +5.98% | +4.22% |
+| #564 | FF on saf (sparse-defined) | +5.30% | +9.94% |
+| #664 | Surface-gated FF | +6.92% | +3.68% |
+| #678 (this) | AoA × NACA-M interaction | +8.59% | +5.69% |
+
+**rc-camber's residual error is NOT representational.** The encoder MLP
+already sees AoA1, NACA-M1, and all geometric channels per-node and can
+learn arbitrary nonlinear interactions internally. Hand-injecting input-
+side features doesn't add capacity; it just steals dimensions and biases
+the encoder toward particular product structures.
+
+### Round-3 rule for rc-targeted work
+
+**Stop adding input-side representational interventions for rc-camber.**
+The encoder is not the bottleneck. Future rc-targeted work should focus on
+**optimizer/schedule interventions** — those are non-architectural and
+have moved the needle (compile +24%, T_max=50 +1.07%, EMA +3.65%, per-Re
++3.79%, wd=3e-4 +0.55%/-1.34% canonical).
+
+### Analysis & conclusions
+
+- **Closed.** Reassigned thorfinn to **AdamW eps=1e-7 probe** (#727) —
+  pivots to optimizer-numerics axis (un-explored hyperparameter probe at
+  default since round 1).
+- Bilinear-in-raw-space fix (followup #3) skipped — even with the fix,
+  the four-PR pattern says input-side rc interventions don't move the
+  needle at this stack.
+- Wake-aware architectural change (followup #2) held for round 4 —
+  bigger swing than this round can absorb.
+
 ## 2026-04-28 10:18 — PR #689 (closed): EMA decay=0.998 single probe (low-side bracket)
 
 - branch: `willowpai2d1-nezuko/ema-decay-998-probe` (deleted on close)
