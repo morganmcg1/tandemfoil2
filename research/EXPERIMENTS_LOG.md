@@ -1082,3 +1082,29 @@ All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the s
 - LR-vs-epoch confirmed: ep1=1.80e-4, ep4=6.00e-4 (peak), ep17=7.52e-6, **ep18=0 (eta_min reached)**. No second cycle.
 - **Edward's analysis claim**: "second cycle was apparently a workaround for the misaligned schedule, not load-bearing". **This DIRECTLY CONFLICTS with PR #630's finding** that the T_max=11 cosine rebound was the load-bearing mechanism (-2.49 cumulative gain at ep16-18 when LR rebounded 2e-5 → 1.03e-4).
 - Decision: **SEND BACK FOR REBASE**. The T_max × eta_min interaction is critical: T_max=14 + eta_min=0 gives clean monotone descent; T_max=11 + eta_min=2e-5 gives rebound. Under PR #630 (current merged), the rebound is real. T_max=14 removes the rebound. Need clean current-stack measurement to disambiguate which mechanism is dominant.
+
+## 2026-04-28 10:30 — PR #661: TF32 matmul precision (Blackwell tensor cores)
+- Branch: `charliepai2d2-alphonse/tf32-matmul-high` (artifact: `model-tf32-matmul-high-20260428-085927`)
+- Hypothesis: `torch.set_float32_matmul_precision("high")` enables Blackwell TF32. Predicted 1.5-2× matmul speedup → 25-40% epoch time reduction. Single-line change.
+
+| metric | TF32+compile (this run) | PR #510 baseline (compile-only) | Δ |
+|---|---|---|---|
+| best `val_avg/mae_surf_p` | **60.5905** (epoch 19) | 64.824 | **−6.5%** |
+| `test_avg/mae_surf_p` | **53.404** | 56.391 | **−5.3%** |
+| epochs in 30-min budget | **21** | 18 | **+16.7%** |
+| mean s/epoch (post-warmup) | **86.8** | ~102.3 | **−15.1%** |
+| Peak VRAM | 42.6 GB | 42.6 GB | flat |
+
+- Diagnostic eager run also probed: TF32+eager = 16 epochs / 117.9 s/ep = **−12.4% vs eager baseline**.
+- Per-split val (vs PR #510 baseline): in_dist −6.4%, camber_rc −6.8%, **camber_cruise −12.1% (largest)**, re_rand −2.2%.
+- Per-split test: all 4 splits improve substantially.
+- TF32 verification: `torch.get_float32_matmul_precision()` returns `"high"`; no TensorFloat32 hint warning fires.
+- **Throughput came in at lower bound of predicted band** (15.1% vs predicted 25-40%). alphonse's diagnosis: matmul fraction is ~50-60% not 70-85% — slice-attention softmax + LayerNorm/GELU are bigger non-matmul fraction than expected.
+- **Quality decomposition** (per alphonse): (1) -12.4% to -15.1% per-iter wall-clock pure TF32 matmul speedup; (2) +2-3 extra epochs in budget; (3) the extra epochs land in LR≈0 EMA-tail, val_avg keeps descending into them.
+- Vs current baseline 59.907 (post-#630): +1.14% cross-stack regression, but throughput is hardware-deterministic. Same kind of infrastructure value as PR #510 (compile) merge.
+- Decision: **MERGE**. Throughput compounds with every future PR. +16.7% epochs in budget = ~3 extra "free" epochs per run. Cosine T_max retune (already in flight as edward's #697 sent-back) becomes even higher-leverage post-TF32.
+- Suggested follow-ups (per alphonse):
+  1. **Cosine T_max=11 → 14** — actively use the new 21-epoch budget for fine-tuning rather than running ~10 epochs at LR≈0. (Already in flight as edward's #697 — should be re-evaluated post-TF32.)
+  2. `set_float32_matmul_precision("medium")` — TF32 with BF16 reduce. ~5-10% additional throughput.
+  3. **bfloat16 autocast forward pass** — much larger throughput envelope. EMA + Huber stack robust enough.
+  4. Profile matmul fraction with `torch.profiler` to confirm ~50-60% finding.
