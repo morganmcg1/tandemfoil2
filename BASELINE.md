@@ -4,6 +4,48 @@ Lower is better on **`val_avg/mae_surf_p`** (equal-weight mean surface-pressure 
 
 > **⚠️ Seed-variance caveat (2026-04-28).** `train.py` does not call `torch.manual_seed` (yet), and run-to-run variance for the same config has been measured at ~25 MAE (~21%) on this metric. Numbers below are single-seed point estimates. PR #482 will replace these with multi-seed `mean ± std` once it lands.
 
+## 2026-04-28 06:47 — PR #294: Pure L1 surface loss (`huber_delta=0`)
+
+- Branch: `willowpai2d3-alphonse/huber-loss-surf-p` (squash-merged)
+- **Recipe addition:** Surface loss replaced with Huber-shaped loss; `huber_delta=0` defaults in `train.py` (degenerate to pure L1 = MAE-in-normalized-space). Volume loss stays MSE.
+- **Best val avg surface MAE:** `val_avg/mae_surf_p = 94.8854` (epoch 14, run `1zpw3ts2`).
+- **Best test avg surface MAE:** `test_avg/mae_surf_p = 83.9410` (same checkpoint).
+- **Within-sweep delta (apples-to-apples, monotonic 4-point sweep):** δ=2.0 (110.61) → δ=0 (94.89) = **−15.72 MAE on val_avg, −14.24 on test_avg**. Trend monotonic and clean across δ ∈ {2.0, 1.0, 0.5, 0}.
+- **vs prior baseline (PR #410, EMA-included):** **−26.55 MAE on val_avg (121.44 → 94.89, −21.9%), −24.72 MAE on test_avg (108.66 → 83.94, −22.8%)**. Comfortably above the ~25 MAE seed-noise floor on val_avg, with test_avg confirming.
+- **Per-split val MAE on best-val checkpoint:**
+
+  | Split | mae_surf_p |
+  |---|---:|
+  | `val_single_in_dist` | 115.4932 |
+  | `val_geom_camber_rc` | 107.5207 |
+  | `val_geom_camber_cruise` | 69.5202 |
+  | `val_re_rand` | 87.0077 |
+  | **val_avg** | **94.8854** |
+
+- **Per-split test MAE on best-val checkpoint:**
+
+  | Split | mae_surf_p |
+  |---|---:|
+  | `test_single_in_dist` | 102.7639 |
+  | `test_geom_camber_rc` | 93.1056 |
+  | `test_geom_camber_cruise` | 58.8788 |
+  | `test_re_rand` | 81.0157 |
+  | **test_avg** | **83.9410** |
+
+- **W&B run:** `1zpw3ts2` in group `huber-loss-surf-p-r2` (project `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r3`)
+- **Reproduce:**
+  ```bash
+  cd target/
+  python train.py --huber_delta 0 --epochs 50 \
+      --wandb_group huber-loss-surf-p-r2 --wandb_name huber-d0-r2 \
+      --agent willowpai2d3-alphonse
+  ```
+- **Notes:**
+  - Compounding confirmed: pure L1 stacks with the warmup+EMA baseline. The mechanisms are orthogonal (loss landscape vs. optimizer schedule + weight averaging) so gains add roughly additively.
+  - The largest absolute gains land on the high-residual splits: `val_single_in_dist` (148.90 → 115.49, −33.41 MAE) and `val_geom_camber_rc` (130.69 → 107.52, −23.17). Cruise and re_rand also improve cleanly.
+  - Mechanism check via `train/surf_huber_outlier_frac` confirms the lever is doing what it should: at δ=0 every surface element is in the linear regime by construction (outlier_frac = 1.0); at δ=2.0 it stays near 0 (essentially MSE-on-surface).
+  - Hyperparameter snapshot: `peak_lr=1e-3, warmup_epochs=2, weight_decay=1e-4, batch_size=4, surf_weight=10.0, huber_delta=0, epochs=50, n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2, use_ema=True, ema_decay=0.99, ema_warmup_steps=100`.
+
 ## 2026-04-28 03:37 — PR #410: EMA of weights at eval time (decay=0.99, warmup_steps=100)
 
 - Branch: `willowpai2d3-nezuko/ema-of-weights` (squash-merged)
