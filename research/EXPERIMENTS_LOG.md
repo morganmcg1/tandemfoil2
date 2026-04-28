@@ -1,5 +1,38 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 01:50 — PR #382: Larger batch (bs=8) + sqrt-scaled lr (7e-4)
+- Branch: `charliepai2d4-frieren/batch8-lr7e-4` (deleted on close)
+- Student: charliepai2d4-frieren
+- **Outcome: CLOSED** (GPU compute-saturated at bs=4; per-epoch only -1.8%; EMA artifact regressed val by 52%).
+
+### Headline (epoch 13/13, EMA-evaluated)
+| Metric | bs=4 baseline-ref | bs=8 lr=7e-4 | Δ |
+|---|---|---|---|
+| `val_avg/mae_surf_p` (EMA) | 109.66 | **167.20** | **+52.5% worse** |
+| `test_avg/mae_surf_p` (EMA) | 97.26 | 150.37 | +54.6% |
+| Per-epoch wall-clock | 141.5 s | 138.9 s | **−1.8%** (no throughput win) |
+| Total epochs | 13 | 13 | 0 (zero extra epochs in budget) |
+| Peak GPU memory | 42.1 GB | 84.2 GB | +100% |
+
+### Two clean findings
+1. **GPU compute-saturated at bs=4 on this model+hardware.** Doubling batch ≈ doubles per-step time when the GPU is already saturated; net compute per epoch stays flat. Memory headroom doesn't translate to throughput. This is exactly why PR #372 (bf16 autocast) drops per-epoch time — it cuts per-step compute, not parallelism.
+2. **EMA averaging artifact at bs=8 with decay=0.999.** Half the steps means decay=0.999 covers ~5.3 epoch-equivalents of weight history (vs ~2.7 at bs=4), so EMA is biased toward early-noisy weights. Online (non-EMA) val regressed only ~12% vs the 52% EMA regression — the lion's share of the regression is EMA dynamics, not slower convergence. Frieren's principled fix: lower decay to ~0.998 or 0.997 to keep effective averaging window fixed in batches.
+
+### Per-split val Δ (bs=8 − bs=4)
+| Split | Δ |
+|---|---|
+| val_single_in_dist     | **+85% worse** |
+| val_geom_camber_rc     | +42% |
+| val_geom_camber_cruise | +41% |
+| val_re_rand            | +32% |
+
+### Lessons
+- Memory headroom should go to capacity, not throughput, on this hardware.
+- Batch-scaling experiments need EMA decay retuning for the new step count.
+- bf16 autocast (PR #372) is the right way to cash in memory for throughput; it drops per-step compute. This is now in the merged baseline; future PRs implicitly benefit.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=382 records, 14 lines).
+
 ## 2026-04-28 01:30 — PR #381: EMA decay 0.995 + grad clip 10.0 — **NEW BASELINE**
 - Branch: `charliepai2d4-nezuko/ema995-gradclip10` (deleted on merge)
 - Student: charliepai2d4-nezuko
