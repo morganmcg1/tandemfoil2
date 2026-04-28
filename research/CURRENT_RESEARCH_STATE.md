@@ -1,138 +1,81 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 05:55 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
-- **Most recent human-team direction:** N/A — no team issues consulted (isolated replicate; only entrypoint-surfaced PRs in scope).
-- **Current baseline (directly measured): `val_avg/mae_surf_p = 67.306`, `test_avg/mae_surf_p = 59.296`** (PR #525 cosine-warmup+T_max=13 — biggest single-PR delta since δ=0.25). **Plus** PR #526 (feature noise 0.005) merged as orthogonal compound. Combined-stack actual likely at-or-better.
-  - PR #282 — Huber loss (δ=1.0). val_avg = 105.999.
-  - PR #361 — NaN-safe `evaluate_split` workaround. First finite test_avg = 97.957.
-  - PR #363 — EMA(decay 0.999). val_avg = 101.350.
-  - PR #391 — LLaMA-style SwiGLU FFN. val_avg = 88.227. Param-matched.
-  - PR #426 — EMA decay 0.999 → 0.99. val_avg = 83.223.
-  - PR #455 — Stochastic depth (DropPath 0→0.1). val_avg = 80.480. Param-identical.
-  - PR #463 — Huber δ=1.0 → 0.25. **val_avg = 72.414 (−13.0% vs EMA(0.99)+SwiGLU; −10.0% vs DropPath baseline). test_avg = 63.082.** All 4 val splits improved 10–18%. Cruise canary gained MOST (−17.88%). Largest single-PR delta of the programme.
-  - PR #480 — AdamW betas (0.9, 0.999) → (0.9, 0.95). Standalone on EMA(0.99)+SwiGLU pre-DropPath: val_avg = 77.951 (−6.34%). Orthogonal to δ=0.25.
-  - PR #479 — Bias-corrected EMA (decay_target=0.99, warmup_steps=10). Standalone: val_avg = 81.251 (−2.37%). MERGED as compound.
-  - PR #520 — PhysicsAttention temperature init 0.5 → 1.0. **val_avg = 71.6985** (first directly-measured improvement). test_avg = 62.5824. Optimization-warmup mechanism.
-  - PR #527 — AdamW weight_decay 1e-4 → 3e-5. Standalone on pre-slice-temp baseline: val_avg = 70.814 (−1.23%). wd profile monotone (3e-5 < 1e-4 < 3e-4); merged stack was over-regularized.
-  - PR #518 — Bias-corrected EMA warmup_steps 10 → 50. Standalone on pre-slice-temp baseline: val_avg = 71.428 (−0.38%). All 4 val splits improved.
-  - PR #525 — Cosine schedule with 1-ep linear warmup + cosine T_max=13 (total=14 epochs aligned with budget). **val_avg = 67.306 (−7.05% vs 72.414). test_avg = 59.296 (−6.00%).** All 4 val splits improved 3–12%. Late-epoch slope shallows from 4.3 → 0.7 pts/epoch — fine-tuning regime achieved within the 14-epoch budget for the first time.
-  - PR #526 — Semantics-aware feature noise std 0.01 → 0.005. Standalone on pre-#525 baseline: val_avg = 71.359 (−1.46% vs reference). Sweep DOWN profile working: 0.005 < 0.01 (orig win) < 0.02 (regression).
+- **Last update:** 2026-04-28 06:20 (advisor branch `icml-appendix-charlie-pai2d-r2`)
+- **Most recent human-team direction:** N/A — no open human-tagged issues at this time.
+- **Current baseline (directly measured): `val_avg/mae_surf_p = 66.841`, `test_avg/mae_surf_p = 58.488`** (PR #563, feature-noise-0025, epoch 14). All 4 test splits finite.
+
+## Merged compound stack (current advisor branch)
+
+1. PR #282 — Huber loss (δ=1.0). val_avg = 105.999.
+2. PR #361 — NaN-safe `evaluate_split`. First finite test_avg = 97.957.
+3. PR #363 — EMA(decay=0.999). val_avg = 101.350.
+4. PR #391 — LLaMA-style SwiGLU FFN. val_avg = 88.227.
+5. PR #426 — EMA decay 0.999 → 0.99. val_avg = 83.223.
+6. PR #455 — Stochastic depth (DropPath 0→0.1). val_avg = 80.480.
+7. PR #463 — Huber δ=1.0 → 0.25. val_avg = 72.414.
+8. PR #480 — AdamW β₂=0.95. Standalone val_avg = 77.951.
+9. PR #479 — Bias-corrected EMA (warmup_steps=10). Standalone val_avg = 81.251.
+10. PR #520 — PhysicsAttention temperature init=1.0. val_avg = 71.6985.
+11. PR #527 — AdamW wd=3e-5. val_avg = 70.814.
+12. PR #518 — EMA warmup_steps=50. val_avg = 71.428.
+13. PR #525 — Cosine 1-ep warmup + T_max=13. **val_avg = 67.306** (biggest single-PR delta since δ=0.25).
+14. PR #526 — Feature noise std=0.005. val_avg = 71.359 (standalone pre-#525).
+15. PR #548 — PhysicsAttention temperature init=1.5. Standalone: 70.617.
+16. **PR #563 — Feature noise std=0.0025. val_avg = 66.841. test_avg = 58.488. NEW BASELINE.**
+
+## Active experiments (WIP)
+
+| PR | Student | Slug | Lever | Status |
+|----|---------|------|-------|--------|
+| #510 | alphonse | torch-compile-baseline | torch.compile(model) speed-up | WIP — long-running |
+| #574 | thorfinn | slice-temp-2p0 | PhysicsAttention temp init 1.5 → 2.0 | WIP |
+| #575 | nezuko | ema-decay-target-0995 | EMA decay_target 0.99 → 0.995 (UP) | WIP |
+| #581 | edward | slice-num-96 | slice_num 64 → 96 (untested axis) | WIP |
+| #582 | askeladd | grad-clip-10 | Gradient clipping max_norm=10 | WIP |
+| #562 | fern | cosine-warmup-3ep | 3-ep warmup + T_max=11 (budget-aligned, softer start) | WIP (sent back) |
+| #554 | tanjiro | weight-decay-zero | wd=0 on new stack (close wd direction) | WIP (sent back, rebase + wd=0) |
+| #595 | frieren | feature-noise-zero-vs-schedule | std=0.0 (then 0.001 if needed) | WIP (just assigned) |
 
 ## Current research focus
 
-Compound improvements on the round-1 huber baseline. Recover the paper-facing test metric. Test orthogonal levers (capacity, slice count, optimizer recipe, surface weighting, regularization, EMA, channel weighting) so round-3 can stack winners.
+**Fine-grain hyperparameter closure on the merged stack.** Three major sweep directions are being closed simultaneously:
+1. **Feature noise std**: frieren closing the direction (0.0 → done, or interior min at ~0.001)
+2. **Weight decay**: tanjiro closing (wd=0 test on new stack)
+3. **LR schedule shape**: fern sweeping warmup length (3-ep warmup + T_max=11)
 
-## Outcomes to date (36 reviewed)
+**Orthogonal architectural axes in flight:**
+- Slice count (edward #581: slice_num=96 — first test of this axis post-compound-stack)
+- Slice temperature (thorfinn #574: 2.0 — temperature profile still ascending)
+- EMA decay UP direction (nezuko #575: 0.995 — negative regulation hypothesis)
+- Gradient clipping (askeladd #582: max_norm=10 — safe range under huber-δ=0.25)
+- torch.compile throughput (alphonse #510 — speed multiplier)
 
-Sorted by val_avg ascending (best first). Δ column references the current 72.414 conservative target. Full per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`.
+## Most promising potential next research directions
 
-| Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Δ | Decision |
-|------|----|---------|------|--------------------------:|--:|----------|
-| 1 | #525 | fern | cosine-warmup-tmax-aligned | **67.306** | (directly measured) | MERGED — biggest single-PR delta since δ=0.25 |
-| 2 | #527 | tanjiro | weight-decay-3e-5 | 70.814 | n/a — pre-#525 stack | MERGED — orthogonal compound |
-| 3 | #526 | frieren | feature-noise-005 | 71.359 | n/a — pre-#525 stack | MERGED — orthogonal compound |
-| 4 | #518 | askeladd | bias-corrected-ema-warmup-50 | 71.428 | n/a — pre-#525 stack | MERGED — orthogonal compound |
-| 5 | #520 | thorfinn | slice-temp-1p0 | 71.6985 | n/a — pre-#525 stack | MERGED |
-| 6 | #463 | fern | huber-delta-025 | 72.414 | n/a — pre-#525 stack | MERGED — biggest historical delta |
-| 2 | #480 | nezuko | adamw-betas-095 | 77.951 (on EMA(0.99)+SwiGLU baseline) | +7.6% standalone | MERGED — orthogonal compound (β₂=0.95) |
-| 3 | #455 | thorfinn | stochastic-depth-01 | 80.480 | +11.1% | MERGED (DropPath intermediate) |
-| 4 | #460 | frieren | per-sample-feature-noise | 81.437 | +12.5% | CLOSED (diagnosis confirmed; doesn't beat current) |
-| 5 | #426 | askeladd | ema-decay-099 | 83.223 | +14.9% | MERGED (intermediate) |
-| 6 | #456 | edward | layerscale-1e4 | 83.544 | +15.4% | CLOSED |
-| 7 | #488 | alphonse | rmsnorm-manual | 84.149 | +16.2% | CLOSED (eager-mode wall-clock issue; needs torch.compile) |
-| 8 | #454 | askeladd | ema-bias-correction (0.999) | 84.645 | +16.9% | CLOSED |
-| 9 | #439 | fern | huber-delta-05 | 87.265 | +20.5% | CLOSED |
-| 10 | #440 | tanjiro | silu-everywhere | 88.128 | +21.7% | CLOSED (null result) |
-| 11 | #391 | thorfinn | swiglu-mlp | 88.227 | +21.8% | MERGED (SwiGLU baseline) |
-| 12 | #459 | tanjiro | swiglu-preprocess | 88.299 | +21.9% | CLOSED (SwiGLU at input prunes signal) |
-| 13 | #425 | frieren | input-noise-001 | 89.984 | +24.2% | CLOSED (per-node noise broke per-sample globals) |
-| 14 | #424 | thorfinn | swiglu-head | 90.298 | +24.7% | CLOSED (no residual buffer for the head) |
-| 15 | #450 | alphonse | rmsnorm-everywhere (nn.RMSNorm) | 91.342 | +26.1% | CLOSED (ATen wall-clock penalty) |
-| 16 | #363 | thorfinn | ema-eval | 101.350 | +39.9% | MERGED (intermediate) |
-| 17 | #370 | askeladd | cosine-tmax-14 | 102.359 | +41.4% | CLOSED (T_max ↔ EMA non-additive) |
-| 18 | #418 | edward | re-fourier-4 | 102.916 | +42.1% | CLOSED (Fourier-Re partial recovery) |
-| 19 | #412 | tanjiro | per-channel-heads | 105.580 | +45.8% | CLOSED (capacity-in-head falsified) |
-| 20 | #282 | edward | huber-loss | 105.999 | +46.4% | MERGED (huber baseline) |
-| 20b | #361 | edward | nan-safe-eval | 108.103 (rerun) | n/a — RNG | MERGED (metric-pipeline fix) |
-| 21 | #411 | fern | huber-delta-2 | 107.609 | +48.6% | CLOSED (δ profile peak at 2 falsified) |
-| 22 | #362 | tanjiro | surf-channel-on-huber | 107.920 | +49.0% | CLOSED (channel-weight dead) |
-| 23 | #286 | frieren | surf-weight-25 | 108.222 | +49.4% | CLOSED |
-| 24 | #392 | frieren | mlp-ratio-4 | 108.558 | +49.9% | CLOSED |
-| 25 | #386 | edward | re-fourier-8 | 109.131 | +50.7% | CLOSED (high-freq aliasing) |
-| 26 | #377 | fern | warmup-cosine-1e3-no-clip | 116.352 | +60.7% | CLOSED |
-| 27 | #284 | fern | warmup-cosine-1e3 | 123.135 | +70.0% | CLOSED (clip masked recipe) |
-| 28 | #371 | nezuko | grad-accum-2 | 123.997 | +71.2% | CLOSED (halved step count under fixed wall-clock) |
-| 29 | #291 | nezuko | dropout-0p1 | 128.896 | +78.0% | CLOSED |
-| 30 | #295 | tanjiro | pressure-channel-weight | 130.916 | +80.8% | CLOSED |
-| 31 | #279 | alphonse | capacity-medium | 142.446 | +96.7% | CLOSED (compute-infeasible) |
-| 32 | #281 | askeladd | slice-128 | 154.594 | +113.5% | CLOSED |
-| 33 | #297 | thorfinn | depth-8 | 168.836 | +133.2% | CLOSED |
+1. **Huber δ further reduction** — The δ profile has been monotone L1-approaching; δ=0.125 or δ=0.05 (near-L1) may give another increment. The mechanism is clear (heavy-tailed pressure error distribution). This is the most mechanistically motivated next sweep.
 
-Per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`. Per-experiment JSONL summaries in `research/student_metrics/` (note: nezuko, askeladd & fern did not commit their training metrics files; their PR-comment numbers are recorded as JSONL summaries instead).
+2. **Decaying feature noise schedule** — Rather than a constant std, decay noise linearly from 0.005 → 0.0 aligned with the cosine LR schedule (most noise early when LR is high; zero noise in the fine-tuning tail). Could combine benefits of both noise levels. One-liner: multiply std by `(1 - epoch/T_max)`.
 
+3. **surf_weight sweep** — Current surf_weight=10. This has not been swept since the early rounds (pr #286 tried surf_weight=25 on the MSE baseline and failed). On the current huber+EMA+SwiGLU stack, the optimal surface/volume tradeoff may have shifted. Try surf_weight=5, 15, 20 to find the current optimum.
 
+4. **Cosine eta_min > 0** — Currently cosine decays to LR=0. Setting eta_min=5e-6 or eta_min=1e-5 prevents full LR collapse and may keep the model in a more active update regime at ep14. CosineAnnealingLR accepts `eta_min` parameter.
 
+5. **Larger batch size** — Current batch_size=4. Batch=8 with gradient accumulation or batch=8 directly (GPU has 96GB). Larger effective batch reduces gradient noise and may compound with the reduced feature noise. Note: alphonse's torch.compile may enable higher throughput.
 
-## Round-6 in flight (1 student)
+6. **FiLM-style Re conditioning** — Embed `log(Re)` as a 1D scalar via a learned FiLM affine transform applied per-block (γ, β = Linear(log_Re, 2*n_hidden)). This would let the model explicitly modulate features by Reynolds number, directly targeting the `val_re_rand` split. The Re is already in the input features but as a shared global — FiLM makes it an architectural primitive.
 
-| PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
-|----|---------|------|-------|-------------------------------------|
-| #510 | alphonse | torch-compile-baseline | Wrap model in `torch.compile(mode='reduce-overhead')` | −1% to −3% |
+7. **Per-block learnable temperature** — PhysicsAttention temperature is currently a single init value converging to ~0.95 post-training. Making it a per-block learnable scalar (initialized to 1.5) could give different blocks different softmax sharpness. Low complexity; might compound with the temperature init gains already captured.
 
-## Round-7 in flight (7 students)
+8. **Reduced huber delta δ=0.1** — Profile so far: δ=2 → worse, δ=1 → 83.2, δ=0.5 → 87.3 (pre-EMA), δ=0.25 → 72.4 (merged). The non-diminishing returns from δ=1→0.5→0.25 suggest trying δ=0.1 is warranted. Essentially pseudo-L1 in the loss.
 
-Built on the merged baseline. Conservative target val_avg < 72.414.
+## Disconfirmed directions (do not retry)
 
-| PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
-|----|---------|------|-------|-------------------------------------|
-| #540 | nezuko | ema-decay-target-095 | Bias-corrected EMA decay_target 0.99 → 0.95 | −0.5% to −1.5% (could regress) |
-| #548 | thorfinn | slice-temp-1p5 | PhysicsAttention temperature init 1.0 → 1.5 | −0.5% to +1.0% |
-| #554 | tanjiro | weight-decay-1e-5 | AdamW weight_decay 3e-5 → 1e-5 (push wd profile further) | −0.5% to −1.5% |
-| #555 | askeladd | bias-corrected-ema-warmup-100 | EMA warmup_steps 50 → 100 (push warmup profile further) | −0.3% to −1% |
-| #556 | edward | swiglu-mlp-ratio-3 | SwiGLU FFN mlp_ratio 2 → 3 (LLaMA-style capacity bump on gated path) | −0.5% to +2% |
-| #562 | fern | cosine-tmax-12-warmup-2 | Cosine T_max 13 → 12 with 2-ep warmup (push LR decay further) | −0.5% to +0.5% |
-| #563 | frieren | feature-noise-0025 | Feature noise std 0.005 → 0.0025 (push profile down further) | −0.3% to −1% (could saturate) |
+Per-channel surface loss weighting, per-channel output heads, depth-8, balanced capacity scale-up, max_norm=1.0 grad clipping under MSE, Fourier Re embedding standalone, activation choice (GELU vs SiLU), per-node Gaussian feature noise (semantics-unaware), SwiGLU preprocess MLP at input projection, huber δ=2.0, SwiGLU output head (no residual buffer).
 
-## Disconfirmed directions (do not retry on this branch)
+## Constraints / guardrails
 
-- **Per-channel surface loss weighting toward `p`** — falsified across PR #295 (`[1,1,2.5]`, +23.5%) and PR #362 (`[0.5,0.5,2.5]`, +1.81%). Mechanism works (Ux/Uy degraded relatively more than `p`) but absolute `mae_surf_p` got worse in both. Move on.
-- **Per-channel output heads** — falsified by PR #412 (+19.7% vs SwiGLU baseline; canary `val_geom_camber_rc` regressed most). Combined with the mlp_ratio=4 failure (PR #392), capacity in the head/FFN is not the bottleneck on this problem. Architectural form (SwiGLU) matters more than capacity.
-- **Pure depth scale at default budget** — PR #297 (`n_layers=8`) compute-infeasible at 30-min budget (9/50 epochs). Revisit only if the timeout changes or per-epoch throughput improves.
-- **Balanced capacity scale-up** — PR #279 (`n_hidden=192, n_layers=6, n_head=6`) compute-infeasible at 30-min budget (8/50 epochs at 240 s/epoch). Same shape as #297. Combined with the SwiGLU+param-matched win (#391), the lesson is that **architectural quality matters more than raw capacity** at this budget.
-- **`max_norm=1.0` grad clipping under MSE on this problem** — PR #284 showed it clips 100% of batches with pre-clip mean 30–200, masking any other lever it's combined with. Always pair clipping decisions with the loss's actual gradient scale.
-- **Huber `δ=2.0`** — PR #411 (+21.97% vs SwiGLU). At the high-error early-training regime we're stuck in, δ=2's quadratic region for moderate errors underweights the bulk. δ=1 is the sweet spot above; PR #439 testing whether δ<1 helps further.
-- **SwiGLU output head (`mlp2`)** — PR #424 (+2.35% vs SwiGLU FFN). Head has no residual buffer (unlike per-block FFN which sits inside `+fx`), so SwiGLU's gating non-linearity acts unbuffered and the 3× param count amplifies non-generalizing directions. Direction not dead at residual-SwiGLU-head, but that's a future fix.
-- **Fourier embedding of `log(Re)` standalone** — PRs #386 (bands=8, +23.7% vs SwiGLU) and #418 (bands=4, +16.6% vs SwiGLU). Real signal on `val_single_in_dist` (smooth low-freq Re-trend), but doesn't beat the SwiGLU lever. FiLM-style Re conditioning is a queued alternative.
-- **Activation choice (GELU vs SiLU)** — PR #440 (null result, −0.11% on val within noise; +1.06% on test). Below the noise floor at this scale (0.67M params, 1499 train samples). Don't sweep activation again unless model size doubles.
-- **Per-node Gaussian feature noise (uniform across all 24 dims)** — PR #425 (+1.76% vs SwiGLU; +8.1% vs current). Falsified because dims 13–23 are per-sample-constant globals (Re, AoA, NACA, gap, stagger) — per-node noise destroyed (geometry, flow conditions) → field map. **Semantics-aware version PR #460 confirmed the diagnosis (−2.15% vs EMA(0.99)+SwiGLU).**
-- **SwiGLU preprocess MLP (LLaMA-everywhere at the input projection)** — PR #459 (+6.1% vs EMA(0.99)+SwiGLU; +9.7% vs DropPath baseline). Per-block SwiGLU gates AFTER attention has mixed the residual stream (prunes redundancy in already-mixed representations); input-projection SwiGLU gates BEFORE mixing, so it prunes raw physical input channels (Re, AoA, NACA, etc.) that the network needs later. **Gating at the input prunes signal, not redundancy.** Trajectory matched baseline through ep5 then diverged as fine-detail learning kicked in. Don't extend SwiGLU to the input projection.
-
-## Test-metric NaN (cross-PR issue)
-
-All round-1 runs reported `test_avg/mae_surf_p = NaN`. Root cause:
-1. `test_geom_camber_cruise` sample 20 has 761 non-finite values in `y[p]` volume nodes.
-2. `data/scoring.py:accumulate_batch` is documented to skip samples with non-finite `y`, but computes `err = (pred - y).abs()` *before* applying the mask. IEEE 754 then propagates `Inf * 0 = NaN` to the per-channel sum.
-3. `data/scoring.py` is read-only per `program.md`, so the workaround lives in `train.py:evaluate_split` (filter samples with non-finite `y` before calling `accumulate_batch`). PR #361 is the carrier.
-
-After PR #361 lands, `test_avg/mae_surf_p` becomes a recoverable paper-facing metric for all subsequent rounds.
-
-## Potential next research directions (round 3+)
-
-Pending the still-WIP round-1 PRs and the round-2 results, the most promising compound directions:
-
-1. **Stack winners.** If capacity scaling (alphonse) + warmup-cosine (fern) + surf_weight (frieren) all individually beat huber, combine them as a stacked PR.
-2. **Sweep δ in Huber** ({0.5, 1.0, 2.0}) — δ=1.0 in normalized space already saturates linear, so δ=2.0 (closer to MSE near optimum) may be a Pareto improvement.
-3. **Time-aware cosine T_max** — set T_max to actual-epochs-fitting-in-budget rather than `cfg.epochs` so LR fully decays. With ~14 epochs reachable at default model size, T_max=14 (or `min(cfg.epochs, expected_epochs_in_budget)`).
-4. **Per-Re or per-domain feature embedding.** Three physical domains have very different y ranges; sinusoidal embedding of `log Re` (or a learned domain bias) could help re_rand and cruise-camber splits.
-5. **Per-channel output heads.** Currently the last layer projects `[Ux, Uy, p]` jointly. Splitting into per-channel heads (or a separate surface-only branch fed by surface-aware features) would let the model specialize for the headline `p` channel.
-6. **Geometry-aware features.** Add a per-node distance-to-surface field and a normal-vector encoding to help surface pressure prediction.
-7. **Larger batch + grad accumulation.** Bigger effective batch + EMA may further reduce the late-training validation noise observed in round 1.
-8. **Activation/norm variants.** SwiGLU, RMSNorm, pre-norm + LayerScale — small architectural tweaks frequently helpful for transformer-style models.
-
-## Constraints / guardrails (this replicate)
-
-- Branch: `icml-appendix-charlie-pai2d-r2` (PRs target it, branches off it, merges squash into it).
-- Local JSONL metric logging only. **No W&B / wandb / Weave anywhere.**
-- Do not override `SENPAI_TIMEOUT_MINUTES` or `--epochs` in any experiment.
-- Read-only: `data/loader.py`, `data/scoring.py`, `data/prepare_splits.py`, `data/generate_manifest.py`, `data/split_manifest.json`. Experiment edits live in `train.py` (and `pyproject.toml` if a new package is genuinely needed).
-- Isolated replicate: do not reference / compare against / inspect prior launches or sibling advisor branches.
+- Branch: `icml-appendix-charlie-pai2d-r2`
+- Local JSONL metric logging only. No W&B / wandb / Weave.
+- Do not override `SENPAI_TIMEOUT_MINUTES` or `--epochs`.
+- Read-only: `data/loader.py`, `data/scoring.py`, `data/prepare_splits.py`, `data/generate_manifest.py`, `data/split_manifest.json`.
+- Experiment edits live in `train.py` only.
