@@ -47,6 +47,61 @@ from data import (
     pad_collate,
 )
 
+
+class Lion(torch.optim.Optimizer):
+    """Inline Lion implementation.
+
+    Reference: Chen et al. 2023, "Symbolic Discovery of Optimization Algorithms".
+    Update rule:
+        c_t = β1 · m_{t-1} + (1 - β1) · g_t
+        m_t = β2 · m_{t-1} + (1 - β2) · g_t
+        θ_t = θ_{t-1} - lr · (sign(c_t) + wd · θ_{t-1})
+
+    Memory: 1 buffer per param (first moment only). Half of AdamW.
+    """
+
+    def __init__(self, params, lr=1e-4, betas=(0.9, 0.99), weight_decay=0.0):
+        if lr <= 0.0:
+            raise ValueError(f"Invalid lr: {lr}")
+        if not 0.0 <= betas[0] < 1.0 or not 0.0 <= betas[1] < 1.0:
+            raise ValueError(f"Invalid betas: {betas}")
+        defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            lr = group["lr"]
+            beta1, beta2 = group["betas"]
+            wd = group["weight_decay"]
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                grad = p.grad
+                state = self.state[p]
+                if len(state) == 0:
+                    state["exp_avg"] = torch.zeros_like(p)
+                exp_avg = state["exp_avg"]
+
+                # Decoupled weight decay (Lion-style)
+                if wd != 0.0:
+                    p.mul_(1.0 - lr * wd)
+
+                # Update direction = sign(beta1 * exp_avg + (1 - beta1) * grad)
+                update = exp_avg.mul(beta1).add_(grad, alpha=1.0 - beta1).sign_()
+                p.add_(update, alpha=-lr)
+
+                # Update first moment (after computing direction, with beta2)
+                exp_avg.mul_(beta2).add_(grad, alpha=1.0 - beta2)
+
+        return loss
+
+
 # ---------------------------------------------------------------------------
 # Transolver model
 # ---------------------------------------------------------------------------
@@ -394,8 +449,8 @@ DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 
 @dataclass
 class Config:
-    lr: float = 1e-3
-    weight_decay: float = 1e-4
+    lr: float = 1.7e-4  # Lion: AdamW lr / 3
+    weight_decay: float = 3e-4  # Lion: AdamW wd * 3
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
@@ -455,7 +510,8 @@ for p in ema_model.parameters():
     p.requires_grad_(False)
 print(f"EMA shadow built (decay={ema_decay})")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+optimizer = Lion(model.parameters(), lr=cfg.lr, betas=(0.9, 0.99), weight_decay=cfg.weight_decay)
+print(f"Lion optimizer: lr={cfg.lr}, betas=(0.9, 0.99), weight_decay={cfg.weight_decay}")
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
