@@ -12,9 +12,19 @@ cosine T_max=50 + per-Re sqrt sampling. Validation, checkpoint, and test
 eval all use EMA weights. Every-2-epochs gating recovers the schedule
 budget that v3's swap-validate-swap was eating.
 
-- **`val_avg/mae_surf_p` = 52.1155** at epoch 36 (of 36 completed, wall-cap)
-- **`test_avg/mae_surf_p` = 45.0018** (best EMA val checkpoint)
-- W&B run: [`qsplc76j` / `ema999-on-l1-every2-rebased`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r1/runs/qsplc76j)
+- **`val_avg/mae_surf_p` = 51.7020** at epoch 36 (of 36 completed, wall-cap, post-NaN-cleanup)
+- **`test_avg/mae_surf_p` = 44.0183** (best EMA val checkpoint, post-NaN-cleanup)
+- W&B run (post-NaN-cleanup): [`69l1661r` / `evaluate-split-finite-y-filter`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r1/runs/69l1661r)
+- W&B run (pre-NaN-cleanup, same recipe modulo the cosmetic fix): [`qsplc76j` / `ema999-on-l1-every2-rebased`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r1/runs/qsplc76j) — val_avg=52.1155, test_avg=45.0018
+
+**Note on the 52.12 → 51.70 shift:** PR #634 (cosmetic NaN cleanup in
+`evaluate_split`) is **metric-invariant by construction** — only the
+loss-display accumulator changed; MAE goes through the unchanged
+`accumulate_batch` path. The 0.4-point val_avg shift is **CUDA
+non-determinism × EMA shadow propagation across 13.5K steps**, not a
+real metric improvement. Treat 52.12 ± 1% as the canonical baseline
+value; rebased PRs comparing against 51.70 are also valid since the
+recipe is identical.
 - Per-epoch wall: ~52.9 s steady state (49 s train + ~3-4 s amortized EMA val)
 - Peak GPU memory: 24.1 GB / 102.6 GB (~78 GB headroom)
 - Wall: 30-min `SENPAI_TIMEOUT_MINUTES` binding at 36/50 epochs (matches baseline budget exactly).
@@ -53,8 +63,11 @@ budget that v3's swap-validate-swap was eating.
 | PR #541 (edward): T_max=50 confirmed for L1, fresh seed | 56.22 | −1.07% |
 | PR #531 (fern): + per-Re sqrt sampling | 54.09 | −3.79% |
 | **PR #324 (nezuko): + EMA decay=0.999 every-2-epochs gating** | **52.12** | **−3.65%** |
+| PR #634 (nezuko): + cosmetic NaN cleanup in `evaluate_split` | 51.70 | seed-variance shift, metric-invariant |
 
-Cumulative: **−63.9% on val_avg / −65.7% on test_avg** since PR #312.
+Cumulative: **−63.9% on val_avg / −65.7% on test_avg** since PR #312
+(treating 52.12 ± 1% as the canonical reference; with the PR #634
+post-cleanup measurement, **−64.1% / −66.5%**).
 
 ### EMA mechanism
 
