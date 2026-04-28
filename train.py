@@ -228,6 +228,8 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
     n_surf = n_vol = n_batches = 0
+    total_nonfinite_pred = 0
+    total_nonfinite_gt = 0
 
     with torch.no_grad():
         for x, y, is_surface, mask in loader:
@@ -240,9 +242,23 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
-            abs_err = (pred - y_norm).abs() * channel_weights[None, None, :]
-            vol_mask = mask & ~is_surface
-            surf_mask = mask & is_surface
+            # Bug 1 guard: replace +inf / -inf / NaN predictions in normalized
+            # space with 0 (the per-channel mean post-standardization), so a
+            # single corrupted prediction element on one edge-case sample
+            # doesn't propagate NaN/Inf into the whole-split accumulators.
+            n_nonfinite_pred = (~torch.isfinite(pred)).sum().item()
+            total_nonfinite_pred += n_nonfinite_pred
+            if n_nonfinite_pred > 0:
+                pred = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)
+
+            # Bug 2 (loss-side): also gate the normalized-space loss on a
+            # per-node y_finite mask so NaN GT doesn't poison vol_loss /
+            # surf_loss. nan_to_num sanitizes y_norm itself; the AND into
+            # vol_mask / surf_mask zeroes the contributing nodes.
+            y_finite_mask = torch.isfinite(y_norm).all(dim=-1)  # [B, N]
+            abs_err = (pred - torch.nan_to_num(y_norm)).abs() * channel_weights[None, None, :]
+            vol_mask = mask & ~is_surface & y_finite_mask
+            surf_mask = mask & is_surface & y_finite_mask
             vol_loss_sum += (
                 (abs_err * vol_mask.unsqueeze(-1)).sum()
                 / vol_mask.sum().clamp(min=1)
@@ -254,14 +270,40 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+
+            # Bug 2 guard: drop whole samples with any non-finite GT before
+            # passing to accumulate_batch. The masked accumulator inside
+            # data/scoring.py already zeroes those samples via surf_mask, but
+            # IEEE 754 NaN * 0 = NaN poisons the float64 accumulator anyway.
+            # Pre-filtering avoids the propagation; the read-only scorer is
+            # untouched.
+            B = y.shape[0]
+            y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)  # [B]
+            n_nonfinite_gt = int((~y_finite).sum().item())
+            total_nonfinite_gt += n_nonfinite_gt
+            if n_nonfinite_gt > 0:
+                keep = y_finite.nonzero(as_tuple=True)[0]
+                pred_orig_keep = pred_orig[keep]
+                y_keep = y[keep]
+                is_surface_keep = is_surface[keep]
+                mask_keep = mask[keep]
+            else:
+                pred_orig_keep = pred_orig
+                y_keep, is_surface_keep, mask_keep = y, is_surface, mask
+
+            ds, dv = accumulate_batch(
+                pred_orig_keep, y_keep, is_surface_keep, mask_keep,
+                mae_surf, mae_vol,
+            )
             n_surf += ds
             n_vol += dv
 
     vol_loss = vol_loss_sum / max(n_batches, 1)
     surf_loss = surf_loss_sum / max(n_batches, 1)
     out = {"vol_loss": vol_loss, "surf_loss": surf_loss,
-           "loss": vol_loss + surf_weight * surf_loss}
+           "loss": vol_loss + surf_weight * surf_loss,
+           "nonfinite_pred_count": total_nonfinite_pred,
+           "nonfinite_gt_samples": total_nonfinite_gt}
     out.update(finalize_split(mae_surf, mae_vol, n_surf, n_vol))
     return out
 
