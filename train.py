@@ -47,6 +47,8 @@ from data import (
     pad_collate,
 )
 
+torch.set_float32_matmul_precision('high')
+
 
 class Lion(torch.optim.Optimizer):
     """Inline Lion implementation.
