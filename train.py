@@ -452,6 +452,13 @@ def with_ema_weights(fn):
             for k, v in saved.items():
                 msd[k].copy_(v)
 
+# SWA: snapshot ensemble at convergence — average raw model weights
+# from the last N epochs for test eval. Distinct mechanism from EMA
+# (continuous step-wise averaging); SWA captures end-of-training basin
+# diversity.
+SWA_LAST_N_EPOCHS = 4
+swa_snapshots: list[dict[str, torch.Tensor]] = []
+
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
 model_dir = Path("models") / f"model-{_sanitize_path_token(experiment_label)}-{experiment_stamp}"
@@ -520,6 +527,12 @@ for epoch in range(MAX_EPOCHS):
         n_batches += 1
 
     scheduler.step()
+    if epoch >= MAX_EPOCHS - SWA_LAST_N_EPOCHS:
+        swa_snapshots.append({
+            k: v.detach().clone()
+            for k, v in model.state_dict().items()
+            if v.dtype.is_floating_point
+        })
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
     epoch_grad_mean = epoch_grad_sum / max(n_batches, 1)
@@ -577,7 +590,19 @@ print(f"\nTraining done in {total_time:.1f} min")
 if best_metrics:
     print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    best_state = torch.load(model_path, map_location=device, weights_only=True)
+    if swa_snapshots:
+        print(
+            f"\nSWA: averaging {len(swa_snapshots)} snapshots from last "
+            f"{SWA_LAST_N_EPOCHS} configured epochs for test evaluation."
+        )
+        swa_avg = {
+            k: torch.stack([s[k] for s in swa_snapshots]).mean(0)
+            for k in swa_snapshots[0]
+        }
+        for k, v in swa_avg.items():
+            best_state[k] = v
+    model.load_state_dict(best_state)
     model.eval()
 
     test_metrics = None
