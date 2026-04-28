@@ -215,9 +215,11 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 drop_path_prob=0.0):
         super().__init__()
         self.last_layer = last_layer
+        self.drop_path_prob = drop_path_prob
         self.ln_1 = nn.LayerNorm(hidden_dim)
         self.attn = PhysicsAttention(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
@@ -237,8 +239,17 @@ class TransolverBlock(nn.Module):
             )
 
     def forward(self, fx):
-        fx = self.attn(self.ln_1(fx)) + fx
-        fx = self.mlp(self.ln_2(fx)) + fx
+        if self.training and self.drop_path_prob > 0.0:
+            # Stochastic depth (Huang et al. 2016, no train-time rescale): per-branch,
+            # per-batch Bernoulli mask. Tensor-mask form (vs `.item()`) keeps this
+            # inside one compiled graph rather than breaking on every block.
+            keep_attn = (torch.rand(1, device=fx.device) >= self.drop_path_prob).to(fx.dtype)
+            fx = fx + keep_attn * self.attn(self.ln_1(fx))
+            keep_mlp = (torch.rand(1, device=fx.device) >= self.drop_path_prob).to(fx.dtype)
+            fx = fx + keep_mlp * self.mlp(self.ln_2(fx))
+        else:
+            fx = self.attn(self.ln_1(fx)) + fx
+            fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
         return fx
@@ -270,6 +281,7 @@ class Transolver(nn.Module):
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                drop_path_prob=0.05,
             )
             for i in range(n_layers)
         ])
@@ -597,6 +609,15 @@ for epoch in range(MAX_EPOCHS):
 
     # --- Validate (EMA shadow drives best-checkpoint selection) ---
     ema_model.eval()
+    if epoch == 0:
+        # Confirm drop_path branches are off at eval (PR #683 verification):
+        # ema_model.eval() should set ema_model._orig_mod.training=False so the
+        # drop_path branches are bypassed for all val/test forward passes.
+        first_block_ema = ema_model._orig_mod.blocks[0]
+        print(
+            f"  drop_path verify: ema_model._orig_mod.training={ema_model._orig_mod.training} "
+            f"block0_ema.drop_path_prob={first_block_ema.drop_path_prob}"
+        )
     split_metrics = {
         name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device)
         for name, loader in val_loaders.items()
@@ -644,8 +665,10 @@ for epoch in range(MAX_EPOCHS):
         "val_splits": split_metrics,
         "raw_val_avg/mae_surf_p": raw_avg_surf_p,
         "raw_val_splits": raw_split_metrics,
+        "ema_raw_spread": raw_avg_surf_p - avg_surf_p,
         "is_best": tag == " *",
         "ema_decay": ema_decay,
+        "drop_path_prob": 0.05,
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
