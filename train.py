@@ -368,6 +368,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 30.0
     epochs: int = 50
+    grad_clip_norm: float = 1.0  # max gradient L2 norm; set <=0 to disable
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
@@ -451,6 +452,7 @@ for epoch in range(MAX_EPOCHS):
     t0 = time.time()
     model.train()
     epoch_vol = epoch_surf = 0.0
+    epoch_grad_norm_sum = 0.0
     n_batches = 0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
@@ -474,6 +476,11 @@ for epoch in range(MAX_EPOCHS):
 
         optimizer.zero_grad()
         loss.backward()
+        if cfg.grad_clip_norm > 0:
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(), max_norm=cfg.grad_clip_norm
+            )
+            epoch_grad_norm_sum += grad_norm.item()
         optimizer.step()
 
         epoch_vol += vol_loss.item()
@@ -506,6 +513,7 @@ for epoch in range(MAX_EPOCHS):
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+    avg_grad_norm = epoch_grad_norm_sum / max(n_batches, 1)
     append_metrics_jsonl(metrics_jsonl_path, {
         "event": "epoch",
         "epoch": epoch + 1,
@@ -513,6 +521,7 @@ for epoch in range(MAX_EPOCHS):
         "peak_memory_gb": peak_gb,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/grad_norm_avg": avg_grad_norm,
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
