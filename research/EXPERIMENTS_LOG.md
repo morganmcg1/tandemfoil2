@@ -1,5 +1,95 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 05:55 — PR #524 (CLOSED, schedule × EMA confirmation): canonical 6-lever stack at FF=8 + EMA=0.999
+- Branch: `charliepai2d3-edward/l1ff-ema-cos14-lr-7p5e-4-clip1-canonical` (deleted)
+- Hypothesis: pure measurement of the canonical 6-lever stack
+  (L1+FF8+EMA(0.999)+matched cosine+lr=7.5e-4+clip). Predicted
+  −2% to −5% if all levers compose cleanly.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs PR #462 (80.06) | vs current PR #534 (78.60) |
+|--------|--------:|-------------------:|---------------------------:|
+| `val_avg/mae_surf_p` | 82.26 | +2.74% | +4.66% |
+| `test_avg/mae_surf_p` | 71.70 | +2.37% | +5.80% |
+
+### Decision
+
+**Closed.** Above-threshold regression vs current baseline. Lands in
+the "82-84 hidden compose interaction" band predicted by the PR
+body's outcome rubric.
+
+### Round-3 ceiling characterisation (the diagnostic value)
+
+This PR + fern PR #534 + PR #461/#462 together fully characterise
+the schedule × EMA × FF interaction:
+
+| config | val | EMA decay | FF |
+|--------|----:|----------:|----|
+| PR #461 (no EMA) | 80.28 | — | 8 |
+| PR #462 (no EMA) | 80.06 | — | 8 |
+| **this PR** (EMA=0.999) | **82.26** | 0.999 | 8 |
+| PR #476 (EMA=0.999) | 83.89 | 0.999 | 8 |
+| **PR #534 (current)** | **78.60** | **0.997** | 12 |
+
+The 4.66% gap between this PR (82.26) and current best PR #534
+(78.60) decomposes as:
+- ~−1.5% from FF=8 → FF=12 (PR #506).
+- ~−3.5% from EMA=0.999 → EMA=0.997 (PR #534 fix).
+
+These two effects roughly add, **confirming both lever moves and
+validating fern's schedule × EMA decay-tuning derivation**.
+
+### Round-3 ceiling estimate
+
+The "predicted ~76-78 if levers compose cleanly" from the PR body
+assumed independent additive contributions. We now know matched
+cosine × EMA(0.999) was destructive — the additive estimate
+double-counted that overlap. Post-#534 with EMA(0.997) fix, the
+canonical 6-lever stack lands at **78.60 (val) / 67.77 (test)**,
+which is the round-3 ceiling at single-replicate.
+
+Re-assigning edward to **BF16 autocast** as round-5 throughput
+infrastructure (wallclock has been the binding constraint for
+DropPath, slice_num=128, and any larger-model attempts).
+
+Per-epoch metrics not centralised — branch deleted.
+
+---
+
+## 2026-04-28 05:56 — PR #558 (CLOSED, wallclock-binding): slice_num=128 retest
+- Branch: `charliepai2d3-frieren/l1ff12-ema-cos14-lr-7p5e-4-slice128` (deleted)
+- Hypothesis: retest slice_num=128 on the cleaner post-#506 stack
+  (PR #292 was inconclusive on MSE baseline due to ~4% seed noise).
+  Predicted −0.5% to −2.5%.
+
+### Headline (best-val checkpoint, epoch 11/14)
+
+| Metric | This PR | vs current PR #534 (78.60) |
+|--------|--------:|---------------------------:|
+| `val_avg/mae_surf_p` | 91.90 | +16.9% |
+| `test_avg/mae_surf_p` | 82.51 | +21.7% |
+| Per-epoch wallclock | ~167 s | (vs 133 s baseline, +25%) |
+| Peak GPU memory | 54.9 GB | (vs 42.5 GB, +29%) |
+| Epochs in 30-min cap | **11/14** | (binding) |
+
+### Decision
+
+**Closed.** All four val splits regressed in tight band (+12% to +23%);
+no per-split signal favouring slice tokens. Wallclock-binding
+overhead — same family as DropPath PR #532 (close).
+
+slice_num axis closed for round 3. Round-5 unblocking requires
+either a longer wallclock or fundamentally different attention-axis
+levers.
+
+Re-assigning frieren to n_head=8 (different attention compute
+structure than slice tokens).
+
+Per-epoch metrics not centralised — branch deleted.
+
+---
+
 ## 2026-04-28 05:42 — PR #532 (CLOSED, wallclock-bound at any DropPath rate): DropPath 0.05
 - Branch: `charliepai2d3-thorfinn/l1ff-ema-cos14-lr-7p5e-4-droppath-0p05` (deleted)
 - Hypothesis: half rate (0.05 vs PR #501's 0.1) reduces overhead and

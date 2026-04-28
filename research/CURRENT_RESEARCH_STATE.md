@@ -155,8 +155,13 @@ composition even if they don't outright beat 102.64:**
    re-tested on the new advisor:
    - PR #383 — alphonse: L1 + 3× pressure channel weight in surface loss
      *(loss focus)* — branched off L1-only.
-   - PR #558 — frieren: L1+FF12+EMA + `--epochs 14` + `lr=7.5e-4` +
-     **slice_num=128** — retest of inconclusive PR #292 on cleaner stack.
+   - PR (frieren, new): L1+FF12+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **n_head=8** — different attention compute structure than slice
+     tokens; tests attention parallelism axis.
+   - PR (edward, new): **BF16 autocast** — round-5 throughput
+     infrastructure to unlock currently-wallclock-blocked levers
+     (DropPath, slice_num=128, larger models). Code change ~5-10
+     lines (autocast wrap around forward pass).
    - PR (fern, new): L1+FF12+EMA(0.998) + `--epochs 14` + `lr=7.5e-4`
      — bracket EMA decay slightly upward from 0.997 (window ~500 steps
      vs 333) toward the cosine tail.
@@ -204,7 +209,7 @@ post-EMA stack. The pattern:
 | **Saturated regularisation overlap** | no marginal value | wd=5e-4 × full stack (#500) | closed |
 | **Heavy-tail compose redundancy with EMA** | mild uniform regression | 3× p-weight in vol_loss × full stack (#515) | closed |
 | **Capacity competition with main task** | mixed per-split tradeoffs | aux log-p at weight=0.5 (#551) | closed (re-assigned at weight=0.25) |
-| **Wallclock-binding overhead** | under-convergence at any rate | DropPath 0.05/0.1 per-sample mask (#501, #532) | closed (round-5 unblock requires per-batch mask or longer schedule) |
+| **Wallclock-binding overhead** | under-convergence at any rate | DropPath 0.05/0.1 per-sample mask (#501, #532), slice_num=128 (#292, #558) | closed (round-5 unblock requires throughput infra: BF16 autocast in-flight via #524 reassignment) |
 
 **Generalisation observed across compose tests**: once one "noise/
 regularisation" lever is in the stack (FF, EMA), additional
@@ -213,21 +218,22 @@ The pattern reproduces across magnitude-based (#437, #446), loss-shape
 (#492), LR-overshoot (#489), and direction-only-clipping (#499)
 failure modes.
 
-## Round-3-best 6-lever stack — pending canonical measurement
+## Round-3 ceiling characterised (post-#534)
 
-Every round-3 merge has been on a slightly different baseline:
-- PR #389 (val 90.90): L1 + matched cosine — **no FF**
-- PR #447 (val 82.97): L1 + FF + EMA — **no matched cosine** (T_max=50)
-- PR #461 (val 80.28): L1+FF + matched cosine + lr=7.5e-4 — **no EMA**
-- PR #462 (val 80.06): L1+FF + matched cosine + clip=1.0 — **no EMA, lr=5e-4**
+PR #524 (edward, canonical 6-lever stack at FF=8 + EMA=0.999) measured
+val 82.26 — **+4.66% above current PR #534 baseline (78.60)**.
+Decomposition:
+- ~−1.5% from FF=8 → FF=12 (PR #506).
+- ~−3.5% from EMA=0.999 → EMA=0.997 (PR #534 schedule × EMA fix).
 
-The advisor `train.py` now bakes in L1 + FF + EMA + clipping. The
-recommended reproduce command is `--epochs 14 --lr 7.5e-4`. **The
-canonical six-lever-stack measurement on the post-#462 advisor is
-the missing reference number** — predicted ~76-78 if proven levers
-compose cleanly.
+These two lever moves account for the gap, **confirming both PR #506
+(FF=12) and PR #534 (EMA=0.997) were correct fixes**.
 
-Edward (post-#499 close) is assigned this canonical measurement run.
+The "predicted ~76-78 if levers compose cleanly" estimate from prior
+analysis assumed independent additive contributions — but matched
+cosine × EMA(0.999) was destructive, double-counting that overlap.
+Post-#534 with EMA(0.997) fix, the canonical 6-lever stack lands at
+**78.60 val / 67.77 test** — the round-3 ceiling at single-replicate.
 
 **Input encoding compose insight (from PR #432 close)**: input-encoding
 levers compose with FF only when the targeted input dimension was
