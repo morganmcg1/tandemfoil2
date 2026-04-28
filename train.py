@@ -32,6 +32,7 @@ import wandb
 import yaml
 from einops import rearrange
 from timm.layers import trunc_normal_
+from torch.cuda.amp import GradScaler
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
@@ -465,6 +466,12 @@ print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
+# bf16 mixed precision (PR #808). GradScaler is included per the advisor's
+# instructions even though it's typically a no-op with bf16 — bf16 has the
+# same exponent range as fp32 so gradient underflow isn't a concern. Keeping
+# the recipe intact in case any ops go through fp16 fallback paths.
+scaler = GradScaler()
+
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
     project=os.environ.get("WANDB_PROJECT"),
@@ -542,18 +549,20 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        err = per_element_loss(pred, y_norm, cfg.loss, cfg.huber_delta)
-
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            pred = model({"x": x_norm})["preds"]
+            err = per_element_loss(pred, y_norm, cfg.loss, cfg.huber_delta)
+            vol_loss = (err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+            surf_loss = (err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            loss = vol_loss + cfg.surf_weight * surf_loss
+
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
