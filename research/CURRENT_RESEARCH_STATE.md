@@ -22,7 +22,7 @@
 | **#614** | **nezuko** | **Stability / regularization** | **grad_clip alone (max_norm=1.0)** on top of L1+EMA+per-Re — original PR v1 had it bundled with EMA, never tested in isolation under L1's already-bounded `sign(r)` gradient regime |
 | **#619** | **tanjiro** | **Spatial features hyperparam** | **FF K-sweep (K=4 vs K=8 baseline vs K=12) on (x, z) — settles whether K=8 is locally optimal** |
 | **#584** | **edward** | **Schedule (with L1)** | **--epochs 70 probe — extends T_max=50 finding; tests if even longer schedule continues the trend** |
-| **#570** | **thorfinn** | **Loss / metric alignment** | **surf_weight=8 single probe on pure-L1** (followup from #544 close: 3-point monotonic curve under L1 suggests sw<10 may be optimum, single-flag test) |
+| #570 v2 | thorfinn | Loss / metric alignment | sw=8 sent back to rebase onto current baseline. v1 result on PR #504: val_avg=54.75 (-4.43%). All 16 surface velocity components improved. Three-point monotonic curve confirmed velocity-coupling mechanism. Predicted post-rebase: 49-51. |
 | #522 | askeladd | Optimization tuning | lr=3e-4 on Huber+compile+FF (sharp-edge hypothesis) |
 | #529 v2 | alphonse | Architecture | **Aux p head sent back: rebase + switch aux loss SmoothL1→L1.** Original run on PR #407 gave val=66.16 (-5.13%) with clean ablation (aux loss alone -1.9%, inference blend +3.3%). Orthogonal mechanism; predicted post-rebase val 51-53. |
 | **#591** | **fern** | **Sampling** | **Linear-Re bracket** (`weight ∝ Re/Re_median`, no sqrt) — followup #1 from PR #531 closing analysis ("we may not have saturated") |

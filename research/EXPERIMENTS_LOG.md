@@ -1,5 +1,58 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 07:14 — PR #570 (sent back): surf_weight=8 on pure L1
+
+- branch: `willowpai2d1-thorfinn/sw8-probe-on-pure-l1` (in flight as draft after send-back)
+- hypothesis: sw<10 helps under pure L1 (askeladd's velocity-coupling
+  mechanism predicts sw=10 may be slightly too high). Predicted -1 to -3%.
+
+### Results (vs PR #504 baseline, before three subsequent merges)
+
+| Metric | Value | vs PR #504 (assignment-time) | vs PR #324 v4 (current) |
+|---|---|---|---|
+| Best `val_avg/mae_surf_p` | **54.75** (epoch 37 of 37) | **−4.43%** | **+5.05%** (regression) |
+| `test_avg/mae_surf_p` | 47.75 | **−7.01%** | +6.11% |
+| Per-epoch wall | ~49 s | matches | matches |
+| Peak GPU memory | ~24 GB | unchanged | unchanged |
+| W&B run | `hhsyg3ao` | | |
+
+### Mechanism check confirmed across all 16 surface velocity metrics
+
+- **All 8 val surface velocity components improve** (Ux, Uy across all
+  4 splits): −1.44% to −8.93%.
+- **All 8 test surface velocity components improve**: −1.21% to −8.18%.
+- All 4 val surface pressures improve, all 4 test surface pressures improve.
+- Volume side neutral or slightly improved.
+
+### Three-point monotonic surf_weight curve under pure L1
+
+| surf_weight | val_avg vs PR #504 | source |
+|---|---|---|
+| 15 | +8.7% | PR #544 (closed) |
+| 10 (default) | 0% | baseline |
+| 8 | −4.4% | this PR |
+
+Velocity-pressure coupling mechanism (askeladd PR #451): lower
+surf_weight → less surface-velocity gradient distortion → better
+surface velocity prediction → better surface pressure prediction
+through boundary-layer coupling. Now empirically confirmed by
+3 monotonic data points in the same direction.
+
+### Analysis & conclusions
+
+- **Sent back to rebase + re-run.** Same goal-post-shift situation as
+  prior students — assignment-time PR #504 baseline (57.29) was
+  superseded by PR #541 (56.22) → PR #531 (54.09) → PR #324 v4 (52.12).
+  vs current 52.12: +5.05%.
+- **Mechanism is fully orthogonal** to the merged stack (surf_weight
+  scales loss aggregation; T_max/per-Re/EMA are on different axes).
+  Predicted post-rebase val_avg: 49-51 at 70-90% stacking efficiency.
+- Followup #1 (sw=6 probe) queued for after rebased run lands.
+- Convergence-speed prediction was wrong: sw=8 doesn't converge slower
+  than sw=10 under L1 (the "less surface emphasis = slower" was an
+  MSE/Huber-era assumption that doesn't carry to L1's constant-gradient
+  profile).
+
 ## 2026-04-28 07:11 — PR #564 (closed): FF on saf (signed arc-length) parallel to FF on (x, z)
 
 - branch: `willowpai2d1-tanjiro/ff-on-saf` (deleted on close)
