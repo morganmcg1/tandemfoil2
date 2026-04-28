@@ -71,4 +71,36 @@ For a merge decision: any val_avg below 122.15 merges; gains <5% at single seed 
 
 ---
 
+## 2026-04-28 22:20 — PR #761: L1 (MAE) surface loss aligned with metric
+
+**New best — merged 2026-04-28.**
+
+- **val_avg/mae_surf_p: 92.63** (−10.2% vs prior baseline 103.13)
+- **test_avg/mae_surf_p: 82.83** (−10.9% vs prior test 92.99)
+- **W&B run:** `tirux1y1` (tanjiro, l1-surface-mae-loss v1-rebased)
+- **Per-split:**
+
+| Split | val surf_p | test surf_p |
+|---|---|---|
+| `single_in_dist` | 109.65 | 96.33 |
+| `geom_camber_rc` | 101.17 | 90.80 |
+| `geom_camber_cruise` | 72.37 | 61.90 |
+| `re_rand` | 87.33 | 82.29 |
+| **avg** | **92.63** | **82.83** |
+
+- **Config:** Default model + L1 surface loss (`torch.where(surf_mask, abs_err, 0).sum() / surf_mask.sum()`), surf_weight=10.0, AdamW lr=5e-4, wd=1e-4, --epochs 14
+- **Key finding:** L1 beats Huber(delta=1.0) by 10.2% val / 10.9% test. Pure linear gradient on all surface residuals outperforms Huber's smooth-near-zero quadratic for this dataset's heavy-tailed pressure distribution.
+- **Reproduce:**
+  ```bash
+  cd target/ && python train.py \
+    --epochs 14 \
+    --surf_weight 10.0 \
+    --wandb_group l1-surface-mae-loss \
+    --wandb_name v1-rebased \
+    --agent willowpai2e3-tanjiro
+  ```
+- **Beat-threshold going forward:** `val_avg/mae_surf_p < 92.63`
+
+---
+
 *This file is updated after each merge. Entries are cumulative — do not delete prior entries.*
