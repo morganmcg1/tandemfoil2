@@ -138,19 +138,24 @@ class PhysicsAttention(nn.Module):
 
 
 class FiLM(nn.Module):
-    """Produce per-layer (gamma, beta) from a single conditioning scalar (log Re).
+    """Produce per-layer (gamma, beta) from a conditioning vector.
+
+    cond_dim=1: log(Re) only (merged baseline).
+    cond_dim=5: [log(Re), AoA1, AoA2, gap, stagger] — flow regime + per-foil
+    angle of attack + tandem geometry.
 
     Identity-init: gamma starts at 1, beta at 0, so the modulated path matches
     the unconditioned baseline at step 0 and can only deviate as the network
-    learns useful Re-dependent modulations.
+    learns useful conditioning-dependent modulations.
     """
 
-    def __init__(self, n_layers: int, n_hidden: int, hidden: int = 64):
+    def __init__(self, n_layers: int, n_hidden: int, cond_dim: int = 1, hidden: int = 64):
         super().__init__()
         self.n_layers = n_layers
         self.n_hidden = n_hidden
+        self.cond_dim = cond_dim
         self.net = nn.Sequential(
-            nn.Linear(1, hidden),
+            nn.Linear(cond_dim, hidden),
             nn.GELU(),
             nn.Linear(hidden, 2 * n_layers * n_hidden),
         )
@@ -160,10 +165,10 @@ class FiLM(nn.Module):
             b.zero_()
             b[: n_layers * n_hidden].fill_(1.0)
 
-    def forward(self, log_re):
-        if log_re.dim() == 1:
-            log_re = log_re.unsqueeze(-1)
-        out = self.net(log_re)
+    def forward(self, cond):
+        if cond.dim() == 1:
+            cond = cond.unsqueeze(-1)
+        out = self.net(cond)
         gamma, beta = out.chunk(2, dim=-1)
         gamma = gamma.view(-1, self.n_layers, self.n_hidden)
         beta = beta.view(-1, self.n_layers, self.n_hidden)
@@ -202,14 +207,20 @@ class TransolverBlock(nn.Module):
 
 
 class Transolver(nn.Module):
-    # x dim 13 carries log(Re) (already normalized by data/loader stats); we tap
-    # it before preprocess() so FiLM sees the same conditioning for every node.
-    LOG_RE_DIM = 13
+    # Per-sample conditioning indices (constant across nodes) tapped from the
+    # normalized input feature vector before preprocess(); see
+    # data/prepare_splits.py:65-99 for the full layout.
+    LOG_RE_DIM = 13   # log(Re)
+    AOA1_DIM = 14     # AoA foil 1 (rad)
+    AOA2_DIM = 18     # AoA foil 2 (rad; 0 for single-foil)
+    GAP_DIM = 22      # tandem gap (0 for single-foil)
+    STAGGER_DIM = 23  # tandem stagger (0 for single-foil)
 
     def __init__(self, space_dim=1, n_layers=5, n_hidden=256, dropout=0.0,
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  film_re: bool = False, film_hidden: int = 64,
+                 film_cond_dim: int = 1,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None):
         super().__init__()
@@ -238,8 +249,12 @@ class Transolver(nn.Module):
         ])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.film_re = film_re
+        self.film_cond_dim = film_cond_dim
         if film_re:
-            self.film = FiLM(n_layers=n_layers, n_hidden=n_hidden, hidden=film_hidden)
+            self.film = FiLM(
+                n_layers=n_layers, n_hidden=n_hidden,
+                cond_dim=film_cond_dim, hidden=film_hidden,
+            )
         self.apply(self._init_weights)
         # Re-apply FiLM identity-init: _init_weights overwrites the
         # last-layer (zero W, gamma-bias=1, beta-bias=0) initialization.
@@ -262,8 +277,23 @@ class Transolver(nn.Module):
     def forward(self, data, **kwargs):
         x = data["x"]
         if self.film_re:
-            log_re = x[:, 0, self.LOG_RE_DIM]
-            gamma, beta = self.film(log_re)
+            # node 0 is always real after pad_collate; conditioning is
+            # constant across nodes per-sample.
+            if self.film_cond_dim == 1:
+                cond = x[:, 0, self.LOG_RE_DIM:self.LOG_RE_DIM + 1]      # [B, 1]
+            elif self.film_cond_dim == 5:
+                cond = torch.cat([
+                    x[:, 0, self.LOG_RE_DIM:self.LOG_RE_DIM + 1],
+                    x[:, 0, self.AOA1_DIM:self.AOA1_DIM + 1],
+                    x[:, 0, self.AOA2_DIM:self.AOA2_DIM + 1],
+                    x[:, 0, self.GAP_DIM:self.GAP_DIM + 1],
+                    x[:, 0, self.STAGGER_DIM:self.STAGGER_DIM + 1],
+                ], dim=-1)                                                # [B, 5]
+            else:
+                raise ValueError(
+                    f"film_cond_dim must be 1 or 5, got {self.film_cond_dim}"
+                )
+            gamma, beta = self.film(cond)
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         if self.film_re:
             for i, block in enumerate(self.blocks):
@@ -464,7 +494,8 @@ class Config:
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
     film_re: bool = True  # FiLM modulation conditioned on log(Re), per-block
-    film_hidden: int = 64  # hidden width of the FiLM MLP (1 → hidden → 2*L*H)
+    film_hidden: int = 64  # hidden width of the FiLM MLP (cond_dim → hidden → 2*L*H)
+    film_cond_dim: int = 1  # 1 = log(Re) only; 5 = [log(Re), AoA1, AoA2, gap, stagger]
     seed: int | None = None  # if set, torch.manual_seed for variance checks
 
 
@@ -510,6 +541,7 @@ model_config = dict(
     mlp_ratio=2,
     film_re=cfg.film_re,
     film_hidden=cfg.film_hidden,
+    film_cond_dim=cfg.film_cond_dim,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
