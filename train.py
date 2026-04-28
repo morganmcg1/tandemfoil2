@@ -512,8 +512,8 @@ for p in ema_model.parameters():
     p.requires_grad_(False)
 print(f"EMA shadow built (decay={ema_decay})")
 
-optimizer = Lion(model.parameters(), lr=cfg.lr, betas=(0.9, 0.99), weight_decay=cfg.weight_decay)
-print(f"Lion optimizer: lr={cfg.lr}, betas=(0.9, 0.99), weight_decay={cfg.weight_decay}")
+optimizer = Lion(model.parameters(), lr=cfg.lr, betas=(0.9, 0.999), weight_decay=cfg.weight_decay)
+print(f"Lion optimizer: lr={cfg.lr}, betas=(0.9, 0.999), weight_decay={cfg.weight_decay}")
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
