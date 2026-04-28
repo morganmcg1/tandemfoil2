@@ -218,12 +218,13 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device, huber_delta: float = 0.0) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
     ``score.py`` (float64, non-finite samples skipped).
+    ``huber_delta`` mirrors the training loss: 0 → MSE, >0 → Huber.
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
@@ -258,7 +259,15 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             # Guard against NaN in GT (e.g. test_geom_camber_cruise sample 20):
             # NaN in y_norm propagates into sq_err and then into the loss sum.
             # Mask out non-finite sq_err entries before accumulating.
-            sq_err = (pred - y_norm) ** 2
+            if huber_delta > 0.0:
+                _abs = (pred - y_norm).abs()
+                sq_err = torch.where(
+                    _abs < huber_delta,
+                    0.5 * _abs ** 2,
+                    huber_delta * (_abs - 0.5 * huber_delta),
+                )
+            else:
+                sq_err = (pred - y_norm) ** 2
             sq_err = torch.nan_to_num(sq_err, nan=0.0, posinf=0.0, neginf=0.0)
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
@@ -407,6 +416,7 @@ class Config:
     skip_test: bool = False  # skip end-of-run test evaluation
     ema_decay: float = 0.999  # Polyak/EMA decay; 0.999 → ~1000-step half-life
     ema_warmup_epochs: int = 5  # epochs to skip EMA accumulation (avoid pulling toward random init)
+    huber_delta: float = 0.0  # Huber loss transition point in normalized space; 0 → MSE
 
 
 cfg = sp.parse(Config)
@@ -523,7 +533,15 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+        if cfg.huber_delta > 0.0:
+            _abs = (pred - y_norm).abs()
+            sq_err = torch.where(
+                _abs < cfg.huber_delta,
+                0.5 * _abs ** 2,
+                cfg.huber_delta * (_abs - 0.5 * cfg.huber_delta),
+            )
+        else:
+            sq_err = (pred - y_norm) ** 2
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
@@ -552,7 +570,7 @@ for epoch in range(MAX_EPOCHS):
     model.eval()
     ema_model.eval()
     live_split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device, cfg.huber_delta)
         for name, loader in val_loaders.items()
     }
     live_val_avg = aggregate_splits(live_split_metrics)
@@ -560,7 +578,7 @@ for epoch in range(MAX_EPOCHS):
 
     if ema_active:
         ema_split_metrics = {
-            name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device, cfg.huber_delta)
             for name, loader in val_loaders.items()
         }
         ema_val_avg = aggregate_splits(ema_split_metrics)
@@ -659,7 +677,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, cfg.huber_delta)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
