@@ -69,6 +69,76 @@ def fourier_encode_coords(coords: torch.Tensor, num_bands: int) -> torch.Tensor:
     )
 
 
+def subsample_volume_nodes(
+    coords: torch.Tensor,         # [B, N, 2] normalized
+    mask: torch.Tensor,           # [B, N] bool
+    is_surface: torch.Tensor,     # [B, N] bool
+    keep_frac_min: float,
+    sigma: float,
+    generator: torch.Generator | None = None,
+    return_distances: bool = False,
+):
+    """Stratified volume subsampling — keep prob is a Gaussian of distance to
+    nearest surface node.
+
+    All surface nodes are kept. Pad-region nodes (mask=False) stay False.
+    Volume nodes are kept with per-node probability:
+
+        keep_prob = keep_frac_min + (1 - keep_frac_min) * exp(-d^2 / (2 sigma^2))
+
+    where d is the distance from this volume node to its nearest surface node
+    in the same sample. For sigma=0.05, keep_prob is near 1.0 within ~0.1
+    units of the foil and falls to ~keep_frac_min beyond ~0.3 units.
+    """
+    if keep_frac_min >= 1.0:
+        if return_distances:
+            d_per_node = torch.full(mask.shape, float("inf"),
+                                    device=coords.device, dtype=coords.dtype)
+            return mask, d_per_node
+        return mask
+
+    B, N, _ = coords.shape
+    new_mask = mask.clone()
+    if return_distances:
+        d_per_node = torch.full((B, N), float("inf"),
+                                device=coords.device, dtype=coords.dtype)
+
+    inv_two_sigma_sq = 1.0 / (2.0 * sigma * sigma)
+    for b in range(B):
+        sample_mask = mask[b]                          # [N]
+        sample_surf = is_surface[b] & sample_mask      # [N]
+        sample_vol = (~is_surface[b]) & sample_mask    # [N]
+
+        if sample_surf.sum() == 0 or sample_vol.sum() == 0:
+            continue
+
+        surf_coords = coords[b][sample_surf]           # [Ns, 2]
+        vol_coords = coords[b][sample_vol]             # [Nv, 2]
+
+        # Distance from each volume node to its nearest surface node.
+        d = torch.cdist(vol_coords.unsqueeze(0),
+                        surf_coords.unsqueeze(0)).squeeze(0).min(dim=-1).values  # [Nv]
+        d = d.clamp(min=0.0)  # cdist mm-mode can emit tiny negatives in fp32
+
+        if return_distances:
+            vol_idx_full = sample_vol.nonzero(as_tuple=True)[0]
+            d_per_node[b, vol_idx_full] = d
+
+        keep_prob = keep_frac_min + (1.0 - keep_frac_min) * torch.exp(
+            -(d * d) * inv_two_sigma_sq
+        )
+        u = torch.rand(d.shape, device=d.device, generator=generator)
+        keep_vol = u < keep_prob                        # [Nv]
+
+        vol_idx = sample_vol.nonzero(as_tuple=True)[0]
+        drop_idx = vol_idx[~keep_vol]
+        new_mask[b, drop_idx] = False
+
+    if return_distances:
+        return new_mask, d_per_node
+    return new_mask
+
+
 # ---------------------------------------------------------------------------
 # Transolver model
 # ---------------------------------------------------------------------------
@@ -458,6 +528,10 @@ class Config:
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
     fourier_bands: int = 0  # 0 = disabled, baseline behavior
+    # Stratified volume subsampling (train-time only). 1.0 = disabled.
+    # Recommended test config: keep_frac_min=0.10, sigma=0.05.
+    strat_subsample_keep_frac_min: float = 1.0
+    strat_subsample_sigma: float = 0.05
 
 
 cfg = sp.parse(Config)
@@ -561,6 +635,45 @@ for epoch in range(MAX_EPOCHS):
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
 
+        # Train-time stratified volume subsampling: drop far-field volume
+        # nodes from the loss mask so supervision concentrates on the
+        # boundary layer. Surface nodes are always kept; val/test untouched.
+        diag_dict: dict = {}
+        if cfg.strat_subsample_keep_frac_min < 1.0:
+            coords_norm = (
+                (x[..., :2] - stats["x_mean"][..., :2]) / stats["x_std"][..., :2]
+            )
+            if n_batches == 0:
+                orig_mask = mask
+                mask, d_per_node = subsample_volume_nodes(
+                    coords_norm, mask, is_surface,
+                    keep_frac_min=cfg.strat_subsample_keep_frac_min,
+                    sigma=cfg.strat_subsample_sigma,
+                    return_distances=True,
+                )
+                vol_orig = orig_mask & ~is_surface
+                bl_band = d_per_node < 0.1
+                far_band = d_per_node > 0.5
+                bl_full = (vol_orig & bl_band).sum().float()
+                far_full = (vol_orig & far_band).sum().float()
+                bl_kept = (mask & ~is_surface & bl_band).sum().float()
+                far_kept = (mask & ~is_surface & far_band).sum().float()
+                eff_surf_frac = (
+                    (mask & is_surface).sum().float()
+                    / mask.sum().float().clamp(min=1)
+                )
+                diag_dict = {
+                    "train/effective_surf_frac": eff_surf_frac.item(),
+                    "train/bl_keep_frac": (bl_kept / bl_full.clamp(min=1)).item(),
+                    "train/far_keep_frac": (far_kept / far_full.clamp(min=1)).item(),
+                }
+            else:
+                mask = subsample_volume_nodes(
+                    coords_norm, mask, is_surface,
+                    keep_frac_min=cfg.strat_subsample_keep_frac_min,
+                    sigma=cfg.strat_subsample_sigma,
+                )
+
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         if not logged_coord_range:
@@ -590,7 +703,7 @@ for epoch in range(MAX_EPOCHS):
         loss.backward()
         optimizer.step()
         global_step += 1
-        wandb.log({"train/loss": loss.item(), "global_step": global_step})
+        wandb.log({"train/loss": loss.item(), "global_step": global_step, **diag_dict})
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
