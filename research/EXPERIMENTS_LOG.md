@@ -1,5 +1,55 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 08:02 — PR #616 (CLOSED): max_norm=10.0 (continue bracketing clip up)
+- Branch: `charliepai2d3-askeladd/l1ff-ema-cos14-lr-7p5e-4-clip10` (deleted)
+- Hypothesis: Continue bracketing clip from 5.0 → 10.0 to test whether clip-tightness optimum is at-or-below 5.0 or further loosening still helps.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | max_norm=10 | branched-base PR #596 (5.0) | current advisor baseline PR #578 |
+|--------|-----------:|----------------------------:|---------------------------------:|
+| `val_avg/mae_surf_p` | 76.78 | 77.01 (−0.30%) | 75.78 (**+1.32% REGRESSION**) |
+| `test_avg/mae_surf_p` | 66.52 | 67.78 (−1.86%) | 66.27 (+0.38%) |
+
+### Per-split val
+
+| split | branched base (5.0) | this PR (10.0) | Δ |
+|-------|--------------------:|---------------:|--:|
+| val_single_in_dist     | 85.42 | 88.61 | **+3.74%** ↑ |
+| val_geom_camber_rc     | 88.01 | 90.32 | **+2.62%** ↑ |
+| val_geom_camber_cruise | 58.13 | **54.06** | **−7.00%** ↓ |
+| val_re_rand            | 76.48 | 74.15 | −3.05% ↓ |
+
+### Clip dynamics
+
+| Epoch | clip_frac (gn>10) | gn_mean | gn_max |
+|-------|------------------:|--------:|-------:|
+| 1  | 1.000 | 49.21 | 135.84 |
+| 7  | 1.000 | 46.93 | 134.47 |
+| 13 | 0.997 | 32.41 | 115.90 |
+| 14 | 0.992 | 30.28 | 160.95 |
+
+`gn_mean` settles ~30 — 3× the new clip threshold; clip still binds 99.2% of batches in the last epoch. Natural grad-norm scale of the model is past 30.
+
+### Analysis
+
+Marginal win on the branched base (PR #596) but **regresses against the current advisor stack (post-#578)**. The clip-loosening direction has diminishing returns: −0.99% at 5× → −0.30% at 10×. Per-split signal is informative — cruise wants looser clip (54.06, recovered below pre-clip baseline 52.93), in-dist and rc-camber want tighter clip (both regress meaningfully). This is a Pareto trade between OOD splits, not a Pareto improvement.
+
+Stack-on-stack question (does max_norm=10 still help on the post-#578 stack with decoupled head LR?) is untested. But given:
+- diminishing val_avg returns,
+- per-split tradeoff is now the dominant signal,
+- merged stack already includes max_norm=5.0,
+
+continued vertical bracketing (max_norm=20/50) is lower-priority than orthogonal axes.
+
+### Decision: CLOSED
+
+Per-domain LR / surf_weight (askeladd's suggestion #3) queued as future hypothesis.
+
+Reassigning askeladd to **width-bracket of decoupled head LR (PR #578)**: extending the head set from `mlp2 + ln_3` to the full late-block MLP path (`+ mlp + ln_2`), keeping multiplier at 2×. Complements thorfinn's PR #625 (vertical bracket: 2× → 3×) with horizontal bracket (same multiplier, more parameters).
+
+---
+
 ## 2026-04-28 08:10 — PR #597 (CLOSED): aux log-p weight=0.10 (bracket down from 0.25)
 - Branch: `charliepai2d3-tanjiro/l1ff-ema-cos14-lr-7p5e-4-logp-aux-0p10` (deleted)
 - Hypothesis: Bracket auxiliary log-pressure weight from 0.25 to 0.10 — if the non-monotone cruise behavior continues growing at lower weight, the optimum is below 0.25.

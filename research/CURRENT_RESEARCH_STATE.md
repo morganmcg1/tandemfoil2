@@ -151,68 +151,30 @@ Recommended reproduce: `python train.py --epochs 14 --lr 7.5e-4`.
      `EMA_DECAY = 1 − 1/(0.2 × total_steps) ≈ 0.999` for this 5K-step
      budget. Re-assigned as L1+FF + EMA(0.999) compose test.
 
-**In-flight (1 on pre-L1 + 7 on L1 baseline) — still useful for round-4
-composition even if they don't outright beat 102.64:**
+**In-flight roster (8 active PRs on post-#578 advisor):**
 
-1. **Loss formulation (pre-L1 baseline)**
-   - PR #302 — tanjiro: Huber (smooth-L1, δ=1.0) surface loss — informs
-     whether the L2-near-zero region helps over pure L1.
-2. **L1+FF-baseline composition** (post-#400 merge — `train.py` has both
-   L1 and 8-freq spatial Fourier features). The 6 in-flight PRs below
-   were branched off the L1-only advisor (post-#280, pre-#400), so their
-   results test their lever on the L1 baseline (val 102.64). To compose
-   with the new PR #400 baseline (val 91.87), winners will need to be
-   re-tested on the new advisor:
-   - PR #383 — alphonse: L1 + 3× pressure channel weight in surface loss
-     *(loss focus)* — branched off L1-only.
-   - PR #583 — frieren: L1+FF12+EMA + `--epochs 14` + `lr=7.5e-4` +
-     **n_head=8** — different attention compute structure.
-   - PR #597 — tanjiro: L1+FF12+EMA + aux log-p **weight=0.10** —
-     bracket aux dose downward from merged 0.25.
-   - PR #616 — askeladd: L1+FF12+EMA + max_norm=**10.0** — continue
-     bracketing clip up.
-   - PR #617 — fern: L1+FF12+EMA + cosine **eta_min=5e-5**.
-   - PR (thorfinn, new): L1+FF12+EMA + decoupled head LR **3×** —
-     bracket head-LR multiplier upward from merged 2× (best-val at
-     ep 14/14 monotone-descending suggests optimum past 2×).
-   - PR (edward, new): L1+FF12+EMA + BF16 autocast + **broader FP32
-     pred cast for both surf_loss AND aux log-p** — addresses
-     loss-side precision path comprehensively (single-line guard
-     on PR #606 was insufficient).
-   - PR (edward, new): **BF16 + FP32 surf_loss guard** — restore
-     precision on the high-Re extreme pressure reduction while keeping
-     the BF16 forward-pass speedup.
-   - PR (nezuko, new): **Annealed input noise** (sigma 0.05 → 0
-     linearly) — front-loaded regularisation; tests if the lever
-     captures regularisation benefit without late-epoch convergence
-     drag.
-   - PR (fern, new): L1+FF12+EMA(0.998) + `--epochs 14` + `lr=7.5e-4`
-     — bracket EMA decay slightly upward from 0.997 (window ~500 steps
-     vs 333) toward the cosine tail.
-   - PR (askeladd, new): L1+FF12+EMA + `--epochs 14` + `lr=7e-4` —
-     LR bracket DOWN on EMA-stack (optimum at-or-below 7.5e-4 per
-     LR-curve triangulation).
-   - PR (nezuko, new): L1+FF12+EMA + `--epochs 14` + `lr=7.5e-4` +
-     **input-space Gaussian noise** (sigma=0.05) — different
-     regularisation axis than FF; tests input-perturbation robustness
-     as a mechanistically-novel lever for round 5.
-   - PR (tanjiro, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
-     **auxiliary log-pressure loss at weight=0.25** (half the dose
-     of PR #551 which was a wash) — tests whether aux lever has
-     sweet spot below 0.5 where heavy-tail benefit survives without
-     capacity competition.
-   - PR #516 — askeladd: L1+FF+EMA + `--epochs 14` + **`lr=8e-4`** —
-     interior LR bracket point.
-   - PR #524 — edward: **canonical 6-lever stack measurement** —
-     `--epochs 14 --lr 7.5e-4` on post-#462 advisor.
-   - PR (thorfinn, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
-     **DropPath 0.05** — half the previous rate, no wallclock cliff.
-   - PR (frieren, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
-     **NUM_FOURIER_FREQS=4** — FF dose bracket downward, complement
-     to nezuko's #506.
-   - PR (fern, new): L1+FF+EMA(decay=**0.997**) + `--epochs 14` +
-     `lr=7.5e-4` — shorter EMA window to address the schedule × EMA
-     interference identified in PR #476.
+1. **PR #383** — alphonse: L1 + 3× pressure channel weight in surface
+   loss *(loss-focus axis)* — branched off pre-#400 (long-running).
+2. **PR #583** — frieren: L1+FF12+EMA + `--epochs 14` + `lr=7.5e-4` +
+   **n_head=8** — different attention compute structure.
+3. **PR #607** — nezuko: post-#578 stack experiment (TBD per branch).
+4. **PR #617** — fern: L1+FF12+EMA + cosine **eta_min=5e-5**.
+5. **PR #625** — thorfinn: L1+FF12+EMA + decoupled head LR
+   **3× (vertical bracket)** — bracket head-LR multiplier upward from
+   merged 2× (best-val at ep 14/14 monotone-descending suggests
+   optimum past 2×).
+6. **PR #626** — edward: L1+FF12+EMA + BF16 autocast + **broader FP32
+   pred cast for both surf_loss AND aux log-p** — addresses loss-side
+   precision comprehensively (single-line guard on PR #606 was
+   insufficient).
+7. **PR #639** — askeladd: L1+FF12+EMA + decoupled head LR
+   **2× on FULL late-block MLP path** (`mlp2 + ln_3 + mlp + ln_2`,
+   horizontal bracket) — tests whether PR #578's effect is specific to
+   post-attention head or generalises to whole late-block MLP path.
+
+(Roster excludes one further pending PR; see survey-prs output for
+authoritative count. tanjiro ID may also be cycling between WIP and
+review on this cadence.)
 
 ## Compose pattern map — final round-3 picture
 
