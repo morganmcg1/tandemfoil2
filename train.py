@@ -47,6 +47,23 @@ from data import (
 )
 
 # ---------------------------------------------------------------------------
+# Fourier positional features
+# ---------------------------------------------------------------------------
+
+FOURIER_K = 8
+
+
+def fourier_features(xz: torch.Tensor) -> torch.Tensor:
+    """xz: [..., 2] (the raw, *normalized* x and z columns).
+    Returns [..., 4*FOURIER_K] of sin/cos at 2^k * pi frequencies, k=0..K-1."""
+    freqs = (2.0 ** torch.arange(FOURIER_K, device=xz.device, dtype=xz.dtype)) * torch.pi
+    proj = xz.unsqueeze(-1) * freqs  # [..., 2, K]
+    sin = torch.sin(proj).flatten(-2)  # [..., 2*K]
+    cos = torch.cos(proj).flatten(-2)
+    return torch.cat([sin, cos], dim=-1)  # [..., 4*K]
+
+
+# ---------------------------------------------------------------------------
 # Transolver model
 # ---------------------------------------------------------------------------
 
@@ -237,6 +254,8 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             mask = mask.to(device, non_blocking=True)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            ff = fourier_features(x_norm[..., :2])
+            x_norm = torch.cat([x_norm, ff], dim=-1)
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
 
             with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
@@ -417,7 +436,7 @@ val_loaders = {
 
 model_config = dict(
     space_dim=2,
-    fun_dim=X_DIM - 2,
+    fun_dim=X_DIM - 2 + 4 * FOURIER_K,
     out_dim=3,
     n_hidden=128,
     n_layers=5,
@@ -445,6 +464,8 @@ run = wandb.init(
         **asdict(cfg),
         "model_config": model_config,
         "n_params": n_params,
+        "fourier_k": FOURIER_K,
+        "fourier_dims": 4 * FOURIER_K,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
     },
@@ -486,6 +507,8 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
+        ff = fourier_features(x_norm[..., :2])
+        x_norm = torch.cat([x_norm, ff], dim=-1)
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
 
         with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
