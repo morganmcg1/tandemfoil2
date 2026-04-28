@@ -2,6 +2,31 @@
 
 Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pressure MAE across the four val splits). Paper-facing metric is `test_avg/mae_surf_p` from the best-val checkpoint.
 
+## 2026-04-28 08:45 — PR #636: Decaying feature-noise schedule (linear decay 0.0025→0 over 14 ep)
+
+- **Best `val_avg/mae_surf_p`** (this PR's standalone measurement, on PR #562 baseline): **63.222** (epoch 17, −2.28% vs 64.696)
+- **`test_avg/mae_surf_p`** (paper-facing, all 4 splits finite): **54.900** (vs 55.879 prior, −1.75%)
+- **Per-split val MAE for `p`** (best epoch 17, compile=True):
+  - val_single_in_dist: 76.288 (−1.60%)
+  - val_geom_camber_rc: 77.187 (+1.61%)
+  - val_geom_camber_cruise: **40.296 (−8.89%, biggest gain)**
+  - val_re_rand: 59.118 (−3.19%)
+- **Per-split test MAE for `p`** (best ckpt):
+  - test_single_in_dist: 65.550
+  - test_geom_camber_rc: 69.199
+  - test_geom_camber_cruise: **33.927 (−6.47%)**
+  - test_re_rand: 50.924
+- **Recipe**: huber(δ=0.25) + bias-corrected EMA(0.995, warmup=50) + SwiGLU + DropPath(0.1) + AdamW betas (0.9, 0.95) + wd=3e-5 + PhysicsAttention temperature init=2.0 + cosine 3-ep warmup (start_factor=0.3) + T_max=11 + **feature noise decaying schedule** (linear: ep1=0.0025, ep14=0.000179, ep15+=0) + NaN-safe + clip_grad_norm_(max_norm=10.0) + compile=True + lr=6e-4 (from PR #635 just merged on top).
+- **Schedule trajectory**: linear from 0.0025 at ep1 to 0 at ep15+; matches LR=0 at ep15. Confirms "noise vanishes when LR vanishes" property.
+- **Mechanism**: schedule preserves AND amplifies the early-phase noise benefit on OOD splits while removing the late-phase noise tax. Post-noise tail (ep15-17, std=0) keeps descending 0.5-0.6 pts/epoch under cosine cycle-back — confirms EMA was NOT fully absorbing late-phase noise; the schedule does real work.
+- **Compound expectation**: PR #635 (lr=6e-4) just merged with val=63.131. Frieren's PR #636 was measured against the pre-#635 baseline 64.696. Combined-stack measurement (lr=6e-4 + decaying noise) will be measured by next round PRs; expected to compound below 63.131 if levers are orthogonal.
+- **Metric summary**: `models/model-charliepai2d2-frieren-feature-noise-decaying-20260428-075320/metrics.jsonl`
+- **Reproduce**:
+  ```bash
+  cd target
+  python train.py --epochs 50 --experiment_name feature-noise-decaying --agent <name> --compile=True
+  ```
+
 ## 2026-04-28 08:44 — PR #635: lr peak bump 5e-4 → 6e-4 (gentler 3-ep warmup permits 1.2× peak)
 
 - **Best `val_avg/mae_surf_p`**: **63.131** (epoch 17, −2.42% vs 64.696 prior, −2.61% vs 64.824 compile prior)
