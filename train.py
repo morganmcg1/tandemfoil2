@@ -358,6 +358,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip final test evaluation
+    ckpt_avg_topk: int = 3   # number of best-val checkpoints to average for final test eval
 
 
 cfg = sp.parse(Config)
@@ -423,6 +424,7 @@ with open(model_dir / "config.yaml", "w") as f:
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
+top_k_states: list[tuple[float, dict]] = []   # sorted ascending by val metric
 train_start = time.time()
 
 for epoch in range(MAX_EPOCHS):
@@ -485,6 +487,13 @@ for epoch in range(MAX_EPOCHS):
         torch.save(model.state_dict(), model_path)
         tag = " *"
 
+    # Always consider for top-K — a checkpoint can be in top-K without being the single best
+    if len(top_k_states) < cfg.ckpt_avg_topk or avg_surf_p < top_k_states[-1][0]:
+        state_cpu = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+        top_k_states.append((avg_surf_p, state_cpu))
+        top_k_states.sort(key=lambda x: x[0])
+        top_k_states = top_k_states[: cfg.ckpt_avg_topk]
+
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
     append_metrics_jsonl(metrics_jsonl_path, {
         "event": "epoch",
@@ -512,7 +521,22 @@ print(f"\nTraining done in {total_time:.1f} min")
 if best_metrics:
     print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    if cfg.ckpt_avg_topk > 1 and len(top_k_states) >= 2:
+        avg_state = {}
+        for key in top_k_states[0][1]:
+            stacked = torch.stack([cp[1][key].float() for cp in top_k_states])
+            avg_state[key] = stacked.mean(dim=0).to(top_k_states[0][1][key].dtype)
+        model.load_state_dict(avg_state)
+        model = model.to(device)
+        print(
+            f"Loaded averaged checkpoint over top-{len(top_k_states)} val_avg/mae_surf_p: "
+            + ", ".join(f"{v:.2f}" for v, _ in top_k_states)
+        )
+        averaged_path = model_dir / "checkpoint_averaged.pt"
+        torch.save(model.state_dict(), averaged_path)
+        print(f"Saved averaged checkpoint to {averaged_path}")
+    else:
+        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
 
     test_metrics = None
