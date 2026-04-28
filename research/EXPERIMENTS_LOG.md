@@ -1,5 +1,31 @@
 # SENPAI Research Results — `icml-appendix-willow-pai2d-r3`
 
+## 2026-04-28 07:05 — PR #420 (round 2): Random Fourier features — **CLOSED (substitutes with EMA, doesn't compound)**
+
+- Branch: `willowpai2d3-edward/fourier-features-coords` (deleted post-close)
+- **Hypothesis (round 2):** Single-σ Fourier (σ=0.5) + EMA + multi-scale escalation should give −15 to −25% on val_avg, clearly clearing noise floor.
+
+### Sweep results (group `fourier-features-coords-r2`, on the post-EMA baseline — predates PR #294 L1 merge)
+
+| Variant | best_ep | val_avg/mae_surf_p | test_avg/mae_surf_p | params | W&B |
+|---|---:|---:|---:|---:|---|
+| **Run 1: Fourier σ=0.5 + EMA** | 13 | **116.66** | **105.52** | 0.69M | `lhoidw09` |
+| Run 2: multi-scale + concat_raw + EMA | 14 | 128.56 | 117.87 | 0.76M | `9kuqs8m5` |
+
+### Decision: **CLOSED + park**
+
+Edward executed the two-run focused experiment cleanly. **Run 1 was direction-positive on every val and test split** (largest gain on `geom_camber_cruise`, ~−8%) but didn't clear the 110 bar; **Run 2 actively regressed** (single_in_dist +27 MAE while modestly helping camber_cruise).
+
+Edward's key mechanistic insight: **EMA and Fourier features substitute, not compound.** Both regularize the same spectral-fit problem (EMA averages weight oscillations across steps; Fourier replaces the linear coord projection that was the spectral bottleneck). Within-experiment effects: EMA alone −21.71 MAE, Fourier σ=0.5 alone −18.3 MAE, both stacked only −4.78 MAE. That's the substitution signature.
+
+**Run 2 also exposed a stability problem with multi-scale + concat_raw**: input dim blew up ~17× (24 → 386 spatial dims), the live training path was unstable (epoch 7→8 jump of +30 MAE), and EMA-vs-live diagnostic showed −30.88 MAE (EMA was rescuing live during instability). At the 30-min wall-clock budget the wider input layer didn't get enough optimization steps to stabilize.
+
+**The bar moved further**: PR #294 (pure L1) merged at 06:47 UTC (concurrent with edward's runs), taking the merged baseline to 94.89/83.94. Run 1's 116.66 is now 21.77 MAE above the bar — well outside any reasonable noise envelope. Confirmed Fourier doesn't survive the L1 merge either.
+
+**Bonus team-record contribution: edward flagged a real `ema_decay` doc/code mismatch.** BASELINE.md claimed PR #410 set `ema_decay=0.99` as the default, but `train.py` actually defaults to 0.999. PR #410's winner ran at 0.99 but the merged code committed 0.999, and all subsequent runs (alphonse's L1 winner, tanjiro's experiments) used 0.999. Practically the gap is small (1.76 MAE), but BASELINE.md should match the actual code default — fixed in commit `3033b5f` to reflect 0.999.
+
+Edward reassigned to **PR #618 (UNet-style skip connection from preprocess into last block)** — a structurally different lever attacking information path length within the transformer rather than the input representation.
+
 ## 2026-04-28 06:47 — PR #294 (round 2): Pure L1 surface loss — **MERGED (strongest result yet)**
 
 - Branch: `willowpai2d3-alphonse/huber-loss-surf-p`

@@ -47,7 +47,9 @@ These eight axes were chosen for **orthogonality** so that improvements compound
 |---|---|---|---|
 | frieren | [#409](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/409) | **OneCycleLR** — onecycle_peak_lr ∈ {1e-3, 2e-3, 3e-3}, pct_start=0.1 | **rebase + single confirming run** — within-sweep −33 MAE (next merge candidate) |
 | nezuko | [#410](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/410) | **EMA of weights at eval time** — sweep decay ∈ {0.99, 0.999, 0.9995} | **MERGED** (within-sweep −21.7 MAE; live-vs-EMA −30.7 MAE in-run) |
-| edward | [#420](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/420) | **Random Fourier features for spatial coords** — sigma sweep {0.5, 1, 2, 5}, m=64 | **rebase + multi-scale escalation** — σ trend monotone, geom-camber preferred, but single-σ borderline at noise floor; redirected to multi-scale Fourier σ ∈ {0.25, 0.5, 1.0} + raw coords + EMA |
+| edward | [#420](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/420) | **Random Fourier features for spatial coords** — single-σ + multi-scale + concat_raw + EMA | **CLOSED** — Fourier+EMA substitute (both regularize spectral fit); stacking captures only ⅕ of solo effects. Multi-scale destabilized training. Direction real but doesn't compound enough vs new merged baseline 94.89. |
+| alphonse | [#609](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/609) | **Focal-L1** — per-node residual reweighting on top of L1 surface loss; γ ∈ {0, 0.5, 1.0, 2.0} | wip |
+| edward | [#618](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/618) | **UNet-style skip from preprocess into last block** — information-flow architectural lever | wip |
 | thorfinn | [#482](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/482) | **Multi-seed baseline + deterministic seeding** (research infrastructure) | wip — redirected to post-EMA baseline |
 
 ## Round 3 — extensions on the post-EMA baseline (2026-04-28)
