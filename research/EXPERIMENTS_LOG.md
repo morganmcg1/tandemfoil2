@@ -718,3 +718,33 @@ All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the s
   1. **Surface-only feature noise** (apply only to per-node positional/SDF features dims 0–12, not per-sample dims 13–23).
   2. **Decaying noise schedule** aligned with cosine LR — high noise during basin selection, decay to zero in the LR≈0 fine-tuning tail.
   3. **Per-split EMA decay** — cruise has the biggest single-split headroom signal.
+
+## 2026-04-28 08:00 — PR #554: AdamW wd 3e-5 → 1e-5 (rebased as wd → 0 to close direction)
+- Branch: `charliepai2d2-tanjiro/weight-decay-1e-5` (artifact: `model-weight-decay-0-20260428-072248`)
+- Hypothesis: wd profile was monotone-descending on the older stack (3e-4 → 1e-5 = monotone). Rebased to test wd=0 on the post-#562/#510 stack.
+
+| metric | this run (wd=0) | baseline (PR #562 wd=3e-5) | Δ |
+|---|---|---|---|
+| best `val_avg/mae_surf_p` | **66.476** (epoch 14) | 64.696 | **+2.75% regression** |
+| `test_avg/mae_surf_p` | **56.882** | 55.879 | **+1.79% regression** |
+
+- Per-split val: in_dist +2.38%, **camber_rc +7.16% (biggest single-split degradation)**, cruise +1.26% (~flat), **re_rand −1.18% (only improvement)**.
+- Per-split test: in_dist +2.22%, camber_rc +3.56%, cruise +1.40%, re_rand −0.73%.
+
+### Updated wd profile (across stacks)
+
+| wd | val_avg | stack |
+|---:|---:|---|
+| 3e-4 | 73.771 | older (pre-#525) |
+| 1e-4 | 72.414 | older (PR #463) |
+| 3e-5 | 70.814 | older (PR #527 merged) |
+| 1e-5 | 70.4328 | older (PR #554 first run) |
+| **3e-5** | **64.696** | **new (current merged baseline)** |
+| 0 | 66.476 | new (this rebased run) |
+
+- **Mechanism**: the heavy implicit regularization stack (EMA→0.995, slice-temp=2.0, grad-clip=10, gentler 3-ep warmup) shifted the basin floor UP. On the older stack, wd profile descended monotonically toward zero. On the new stack, **wd=3e-5 is at-or-near the floor**, and removing it overshoots into under-regularized territory. The OOD asymmetry pattern (lower wd helps re_rand, hurts camber_rc) is preserved across both stacks — suggests per-parameter-group wd is the natural next probe.
+- Decision: **CLOSE** — wd-down direction definitively closed. wd=3e-5 is at the basin floor on the current stack; pushing lower regresses, pushing higher (already tested) regresses. Single-scalar wd axis exhausted.
+- Suggested follow-ups (per tanjiro):
+  1. wd=1e-5 on new stack to localize basin floor between (0, 3e-5] — but expected gain is ≤0.3% based on profile shape.
+  2. **Per-parameter-group wd** — split AdamW groups by module type (attention out-projection vs MLP vs others) with different wd values. Mechanism-driven by the OOD asymmetry: attention should keep higher wd (camber_rc benefits), MLP should have lower wd (re_rand benefits). Captures both wins simultaneously.
+  3. NaN-safe eval loss bug fix in `evaluate_split` (cosmetic; loss=NaN on test_geom_camber_cruise while MAEs are finite).
