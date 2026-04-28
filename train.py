@@ -290,7 +290,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
-            err = F.huber_loss(pred, y_norm, delta=0.25, reduction='none')
+            err = F.huber_loss(pred, y_norm, delta=0.1, reduction='none')
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
@@ -515,7 +515,7 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        err = F.huber_loss(pred, y_norm, delta=0.25, reduction='none')
+        err = F.huber_loss(pred, y_norm, delta=0.1, reduction='none')
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
