@@ -161,7 +161,8 @@ class TransolverBlock(nn.Module):
         fx = self.attn(self.ln_1(fx)) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
-            return self.mlp2(self.ln_3(fx))
+            features = self.ln_3(fx)
+            return self.mlp2(features), features
         return fx
 
 
@@ -209,9 +210,33 @@ class Transolver(nn.Module):
     def forward(self, data, **kwargs):
         x = data["x"]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        for block in self.blocks:
+        for block in self.blocks[:-1]:
             fx = block(fx)
-        return {"preds": fx}
+        pred, features = self.blocks[-1](fx)
+        return {"preds": pred, "features": features}
+
+
+class SurfaceAuxHead(nn.Module):
+    """Surface-only pressure head over backbone features (post-ln3)."""
+
+    def __init__(self, in_dim: int, hidden_dim: int, n_layers: int):
+        super().__init__()
+        layers: list[nn.Module] = [nn.Linear(in_dim, hidden_dim), nn.GELU()]
+        for _ in range(max(n_layers - 1, 0)):
+            layers += [nn.Linear(hidden_dim, hidden_dim), nn.GELU()]
+        layers += [nn.Linear(hidden_dim, 1)]
+        self.net = nn.Sequential(*layers)
+        self.apply(self._init_weights)
+
+    @staticmethod
+    def _init_weights(m: nn.Module) -> None:
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        return self.net(features).squeeze(-1)
 
 
 # ---------------------------------------------------------------------------
@@ -268,16 +293,26 @@ class EMA:
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device, aux_head=None) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
     ``score.py`` (float64, non-finite samples skipped).
+
+    When ``aux_head`` is provided, the *primary* surface-pressure prediction is
+    swapped in from the aux head while volume p / Ux / Uy stay on the backbone.
+    Two extra diagnostics are returned:
+      - ``mae_surf_p_aux``     — surface pressure MAE using aux head only
+      - ``mae_surf_p_backbone``— surface pressure MAE using backbone only
+    so the mechanism check (aux ≪ backbone?) is visible in W&B.
     """
-    vol_loss_sum = surf_loss_sum = 0.0
+    vol_loss_sum = surf_loss_sum = aux_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
+    aux_p_abs_sum = torch.zeros((), dtype=torch.float64, device=device)
+    backbone_p_abs_sum = torch.zeros((), dtype=torch.float64, device=device)
+    surf_p_count = torch.zeros((), dtype=torch.float64, device=device)
     n_surf = n_vol = n_batches = 0
 
     with torch.no_grad():
@@ -297,7 +332,9 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            output = model({"x": x_norm})
+            pred = output["preds"]
+            features = output["features"]
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -310,10 +347,34 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
                 (sq_err * surf_mask.unsqueeze(-1)).sum()
                 / surf_mask.sum().clamp(min=1)
             ).item()
-            n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            backbone_p_orig = pred_orig[..., 2]
+
+            if aux_head is not None:
+                aux_pred_norm = aux_head(features)
+                aux_diff_sq = (aux_pred_norm - y_norm[..., 2]) ** 2
+                aux_loss_sum += (
+                    (aux_diff_sq * surf_mask).sum() / surf_mask.sum().clamp(min=1)
+                ).item()
+
+                aux_pred_p_orig = aux_pred_norm * stats["y_std"][2] + stats["y_mean"][2]
+                pred_for_score = pred_orig.clone()
+                pred_for_score[..., 2] = torch.where(
+                    is_surface, aux_pred_p_orig, pred_orig[..., 2]
+                )
+
+                # Diagnostics: aux-only vs backbone-only surface-p MAE.
+                surf_pf = surf_mask.to(torch.float64)
+                aux_p_abs_sum += ((aux_pred_p_orig - y[..., 2]).abs().to(torch.float64) * surf_pf).sum()
+                backbone_p_abs_sum += ((backbone_p_orig - y[..., 2]).abs().to(torch.float64) * surf_pf).sum()
+                surf_p_count += surf_pf.sum()
+            else:
+                pred_for_score = pred_orig
+
+            n_batches += 1
+
+            ds, dv = accumulate_batch(pred_for_score, y, is_surface, mask, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
 
@@ -321,6 +382,11 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     surf_loss = surf_loss_sum / max(n_batches, 1)
     out = {"vol_loss": vol_loss, "surf_loss": surf_loss,
            "loss": vol_loss + surf_weight * surf_loss}
+    if aux_head is not None:
+        out["aux_loss"] = aux_loss_sum / max(n_batches, 1)
+        if surf_p_count.item() > 0:
+            out["mae_surf_p_aux"] = (aux_p_abs_sum / surf_p_count).item()
+            out["mae_surf_p_backbone"] = (backbone_p_abs_sum / surf_p_count).item()
     out.update(finalize_split(mae_surf, mae_vol, n_surf, n_vol))
     return out
 
@@ -446,8 +512,12 @@ class Config:
     epochs: int = 50
     n_layers: int = 5
     use_ema: bool = True
-    ema_decay: float = 0.999
+    ema_decay: float = 0.99
     ema_warmup_steps: int = 100
+    aux_surf_head: bool = True
+    aux_surf_head_hidden: int = 128
+    aux_surf_head_layers: int = 2
+    aux_surf_loss_weight: float = 1.0
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -499,11 +569,34 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
+aux_head: SurfaceAuxHead | None = None
+aux_n_params = 0
+if cfg.aux_surf_head:
+    aux_head = SurfaceAuxHead(
+        in_dim=model_config["n_hidden"],
+        hidden_dim=cfg.aux_surf_head_hidden,
+        n_layers=cfg.aux_surf_head_layers,
+    ).to(device)
+    aux_n_params = sum(p.numel() for p in aux_head.parameters())
+    print(
+        f"SurfaceAuxHead enabled: hidden={cfg.aux_surf_head_hidden}, "
+        f"layers={cfg.aux_surf_head_layers}, weight={cfg.aux_surf_loss_weight}, "
+        f"params={aux_n_params/1e3:.1f}K"
+    )
+
 ema = EMA(model, decay=cfg.ema_decay, warmup_steps=cfg.ema_warmup_steps) if cfg.use_ema else None
+aux_ema = (
+    EMA(aux_head, decay=cfg.ema_decay, warmup_steps=cfg.ema_warmup_steps)
+    if cfg.use_ema and aux_head is not None
+    else None
+)
 if ema is not None:
     print(f"EMA enabled: decay={cfg.ema_decay}, warmup_steps={cfg.ema_warmup_steps}")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.peak_lr, weight_decay=cfg.weight_decay)
+opt_params = list(model.parameters())
+if aux_head is not None:
+    opt_params += list(aux_head.parameters())
+optimizer = torch.optim.AdamW(opt_params, lr=cfg.peak_lr, weight_decay=cfg.weight_decay)
 
 warmup_iters = max(cfg.warmup_epochs, 1)
 warmup = torch.optim.lr_scheduler.LinearLR(
@@ -526,6 +619,7 @@ run = wandb.init(
         **asdict(cfg),
         "model_config": model_config,
         "n_params": n_params,
+        "aux_head_n_params": aux_n_params,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
     },
@@ -557,7 +651,9 @@ for epoch in range(MAX_EPOCHS):
 
     t0 = time.time()
     model.train()
-    epoch_vol = epoch_surf = 0.0
+    if aux_head is not None:
+        aux_head.train()
+    epoch_vol = epoch_surf = epoch_aux = 0.0
     n_batches = 0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
@@ -568,49 +664,70 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
+        output = model({"x": x_norm})
+        pred = output["preds"]
+        features = output["features"]
         sq_err = (pred - y_norm) ** 2
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
         surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+
+        aux_loss = torch.zeros((), device=device)
+        if aux_head is not None and surf_mask.any():
+            aux_pred_norm = aux_head(features)
+            aux_diff_sq = (aux_pred_norm - y_norm[..., 2]) ** 2
+            aux_loss = (aux_diff_sq * surf_mask).sum() / surf_mask.sum().clamp(min=1)
+
+        loss = vol_loss + cfg.surf_weight * surf_loss + cfg.aux_surf_loss_weight * aux_loss
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         if ema is not None:
             ema.update(model)
+        if aux_ema is not None:
+            aux_ema.update(aux_head)
         global_step += 1
         wandb.log({
             "train/loss": loss.item(),
+            "train/vol_loss_step": vol_loss.item(),
+            "train/surf_loss_step": surf_loss.item(),
+            "train/aux_loss_step": aux_loss.item() if aux_head is not None else 0.0,
             "lr": optimizer.param_groups[0]["lr"],
             "global_step": global_step,
         })
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
+        epoch_aux += aux_loss.item() if aux_head is not None else 0.0
         n_batches += 1
 
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
+    epoch_aux /= max(n_batches, 1)
 
     # --- Validate (using EMA weights when enabled) ---
-    if ema is not None:
-        with ema.apply_to(model):
-            model.eval()
-            split_metrics = {
-                name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
-                for name, loader in val_loaders.items()
-            }
-    else:
-        model.eval()
-        split_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+    def _run_val_splits() -> dict:
+        return {
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, aux_head)
             for name, loader in val_loaders.items()
         }
+
+    model.eval()
+    if aux_head is not None:
+        aux_head.eval()
+    if ema is not None:
+        with ema.apply_to(model):
+            if aux_ema is not None:
+                with aux_ema.apply_to(aux_head):
+                    split_metrics = _run_val_splits()
+            else:
+                split_metrics = _run_val_splits()
+    else:
+        split_metrics = _run_val_splits()
     val_avg = aggregate_splits(split_metrics)
     avg_surf_p = val_avg["avg/mae_surf_p"]
     val_loss_mean = sum(m["loss"] for m in split_metrics.values()) / len(split_metrics)
@@ -619,6 +736,7 @@ for epoch in range(MAX_EPOCHS):
     log_metrics = {
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/aux_loss": epoch_aux,
         "val/loss": val_loss_mean,
         "lr": scheduler.get_last_lr()[0],
         "epoch_time_s": dt,
@@ -639,11 +757,22 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
+
+        def _save_ckpt() -> None:
+            ckpt = {"model": model.state_dict()}
+            if aux_head is not None:
+                ckpt["aux_head"] = aux_head.state_dict()
+            torch.save(ckpt, model_path)
+
         if ema is not None:
             with ema.apply_to(model):
-                torch.save(model.state_dict(), model_path)
+                if aux_ema is not None:
+                    with aux_ema.apply_to(aux_head):
+                        _save_ckpt()
+                else:
+                    _save_ckpt()
         else:
-            torch.save(model.state_dict(), model_path)
+            _save_ckpt()
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
@@ -662,16 +791,23 @@ print(f"\nTraining done in {total_time:.1f} min")
 if ema is not None:
     print("\nDiagnostic: comparing EMA vs live weights on val splits...")
     model.eval()
-    live_split = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
-        for name, loader in val_loaders.items()
-    }
-    live_avg = aggregate_splits(live_split)
-    with ema.apply_to(model):
-        ema_split = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+    if aux_head is not None:
+        aux_head.eval()
+
+    def _final_val() -> dict:
+        return {
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, aux_head)
             for name, loader in val_loaders.items()
         }
+
+    live_split = _final_val()
+    live_avg = aggregate_splits(live_split)
+    with ema.apply_to(model):
+        if aux_ema is not None:
+            with aux_ema.apply_to(aux_head):
+                ema_split = _final_val()
+        else:
+            ema_split = _final_val()
     ema_avg = aggregate_splits(ema_split)
     diag = {
         "diag/val_avg_live_final": live_avg["avg/mae_surf_p"],
@@ -695,8 +831,16 @@ if best_metrics:
         "total_train_minutes": total_time,
     })
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    sd = torch.load(model_path, map_location=device, weights_only=True)
+    if isinstance(sd, dict) and "model" in sd:
+        model.load_state_dict(sd["model"])
+        if aux_head is not None and "aux_head" in sd:
+            aux_head.load_state_dict(sd["aux_head"])
+    else:
+        model.load_state_dict(sd)
     model.eval()
+    if aux_head is not None:
+        aux_head.eval()
 
     test_metrics = None
     test_avg = None
@@ -708,7 +852,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, aux_head)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
