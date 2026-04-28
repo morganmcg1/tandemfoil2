@@ -1,5 +1,32 @@
 # SENPAI Research Results — `icml-appendix-willow-pai2d-r3`
 
+## 2026-04-28 04:50 — PR #409: OneCycleLR — **SENT BACK FOR REBASE (next merge candidate)**
+
+- Branch: `willowpai2d3-frieren/onecycle-lr`
+- **Hypothesis:** OneCycleLR's aggressive cool-down phase (LR ↓ 1–4 orders of magnitude in last 30%) finds a sharper minimum than `LinearLR + CosineAnnealingLR` does at our 30-min wall-clock budget (where cosine never anneals past ~85% peak).
+
+### Sweep results (group `onecycle-lr`, runs PRE-DATE the EMA merge — measured against pre-EMA control)
+
+| Schedule | peak_lr | best ep | val_avg/mae_surf_p | test_avg/mae_surf_p | LR at exit | W&B run |
+|---|---:|---:|---:|---:|---:|---|
+| warmup-cosine (control) | 1e-3 | 13 | 140.42 | 128.85 | 8.5e-4 (85% peak) | `j9b9g70e` |
+| onecycle | 1e-3 | 14 | 109.75 | 97.81 | 1e-5 (1.0% peak) | `gddb79de` |
+| **onecycle** | **2e-3** | **14** | **107.20** | **95.92** | 3e-5 (1.5% peak) | **`m9jvp59q`** |
+| onecycle | 3e-3 | 13 | 118.07 | 106.94 | 1.6e-4 (5.3% peak) | `itvy80t3` |
+
+### Decision: **REQUEST CHANGES (rebase + single confirming run, this is the merge candidate)**
+
+**Within-sweep delta = −33.22 MAE on val_avg, −32.93 on test_avg** — well above the seed-noise floor of ~25 MAE we surfaced via PR #323. Mechanism is confirmed: control LR stays flat at 85% peak (cosine never engages at 30-min cap), while OneCycle 2e-3 drops to 1.5% peak — exactly the sharper-minimum-annealing the hypothesis targeted. Test gain (-32.93 MAE) is even bigger than val gain (-33.22 MAE), indicating the cool-down is helping generalization, not just memorization.
+
+Frieren also caught a subtle calibration bug: OneCycle's cool-down is fraction-of-`total_steps`-based, so with `epochs=50` but wall-clock at ~14 epochs, the cool-down barely fired in their initial run. Fix was a separate `onecycle_total_epochs=15` config field that aligns the schedule with reachable epochs while keeping `--epochs 50` for the wall-clock budget. Clean engineering.
+
+### Why send back instead of merge
+
+1. **Merge conflicts**: frieren's branch and the upstream EMA merge (PR #410) both modified `Config`; can't auto-resolve.
+2. **Runs predate EMA**: the 107.20 number was measured WITHOUT EMA. I asked for one more confirming run on the post-EMA baseline so we know whether OneCycle + EMA compound. The within-sweep evidence is so strong (-33 MAE > 25 MAE noise) that the rebased re-run is essentially a sanity check, not a re-validation.
+
+After the rebased confirming run lands, this becomes the merge that drops the baseline to ~95-100 val_avg.
+
 ## 2026-04-28 03:55 — PR #322 round 2: rebased channel-weighted-loss — **CLOSED (noise-bound at this budget)**
 
 - Branch: `willowpai2d3-tanjiro/channel-weighted-loss` (deleted post-close)

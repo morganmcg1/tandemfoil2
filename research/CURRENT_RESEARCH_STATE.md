@@ -43,7 +43,7 @@ These eight axes were chosen for **orthogonality** so that improvements compound
 
 | Student | PR | Lever | Status |
 |---|---|---|---|
-| frieren | [#409](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/409) | **OneCycleLR** — onecycle_peak_lr ∈ {1e-3, 2e-3, 3e-3}, pct_start=0.1 | wip |
+| frieren | [#409](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/409) | **OneCycleLR** — onecycle_peak_lr ∈ {1e-3, 2e-3, 3e-3}, pct_start=0.1 | **rebase + single confirming run** — within-sweep −33 MAE (next merge candidate) |
 | nezuko | [#410](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/410) | **EMA of weights at eval time** — sweep decay ∈ {0.99, 0.999, 0.9995} | **MERGED** (within-sweep −21.7 MAE; live-vs-EMA −30.7 MAE in-run) |
 | edward | [#420](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/420) | **Random Fourier features for spatial coords** — sigma sweep {0.5, 1, 2, 5}, m=64 | wip |
 | thorfinn | [#482](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/482) | **Multi-seed baseline + deterministic seeding** (research infrastructure) | wip — redirected to post-EMA baseline |
