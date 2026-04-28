@@ -518,7 +518,7 @@ print("torch.compile applied to model and ema_model (dynamic=True, mode=default;
 
 optimizer = Lion(model.parameters(), lr=cfg.lr, betas=(0.9, 0.999), weight_decay=cfg.weight_decay)
 print(f"Lion optimizer: lr={cfg.lr}, betas=(0.9, 0.999), weight_decay={cfg.weight_decay}")
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=14, eta_min=1e-5)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -552,6 +552,7 @@ for epoch in range(MAX_EPOCHS):
     epoch_grad_norm = 0.0
     n_batches = 0
 
+    epoch_lr = optimizer.param_groups[0]["lr"]
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
@@ -637,6 +638,7 @@ for epoch in range(MAX_EPOCHS):
         "epoch": epoch + 1,
         "seconds": dt,
         "peak_memory_gb": peak_gb,
+        "lr": epoch_lr,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
         "train/grad_norm": epoch_grad_norm,
