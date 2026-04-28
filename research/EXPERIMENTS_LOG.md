@@ -1130,3 +1130,50 @@ All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the s
   2. eta_min=7.5e-5 — bracket if 1e-4 saturates.
   3. CosineAnnealingWarmRestarts to decouple rebound from floor.
   4. T_max sweep at fixed eta_min=5e-5.
+
+## 2026-04-28 10:50 — PR #709: Per-channel Huber δ (δ_p=0.05, δ_Ux=δ_Uy=0.10)
+- Branch: `charliepai2d2-thorfinn/huber-per-channel-delta` (artifact: `model-huber-per-channel-delta-20260428-100432`)
+- Hypothesis: scalar δ axis saturated at 0.10 (PR #674); the `p` channel has the lowest lin fraction (37% at thr=0.05). Apply δ_p=0.05 + δ_Ux=δ_Uy=0.10 to focus outlier downweighting.
+
+| metric | this run | PR #630 baseline | current PR #698 baseline | Δ |
+|---|---|---|---|---|
+| best `val_avg/mae_surf_p` | **58.887** (epoch 18) | 59.907 | 58.742 | **−1.70% / +0.25% cross-stack** |
+| `test_avg/mae_surf_p` | **51.162** | 52.656 | 50.789 | **−2.84% / +0.73% cross-stack** |
+
+- Per-split val: in_dist **−2.31%**, camber_rc **−2.12%**, camber_cruise +0.59% (essentially flat — cruise gain LOST), re_rand **−2.01%**.
+- All 4 test splits improve.
+- **Mechanism CONFIRMED**: per-channel δ_p=0.05 reproduces the global δ=0.05 effect on p residual distribution (35.81% vs 36.54% lin at thr=0.05, near-identical). Ux/Uy lin fractions DROPPED vs global δ=0.05 (52.55%→49.04%, 49.33%→47.28%) because they now train under δ=0.10's wider quadratic regime, tightening their residuals.
+- **Cruise gain LOST** (but cruise is essentially flat). PR #674's −5.14% cruise gain came partly from Ux/Uy δ=0.05 interaction, not just p. Per-channel scheme captures p's tail benefit + Ux/Uy's quadratic-regime benefit but loses cruise's joint-channel outlier handling.
+- Decision: **MERGE**. Mechanically orthogonal to eta_min — should compound. Standalone -1.70% on prior stack is robust same-stack evidence.
+- Suggested follow-ups (per thorfinn):
+  1. **δ_p=0.025** (push p-tail axis further; predicted Δ −0.5 to +0.5 pts).
+  2. Cruise-aware loss (per-split or geometry-conditioned δ).
+  3. Ux/Uy at δ=0.05 only on cruise (per-batch dispatch).
+
+## 2026-04-28 10:50 — PR #708: Cruise-friendly anchor [1.0, 1.75, 2.5, 3.25, 4.0]
+- Branch: `charliepai2d2-askeladd/slice-temp-per-block-cruise-anchor` (artifact: `model-charliepai2d2-askeladd-slice-temp-per-block-cruise-anchor-20260428-100558`)
+- Hypothesis: combine block 0=1.0 (cruise benefit) with mean=2.5 (higher than #647's 2.25) and range=3.0. Disambiguate variance-vs-mean.
+
+| metric | this run | PR #630 baseline | current PR #698 | Δ |
+|---|---|---|---|---|
+| best `val_avg/mae_surf_p` | **59.737** (epoch 18) | 59.907 | 58.742 | **−0.28% / +1.69% cross-stack** |
+| `test_avg/mae_surf_p` | **52.863** | 52.656 | 50.789 | **+0.39% / +4.09% cross-stack** |
+
+- Per-split val: in_dist +0.774, camber_rc −0.566, camber_cruise −0.167, re_rand −0.720. 3/4 improve (in_dist regresses).
+- Per-block final temps: [0.974, 1.699, 2.429, 3.166, 3.909] — block 4 settled at 3.91 (drift -0.09), block 0 at 0.97 (drift -0.026, smallest as expected).
+- **Mechanism observations**: cruise val improved slightly (-0.167) — block 0=1.0 preserves cruise mechanism. Higher mean (2.5 vs 2.25) IS load-bearing. Range=3.0 well-tolerated by block 4.
+- Decision: **CLOSE** — marginal val win (-0.28%) on prior baseline; cross-stack +1.69% regression vs current 58.742. Test slightly regressed. Schedule axis is approaching saturation; mean shifts give diminishing returns.
+
+## 2026-04-28 10:50 — PR #673: Per-group wd extreme rebased (wd_attn=3e-4, wd_mlp=3e-6)
+- Branch: `charliepai2d2-tanjiro/per-group-wd-extreme` (artifact: `model-per-group-wd-extreme-rebased-20260428-100928`)
+- Hypothesis: rebased onto post-#630 stack to verify the asymmetry-magnitude push that won -2.18% on PR #640 baseline still wins under heavier merged stack.
+
+| metric | this run | PR #630 baseline | current PR #698 | Δ |
+|---|---|---|---|---|
+| best `val_avg/mae_surf_p` | **60.122** (epoch 18) | 59.907 | 58.742 | **+0.36% regression / +2.35% cross-stack** |
+| `test_avg/mae_surf_p` | **52.339** | 52.656 | 50.789 | **−0.60% / +3.05% cross-stack** |
+
+- Per-split val: in_dist −0.051 (flat), **camber_rc +1.030 (REVERSED)**, camber_cruise +0.210, **re_rand −0.325 (preserved)**.
+- All 4 test splits improve.
+- **CRITICAL ASYMMETRIC REVERSAL FINDING**: MLP arm preserved (re_rand still improves with wd_mlp=3e-6, just smaller magnitude than -0.634 on pre-#630 stack); ATTENTION arm reversed (camber_rc was -2.000 on old stack, now +1.030 with wd_attn=3e-4). The per-block slice-temp schedule (PR #647) + cosine rebound (PR #630) already supply the geometry-OOD regularization that wd_attn was extracting.
+- Decision: **CLOSE** — val regresses (gating metric); asymmetry-magnitude axis is bracketed at (1e-4, 1e-5). MLP-only extreme is the right decoupled probe.
