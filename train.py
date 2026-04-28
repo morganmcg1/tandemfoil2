@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import copy
 import os
 import subprocess
 import time
@@ -236,9 +237,20 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Sanitize ground-truth NaN/Inf at sample granularity. test_geom_camber_cruise
+            # has 1 sample with non-finite p values; accumulate_batch's per-sample skip
+            # alone can't clean it because (pred-y).abs() * mask propagates NaN through
+            # NaN*0=NaN. We mask out the bad samples here so downstream sums stay finite.
+            y_per_sample_finite = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)
+            if not bool(y_per_sample_finite.all()):
+                mask = mask & y_per_sample_finite[:, None]
+                y = torch.where(y_per_sample_finite[:, None, None], y, torch.zeros_like(y))
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+            # Guard against rare NaN/Inf predictions that poison test_avg metrics.
+            pred = torch.nan_to_num(pred, nan=0.0, posinf=20.0, neginf=-20.0).clamp(-20.0, 20.0)
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -367,6 +379,31 @@ def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# EMA (exponential moving average of model weights)
+# ---------------------------------------------------------------------------
+
+class EMAModel:
+    """Maintain a running EMA of model weights.
+
+    decay=0.999 corresponds to an effective averaging window of ~1000 SGD
+    steps. Floating-point parameters/buffers are EMA-blended; integer buffers
+    (counters etc.) are copied verbatim.
+    """
+
+    def __init__(self, model: nn.Module, decay: float = 0.999):
+        self.decay = decay
+        self.shadow = {k: v.detach().clone() for k, v in model.state_dict().items()}
+
+    @torch.no_grad()
+    def update(self, model: nn.Module) -> None:
+        for k, v in model.state_dict().items():
+            if v.dtype.is_floating_point:
+                self.shadow[k].mul_(self.decay).add_(v.detach(), alpha=1 - self.decay)
+            else:
+                self.shadow[k].copy_(v)
+
+
+# ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
 
@@ -380,6 +417,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    ema_decay: float = 0.999
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -430,6 +468,11 @@ model_config = dict(
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+
+ema = EMAModel(model, decay=cfg.ema_decay)
+eval_model = copy.deepcopy(model)
+eval_model.eval()
+print(f"EMA: decay={cfg.ema_decay} (effective window ~{int(round(1.0 / max(1 - cfg.ema_decay, 1e-12)))} steps)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
@@ -498,6 +541,7 @@ for epoch in range(MAX_EPOCHS):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        ema.update(model)
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
@@ -509,10 +553,11 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
-    # --- Validate ---
-    model.eval()
+    # --- Validate (EMA model) ---
+    eval_model.load_state_dict(ema.shadow)
+    eval_model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(eval_model, loader, stats, cfg.surf_weight, device)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -543,7 +588,7 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        torch.save(ema.shadow, model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
