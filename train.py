@@ -169,19 +169,29 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 re_fourier_bands: int = 0):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
+        self.re_fourier_bands = re_fourier_bands
+        if re_fourier_bands > 0:
+            self.register_buffer(
+                "re_fourier_freqs",
+                torch.tensor([2.0 ** k for k in range(re_fourier_bands)], dtype=torch.float32),
+            )
 
+        extra_fun_dim = 2 * re_fourier_bands  # sin + cos per frequency
         if self.unified_pos:
-            self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
+            self.preprocess = MLP(fun_dim + extra_fun_dim + ref**3, n_hidden * 2, n_hidden,
                                   n_layers=0, res=False, act=act)
         else:
-            self.preprocess = MLP(fun_dim + space_dim, n_hidden * 2, n_hidden,
+            self.preprocess = MLP(fun_dim + extra_fun_dim + space_dim, n_hidden * 2, n_hidden,
                                   n_layers=0, res=False, act=act)
+        self.preprocess_in_dim = (fun_dim + extra_fun_dim
+                                  + (ref**3 if unified_pos else space_dim))
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
@@ -207,6 +217,12 @@ class Transolver(nn.Module):
 
     def forward(self, data, **kwargs):
         x = data["x"]
+        if self.re_fourier_bands > 0:
+            log_re = x[..., 13:14]
+            freqs = self.re_fourier_freqs.to(x.dtype)
+            proj = log_re * freqs
+            re_features = torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
+            x = torch.cat([x, re_features], dim=-1)
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         for block in self.blocks:
             fx = block(fx)
@@ -409,13 +425,16 @@ model_config = dict(
     n_head=4,
     slice_num=64,
     mlp_ratio=2,
+    re_fourier_bands=8,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
 
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
-print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+print(f"Model: Transolver ({n_params/1e6:.2f}M params)  "
+      f"preprocess_in_dim={model.preprocess_in_dim}  "
+      f"re_fourier_bands={model.re_fourier_bands}")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
