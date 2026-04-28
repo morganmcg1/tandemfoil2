@@ -15,36 +15,40 @@ help across at least three of the four tracks.
 
 ## Round 3 focus
 
-**Current measured baseline (merged 2026-04-28 02:28):**
-PR #389 (askeladd) — **L1 + matched cosine schedule** (`--epochs 14`,
-T_max=14). `val_avg/mae_surf_p = 90.90`, `test_avg/mae_surf_p = 80.84`.
-Three-seed reproducibility ~1% spread. **First round-3 result with
-effect size large enough to clearly clear the seed-noise floor.**
+**Current measured baseline (merged 2026-04-28 02:50):**
+PR #447 (fern) — **L1 + 8-freq spatial Fourier features + EMA-of-
+weights with decay=0.999**. `val_avg/mae_surf_p = 82.97`,
+`test_avg/mae_surf_p = 73.58`. **Largest single-lever win since
+PR #280 (L1 surface loss).** Wins on all 4 val splits and all 4
+test splits. Closes the persistent `val_single_in_dist` bottleneck
+(117.24 → 99.44, −15.2%) — the first round-3 lever to substantially
+move the in-dist regime.
 
-**Important caveat**: PR #389 was branched off the pre-FF advisor, so
-the measured 90.90 reflects L1+matched-cosine *without* FF. The
-advisor `train.py` retains FF from PR #400 — running the post-merge
-advisor with `--epochs 14` is **untested** but expected to land below
-90.90 if FF and matched cosine compose. The 90.90/80.84 numbers should
-be treated as approximately tied with PR #400's 91.87/81.11 (both
-configurations are good, ~1% gap is below seed noise).
+**Caveat**: PR #447 was branched off post-#400 (had FF) but
+pre-#389-merge (didn't have matched cosine), so the measurement is
+L1+FF + EMA + cosine T_max=50 (default schedule). The post-merge
+advisor has all four levers; the **untested** L1+FF+EMA + matched
+cosine four-lever stack is the round-4 priority (fern's next
+assignment).
 
 **Round-3 baseline lineage:**
 | Round | best val | best test | lever | Δ vs prior |
 |-------|---------:|----------:|-------|----:|
 | PR #306 | 135.20 | 123.15 | bs=8 + sqrt-LR (MSE) | reference |
 | PR #280 | 102.64 |  97.73 | + L1 surface loss | **−24.1%** |
-| PR #400 |  91.87 |  81.11 | + 8-freq spatial Fourier features | **−10.5% / −17.0%** |
-| **PR #389** | **90.90** | **80.84** | **+ matched cosine `--epochs 14`** | **−1.06% / −0.33%** (≈ tied with FF) |
+| PR #400 |  91.87 |  81.11 | + 8-freq spatial FF | **−10.5% / −17.0%** |
+| PR #389 |  90.90 |  80.84 | + matched cosine (CLI) | **−1.06% / −0.33%** |
+| **PR #447** | **82.97** | **73.58** | **+ EMA(0.999)** | **−8.7% / −9.0%** |
 
-**Round-3 proven levers (cumulative)**:
+**Round-3 proven levers (cumulative, four stacked)**:
 1. L1 surface loss (PR #280) — loss formulation aligned with metric.
 2. 8-freq spatial Fourier features (PR #400) — spectral bias mitigation.
-3. Matched cosine `--epochs 14` (PR #389) — let LR fully decay.
+3. Matched cosine `--epochs 14` (PR #389) — full LR decay (CLI flag).
+4. **EMA-of-weights, decay=0.999** (PR #447) — late-training trajectory averaging.
 
-**Round-4 priority**: confirm the L1+FF + matched-cosine compose
-result. Round-5 candidate stacking depends on which compose tests
-return wins.
+**Round-4 priority**: confirm the four-lever-stack number (L1+FF+EMA +
+matched cosine) and continue compose tests on remaining round-3
+levers (beta2=0.95, grad clipping, log(Re) FF) per-split-aware.
 
 **Closed PRs (2026-04-28):**
    - PR #283 — askeladd (wider+deeper): val 166.64 (+62% vs L1 baseline);
@@ -119,8 +123,6 @@ composition even if they don't outright beat 102.64:**
      encoding extension)* — on post-#400 advisor.
    - PR #446 — thorfinn: L1+FF + AdamW(beta2=0.95) *(optimiser compose)*
      — on post-#400 advisor.
-   - PR #447 — fern: L1+FF + EMA(decay=0.999) *(weight averaging compose
-     with budget-aware decay)* — on post-#400 advisor.
    - PR #448 — tanjiro: L1+FF + L1 volume loss *(loss formulation
      extension — does L1 dominance extend to volume?)* — on post-#400
      advisor.
@@ -128,10 +130,12 @@ composition even if they don't outright beat 102.64:**
      higher peak LR with matched cosine *(schedule × lr)*.
    - PR #462 — edward: L1+FF + `--epochs 14` + grad clipping
      `max_norm=1.0` — three-lever stack *(stability × schedule × FF)*.
-   - PR (frieren, new): L1+FF + `--epochs 14` + **`wd=5e-4`**
+   - PR #469 — frieren: L1+FF + `--epochs 14` + `wd=5e-4`
      (interior-point) — tests whether intermediate wd captures
-     cruise/in-dist compose without rc-camber regression seen at
-     wd=1e-3 in PR #437. Most-informative round-5 single-knob.
+     cruise/in-dist compose without rc-camber regression.
+   - PR (fern, new): L1+FF+EMA + `--epochs 14` (matched cosine) —
+     four-lever-stack confirmation; tests whether matched cosine still
+     helps once EMA is in. Single CLI knob from new baseline.
 
 ## Convergent OOD-camber narrative — partially refuted by PR #437
 
@@ -256,21 +260,23 @@ Following round 3, plausible next steps depending on which family wins:
   with point-cloud transformer variants, GINO/FNO style spectral mixing in
   irregular meshes, hierarchical clustering of slice tokens.
 
-## Per-track diagnostics on the current baseline (PR #400)
+## Per-track diagnostics on the current baseline (PR #447)
 
 | split | val mae_surf_p | comment |
 |-------|---------------:|---------|
-| `val_geom_camber_cruise` |  68.61 | easiest — low-Re cruise meshes |
-| `val_re_rand`            |  82.64 | mid — stratified Re, all tandem domains |
-| `val_geom_camber_rc`     |  98.99 | unseen front-foil camber, raceCar |
-| `val_single_in_dist`     | **117.24** | hardest — high-Re raceCar singles |
+| `val_geom_camber_cruise` |  61.06 | easiest |
+| `val_re_rand`            |  78.22 | mid |
+| `val_geom_camber_rc`     |  93.14 | unseen front-foil camber, raceCar |
+| `val_single_in_dist`     | **99.44** | hardest — high-Re raceCar singles |
 
-`val_single_in_dist` is still the dominant bottleneck even after L1+FF —
-the gap to cruise (1.71×) actually *widened* from the L1 baseline (1.65×).
-High-Re raceCar singles are the persistent failure mode.
+`val_single_in_dist` is still the worst split but the gap is
+**closing**: it ratio to cruise dropped from 1.71× (post-#400) to
+1.63× (post-#447). EMA was the first lever to substantially attack
+this regime (−15.2% on it).
 
-Round-4/5 candidates that target this regime specifically:
-- **`log(Re)` Fourier features** ← assigning to nezuko this round.
+Round-5 candidates for further in-dist gains:
+- **`log(Re)` Fourier features** (PR #432, in flight) — Re-aware
+  spectral encoding.
 - Log-space pressure prediction (target transform).
 - Re-aware output rescaling (per-sample scalar gain).
 - Per-domain sample reweighting in the WeightedRandomSampler (boost

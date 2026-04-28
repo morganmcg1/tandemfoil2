@@ -1,5 +1,101 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 02:50 — PR #447 (MERGED): L1+FF + EMA(decay=0.999) — biggest single-lever win since PR #280
+- Branch: `charliepai2d3-fern/l1ff-ema-d999`
+- Hypothesis: stack EMA-of-weights with budget-aware decay 0.999 onto
+  the L1+FF baseline (PR #400). Orthogonal mechanism (weight averaging
+  vs input encoding); predicted −1% to −4% on val.
+- Config: L1+FF baseline (post-#400, pre-#389-merge), EMA every step
+  with `EMA_DECAY=0.999` (derived from `1 − 1/(0.2 × total_steps)` ≈
+  0.999 for ~5K steps), swap for val/test eval, save EMA weights to
+  best-val checkpoint.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs L1+FF baseline (PR #400, 91.87) | vs current baseline at merge (PR #389, 90.90) |
+|--------|--------:|-----------------------------------:|----------------------------------------------:|
+| `val_avg/mae_surf_p`  | **82.97** | **−9.7%** ✓ above predicted band | **−8.7%** |
+| `test_avg/mae_surf_p` | **73.58** | **−9.3%** ✓ above predicted band | **−9.0%** |
+| Per-epoch wallclock | ~132 s | flat | flat |
+| Peak GPU memory | 42.4 GB | flat | flat |
+| Param count | 670,551 (EMA shadow ~2.6 MB extra) |
+
+### Per-split val (best epoch 14) — wins on all 4 splits
+
+| split | L1+FF baseline | this PR | Δ |
+|-------|---------------:|--------:|--:|
+| val_single_in_dist     | 117.24 |  99.44 | **−15.2%** (largest gain) |
+| val_geom_camber_rc     |  98.99 |  93.14 | −5.9% |
+| val_geom_camber_cruise |  68.61 |  61.06 | −11.0% |
+| val_re_rand            |  82.64 |  78.22 | −5.4% |
+
+### Per-split test (best-val checkpoint) — wins on all 4 splits
+
+| split | L1+FF baseline | this PR | Δ |
+|-------|---------------:|--------:|--:|
+| test_single_in_dist     | 100.17 | 88.79 | −11.4% |
+| test_geom_camber_rc     |  85.47 | 81.54 |  −4.6% |
+| test_geom_camber_cruise |  61.17 | 52.36 | **−14.4%** |
+| test_re_rand            |  77.64 | 71.62 |  −7.8% |
+
+### Decision
+
+**Merged.** Largest single-lever win since L1 surface loss (PR #280's
+−24.1%). EMA's weight-averaging mechanism is **fully orthogonal** to
+the FF input encoding lever — the EMA-on-L1 gain (−10.4%, PR #396)
+and EMA-on-L1+FF gain (−9.7%, this PR) are within 1% of each other,
+making this the cleanest "additive compose" signal of round 3.
+
+### Bottleneck status update
+
+`val_single_in_dist` was the persistent worst-performing split through
+PR #280, #400, and #389. EMA is the **first round-3 lever to
+substantially attack the high-Re raceCar single regime** — gained
+−15.2% on val (117.24 → 99.44) and −11.4% on test. This is opposite
+the per-split pattern of FF (which gained least on in-dist).
+
+After this merge, the per-split val ranking is:
+- val_single_in_dist: 99.44 (still worst, but closing)
+- val_geom_camber_rc: 93.14
+- val_re_rand: 78.22
+- val_geom_camber_cruise: 61.06 (easiest, now firmly under 65)
+
+### Caveat — measurement on pre-#389 advisor
+
+PR #447's branch was based on the post-#400 advisor (had FF) but
+**before PR #389 merged** (didn't have matched cosine). So the
+measurement is L1+FF + EMA + cosine T_max=50 (default schedule, never
+reaches the tail). The post-merge advisor has all four levers in
+`train.py`/CLI; running with `--epochs 14` will give the **L1+FF+EMA +
+matched cosine** four-lever stack — fern's next assignment tests
+exactly that.
+
+### Round-3 proven levers (cumulative, now four stacked)
+
+1. L1 surface loss (PR #280)
+2. 8-freq spatial Fourier features (PR #400)
+3. Matched cosine `--epochs 14` (PR #389, CLI flag)
+4. **EMA-of-weights, decay=0.999** (PR #447) ← this merge
+
+### Round-3 narrative (refined)
+
+The "five convergent OOD-camber levers" narrative was partially
+refuted by PR #437 (wd × FF overlap on rc-camber). PR #447's data
+adds new structure:
+
+- **EMA × FF compose** is fully additive (this PR).
+- **wd × FF compose** has destructive overlap on rc-camber (PR #437).
+- **EMA × in-dist** is the strongest single-lever effect on the
+  persistent in-dist bottleneck — fundamentally different from
+  weight-magnitude regularisation.
+
+Implication: EMA's mechanism (averaging across late-training
+trajectory variance) is a different kind of "regularisation" than
+weight-magnitude penalty. Round-5 should treat the regularisation
+landscape as multi-dimensional, not scalar.
+
+---
+
 ## 2026-04-28 02:35 — PR #437 (CLOSED, ties current; reveals compose dynamics): L1+FF + wd=1e-3
 - Branch: `charliepai2d3-frieren/l1ff-wd-1e-3` (deleted on close)
 - Hypothesis: stack the validated `wd=1e-3` lever (PR #395) onto the
