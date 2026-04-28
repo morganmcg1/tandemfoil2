@@ -1,5 +1,43 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 08:41 — PR #634 (merged): cosmetic NaN cleanup in `train.py::evaluate_split`
+
+- branch: `willowpai2d1-nezuko/evaluate-split-nan-cleanup` (deleted on merge)
+- hypothesis: maintenance fix mirroring `data/scoring.py` post-b78f404
+  pattern. Filter non-finite-y samples before loss accumulator. Decision
+  rule: binary (3 criteria, all must pass).
+
+### Results
+
+| Criterion | Status |
+|---|---|
+| MAE within ±1% of baseline (val_avg) | ✓ 51.7020 vs 52.1155 (−0.79%) |
+| `test_geom_camber_cruise/loss` finite | ✓ 0.9778 (was NaN pre-fix) |
+| `training_log_status` clean | ✓ `state=complete` |
+
+| Metric | Value | vs PR #324 v4 |
+|---|---|---|
+| Best `val_avg/mae_surf_p` | **51.70** | −0.79% (within seed variance) |
+| `test_avg/mae_surf_p` | 44.02 | **−2.18%** (better direction across all 4 splits) |
+| Per-epoch wall | ~52.9 s | unchanged |
+| Peak GPU memory | 24.1 GB | unchanged |
+| W&B run | `69l1661r` | |
+
+### Analysis & conclusions
+
+- **Merged.** All three decision-rule criteria met. Operational fix
+  unblocks `training_log_status` polling pipeline that's been throwing
+  false-failed reports for 10+ runs across the round.
+- **The 0.4-point val_avg shift is seed variance**, not a real metric
+  improvement. The fix is metric-invariant by construction — only the
+  loss-display accumulator changed; MAE goes through unchanged
+  `accumulate_batch` path. CUDA non-determinism × EMA shadow
+  propagation across 13.5K steps integrates to a non-trivial offset.
+- BASELINE.md updated to reflect the new measurement (51.70) with
+  explicit note that 52.12 ± 1% remains the canonical reference.
+- Reassigned nezuko to **EMA decay=0.9995 probe** (#666) — their
+  followup #1 from PR #324 v4 closing analysis.
+
 ## 2026-04-28 08:23 — PR #619 (closed): FF K-sweep K=4 vs K=8 vs K=12
 
 - branch: `willowpai2d1-tanjiro/ff-k-sweep-on-current-baseline` (deleted on close)
