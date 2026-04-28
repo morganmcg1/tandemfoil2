@@ -1,5 +1,57 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 05:11 — PR #533 (CLOSED, bracket-closure): NUM_FOURIER_FREQS=4
+- Branch: `charliepai2d3-frieren/l1ff4-ema-cos14-lr-7p5e-4` (deleted)
+- Hypothesis: bracket FF dose downward to 4 freqs; tests interior
+  optimum below 8. Predicted −0% to +2%.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs current PR #506 (78.80) | vs PR #462 (80.06) |
+|--------|--------:|---------------------------:|-------------------:|
+| `val_avg/mae_surf_p` | 81.31 | +3.18% | +1.56% |
+| `test_avg/mae_surf_p` | 71.20 | +3.00% | +1.66% |
+
+### Per-split val — under-capacity signature
+
+| split | this PR | PR #462 | Δ |
+|-------|--------:|--------:|--:|
+| val_single_in_dist | 94.97 | 93.59 | +1.47% |
+| val_geom_camber_rc | 92.46 | 92.33 | **+0.14%** (flat) |
+| val_geom_camber_cruise | 60.08 | 57.74 | **+4.06%** (most bitten) |
+| val_re_rand | 77.72 | 76.57 | +1.51% |
+
+Cruise hit hardest — confirms cruise is the most input-encoding-
+sensitive split (richest spatial geometry, lowest absolute baseline).
+
+### Decision
+
+**Closed.** Above-zero regression vs current and prior baselines.
+Bracket-closure successful: FF dose monotonically improves 4 → 8 → 12.
+
+### FF dose response curve (3 of 4 points characterised)
+
+| freqs | val_avg | source |
+|------:|--------:|--------|
+| 4 | 81.31 | this PR |
+| 8 | 80.06 | PR #462 (no-EMA confound) |
+| 12 | **78.80** | PR #506 (current best) |
+| 16 | nezuko PR #543 (in flight) |
+
+Once FF=16 lands (nezuko #543), the bracket is closed. If FF=16
+also wins, optimum is past 12 and round-5 explores 24+. If FF=16
+ties or regresses, optimum sits at 12.
+
+### Re-assignment
+
+frieren re-assigned to `slice_num=128` retest on the post-#506
+advisor (their PR #292 was inconclusive on MSE baseline due to seed
+noise; cleaner gradient signal on full lever stack should resolve).
+
+Per-epoch metrics not centralised — branch deleted.
+
+---
+
 ## 2026-04-28 04:52 — PR #515 (CLOSED, EMA-overlap redundancy): 3× p-weight in vol_loss
 - Branch: `charliepai2d3-tanjiro/l1ff-ema-cos14-lr-7p5e-4-vol-pwt-3x` (deleted)
 - Hypothesis: 3× pressure-channel weight in volume MSE (different axis

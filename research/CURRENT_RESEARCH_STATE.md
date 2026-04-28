@@ -148,9 +148,11 @@ composition even if they don't outright beat 102.64:**
    re-tested on the new advisor:
    - PR #383 — alphonse: L1 + 3× pressure channel weight in surface loss
      *(loss focus)* — branched off L1-only.
-   - PR (nezuko, new): L1+FF(16 freqs)+EMA + `--epochs 14` + `lr=7.5e-4` —
-     **NUM_FOURIER_FREQS=16** spatial FF frequency-count bracket
-     further up (round-3-best is now FF=12; tests if 16 extracts more).
+   - PR #543 — nezuko: L1+FF(16 freqs)+EMA + `--epochs 14` + `lr=7.5e-4` —
+     spatial FF frequency-count bracket up.
+   - PR (frieren, new): L1+FF12+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **slice_num=128** — retest of the inconclusive PR #292 result on
+     the now-cleaner full lever stack.
    - PR (tanjiro, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
      **auxiliary log-pressure loss** — different mechanism than
      channel weighting / loss shape; addresses heavy-tail via
