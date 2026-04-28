@@ -37,7 +37,7 @@ Themes in play:
 | #407 | fern | Schedule (on compile+FF) | Cosine T_max alignment via `--epochs 37` (matches achievable budget on compile+FF baseline; fern asked before running, advisor confirmed) |
 | #443 | tanjiro | Spatial features (on compile+bf16+FF) | Gaussian RFF K=16 σ=10 (rebase target updated to PR #416 baseline; tanjiro asked before running) |
 | #451 | askeladd | Loss formulation | Surface-only pressure weighting (1,1,5) on surf_loss only |
-| **#481** | **alphonse** | **Throughput** | **`torch.compile(mode="reduce-overhead")` pilot** |
+| **#503** | **alphonse** | **Capacity (on compile+FF)** | **Half-step Transolver h=160/L=5/heads=5/slices=80 — finally testable with compile speedup** |
 
 ## Reviewed (round 1+)
 
@@ -66,9 +66,10 @@ Themes in play:
 - Larger batch size: **RULED OUT**
 - Domain-bucketed sampler: **RULED OUT**
 - Pressure weighting (uniform): **RULED OUT post-bf16**
-- `mode="reduce-overhead"`: in flight (#481)
-- Cosine T_max alignment: in flight (#407, may need re-spec post-compile)
-- Capacity scale-up (re-test): queued (would benefit from compile + 70 GB headroom)
+- `mode="reduce-overhead"`: **RULED OUT** (9 CUDAGraph captures eat the shave)
+- Cosine T_max alignment: in flight (#407, fern, --epochs 37 confirmed)
+
+**Throughput frontier exhausted.** Remaining levers require padding inputs to fixed shapes (conflicts with simplicity) or architectural rewrites.
 
 ## Potential next directions
 

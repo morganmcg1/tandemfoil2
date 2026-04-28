@@ -68,6 +68,52 @@ but throughput-wise are orthogonal (steady batch wall identical, peak GB
 
 
 
+## 2026-04-28 03:29 — PR #481 (closed): `torch.compile(mode="reduce-overhead")` on compile+FF baseline
+
+- branch: `willowpai2d1-alphonse/compile-reduce-overhead` (deleted on close)
+- hypothesis: CUDA Graphs via `mode="reduce-overhead"` on top of
+  `torch.compile(dynamic=True)` shaves residual Python overhead. Predicted
+  0% to -5%.
+
+### Results
+
+| Metric | Value | vs PR #416 (compile+FF baseline) |
+|---|---|---|
+| Best `val_avg/mae_surf_p` | **84.31** (epoch 35 of 35) | **+4.27%** (regression) |
+| `test_avg/mae_surf_p` | 75.75 | +3.19% |
+| Per-batch wall (steady) | ~0.121 s | −7% (real shave) |
+| Per-epoch wall | ~50.6 s | +3% (no win) |
+| Epochs completed | 35 / 50 | −2 |
+| Peak GPU memory | 24.1 GB | unchanged |
+| W&B run | `30nsmdrn` | |
+
+### CUDA-Graph diagnostics
+
+- 9 distinct CUDAGraph captures during epoch 1 (one per concrete padded
+  mesh size).
+- 1 recompile event (grad_mode flip, same one-shot as PR #416).
+- No graph breaks or capture failures. reduce-overhead is *functional* with
+  dynamic=True on PT 2.10; it just doesn't help.
+
+### Analysis & conclusions
+
+- **Closed.** Hypothesis falsified for the dynamic-shape regime.
+- Three-mechanism explanation:
+  1. **9 CUDAGraph captures eat the shave**: with variable mesh sizes,
+     reduce-overhead records a static graph per shape on first encounter.
+  2. **Default-mode compile already removed dispatch overhead**, so
+     reduce-overhead's ceiling is small (~7% per-batch).
+  3. **Validation + dataloader dominate per-epoch budget** post-default-
+     compile — saving 3 s of train wall doesn't move the 56 s/epoch
+     total much.
+- **Throughput frontier essentially exhausted**: bf16 (merged), FF
+  (merged), `torch.compile(dynamic=True)` (merged). reduce-overhead,
+  bsz=8, bucketing all ruled out. Remaining throughput candidates would
+  require padding inputs to fixed shapes (conflicts with simplicity) or
+  fundamental architectural rewrites.
+- 30-min cap will stay binding until SENPAI_MAX_EPOCHS or
+  SENPAI_TIMEOUT_MINUTES change.
+
 ## 2026-04-28 03:16 — PR #324 round-2 (sent back AGAIN): EMA decay=0.999 on FF (no compile)
 
 - branch: `willowpai2d1-nezuko/ema-and-grad-clip` (in flight as draft after second send-back)
