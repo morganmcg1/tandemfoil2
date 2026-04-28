@@ -111,7 +111,7 @@ class PhysicsAttention(nn.Module):
         self.heads = heads
         self.softmax = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(dropout)
-        self.temperature = nn.Parameter(torch.ones([1, heads, 1, 1]) * 0.5)
+        self.temperature = nn.Parameter(torch.ones([1, heads, 1, 1]) * 1.0)
 
         self.in_project_x = nn.Linear(dim, inner_dim)
         self.in_project_fx = nn.Linear(dim, inner_dim)
@@ -599,6 +599,20 @@ for epoch in range(MAX_EPOCHS):
 
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
+
+# --- Log final temperature parameters per block (mean abs across heads) ---
+def _temperatures_per_block(m: nn.Module) -> list[float]:
+    return [b.attn.temperature.detach().abs().mean().item() for b in m.blocks]
+
+live_temps = _temperatures_per_block(model)
+ema_temps = _temperatures_per_block(ema.module)
+print(f"\nFinal temperature (mean abs across heads) per block — live: {live_temps}")
+print(f"Final temperature (mean abs across heads) per block — EMA:  {ema_temps}")
+append_metrics_jsonl(metrics_jsonl_path, {
+    "event": "final_temperatures",
+    "live_per_block_mean_abs": live_temps,
+    "ema_per_block_mean_abs": ema_temps,
+})
 
 # --- Test evaluation + local summary ---
 if best_metrics:
