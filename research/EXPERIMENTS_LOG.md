@@ -1,5 +1,69 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 09:10 — PR #613: AoA jittering augmentation (σ=0.02 rad on AoA1/AoA2 at training time) — **CLOSE (regression on all metrics)**
+
+- Branch: `charliepai2d5-thorfinn/aoa-jitter-0p02` (closed)
+- Hypothesis: Small Gaussian noise on AoA1 (idx 14) and AoA2 (idx 18) input features during training would improve generalization on camber-holdout splits.
+
+### Results vs old AdamW+bf16 baseline (73.29)
+
+| metric | this run | PR #496 baseline | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` (best ep 18/24) | **77.01** | 73.29 | +5.07% (regression) |
+| `val_single_in_dist/mae_surf_p` | 93.05 | 87.09 | +6.84% |
+| `val_geom_camber_rc/mae_surf_p` (target) | 87.81 | 85.04 | +3.25% |
+| `val_geom_camber_cruise/mae_surf_p` (target) | 55.32 | 50.89 | +8.71% |
+| `val_re_rand/mae_surf_p` | 71.85 | 70.16 | +2.41% |
+| `test_avg/mae_surf_p` (3-clean) | 76.19 | 69.49 | +9.64% (regression) |
+| `test_single_in_dist/mae_surf_p` | 84.86 | 70.96 | **+19.58% (severe regression)** |
+
+vs current Lion baseline: **+36.9% worse** (77.01 vs 56.19)
+
+### Decision
+
+Closed. All four val splits regressed; target camber splits (the intended beneficiaries) among them. Test_single_in_dist regressed +19.58%, confirming in-distribution accuracy was damaged, not just OOD traded off. Mechanistic explanation: AoA is a regime-controlling variable (attached vs separated flow), not a scaling variable — σ=0.02 rad shifts suction-peak location meaningfully. Unlike log(Re) which scales flow self-similarly, AoA noise effectively injects label noise at the input side. The early-epoch ‖∇‖ spike (ep 2: 283 vs baseline ~150-200) suggests noise inflates gradient variance during warmup when the model is calibrating AoA sensitivity. AoA jittering axis is closed on this stack.
+
+---
+
+## 2026-04-28 09:10 — PR #632: n_layers=6 with budget-matched cosine (--epochs 20) — **CLOSE (schedule-fitting mechanism confirmed; below Lion baseline)**
+
+- Branch: `charliepai2d5-fern/n-layers-6-epochs-20` (closed)
+- Hypothesis: n_layers=6 capacity helps, but requires cosine T_max matched to achievable epoch count (~16 eps in 30-min budget). --epochs 20 → LR at ep 16 ≈ 1.7e-4 vs 3.76e-4 with --epochs 24.
+
+### Results (2 runs, same config)
+
+| run | best ep | val_avg | test 3-clean |
+|---|:---:|:---:|:---:|
+| **081512 (primary)** | **16** | **74.035** | **71.874** |
+| 073915 | 16 | 79.224 | 75.914 |
+| mean | 16 | 76.63 | 73.89 |
+| PR #496 baseline (old) | 18 | 73.29 | 69.49 |
+| **Lion baseline (#612)** | **18** | **56.19** | **53.33** |
+
+Best run vs Lion baseline: **+31.6% worse** (74.03 vs 56.19)
+
+### Per-split val (primary run 081512) vs old baseline
+
+| split | n_layers=6 ep=20 | baseline | Δ |
+|---|---:|---:|---:|
+| val_single_in_dist | 86.71 | 87.09 | −0.4% ✓ |
+| val_geom_camber_rc | 83.48 | 85.04 | −1.8% ✓ |
+| val_geom_camber_cruise | 54.16 | 50.89 | +6.4% regression |
+| val_re_rand | 71.80 | 70.16 | +2.3% regression |
+
+### Key diagnostic findings
+
+1. **Schedule-fitting mechanism confirmed:** ep 14→15→16 trajectory (-19.5% then -3.9%) mirrors baseline's ep 16→17→18 cosine-tail settling pattern. PR #637 (alphonse's budget-matched cosine on Lion) independently cross-validates the mechanism.
+2. **The gap-collapse finding from PR #550 was a schedule-mismatch artifact:** with matched schedule, train-val gap reopened to healthy ~13-16% (comparable to baseline). Healthy convergence, not the pathological artifact.
+3. **Variance is large:** same config, two runs → val 74.03 vs 79.22 (Δ=5.2 pts). At this budget (~16 epochs with 6-layer model), small init/data-order differences produce large endpoint differences. Future n_layers=6 tests should budget 2 runs.
+4. **n_layers=6 + Lion + budget-matched cosine remains untested.** This experiment was on AdamW+bf16 base (73.29). The combination with Lion (56.19) is the natural next step.
+
+### Decision
+
+Closed. Best run at 74.03 was barely below old baseline (73.29) but 31.6% above the current Lion baseline (56.19). The direction is still interesting — depth + schedule matching stacks with Lion is the live hypothesis. The experiment was made obsolete by Lion merging during the experiment queue.
+
+---
+
 ## 2026-04-28 08:50 — PR #628: Lookahead optimizer wrapping AdamW (k=5, α=0.5) — **REQUEST CHANGES (rebase to Lion + test_single_in_dist concern)**
 
 - Branch: `charliepai2d5-tanjiro/lookahead-k5` (status:wip rebasing)
