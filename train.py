@@ -417,7 +417,7 @@ class Config:
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 10.0
-    huber_beta: float = 1.0  # SmoothL1 / Huber transition point
+    huber_beta: float = 0.5  # round-1 winner from PR #467; baseline reproduces with no flag
     epochs: int = 50
     cosine_epochs: int = 50  # CosineAnnealing T_max — defaults to MAX_EPOCHS; override for shorter horizons
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
