@@ -13,6 +13,186 @@ in the pressure channel; `accumulate_batch` masks the sample but
 fern** with the 2-line `nan_to_num` patch — once it lands, every
 round-1 run can recompute a finite `test_avg/mae_surf_p` from W&B.
 
+## 2026-04-28 08:30 — PR #568 (fp16 retry, alphonse) ❌ CLOSED — fp16 catastrophically diverges + zero throughput delta over bf16
+
+- Branch: `willowpai2d2-alphonse/fp16-scoped` (deleted on close).
+- Iteration: 6th axis from alphonse. Tested fp16 with the
+  loss-outside-autocast pattern + GradScaler that bf16 (#399)
+  validated.
+
+### Results — 3 fp16 seeds + 1 bf16 anchor
+
+| amp_dtype | seed | val_avg/mae_surf_p | epoch_time_s | grad_scale_final | run_id |
+|-:|-:|-:|-:|-:|-|
+| bf16 anchor | 0 | **106.92** | 140.8 | n/a | 4joqw1fv |
+| fp16 | 0 | NaN cascade | 141.5 | 0 (collapsed) | tzdrvpj8 |
+| fp16 | 1 | NaN cascade | 141.0 | 0 (collapsed) | p82xzaja |
+| fp16 | 2 | NaN cascade | 140.7 | 0 (collapsed) | jjuvn7vx |
+
+bf16 anchor confirms the implementation infrastructure is correct
+(val=106.92 lands at the favorable end of the bf16+Huber 3-seed
+distribution from #399 — within noise of the merged 3-seed mean
+112.13).
+
+### Failure mode forensics
+
+All 3 fp16 seeds: brief working phase (1-3 epochs of finite training
+loss), then a single overflowed step that GradScaler can't recover
+from, followed by terminal scale collapse to 0. Pre-catastrophe val
+numbers are 50-145 % above bf16 anchor — fp16 was training
+materially worse on the steps it was making, even before the
+divergence.
+
+Mechanism: PhysicsAttention's slice-token einsum + slice_norm
+division produces intermediate values outside fp16's max representable
+value (~65504). bf16 has fp32-equivalent dynamic range (~3.4e38) so
+the same architecture is comfortable. **The loss-outside-autocast
+scope (which made bf16 work) is the necessary precision-engineering
+pattern for any non-fp32 autocast — but it is not sufficient when
+the autocast block itself contains operations that overflow at the
+precision in use.**
+
+### Throughput: +0.2 % slower (the second nail)
+
+fp16 epoch_time matches bf16 within 0.5 s (141.1 vs 140.8 mean). On
+Blackwell tensor cores at our 0.67M-param Transolver, bf16 and fp16
+deliver identical throughput. **bf16 captured all the AMP throughput
+at our scale; fp16 has no remaining headroom to unlock.** Eliminates
+the infrastructure-merge path even in a counterfactual stable-fp16
+world.
+
+### Conclusion
+
+**Closed.** Two independent reasons (catastrophic stability + zero
+throughput delta over bf16) → no metric-merge, no infrastructure-
+merge. **bf16 stays the right precision for this branch.**
+
+### Carry-forward contributions
+
+1. **`--amp_dtype {fp32, bf16, fp16}` parametrization** stays in
+   `train.py` after rebase. Future PRs can switch precision via CLI
+   flag without code edits.
+2. **bf16-anchor data point** (val=106.92, test=96.31 at seed 0)
+   gives a fourth independent bf16+Huber data point. Combined with
+   the merged 3-seed bf16 mean (112.13, σ=4.53), this confirms the
+   bf16 baseline is stable and corroborates the σ ≈ 4.5 noise floor.
+3. **"fp16 catastrophic instability + zero throughput delta over
+   bf16" finding** is methodology data. At our scale on
+   Hopper/Blackwell tensor cores, bf16 already extracts all available
+   AMP throughput. Pushing precision lower doesn't help and hurts
+   stability. **Rules out fp16 for any future round-3 stack** that
+   doesn't restructure the attention pathway.
+
+### Reassignment
+
+Alphonse → PR #648 (round-2 axis: LayerScale). Detailed below.
+
+## 2026-04-28 08:30 — PR #648 (NEW, alphonse round 2): LayerScale (learned residual gain)
+
+- Hypothesis: per-channel learned diagonal-scale parameters on each
+  TransolverBlock's residual contributions, init small (1e-4 to
+  1e-2). Allows the optimizer to gradually "open up" each block's
+  contribution rather than starting at full residual magnitude.
+  Modern transformer recipe (CaiT, ViT-S+, DeiT). Predicted 1-3 %
+  reduction over 115.61 anchor.
+- Sweep: `layerscale_init ∈ {0.0 baseline, 1e-4, 1e-3, 1e-2}` with
+  multi-seed at the winner.
+- Implementation: ~25 LOC `LayerScale(nn.Module)` class + insert in
+  `TransolverBlock.__init__/forward` + plumb through `Transolver.__init__`.
+- Truly orthogonal to all 8 in-flight round-2 axes — different
+  mechanism (residual gain, not loss/optimizer/norm/regularization/
+  data/throughput).
+- Decision rule: ≤102 single-seed (or ≤107 multi-seed mean) merges;
+  at-baseline (107-117) closes (no throughput unlock here, pure
+  metric decision); >125 closes.
+
+## 2026-04-28 08:30 — PR #517 (DropPath, tanjiro) ❌ CLOSED — statistically null at depth=5
+
+- Branch: `willowpai2d2-tanjiro/drop-path` (deleted on close).
+- Iteration: 3rd axis from tanjiro. 4-value sweep + 3-seed at winner.
+
+### Sweep + multi-seed results
+
+| drop_path | seed | val_avg/mae_surf_p | test_avg/mae_surf_p | epoch_time_s |
+|-:|-:|-:|-:|-:|
+| 0.0 in-PR control | 0 | 122.93 | 112.10 | 172.4 |
+| 0.05 | 0 | 127.45 | 116.97 | 178.9 |
+| 0.1 | 0 | 126.72 | 115.64 | 178.7 |
+| **0.2** | 0 | 120.68 | 110.92 | 178.7 |
+| 0.2 | 1 | 126.01 | 112.41 | 178.5 |
+| 0.2 | 2 | 121.14 | 112.45 | 178.2 |
+| **0.2 mean (n=3)** | – | **122.61 ± 2.95** | 111.93 ± 0.87 | ~178.5 |
+
+vs in-PR dp=0.0 control: **−0.26 % on val, −0.15 % on test**, both
+well inside ±10 % noise. Statistically null.
+
+### Throughput: 3.5 % slower, not faster
+
+The PR's predicted 3-8 % faster training was wrong on its face:
+standard timm DropPath (`x * mask / keep_prob`) computes the residual
+THEN multiplies by 0 or 1/keep_prob — there's no actual compute
+saving. Tanjiro correctly diagnosed this in the close write-up.
+
+### Per-split shape (the interesting finding)
+
+DropPath helps `val_single_in_dist` (-3 to -5 %), hurts
+`val_geom_camber_rc` (+3 to +4 %). This is the **SEVENTH instance of
+the per-distribution-shift pattern** in round 2, but with the sign on
+`val_single_in_dist` reversed compared to the previous 6 (alphonse
+#311 / tanjiro #335 / edward #429 / fern #478 / nezuko #332 /
+alphonse #485). **DropPath is the FIRST round-2 axis to help
+val_single_in_dist** (the structurally-hardest split).
+
+The improvements on `val_single_in_dist` cancel the regression on
+`val_geom_camber_rc` so the aggregate metric lands at noise.
+Averaging hides a real per-distribution-tradeoff effect.
+
+### Conclusion
+
+**Closed.** Multi-seed mean is statistically null vs the in-PR
+control; throughput regression rather than unlock; depth=5 is below
+the literature threshold (≥12) where DropPath gains reliably appear.
+Tanjiro's own causal analysis ("depth=5 is too shallow + 11 epochs
+is too few") is exactly right.
+
+### Carry-forward contributions
+
+1. **`drop_path` Config flag + linear-by-depth scaling** stays in
+   `train.py`. If a future PR adds depth (e.g., bf16 + depth=8 stack
+   for round 3), DropPath at the larger depth is a clean drop-in.
+2. **The "DropPath helps `val_single_in_dist`" per-split signal** is
+   the FIRST round-2 axis to help raceCar single. Compounding with
+   axes that help cruise (most others) suggests **per-domain
+   regularization** as a round-3 stacking direction: high DropPath
+   on raceCar, low on OOD splits.
+3. **"Standard timm DropPath has no throughput unlock"** finding.
+   Future PRs proposing DropPath should treat it as a small (~3 %)
+   cost, not a benefit.
+
+### Reassignment
+
+Tanjiro → PR #649 (round-2 axis: smoothness regularization).
+Detailed below.
+
+## 2026-04-28 08:30 — PR #649 (NEW, tanjiro round 2): auxiliary smoothness loss (physics-informed regularization)
+
+- Hypothesis: penalize prediction differences between random pairs
+  of nearby mesh nodes (Gaussian-decay weighted by spatial distance).
+  Encourages spatially-smooth predicted fields — physics-informed
+  prior since underlying CFD solutions are mostly smooth except at
+  shocks/boundaries. Predicted 2-5 % reduction over 115.61 anchor.
+- Sweep: `smooth_lambda ∈ {0.0 baseline, 0.01, 0.1, 1.0}` with
+  multi-seed at the winner.
+- Implementation: ~50 LOC `auxiliary_smoothness_loss` helper +
+  config flags + main-loop integration. Random-pair sampling
+  (K=1024 pairs/sample) sidesteps O(N²) k-NN — Monte Carlo with
+  Gaussian distance weighting.
+- **Truly novel orthogonal axis** — fills the entire un-claimed
+  "auxiliary loss / physics prior" bucket. No other in-flight PR
+  touches auxiliary losses.
+- Decision rule: ≤102 single-seed (or ≤107 multi-seed mean) merges;
+  at-baseline closes; >125 closes.
+
 ## 2026-04-28 05:45 — PR #485 (iter 1): RMSNorm (drop-in for nn.LayerNorm) ❌ CLOSED
 
 - Branch: `willowpai2d2-alphonse/rmsnorm` (deleted on close).
