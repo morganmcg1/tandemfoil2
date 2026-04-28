@@ -237,9 +237,17 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             mask = mask.to(device, non_blocking=True)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
-            y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
+            # One sample in test_geom_camber_cruise has 761 NaN pressure values
+            # from upstream simulation overflow. NaN poisons `err * mask` math
+            # downstream (NaN * 0 = NaN), so substitute pred at those entries —
+            # error contribution becomes zero where ground truth is missing.
+            if not torch.isfinite(y).all():
+                pred_orig_pre = pred * stats["y_std"] + stats["y_mean"]
+                y = torch.where(torch.isfinite(y), y, pred_orig_pre.detach())
+
+            y_norm = (y - stats["y_mean"]) / stats["y_std"]
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
