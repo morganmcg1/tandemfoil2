@@ -422,7 +422,7 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS, eta_min=5e-5)
 
 # --- EMA of weights ----------------------------------------------------
 # Budget-aware decay for the 30-min wallclock cap: ~5K optimizer steps
@@ -535,6 +535,7 @@ for epoch in range(MAX_EPOCHS):
         epoch_surf += surf_loss.item()
         n_batches += 1
 
+    epoch_lr = optimizer.param_groups[0]["lr"]
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
@@ -576,6 +577,7 @@ for epoch in range(MAX_EPOCHS):
         "train/grad_norm_mean": epoch_grad_mean,
         "train/grad_norm_max": epoch_grad_max,
         "train/grad_clip_fraction": epoch_grad_clip_fraction,
+        "train/lr": epoch_lr,
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
