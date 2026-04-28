@@ -240,7 +240,11 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
+            # Guard against NaN in GT (e.g. test_geom_camber_cruise sample 20):
+            # NaN in y_norm propagates into sq_err and then into the loss sum.
+            # Mask out non-finite sq_err entries before accumulating.
             sq_err = (pred - y_norm) ** 2
+            sq_err = torch.nan_to_num(sq_err, nan=0.0, posinf=0.0, neginf=0.0)
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (

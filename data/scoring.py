@@ -46,6 +46,10 @@ def accumulate_batch(
     vol_mask = effective & ~is_surface
 
     err = (pred_orig.double() - y.double()).abs()
+    # Guard against NaN in GT (e.g. sample 20 of test_geom_camber_cruise has 761
+    # non-finite pressure nodes).  IEEE-754 NaN * 0 = NaN, so the masked sum
+    # would poison the accumulator even for correctly-excluded samples.
+    err = torch.nan_to_num(err, nan=0.0, posinf=0.0, neginf=0.0)
     mae_surf += (err * surf_mask.unsqueeze(-1).double()).sum(dim=(0, 1))
     mae_vol += (err * vol_mask.unsqueeze(-1).double()).sum(dim=(0, 1))
     return int(surf_mask.sum().item()), int(vol_mask.sum().item())
