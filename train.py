@@ -46,6 +46,65 @@ from data import (
     pad_collate,
 )
 
+# Augmented feature dim: 24 raw features + 3 derived (dist_surf, log_dist_surf, is_tandem).
+# X_DIM in data/ is the on-disk feature count and stays at 24; AUG_X_DIM is what
+# the model sees after add_derived_features().
+AUG_X_DIM = X_DIM + 3
+
+
+def add_derived_features(
+    x_norm: torch.Tensor,
+    x_raw: torch.Tensor,
+    is_surface: torch.Tensor,
+    mask: torch.Tensor,
+) -> torch.Tensor:
+    """Augment node features with physically grounded derived features.
+
+    Appends three per-node columns to ``x_norm``:
+      D+0: ``dist_to_surface`` — Euclidean distance to nearest surface node,
+           computed from normalized position dims (``x_norm[..., :2]``) so the
+           scale is consistent across domains.
+      D+1: ``log(1 + dist_to_surface)`` — boundary-layer-friendly log scale.
+      D+2: ``is_tandem`` — 1.0 for tandem samples, 0.0 for single-foil. Detected
+           from the *raw* gap/stagger features because a normalized ``0`` is
+           not ``0`` (single-foil's gap=0 maps to ``-mean/std`` after norming).
+
+    Padding rows receive 0 for all derived features; ``mask`` excludes them
+    from the loss/metrics downstream.
+    """
+    B, N, _ = x_norm.shape
+    device = x_norm.device
+    pos = x_norm[..., :2]
+
+    # Per-sample chunked pairwise distance — at 242K nodes × ~5K surface nodes
+    # the full pairwise diff would be ~9 GB, so we chunk over real nodes.
+    CHUNK = 8192
+    dist_to_surf = torch.zeros(B, N, device=device)
+    for b in range(B):
+        n = int(mask[b].sum().item())
+        if n == 0:
+            continue
+        s_flag = is_surface[b, :n]
+        surf_idx = s_flag.nonzero(as_tuple=True)[0]
+        if surf_idx.numel() == 0:
+            continue
+        real_pos = pos[b, :n]                       # [M, 2]
+        surf_pos = real_pos[surf_idx]               # [S, 2]
+        for start in range(0, n, CHUNK):
+            chunk = real_pos[start:start + CHUNK]   # [C, 2]
+            diff = chunk.unsqueeze(1) - surf_pos.unsqueeze(0)  # [C, S, 2]
+            dist_to_surf[b, start:start + chunk.shape[0]] = (
+                diff.norm(dim=-1).min(dim=-1).values
+            )
+
+    log_dist = torch.log1p(dist_to_surf)
+    is_tandem = (
+        (x_raw[..., 22].abs() > 1e-6) | (x_raw[..., 23].abs() > 1e-6)
+    ).float() * mask.float()
+
+    extra = torch.stack([dist_to_surf, log_dist, is_tandem], dim=-1)
+    return torch.cat([x_norm, extra], dim=-1)
+
 # ---------------------------------------------------------------------------
 # Transolver model
 # ---------------------------------------------------------------------------
@@ -237,12 +296,25 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             mask = mask.to(device, non_blocking=True)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            x_aug = add_derived_features(x_norm, x, is_surface, mask)
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            pred = model({"x": x_aug})["preds"]
 
-            sq_err = (pred - y_norm) ** 2
-            vol_mask = mask & ~is_surface
-            surf_mask = mask & is_surface
+            # Per-sample finite-y guard. Some test ground-truth tensors contain
+            # NaN entries (e.g. cruise sample 20 has 761 non-finite p values).
+            # The downstream scorer skips those samples by index, but `nan * 0`
+            # still leaks NaN into the masked sums here, so we zero out the bad
+            # samples' contributions before any sum.
+            B = y.shape[0]
+            y_finite_b = torch.isfinite(y.reshape(B, -1)).all(dim=-1)  # [B]
+            sample_mask = y_finite_b.unsqueeze(-1).expand(-1, mask.shape[-1])
+            mask_eff = mask & sample_mask
+            y_norm_safe = torch.where(
+                sample_mask.unsqueeze(-1), y_norm, torch.zeros_like(y_norm)
+            )
+            sq_err = (pred - y_norm_safe) ** 2
+            vol_mask = mask_eff & ~is_surface
+            surf_mask = mask_eff & is_surface
             vol_loss_sum += (
                 (sq_err * vol_mask.unsqueeze(-1)).sum()
                 / vol_mask.sum().clamp(min=1)
@@ -254,7 +326,20 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            # Drop non-finite-y samples so the inner ``nan * 0`` masking
+            # doesn't leak NaN into the accumulators.
+            if y_finite_b.all():
+                ds, dv = accumulate_batch(
+                    pred_orig, y, is_surface, mask, mae_surf, mae_vol
+                )
+            elif y_finite_b.any():
+                ds, dv = accumulate_batch(
+                    pred_orig[y_finite_b], y[y_finite_b],
+                    is_surface[y_finite_b], mask[y_finite_b],
+                    mae_surf, mae_vol,
+                )
+            else:
+                ds = dv = 0
             n_surf += ds
             n_vol += dv
 
@@ -416,7 +501,7 @@ val_loaders = {
 
 model_config = dict(
     space_dim=2,
-    fun_dim=X_DIM - 2,
+    fun_dim=AUG_X_DIM - 2,
     out_dim=3,
     n_hidden=128,
     n_layers=5,
@@ -485,8 +570,9 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
+        x_aug = add_derived_features(x_norm, x, is_surface, mask)
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
+        pred = model({"x": x_aug})["preds"]
         sq_err = (pred - y_norm) ** 2
 
         vol_mask = mask & ~is_surface
