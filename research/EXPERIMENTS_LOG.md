@@ -1,5 +1,31 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 04:50 — PR #473: lr=2e-3 with grad_clip_norm=1.0 — **CLOSE (redundant axis)**
+
+- Branch: `charliepai2d5-tanjiro/lr-2e-3-with-grad-clip` (closed)
+
+### Results
+
+| metric | value | vs PR #387 baseline (74.44) | vs current baseline PR #464 (73.91 / 70.37) |
+|---|---:|---|---|
+| `val_avg/mae_surf_p` (best ep 14/14) | 74.28 | −0.22% | **+0.50%** (worse) |
+| `test_avg/mae_surf_p` (3 clean) | 70.75 | −1.92% | **+0.54%** (worse) |
+| Pre-clip ‖∇‖ peak (ep 2) | 197.6 | vs baseline 270 → **lower** | predicted 2× higher; observed 0.73× |
+
+### Decision
+
+Close. Marginal worse on current baseline; was directionally on the +/-0.5% noise band on the pre-grad-clip-0.5 baseline.
+
+**Critical mechanistic finding (worth recording):** clipping decouples LR from observed gradient evolution. Per-step parameter movement = `LR × max_norm` in the always-clipped regime, so:
+- `lr=2e-3 + clip=1.0` ≈ `lr=1e-3 + clip=0.5` (both per-step ≈ 1e-3)
+- The "doubling LR doubles peak ‖∇‖" prediction was wrong — observed peak ‖∇‖ at ep 2 was 197.6 vs baseline's 270 (i.e. *lower*, not higher), because gradient evolution depends on local loss-landscape geometry rather than directly on LR.
+
+So **LR and grad_clip_norm are redundant control knobs in the always-clipped regime** — alphonse's PR #464 (clip 1.0→0.5) already captured the meaningful axis change. Tanjiro's lr=2e-3 with clip=1.0 gives a similar effective per-step magnitude as alphonse's lr=1e-3 with clip=0.5, hence similar metrics within seed noise.
+
+Reassigned tanjiro to **bs=8 + lr=1.4e-3** (PR #542) — testing the √2 LR-scaling rule for batch size, picking up thorfinn's bs=8 follow-up suggestion. Genuinely a different axis (variance reduction with appropriate LR adjustment) since clipping doesn't replace batch-size effects on gradient *direction* estimates, just on *magnitude*.
+
+
+
 ## 2026-04-28 04:40 — PR #364 (rerun #2): Huber smooth_l1 β=0.5 on full stack — **CLOSE (loss-refinement axis exhausted)**
 
 - Branch: `charliepai2d5-edward/huber-loss` (closed)
