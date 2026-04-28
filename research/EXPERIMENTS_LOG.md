@@ -481,6 +481,17 @@ Round-1 reviews. Primary ranking metric: `val_avg/mae_surf_p` (lower is better).
 - The +0.65% test regression is likely run-to-run variance (the model was still descending at the cap).
 - Decision: **MERGE.** Orthogonal compound. Modest val win on the same starting baseline.
 
+## 2026-04-28 05:35 — PR #510: torch.compile(model) — **INFRASTRUCTURE WIN**
+
+- Branch: `charliepai2d2-alphonse/torch-compile-baseline` — metrics committed (both compile-default and apples-to-apples eager runs).
+- Hypothesis: wrap model in `torch.compile(mode="reduce-overhead")` for fused TorchInductor + CUDA Graphs. Predicted −1% to −3% from speedup buying extra epochs.
+- Result: **mode="reduce-overhead" OOMed** at iteration ~26 of epoch 1 (90.44 GB allocated, 59.65 GB in private CUDA Graph pools). Inductor printed: *"CUDAGraph supports dynamic shapes by recording a new graph for each distinct input size... 9 distinct sizes"*. The variable mesh padding from `pad_collate` triggered exactly the failure mode the PR predicted.
+- **Pivoted to `mode="default"`**: TorchInductor fusion only, no CUDA Graphs. Succeeded cleanly with one soft graph break (DropPath's `.item()` call).
+- Result: best `val_avg/mae_surf_p = 66.397` at epoch 15. **−1.35% vs current 67.306 baseline; −6.1% vs apples-to-apples eager run (70.700 at ep14).** test_avg = 60.398 (+1.86% vs current 59.296 — driven by RNG since seeds differ between runs).
+- **Wall-clock impact**: 103.6 s/epoch (−23.3% vs eager's 135.1 s/epoch). **17 epochs in 30-min cap vs 14 eager (+21%).** Compile cost: epoch 1 was +6 s warmup amortized across 16 fast subsequent epochs.
+- Per-split val MAE for `p` (compile run, all 4 improved vs eager): single_in_dist 79.83 (eager 87.50), camber_rc 76.52 (eager 81.02), cruise 45.78 (eager 48.46), re_rand 63.46 (eager 65.82).
+- Decision: **MERGE.** This is the round's most impactful merge despite a small val win — the wall-clock gain unlocks ~3 extra epochs for every future PR on this branch. Future cosine T_max may want re-tuning to use the new realistic budget (currently T_max=13, but effective budget is now ~17 epochs).
+
 ## Test-metric NaN follow-up (cross-PR)
 
 All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the student diagnoses:
