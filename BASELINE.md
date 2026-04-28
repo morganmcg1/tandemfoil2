@@ -2,6 +2,37 @@
 
 Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pressure MAE across the four val splits). Paper-facing metric is `test_avg/mae_surf_p` from the best-val checkpoint.
 
+## 2026-04-28 09:09 — PR #647: Per-block slice-temp init schedule [1.5, 1.875, 2.25, 2.625, 3.0]
+
+- **Best `val_avg/mae_surf_p`** (this PR's standalone measurement, on PR #510 same-stack baseline): **61.872** (epoch 18, −4.55% vs 64.824)
+- **`test_avg/mae_surf_p`** (paper-facing, all 4 splits finite): **54.555** (vs 56.391 PR #510, −3.26%)
+- **Per-split val MAE for `p`** (best epoch 18, compile=True):
+  - val_single_in_dist: **72.864 (−6.01%, largest gainer)**
+  - val_geom_camber_rc: **73.794 (−2.86% — direction reversal! Was +2-3% regressing under sharper global init)**
+  - val_geom_camber_cruise: 42.115 (−4.78%)
+  - val_re_rand: 58.713 (−3.85%)
+- **Per-split test MAE for `p`** (best ckpt):
+  - test_single_in_dist: 63.580
+  - test_geom_camber_rc: 67.622
+  - test_geom_camber_cruise: 35.356
+  - test_re_rand: 51.660
+- **Recipe**: huber(δ=0.10) + bias-corrected EMA(0.995, warmup=50) + SwiGLU + DropPath(0.1) + AdamW betas (0.9, 0.95) + per-parameter-group wd: attn=1e-4, mlp=1e-5, other=3e-5 + **per-block PhysicsAttention temperature init [1.5, 1.875, 2.25, 2.625, 3.0]** (was global init=2.0) + cosine 3-ep warmup (start_factor=0.3) + T_max=11 + decaying noise std (linear: ep1=0.0025, ep14=0.000179, ep15+=0) + NaN-safe + clip_grad_norm_(max_norm=10.0) + compile=True + lr=6e-4.
+- **Final per-block temperatures (live=EMA, drift)**:
+  - block 0: 1.456 (drift **−0.044**, smallest — softest block is closest to equilibrium)
+  - block 1: 1.777 (drift −0.098)
+  - block 2: 2.175 (drift −0.075)
+  - block 3: 2.546 (drift −0.079)
+  - block 4: 2.914 (drift −0.086)
+- **Mechanism CONFIRMED**: hierarchical sharpness is a true depth-specialization signal. Adjacent block deltas (0.32-0.39) > drift magnitudes (0.04-0.10) — schedule is a stable equilibrium for these blocks.
+- **camber_rc/cruise tension resolved**: was a depth-specialization issue, not a global capacity tradeoff. The variance across blocks is doing the work, not the higher mean (global init=2.5 with same mean was *worse* by 4 absolute).
+- **Compound expectation**: this run was on pre-#635/#636/#640/#601 baseline. Per-block init is mechanically orthogonal to lr peak, noise schedule, per-group wd, and huber δ — should compound below 61.872 on the combined stack.
+- **Metric summary**: `models/model-charliepai2d2-askeladd-slice-temp-per-block-schedule-20260428-082258/metrics.jsonl`
+- **Reproduce**:
+  ```bash
+  cd target
+  python train.py --epochs 50 --experiment_name slice-temp-per-block-schedule --agent <name> --compile=True
+  ```
+
 ## 2026-04-28 08:58 — PR #601: Huber δ=0.25 → 0.1 (rebased on post-#562/#510 stack)
 
 - **Best `val_avg/mae_surf_p`** (this PR's standalone measurement, on PR #510 same-stack baseline): **62.879** (epoch 17, −3.00% vs 64.824)
