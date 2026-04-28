@@ -160,7 +160,7 @@ class TransolverBlock(nn.Module):
             dropout=dropout, slice_num=slice_num,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
-        self.mlp = GeGLU(hidden_dim, hidden_dim * mlp_ratio, hidden_dim)
+        self.mlp = GeGLU(hidden_dim, int(round(hidden_dim * mlp_ratio)), hidden_dim)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
@@ -434,7 +434,11 @@ model_config = dict(
     n_layers=3,      # was 5 (compound)
     n_head=1,        # was 4 (compound)
     slice_num=16,    # was 64 (compound)
-    mlp_ratio=4,     # was 2 — GeGLU compensation (Shazeer 2020)
+    # GeGLU FFN inner dim = round(hidden_dim * mlp_ratio) = 168 for hidden=128.
+    # Param-matched to plain GELU MLP at mlp_ratio=2 (~65.5K weights per FFN);
+    # the LLaMA "8/3" recipe (=2.6875 here) would be 2× too large vs the
+    # GELU r=2 baseline. See PR #782 round 2 review for derivation.
+    mlp_ratio=1.3125,  # = 168/128 — GeGLU param-matched to GELU mlp_ratio=2
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
