@@ -6,7 +6,7 @@
 
 ## Current research focus
 
-**Round baseline is PR #541 (edward, T_max=50 confirmed for L1 + favorable seed): val_avg = 56.22, test_avg = 48.42** — cumulative **−61.0% / −63.1%** vs original PR #312 reference (144.21 → 56.22). Six merged interventions: bf16 + FF K=8 + `torch.compile(dynamic=True)` + pure L1 + cosine T_max=50 (confirmed correct for L1, **3.14% better than T_max=37**) + single-seed variance ≈ ±1%.
+**Round baseline is PR #531 (fern, per-Re sqrt sampling on pure L1): val_avg = 54.09, test_avg = 46.40** — cumulative **−62.5% / −64.6%** vs original PR #312 reference (144.21 → 54.09). Seven merged interventions: bf16 + FF K=8 + `torch.compile(dynamic=True)` + pure L1 + cosine T_max=50 + per-Re sqrt sampling. Per-Re stacks at **94% efficiency** with L1 baseline.
 
 **Schedule alignment for pure L1 confirmed**: T_max=50 wins by 3.14% over T_max=37. Mechanism is `sign(r)` constant-magnitude gradient + non-zero terminal LR = continued refinement. Per-epoch val jumps in last epochs are LARGEST of the run (epoch 36→37: -5.4%). **rc-camber is the only split unmoved by schedule** — rc is representation-limited, not residual-refinement-limited. Schedule + loss interventions can't move rc; need geometry-side or capacity-side experiments.
 
@@ -25,7 +25,7 @@
 | **#570** | **thorfinn** | **Loss / metric alignment** | **surf_weight=8 single probe on pure-L1** (followup from #544 close: 3-point monotonic curve under L1 suggests sw<10 may be optimum, single-flag test) |
 | #522 | askeladd | Optimization tuning | lr=3e-4 on Huber+compile+FF (sharp-edge hypothesis) |
 | **#529** | **alphonse** | **Architecture** | **Surface-only auxiliary p head + aux Huber loss + inference blending** |
-| #531 | fern | Sampling | Per-Re weighted sampling — sent back to rebase onto pure L1 baseline (val_avg=65.61 on Huber → +14.5% vs L1; mechanism is fully orthogonal so should stack) |
+| **#591** | **fern** | **Sampling** | **Linear-Re bracket** (`weight ∝ Re/Re_median`, no sqrt) — followup #1 from PR #531 closing analysis ("we may not have saturated") |
 
 ## Reviewed (round 1+)
 
@@ -51,7 +51,8 @@
 | #503 | alphonse | Closed | +12.07% on compile+FF. **Capacity scale-up conclusively ruled out** (2 independent runs at 2 different baselines). |
 | #407 | fern | Merged → superseded by #504 | T_max=37 alignment with Huber: val_avg=69.74 (−0.13%). Empty PR — CLI flag change. |
 | #504 | edward | Merged → superseded by #541 | Pure L1 replacing SmoothL1: val_avg=57.29 (−17.96% vs Huber). |
-| **#541** | **edward** | **Merged (CURRENT BASELINE)** | **T_max=50 confirmed for L1, fresh-seed rerun: val_avg=56.22 (−1.07% vs PR #504 same config). T_max=50 beats T_max=37 by 3.14%. Cumulative −61.0%.** |
+| #541 | edward | Merged → superseded by #531 | T_max=50 confirmed for L1, fresh-seed rerun: val_avg=56.22 (-1.07% vs PR #504 same config). |
+| **#531** | **fern** | **Merged (CURRENT BASELINE)** | **Per-Re sqrt sampling: val_avg=54.09 (-3.79% vs PR #541), test_avg=46.40 (-4.18%). Cumulative −62.5% / −64.6%. Stacks at 94% efficiency.** |
 
 ## Throughput levers status
 

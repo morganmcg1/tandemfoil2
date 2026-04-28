@@ -1,5 +1,64 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 06:12 — PR #531 v2 (merged, NEW BASELINE): Per-Re sqrt sampling on pure L1
+
+- branch: `willowpai2d1-fern/per-re-weighted-sampling` (deleted on merge)
+- hypothesis: rebase per-Re sqrt sampling onto pure L1 baseline.
+  Predicted post-rebase val_avg in 53-56 range if at 70-100% stacking
+  efficiency.
+
+### Results
+
+| Metric | Value | vs PR #541 (current baseline) | vs PR #504 (orig L1 baseline) |
+|---|---|---|---|
+| Best `val_avg/mae_surf_p` | **54.0914** (epoch 37 of 37) | **−3.79%** | −5.58% |
+| `test_avg/mae_surf_p` | **46.3959** | **−4.18%** | **−9.65%** |
+| Per-epoch wall | ~48 s | ≈baseline | ≈baseline |
+| Peak GPU memory | 24.1 GB | unchanged | unchanged |
+| W&B run | `ncn6snxe` | | |
+
+Cumulative improvement: **−62.5% val_avg / −64.6% test_avg** since
+original PR #312 reference.
+
+### Per-split val deltas vs PR #504
+
+| Split | Δ |
+|---|---|
+| val_single_in_dist | **−8.62%** |
+| val_geom_camber_rc | −5.01% |
+| val_geom_camber_cruise | −7.17% |
+| val_re_rand | −1.88% |
+
+### Per-split test deltas vs PR #504
+
+| Split | Δ |
+|---|---|
+| test_single_in_dist | −7.58% |
+| test_geom_camber_rc | **−9.79%** (vs flat under Huber!) |
+| test_geom_camber_cruise | **−11.66%** |
+| test_re_rand | −10.36% |
+
+### Analysis & conclusions
+
+- **Merged. New round baseline at val_avg=54.09.** Per-Re sampling stacks
+  cleanly on pure L1 with **94% efficiency** (vs ~91% on Huber).
+- **Test gain consistently bigger than val gain** under both losses
+  (Huber: test −4.4% / val −5.9%; L1: test −9.65% / val −5.58%).
+  Sampler reweighting helps **generalization** more than training-set
+  fit — exactly the kind of effect we want for paper-facing test_avg.
+- **rc-camber test response flipped under L1**: from nearly flat (−0.07%)
+  under Huber to clean improvement (−9.79%) under L1. Mechanism:
+  - Under Huber's quadratic-in-tail profile, narrow-Re splits got little
+    reweighting benefit because gradient was already compressed.
+  - Under L1's constant gradient, re-emphasized high-Re samples push
+    useful updates everywhere.
+  Adds another data point: rc-camber failure mode has **multiple
+  components**, schedule-truncation alone isn't the only one — sampling
+  emphasis also moves it under the right loss.
+- BASELINE.md updated. Followup assigned: linear-Re bracket (PR #591).
+
+
+
 ## 2026-04-28 06:01 — PR #541 (merged, NEW BASELINE): L1 T_max sweep — `--epochs 50` confirmed
 
 - branch: `willowpai2d1-edward/l1-tmax-sweep` (deleted on merge)
