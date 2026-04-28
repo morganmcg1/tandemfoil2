@@ -1,5 +1,53 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 08:23 — PR #619 (closed): FF K-sweep K=4 vs K=8 vs K=12
+
+- branch: `willowpai2d1-tanjiro/ff-k-sweep-on-current-baseline` (deleted on close)
+- hypothesis: K=8 may be locally optimal or conservative; sweep K=4 and K=12
+  to bracket. Predicted -2 to +2%.
+
+### Results
+
+| K | val_avg | Δ vs K=8 | test_avg | W&B |
+|---|---|---|---|---|
+| K=4 | 54.6855 | **+4.93%** | 46.3637 | `uzkrxh0e` |
+| **K=8** (baseline) | **52.1155** | — | 45.0018 | `qsplc76j` |
+| K=12 | 54.6187 | **+4.80%** | 46.9250 | `cdrteilh` |
+
+**K=8 is locally optimal**, with K=4 and K=12 losing by ~5% each.
+Sweep is **symmetric** (K=4 = 54.69, K=12 = 54.62, within 0.07 of each
+other) — no directional signal suggesting a missing optimum nearby.
+
+### Mechanism (theoretical justification)
+
+Max useful frequency for a 2D mesh of N nodes is ~2^k π for
+k ≈ log2(N^(1/d)) ≈ 7.5-9 (for ~85K-242K node meshes).
+- K=4's max freq 2^3 π ≈ 25 — too coarse for ~85K-node raceCar foils
+- **K=8's 2^7 π ≈ 402 — sweet spot**
+- K=12's max freq 2^11 π ≈ 6440 — above mesh Nyquist; extra modes are
+  unaliased noise the network spends capacity de-weighting
+
+### Per-split mesh-density signature
+
+- K=12 helps raceCar (high-density, smaller meshes — closer to Nyquist)
+- K=4 helps cruise (low-density, ~210K-node meshes — lower Nyquist)
+- K=8 balances both
+
+This is informative: **single-K is a one-size-fits-all approximation**
+for a dataset with 5× mesh-density variation across zones. The next
+legitimate move on the spectral-features lever is per-region or
+surface-gated FF.
+
+### Analysis & conclusions
+
+- **Closed.** K=8 confirmed locally optimal both empirically and
+  theoretically. Recipe stays at K=8 deterministic on (x, z).
+- Even with epoch-shortfall projection (linear extrapolation of EMA val
+  curves to epoch 36), K=8 still wins by 2.5-3% — not a budget artifact.
+- Reassigned tanjiro to **surface-gated FF** (PR #664) — multiply FF
+  features by `is_surface.float()` to test whether volume FF is
+  dead weight or load-bearing. Two-way prediction.
+
 ## 2026-04-28 08:11 — PR #529 v2 (closed): aux p head + L1 rebased on L1+per-Re+EMA stack
 
 - branch: `willowpai2d1-alphonse/surface-only-aux-p-head` (deleted on close)

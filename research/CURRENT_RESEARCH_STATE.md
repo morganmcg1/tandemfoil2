@@ -20,7 +20,7 @@
 |---|---|---|---|
 | #321 | frieren | Optimization & schedule | warmup + cosine peak=7e-4 (sent back from peak=1e-3; will need rebase onto new T_max=37 baseline) |
 | **#634** | **nezuko** | **Maintenance / operational** | **Cosmetic NaN cleanup in `train.py::evaluate_split`** — flagged 8+ times across multiple students; tripping `training_log_status` into false-failed reports. One-shot fix mirroring `data/scoring.py` post-b78f404 pattern. |
-| **#619** | **tanjiro** | **Spatial features hyperparam** | **FF K-sweep (K=4 vs K=8 baseline vs K=12) on (x, z) — settles whether K=8 is locally optimal** |
+| **#664** | **tanjiro** | **Spatial features (gated)** | **Surface-gated FF** — multiply FF×`is_surface.float()` so volume nodes see zeros. Tests if volume FF is dead weight or load-bearing. K=8 confirmed locally optimal in PR #619; this attacks the per-region mesh-density variation. |
 | **#641** | **edward** | **Optimization tuning** | **weight_decay=3e-4 single probe** (locks down wd hyperparameter on the heavily-tuned current stack — wd has been at round-1 default 1e-4 the whole round) |
 | **#644** | **thorfinn** | **Architecture (rc-targeted)** | **NACA camber-aware learnable embedding** for rc-camber bottleneck. Adds 11-bin embedding (32 dims total) for front+rear NACA-M; small architectural change targeting OOD-camber generalization gap. |
 | #522 | askeladd | Optimization tuning | lr=3e-4 on Huber+compile+FF (sharp-edge hypothesis) |
