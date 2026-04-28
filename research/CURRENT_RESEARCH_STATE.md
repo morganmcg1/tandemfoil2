@@ -6,6 +6,7 @@
 - **`val_avg/mae_surf_p` = 132.276** (EMA, ep13/50 timeout-cut)
 - **`test_avg/mae_surf_p` = 118.041**
 - See `BASELINE.md` for the full per-split breakdown.
+- **Pending winner**: PR #352 (smoothl1-surface) raw run measured val=105.56, test=95.39 (−20.2% / −19.2% vs current). Sent back for rebase onto post-#356; will merge as new baseline after re-run.
 
 ## Resolved: scoring NaN bug
 - **Root cause** (independently flagged by tanjiro on #356 and askeladd on #351): one sample (`test_geom_camber_cruise` idx 20) has non-finite `y[p]`. `data/scoring.py:accumulate_batch` builds the right per-sample mask but does `err = |pred − y|` *before* the masked sum, so IEEE-754 `NaN*0 = NaN` (and `inf*0 = NaN`) defeats it and poisons the float64 accumulator → `mae_surf_p`/`mae_vol_p` go NaN for the whole split.
@@ -18,7 +19,7 @@
 |----|---------|------|-------|--------|
 | #350 | alphonse  | bigger-transolver-bf16   | Architecture (n_hidden 128→256, n_head 4→8) + bf16 | wip |
 | #351 | askeladd  | surf-weight-50           | Loss balance (10→50) | **sent back 23:42**: val=135.19 raw, test NaN; rebase onto post-#356 + retain surf_weight=50; test compounding with EMA |
-| #352 | edward    | smoothl1-surface         | Loss form (SmoothL1 β=1 on surface) | wip |
+| #352 | edward    | smoothl1-surface         | Loss form (SmoothL1 β=1 on surface) | **sent back 04-28 00:10** for rebase + re-run: val=105.56 raw / test=95.39 (−20.2% / −19.2% vs EMA baseline; raw-vs-raw −22.7%). Decisive winner; conflicts with merged #356 in `evaluate_split`. Will merge as new baseline once post-rebase numbers land. |
 | #353 | fern      | warmup-cosine-1e3        | LR schedule (5-ep warmup + cosine to 1e-5, peak 1e-3) | wip |
 | ~~#354~~ | ~~frieren~~   | ~~slice-128-heads-8~~        | ~~Slice/head count (slice 64→128, n_head 4→8)~~ | **CLOSED 23:51**: val=156.48 (+18%), test=144.10 (+22%); throughput-bound (250 s/ep, 8/50 epochs) |
 | #355 | nezuko    | mlp-ratio-4              | MLP capacity (mlp_ratio 2→4) | **sent back, corrected 23:42**: val=129.24 raw (timeout-cut ep13/50) test NaN; rebase onto post-#356 + retain mlp_ratio=4 |
@@ -32,8 +33,18 @@
 | #373 | frieren | mixed-slice-last-layer | Last-layer-only `slice_num=128` (mixed slicing) | Replaces closed #354; pays slice cost only at the regression head — fits in 30-min budget |
 | #374 | tanjiro | grad-clip-1p0 | Gradient clipping at `max_norm=1.0` between backward and step | Variance-reduction lever complementary to EMA; pre-clip grad norm logged as diagnostic |
 
+## Updated picture from round-1 partial returns
+- **#356 (EMA) merged** as round-1 baseline at val=132.276 (−3.1% vs same-run best raw).
+- **#352 (SmoothL1) raw run** beats baseline by −20.2% / −19.2% — by far the strongest single-lever delta of round 1. Pending rebase + re-run.
+- **#354 (slice_num=128 + heads=8)** closed: throughput-bound at 250 s/epoch.
+- The biggest signal so far: **loss form (MSE→SmoothL1) is more impactful than checkpoint smoothing or any other lever measured to date**. Round 2 priorities should re-rank to put loss-form variants high.
+
 ## Round 2 candidates (queued)
 Once round 1 finishes (best-of-merged-and-still-WIP) and we have a few merged compounders, the next round will pull from:
+
+- **L1-only surface loss + β-sweep** for SmoothL1 (β ∈ {0.25, 0.5, 1.0, 2.0}) — directly follows from #352's gain. β=1 may be too generous once mid-training residuals shrink below 1σ.
+- **SmoothL1 on volume too** — if surface SmoothL1 holds, volume is the natural propagation; pure-L1 surface is a worthwhile end-of-spectrum point.
+- **SmoothL1 + channel weighting + surf_weight** — three loss-shape levers that may compound (#352, #357, #351).
 
 - **EMA decay sweep** at fixed budget — try `ema_decay ∈ {0.9999}` (slow) and a warmup-EMA variant (skip first 1–2 epochs of EMA to avoid the random-init drag tanjiro observed at ep1). Polyak-Ruppert bias correction (`/ (1 - decay^t)`) is cheap and tightens early epochs.
 - **SwiGLU MLP** at matched param count vs. plain GELU `mlp_ratio=4` — modern transformer recipe; nezuko flagged it.

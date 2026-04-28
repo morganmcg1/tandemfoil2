@@ -120,3 +120,43 @@
 |----|---------|------|-------|-----|
 | #373 | frieren | mixed-slice-last-layer | Last-layer-only `slice_num=128` (mixed slicing) | Replaces closed #354; respects 30-min timeout; pays slice cost only at the regression head |
 | #374 | tanjiro | grad-clip-1p0 | Gradient clipping at `max_norm=1.0` between backward and step | Variance-reduction lever complementary to EMA; logs pre-clip grad norm as diagnostic |
+
+## 2026-04-28 00:10 — PR #352: SmoothL1 (Huber, β=1) on surface loss (charliepai2d1-edward) — **sent back for rebase + re-run; will merge after**
+- Branch: `charliepai2d1-edward/smoothl1-surface` (pre-EMA base; conflicts with merged #356 in `evaluate_split`)
+- Hypothesis: replace MSE with SmoothL1 on the surface loss term to give the gradient an MAE-shaped profile in the |err|>β regime, where high-Re samples push the residual past 1σ. Volume term kept as MSE.
+
+### Headline metrics — pre-rebase (raw, no EMA, ep14/50, timeout-cut)
+| | val_single_in_dist | val_geom_camber_rc | val_geom_camber_cruise | val_re_rand | **val_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` | 124.03 | 119.75 | 81.76 | 96.71 | **105.56** |
+| `mae_surf_Ux` | 2.04 | 2.82 | 2.05 | 2.50 | 2.35 |
+| `mae_surf_Uy` | 0.78 | 0.99 | 0.60 | 0.79 | 0.79 |
+
+| | test_single_in_dist | test_geom_camber_rc | test_geom_camber_cruise | test_re_rand | **test_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` | 113.18 | 105.59 | 68.34 | 94.46 | **95.39** |
+| `mae_surf_Ux` | 2.04 | 2.71 | 2.05 | 2.40 | 2.30 |
+| `mae_surf_Uy` | 0.76 | 0.94 | 0.55 | 0.76 | 0.75 |
+
+- Wall clock: 30.7 min (timeout-cut at ep14/50). Peak VRAM: 42.14 GB. NaN events: 0.
+- Run committed `train.py` includes a defensive non-finite-y pre-filter in `evaluate_split` (different implementation from tanjiro's but functionally equivalent — to be replaced by baseline's version on rebase).
+
+### Comparison vs new baseline (PR #356, EMA, ep13/50)
+| | baseline (EMA, MSE) | edward (raw, SmoothL1) | Δ raw-vs-EMA | (informational) Δ raw-vs-raw |
+|---|---:|---:|---:|---:|
+| `val_avg/mae_surf_p` | 132.276 | 105.56 | **−20.2%** | **−22.7%** vs tanjiro's best raw 136.53 |
+| `test_avg/mae_surf_p` | 118.041 | 95.39 | **−19.2%** | n/a (baseline raw test number not available) |
+
+### Analysis
+- **The lever is decisively winning.** Even with the unfair raw-vs-EMA comparison disadvantaging edward, val improvement is −20.2% and test is −19.2%. Raw-vs-raw against tanjiro's PR #356 internal best raw, SmoothL1 alone delivers −22.7%. This is the largest single-lever delta of round 1 by a wide margin.
+- **Mechanism is consistent with theory.** MSE quadratically up-weights large errors, which on high-Re samples (per-sample y std up to ~2,077 m²/s² in `val_single_in_dist`) means the gradient is dominated by a handful of high-Re outliers. SmoothL1 with β=1 in normalized space matches MAE asymptotics in the |err|>β regime, so per-sample contributions stay closer to constant magnitude. The largest val improvements show up exactly where the value range is widest (single_in_dist 165→124, rc 135→120, re_rand 118→97).
+- **Pre-existing scoring NaN bug also handled**: edward used a similar pre-filter to tanjiro's. On rebase, baseline's NaN-safe `evaluate_split` supersedes.
+- **Run was timeout-cut, val curve still descending.** Best at the last logged epoch (14/50). With more wall clock the number would likely fall further.
+
+### Decision: send back for rebase + re-run
+- Beats baseline by a wide margin (>−5%): would normally merge directly. But edward's branch pre-dates #356 and `evaluate_split` conflicts.
+- Per merge-winner skill workflow: when conflicts exist, send back for rebase rather than force-merge.
+- Rebase resolution: take baseline's `evaluate_split` (drops edward's filter); keep edward's SmoothL1 substitution in the train loop's loss block (no overlap with tanjiro's EMA-update insertion).
+- Re-run is required because the saved checkpoint was trained without EMA-shadow updates, so we can't reuse it under the new baseline.
+- Predicted post-rebase outcome: SmoothL1 + EMA likely lands near val ≈ 100–102, test ≈ 92–95 (assuming the EMA −3% delta from #356 applies on top of SmoothL1's −22.7%).
+- Will merge as new baseline once clean post-rebase numbers land.
