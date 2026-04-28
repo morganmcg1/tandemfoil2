@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import time
@@ -46,6 +47,58 @@ from data import (
     load_test_data,
     pad_collate,
 )
+
+# ---------------------------------------------------------------------------
+# Fourier feature encoding for log(Re)
+# ---------------------------------------------------------------------------
+# Concatenate (don't replace) the scalar log(Re) at dim 13 with 12 sin/cos
+# features at 6 frequencies. log(Re) is in ~[11.5, 15.4] (Re ∈ [100K, 5M]);
+# we map that to [0, 1] before applying the geometric frequency band.
+# Resulting input dim: 24 + 12 = 36.
+
+LOG_RE_DIM = 13
+LOG_RE_MIN = 11.5
+LOG_RE_MAX = 15.4
+FOURIER_FREQ_LIST = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
+FOURIER_FEAT_DIM = 2 * len(FOURIER_FREQ_LIST)  # 12
+X_DIM_AUG = X_DIM + FOURIER_FEAT_DIM  # 36
+
+
+def fourier_log_re(x: torch.Tensor, fourier_freqs: torch.Tensor) -> torch.Tensor:
+    """Append sin/cos Fourier features of ``x[..., LOG_RE_DIM]`` to ``x``.
+
+    Args:
+        x: ``[..., X_DIM]`` raw inputs (pre-normalization).
+        fourier_freqs: 1-D tensor of frequencies, on the same device as ``x``.
+
+    Returns:
+        Tensor of shape ``[..., X_DIM_AUG]``: original 24 dims unchanged, then
+        ``2 * len(fourier_freqs)`` Fourier features appended at the end.
+    """
+    log_re = x[..., LOG_RE_DIM:LOG_RE_DIM + 1]
+    log_re_norm = (log_re - LOG_RE_MIN) / (LOG_RE_MAX - LOG_RE_MIN)
+    phases = 2 * math.pi * log_re_norm * fourier_freqs
+    fourier = torch.cat([phases.sin(), phases.cos()], dim=-1)
+    return torch.cat([x, fourier], dim=-1)
+
+
+def build_augmented_stats(
+    stats: dict[str, torch.Tensor], device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build (mean, std) tensors aligned with ``X_DIM_AUG``.
+
+    The Fourier dims are already in [-1, 1] by construction, so we leave them
+    as mean=0, std=1 (i.e., the normalization is a no-op for those dims). The
+    scalar log(Re) at dim 13 is kept and normalized by its original stats.
+    """
+    x_mean_orig = stats["x_mean"].to(device)
+    x_std_orig = stats["x_std"].to(device)
+    fourier_mean = torch.zeros(FOURIER_FEAT_DIM, device=device, dtype=x_mean_orig.dtype)
+    fourier_std = torch.ones(FOURIER_FEAT_DIM, device=device, dtype=x_std_orig.dtype)
+    x_mean_aug = torch.cat([x_mean_orig, fourier_mean])
+    x_std_aug = torch.cat([x_std_orig, fourier_std])
+    return x_mean_aug, x_std_aug
+
 
 # ---------------------------------------------------------------------------
 # Transolver model
@@ -248,7 +301,8 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device,
+                   fourier_freqs, x_mean_aug, x_std_aug) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -267,7 +321,8 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
-            x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            x_aug = fourier_log_re(x, fourier_freqs)
+            x_norm = (x_aug - x_mean_aug) / x_std_aug
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
@@ -509,6 +564,9 @@ if __name__ == "__main__":
     train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
     stats = {k: v.to(device) for k, v in stats.items()}
 
+    fourier_freqs = torch.tensor(FOURIER_FREQ_LIST, dtype=torch.float32, device=device)
+    x_mean_aug, x_std_aug = build_augmented_stats(stats, device)
+
     loader_kwargs = dict(collate_fn=pad_collate, num_workers=4, pin_memory=True,
                          persistent_workers=True, prefetch_factor=2)
 
@@ -552,7 +610,7 @@ if __name__ == "__main__":
 
     model_config = dict(
         space_dim=2,
-        fun_dim=X_DIM - 2,
+        fun_dim=X_DIM_AUG - 2,
         out_dim=3,
         n_hidden=128,
         n_layers=5,
@@ -583,6 +641,14 @@ if __name__ == "__main__":
             "train_samples": len(train_ds),
             "val_samples": {k: len(v) for k, v in val_splits.items()},
             "sampler_info": sampler_info,
+            "fourier_re": {
+                "log_re_dim": LOG_RE_DIM,
+                "log_re_min": LOG_RE_MIN,
+                "log_re_max": LOG_RE_MAX,
+                "fourier_freqs": FOURIER_FREQ_LIST,
+                "fourier_feat_dim": FOURIER_FEAT_DIM,
+                "x_dim_aug": X_DIM_AUG,
+            },
         },
         mode=os.environ.get("WANDB_MODE", "online"),
     )
@@ -621,7 +687,8 @@ if __name__ == "__main__":
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
-            x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            x_aug = fourier_log_re(x, fourier_freqs)
+            x_norm = (x_aug - x_mean_aug) / x_std_aug
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
             sq_err = (pred - y_norm) ** 2
@@ -660,7 +727,8 @@ if __name__ == "__main__":
         # --- Validate ---
         model.eval()
         split_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                                 fourier_freqs, x_mean_aug, x_std_aug)
             for name, loader in val_loaders.items()
         }
         val_avg = aggregate_splits(split_metrics)
@@ -728,7 +796,8 @@ if __name__ == "__main__":
                 for name, ds in test_datasets.items()
             }
             test_metrics = {
-                name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+                name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                                     fourier_freqs, x_mean_aug, x_std_aug)
                 for name, loader in test_loaders.items()
             }
             test_avg = aggregate_splits(test_metrics)
