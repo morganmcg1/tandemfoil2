@@ -1,62 +1,73 @@
 # SENPAI Research State
 
-- **Updated**: 2026-04-28 20:55 UTC
+- **Updated**: 2026-04-28 22:45 UTC
 - **Branch**: `icml-appendix-willow-pai2e-r2`
 - **Tag**: `willow-pai2e-r2`
 - **Most recent human researcher direction**: none; no GitHub Issues open.
 - **Lab**: 8 students, 1 GPU each (96 GB), 30 min wall-clock, 50 epochs cap.
 
-## First review pass (2026-04-28 19:30)
+## Review passes completed
 
-- **PR #782 (edward, GeGLU mlp_ratio=4)** — sent back. Confounded design (FFN ~3x larger than baseline). Re-run will use mlp_ratio≈8/3 to match FFN params. Best val_avg/mae_surf_p 109.89 / offline test_avg ~106.
-- **PR #784 (frieren, OneCycleLR epochs=50)** — sent back. Schedule never completed (32/50 epochs at timeout, LR floor never reached). Re-run will use `--epochs 28` to fit the 30-min budget. Best val_avg/mae_surf_p 91.72 / offline test_avg 81.62.
-- **Tooling debt**: cruise-split non-finite values in target make `test_avg/mae_surf_p` log as NaN for every run on this branch (one cruise sample has 761 -Inf entries in `p`; the multiplicative mask in `data/scoring.py::accumulate_batch` turns `Inf × 0` into NaN, defeating the intended `y_finite` skip). Fix belongs in `train.py::evaluate_split` (sanitize `pred_orig`/`y` before `accumulate_batch`, or pass a masked version of `mask` — `data/scoring.py` is read-only). **Promoted to PR #821, see below.**
+### First review pass (2026-04-28 19:30)
+- **PR #782 (edward, GeGLU mlp_ratio=4)** — sent back. Confounded (FFN ~3x larger). Re-run with h=168 param-matched.
+- **PR #784 (frieren, OneCycleLR)** — sent back. 32/50 epochs at timeout. Re-run with `--epochs 28`.
 
-## Second review pass (2026-04-28 20:50)
+### Second review pass (2026-04-28 20:50)
+- **PR #781 (askeladd, sn=8)** — **closed**. Timed out at epoch 33/50, val still descending. Not a valid result. Askeladd pivoted to tooling PR #821 (AMP/bf16 + batch_size=16 + NaN-safe eval). Acceptance: 50 epochs in <28 min.
 
-- **PR #781 (askeladd, slice_num=8)** — **closed**. Two seeds tightly clustered (val 92.50 ± 0.10, test 83.3 ± 0.2 offline-clean), but both hit timeout at epoch 33/50 with val still descending. Pattern matches PR #784 (compound + OneCycleLR, also timeout at epoch 32/50 with val=91.72) and PR #782 (compound + GeGLU mlp_ratio=4, timeout at epoch 12/20 because of bigger FFN). **Diagnosis: at fp32 / batch_size=4 the compound base takes ~55 s/epoch on this hardware, so 50 epochs needs ~46 min — far past the 30-min wall clock.** No round-1 hypothesis is testable cleanly until throughput is fixed. Askeladd also delivered a clean root-cause + fix recipe for the NaN bug.
-- **Pivot**: closed sn=8 PR (data preserved in EXPERIMENTS_LOG.md), reassigned askeladd to a tooling PR (#821) that bundles AMP/bf16 + `batch_size=16` + NaN-safe sanitize-before-accumulate-in-evaluate_split. Acceptance: 50 epochs of compound base in <28 min wall clock with finite test_avg/mae_surf_p.
+### Third review pass (2026-04-28 22:30)
+- **PR #787 (thorfinn, Fourier PE)** — **closed**. W&B run ph75483c. val_avg=100.12 (+59 pts / +144% regression). Decisive negative. Direction dead — coordinate encoding via random Fourier features conflicts with slice-token architecture's internal geometry partitioning.
+- **PR #782 round 2 (edward, GeGLU param-matched h=168)** — **closed**. W&B run 7hyra9fj. val_avg=94.41 (+53.5 pts / +131% regression). Decisive negative. Gating in FFN does not help Transolver at this scale (H=128, nl3, sn16). GeGLU direction dead.
 
-## Current research focus
-
-Fresh advisor branch — no PRs merged yet. The plan for round 1 is to **stress-test
-the prior round's compound winner** on this fresh branch, while spreading
-mostly-orthogonal additive variations across the 8 students. The compound
-(`n_layers=3, slice_num=16, n_head=1` on `n_hidden=128, mlp_ratio=2`) was the
-prior round's best config (`test_avg/mae_surf_p = 40.927` per
-`target/README.md`). One student (alphonse) is the anchor — they run the
-default baseline AND the compound to give us a reproducible reference.
-The other seven each layer one independent variation on top of the compound.
-
-## Round 1 assignments (8 WIP PRs)
+## Current assignments (active WIP PRs)
 
 | Student | PR | Hypothesis | Axis | Status |
 |---------|----|-----------|------|--------|
-| alphonse | #779 | compound-anchor — bare baseline + nl3/sn16/nh1 compound | anchor / verification | WIP |
-| askeladd | ~~#781~~ → **#821** | tooling: AMP/bf16 + batch_size=16 + NaN-safe eval | infrastructure | WIP (pivot from sn=8 ablation; sn=8 closed as undertrained) |
-| edward   | #782 | compound + GeGLU activation, mlp_ratio≈8/3 (param-matched re-run) | architecture (gating) | WIP (re-run after first send-back) |
-| fern     | #783 | compound + Huber loss δ=1.0 | loss (objective mismatch) | WIP |
-| frieren  | #784 | compound + OneCycleLR with 5% warmup, --epochs 28 | optimizer (schedule) | WIP (re-run after first send-back) |
+| alphonse | #779 | compound-anchor — bare baseline + nl3/sn16/nh1 | anchor / verification | WIP |
+| askeladd | #821 | tooling: AMP/bf16 + batch_size=16 + NaN-safe eval | infrastructure | WIP |
+| fern     | #783 | compound + Huber loss delta=1.0 | loss (objective mismatch) | WIP |
+| frieren  | #784 | compound + OneCycleLR, --epochs 28 (re-run) | optimizer (schedule) | WIP |
 | nezuko   | #785 | compound + n_hidden=192 | architecture (width) | WIP |
 | tanjiro  | #786 | compound + RMSNorm | architecture (normalization) | WIP |
-| thorfinn | #787 | compound + Fourier feature PE on (x,z) | features (positional) | WIP |
+| edward   | #840 | compound + per-sample relative MAE loss | loss (scale heterogeneity) | WIP (newly assigned) |
+| thorfinn | #841 | compound + slice_num=4 (sn4 extreme) | architecture (slice floor) | WIP (newly assigned) |
+| stark    | #842 | compound + SwiGLU param-matched h=168 (clean, no FourierPE) | architecture (activation) | WIP (newly assigned) |
+| himmel   | #843 | compound + gradient norm clipping (max_norm sweep 0.5 / 1.0) | optimization (stability) | WIP (newly assigned) |
+| charlie  | #844 | compound + mlp_ratio=4 (FFN capacity at nh1) | architecture (MLP capacity) | WIP (newly assigned) |
 
-**Note on the timeout bias.** The 6 active hypothesis PRs (#779, #782, #783, #785, #786, #787) and frieren's re-run (#784 with --epochs 28) are still running under the pre-tooling fp32/batch=4 throughput. Their results will be biased by undertraining (~33 of 50 epochs completable). The *relative* ordering between hypotheses at a fixed truncated budget is still informative, but absolute numbers will trail the prior-round reference (~40.9) substantially. Round 2 (after #821 lands) will re-run any candidate hypotheses under proper throughput.
+## Tooling debt
+
+- **Cruise-split NaN bug**: `test/test_geom_camber_cruise/mae_surf_p` returns NaN across all runs because `data/scoring.py` does not filter non-finite predictions before accumulating metrics. Fix is being implemented in PR #821 (askeladd). Until it lands, test_avg/mae_surf_p will be NaN in W&B for every run — use `best_val_avg/mae_surf_p` as the primary metric.
+- **Throughput bias**: Pre-tooling runs (fp32, batch=4) complete only ~33/50 epochs in the 30-min window. All results from PRs #779–#787 are undertrained. Round 2 hypotheses (PRs #840–#844) will also be biased until #821 lands.
+
+## Current research focus
+
+The compound base (nl3/sn16/nh1, val_avg≈40.93) is the anchor. Round 1 is spreading orthogonal variations across students to identify which axes improve the metric:
+
+1. **Loss reformulation** (Huber #783, relative-MAE #840) — address MSE/MAE mismatch and high-Re scale dominance
+2. **Optimization schedule** (OneCycleLR #784, grad clip #843) — improve convergence stability
+3. **Architecture variants** (width=192 #785, RMSNorm #786, SwiGLU #842, mlp_ratio=4 #844) — probe capacity bottlenecks
+4. **Slice floor** (sn4 #841) — close the slice_num reduction axis (sn8 timed out; sn4 is the next test)
+5. **Tooling** (#821) — unblock AMP/batch16 throughput and fix cruise NaN
+
+## Ruled-out directions (do not repeat)
+
+- Gaussian Fourier PE on (x,z) — closed PR #787, val_avg=100.12, decisive negative
+- GeGLU activation in FFN — closed PR #782, val_avg=94.41 (param-matched), decisive negative
+- SwiGLU bundled with Fourier PE — confounded (old leaderboard ranks 9–11); SwiGLU alone being tested in PR #842
+- FiLM conditioning — failed in prior round (confounded with Fourier PE)
+- Fourier-any approach: all Fourier-related runs in old leaderboard scored 58–62+ (ranks 9–22)
+- Horizontal flip augmentation — rank 30 in prior round
+- Cross-attention decoder — rank 28 in prior round
+- Width increase on the uncompressed baseline (different regime from compound base)
 
 ## Potential next research directions
 
-- **Round 2 — combine winners** of round 1 in 2× and 3× compounds (e.g. compound + GeGLU + RMSNorm + OneCycle if all individually positive).
-- **Loss reformulations**: relative MAE per-sample (researcher H9), channel-balanced loss, log-cosh, log-magnitude weighting for high-Re samples.
-- **Conditioning on Re/AoA**: FiLM blocks injecting Reynolds + AoA as global modulation (was a failure with sigma1.0 Fourier in prior round, but FiLM-only has not been cleanly tested on this base).
-- **Slice-token architecture variants**: PerCN cross-attention to slice tokens as a decoder, learned slice-token initialization, dynamic slice_num.
-- **Capacity sweep at compound**: n_hidden × n_layers grid (e.g. nl4/n_hidden=192 vs nl5/n_hidden=160) once we know whether width or depth helps.
-- **EMA weights for evaluation** (researcher H8) — cheap follow-up.
-- **Gradient clipping** (researcher H10) — if any training runs show unstable loss curves.
-- **Domain-aware sampling weights**: adjust sample weights based on val performance gap per domain (start once we have round 1 data).
-- **Pretrain on single-foil, finetune on tandem** — sequential curriculum exploiting easy → hard subset structure.
-
-## Risks and watch items
-
-- The compound base assumption is unverified on this branch; alphonse's anchor is the test. If the compound doesn't reproduce, round 2 will need to recompute baseline before further compounding.
-- High-Re samples drive ~12× larger residuals than low-Re — Huber and relative-MAE hypotheses target this directly.
-- 30-min wall clock + 50 epochs may not always complete; watch elapsed-time logs in PR comments.
+- **Compound winners**: after round 1 results arrive, combine any positive results (e.g. relative-MAE + RMSNorm + SwiGLU if positive) into 2-way and 3-way compounds.
+- **EMA weights for eval** (H8) — cheap follow-up, no architecture change.
+- **AdamW weight decay tuning** — current weight_decay may not be optimal for the narrow compound base.
+- **surf_weight sweep** (5, 10, 20) — current 10 was set for the full-size baseline; optimal may differ for nl3/sn16/nh1.
+- **Domain-aware sampling weights** — adjust by per-domain val MAE gap once round 1 per-split data is in.
+- **Learned slice initialization** — replace random initial slice tokens with learned per-problem prototypes.
+- **Pretrain on single-foil, finetune on tandem** — sequential curriculum.
+- **Plateau escalation**: if round 1 returns no winners, move to architecture-level changes (e.g. PerceiverIO-style cross-attention decoder, physics-constrained output layer, graph neural net comparison).
