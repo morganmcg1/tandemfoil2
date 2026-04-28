@@ -381,6 +381,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    grad_clip: float = 0.0  # max global grad norm; 0 disables
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -493,6 +494,9 @@ for epoch in range(MAX_EPOCHS):
     t0 = time.time()
     model.train()
     epoch_vol = epoch_surf = 0.0
+    epoch_grad_norm_sum = 0.0
+    epoch_grad_norm_max = 0.0
+    epoch_grad_clip_count = 0
     n_batches = 0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
@@ -514,17 +518,29 @@ for epoch in range(MAX_EPOCHS):
 
         optimizer.zero_grad()
         loss.backward()
+        if cfg.grad_clip > 0:
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.grad_clip)
+        else:
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float("inf"))
         optimizer.step()
         global_step += 1
-        wandb.log({"train/loss": loss.item(), "global_step": global_step})
+        gn = grad_norm.item()
+        wandb.log({"train/loss": loss.item(), "train/grad_norm": gn, "global_step": global_step})
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
+        epoch_grad_norm_sum += gn
+        if gn > epoch_grad_norm_max:
+            epoch_grad_norm_max = gn
+        if cfg.grad_clip > 0 and gn > cfg.grad_clip:
+            epoch_grad_clip_count += 1
         n_batches += 1
 
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
+    epoch_grad_norm_mean = epoch_grad_norm_sum / max(n_batches, 1)
+    epoch_grad_clip_frac = epoch_grad_clip_count / max(n_batches, 1)
 
     # --- Validate ---
     model.eval()
@@ -540,6 +556,9 @@ for epoch in range(MAX_EPOCHS):
     log_metrics = {
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/grad_norm_mean": epoch_grad_norm_mean,
+        "train/grad_norm_max": epoch_grad_norm_max,
+        "train/grad_clip_frac": epoch_grad_clip_frac,
         "val/loss": val_loss_mean,
         "lr": scheduler.get_last_lr()[0],
         "epoch_time_s": dt,
@@ -568,7 +587,9 @@ for epoch in range(MAX_EPOCHS):
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
-        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
+        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f} "
+        f"gn_mean={epoch_grad_norm_mean:.3f} gn_max={epoch_grad_norm_max:.3f} "
+        f"clip_frac={epoch_grad_clip_frac:.2f}]  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
     )
     for name in VAL_SPLIT_NAMES:
