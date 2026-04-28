@@ -227,7 +227,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
-    n_surf = n_vol = n_batches = 0
+    n_surf = n_vol = n_batches = n_pred_skipped = 0
 
     with torch.no_grad():
         for x, y, is_surface, mask in loader:
@@ -240,7 +240,32 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
-            sq_err = (pred - y_norm) ** 2
+            # Reject any sample whose pred (normalized), pred_orig (denorm), or
+            # y is non-finite anywhere. The split-level MAE is otherwise
+            # poisoned because NaN/Inf * 0 == NaN/NaN in IEEE 754, so even
+            # masked-out positions leak into masked sums. data.scoring's
+            # accumulate_batch has the y-side skip but still computes
+            # `(pred_orig - y).abs()` before masking, so a non-finite y
+            # propagates through `err * surf_mask` (observed on
+            # test_geom_camber_cruise: Ux/Uy stay finite, p alone NaNs).
+            # pred_orig can also overflow to +/-inf even when pred is finite
+            # because y_std for the p channel is ~679.
+            pred_orig = pred * stats["y_std"] + stats["y_mean"]
+            B = pred.shape[0]
+            pred_finite = (
+                torch.isfinite(pred.reshape(B, -1)).all(dim=-1)
+                & torch.isfinite(pred_orig.reshape(B, -1)).all(dim=-1)
+            )
+            y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            sample_finite = pred_finite & y_finite
+            n_pred_skipped += int((~pred_finite).sum().item())
+            if not sample_finite.any():
+                continue
+            mask = mask & sample_finite.unsqueeze(-1).expand_as(mask)
+            sq_err = torch.nan_to_num(
+                (pred - y_norm) ** 2, nan=0.0, posinf=0.0, neginf=0.0
+            )
+
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
@@ -253,15 +278,22 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             ).item()
             n_batches += 1
 
-            pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            # Sanitize both sides before accumulate_batch — non-finite samples
+            # are already excluded via `mask`, but NaN/Inf * 0 == NaN would
+            # still leak through `err * surf_mask` inside accumulate_batch.
+            pred_orig_safe = torch.nan_to_num(
+                pred_orig, nan=0.0, posinf=0.0, neginf=0.0
+            )
+            y_safe = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+            ds, dv = accumulate_batch(pred_orig_safe, y_safe, is_surface, mask, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
 
     vol_loss = vol_loss_sum / max(n_batches, 1)
     surf_loss = surf_loss_sum / max(n_batches, 1)
     out = {"vol_loss": vol_loss, "surf_loss": surf_loss,
-           "loss": vol_loss + surf_weight * surf_loss}
+           "loss": vol_loss + surf_weight * surf_loss,
+           "n_pred_skipped": n_pred_skipped}
     out.update(finalize_split(mae_surf, mae_vol, n_surf, n_vol))
     return out
 
@@ -390,10 +422,10 @@ model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
+    n_hidden=192,
+    n_layers=6,
+    n_head=6,
+    slice_num=96,
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
