@@ -1,5 +1,54 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 07:39 — PR #584 (closed): L1 T_max=70 probe — extends T_max=50 finding from above
+
+- branch: `willowpai2d1-edward/l1-tmax70-probe` (deleted on close)
+- hypothesis: --epochs 70 either continues the trend (more cosine =
+  better for L1) or hits diminishing returns. Two-way prediction.
+
+### Results
+
+| Metric | T_max=70 | PR #324 v4 baseline | Δ |
+|---|---|---|---|
+| Best `val_avg/mae_surf_p` | **53.83** (epoch 36 of 70) | 52.1155 | **+3.29%** |
+| `test_avg/mae_surf_p` | 46.10 | 45.00 | +2.44% |
+| Terminal LR @ epoch 36 | 2.39e-4 (~48% of peak) | 0.8e-4 (~16% of peak under T_max=50) | matches PR prediction |
+| Late-epoch jumps (per 2 ep) | -2.16% | -5.4% per epoch under T_max=50 | half the size |
+| Per-epoch wall | ~50 s | ~52 s | same |
+| W&B run | `wd0prhml` | | |
+
+### T_max bracket (now bounded above and below)
+
+| T_max | val_avg vs L1 baseline | source | terminal LR |
+|---|---|---|---|
+| 37 | +3.14% | PR #541 (T_max=37 vs 50) | 0 (cosine zero) |
+| **50** | **0% (current optimum)** | PR #324 v4 baseline | 16% of peak |
+| 70 | +3.29% | PR #584 (this PR) | 48% of peak |
+
+**T_max=50 is near-optimal at the 30-min wall budget.** Optimum is in
+[37, 50] but probably very close to 50; a fine-bracket {49, 50, 51}
+sweep would refine but unlikely to change the ranking. Schedule
+question is settled.
+
+### Per-split signal: rc-camber takes biggest hit (+5.18% val)
+
+Schedule-shape matters most for the hardest-fine-tuning split — exactly
+where EMA had previously picked up −5.1% (PR #324 v4). **rc has multiple
+failure components, all needing low-LR fine-tuning**: both EMA and
+proper schedule decay help the same generalization failure mode.
+
+### Analysis & conclusions
+
+- **Closed.** Decisive negative result that brackets T_max from above.
+- **Schedule shape DOES matter for pure L1** at this regime — opposite
+  of "any non-zero lr is good." Terminal lr ~48% of peak is too high;
+  ~16% is the sweet spot for extracting late-stage L1 refinement.
+- **Train loss continued to descend monotonically** while EMA val didn't
+  track it as well — direct empirical signature of "fine-tuning at low
+  LR helps generalization more than fitting more train."
+- The schedule question is settled. No further T_max experiments needed
+  for the current stack.
+
 ## 2026-04-28 07:21 — PR #614 (closed): grad_clip alone (max_norm=1.0) on L1+EMA+per-Re
 
 - branch: `willowpai2d1-nezuko/grad-clip-1.0-on-current` (deleted on close)

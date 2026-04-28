@@ -21,7 +21,7 @@
 | #321 | frieren | Optimization & schedule | warmup + cosine peak=7e-4 (sent back from peak=1e-3; will need rebase onto new T_max=37 baseline) |
 | **#634** | **nezuko** | **Maintenance / operational** | **Cosmetic NaN cleanup in `train.py::evaluate_split`** — flagged 8+ times across multiple students; tripping `training_log_status` into false-failed reports. One-shot fix mirroring `data/scoring.py` post-b78f404 pattern. |
 | **#619** | **tanjiro** | **Spatial features hyperparam** | **FF K-sweep (K=4 vs K=8 baseline vs K=12) on (x, z) — settles whether K=8 is locally optimal** |
-| **#584** | **edward** | **Schedule (with L1)** | **--epochs 70 probe — extends T_max=50 finding; tests if even longer schedule continues the trend** |
+| **#641** | **edward** | **Optimization tuning** | **weight_decay=3e-4 single probe** (locks down wd hyperparameter on the heavily-tuned current stack — wd has been at round-1 default 1e-4 the whole round) |
 | #570 v2 | thorfinn | Loss / metric alignment | sw=8 sent back to rebase onto current baseline. v1 result on PR #504: val_avg=54.75 (-4.43%). All 16 surface velocity components improved. Three-point monotonic curve confirmed velocity-coupling mechanism. Predicted post-rebase: 49-51. |
 | #522 | askeladd | Optimization tuning | lr=3e-4 on Huber+compile+FF (sharp-edge hypothesis) |
 | #529 v2 | alphonse | Architecture | **Aux p head sent back: rebase + switch aux loss SmoothL1→L1.** Original run on PR #407 gave val=66.16 (-5.13%) with clean ablation (aux loss alone -1.9%, inference blend +3.3%). Orthogonal mechanism; predicted post-rebase val 51-53. |
