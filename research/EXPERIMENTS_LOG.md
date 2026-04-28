@@ -1,5 +1,47 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 11:20 — PR #679: n_layers=6 + Lion optimizer + budget-matched cosine (--epochs 20) — **CLOSE (budget-cap kills depth; +13.9% regression vs current best)**
+
+- Branch: `charliepai2d5-fern/lion-n-layers-6-epochs-20` (closed)
+- Hypothesis: Combining n_layers=6 depth capacity (PR #550: per-epoch +11.7% ahead on AdamW), budget-matched cosine schedule (PR #632 mechanism), and Lion optimizer on the same stack would compound into a net win. Two independent runs requested to characterize Lion's variance stabilization at n_layers=6.
+
+### Results (2 runs, same config)
+
+| metric | run1 | run2 | mean | current best (PR #627, Lion+preprocess-depth-1) | Δ vs best |
+|---|---:|---:|---:|---:|---:|
+| `val_avg/mae_surf_p` (best ep 15) | 61.3255 | **61.3211** | 61.3233 | 53.7986 | **+13.9%** |
+| `test_avg/mae_surf_p` (3-clean) | 59.26 | 60.58 | 59.92 | 52.165 | +14.9% |
+| best epoch | 15 | 15 | 15 | 18 | −3 |
+| median per-epoch wall (s) | 120.9 | 120.6 | 120.7 | ~101.4 | +19.3% |
+| run-to-run Δ (val_avg) | — | — | **0.0044** | — | — |
+
+| split | run1 | run2 | mean | PR #627 baseline | Δ |
+|---|---:|---:|---:|---:|---:|
+| `val_single_in_dist` | 68.68 | 66.51 | 67.59 | 54.3136 | +24.4% |
+| `val_geom_camber_rc` | 76.86 | 75.93 | 76.40 | 70.8552 | +7.8% |
+| `val_geom_camber_cruise` | 39.30 | 41.41 | 40.36 | 35.2098 | +14.6% |
+| `val_re_rand` | 60.46 | 61.44 | 60.95 | 54.8159 | +11.2% |
+
+### Key diagnostic findings
+
+1. **Per-epoch depth advantage reproduces on Lion, but tiny.** At matched ep 15, n_layers=6 is 2.5% ahead of the Lion n_layers=5 baseline at the same epoch — vs the 11.7% ahead reported in PR #550 on AdamW. Lion already extracts most gradient signal at n_layers=5, leaving minimal marginal headroom for depth.
+2. **Variance hypothesis confirmed.** Lion + n_layers=6 produces near-identical runs (Δ=0.0044) — the AdamW n_layers=6 high-variance (PR #632 Δ=5.2) is AdamW-specific, not depth-specific. Lion's smoother trajectory stabilizes depth, as predicted.
+3. **Budget cap is the decisive constraint.** +19% per-epoch wall reduces reachable epochs from 18 (baseline) to 15. The Lion baseline's critical late-LR settling (ep 17→18: −5.91 jump) cannot be reached at n_layers=6. The per-epoch advantage doesn't compound enough to overcome 3 lost epochs of cosine settling.
+4. **Matched cosine mechanism failed to materialize.** Run ends at ep 15 of T_max=15 (not ep 16 as predicted), so the model terminates at LR=7.5e-5 (slightly higher than baseline's 6.8e-5 at ep 18 — the opposite of the intended late-settling).
+5. **No overfitting.** Train-val gap is modest (0.014–0.027) at ep 15. Depth helps per-epoch fit quality; the architecture isn't overparameterized — it's budget-starved.
+
+### Decision
+
+Closed. val_avg=61.32 >> merge threshold of 57.5 (decision criterion: val_avg ≥ 57.5 → close). n_layers=6 axis confirmed budget-incompatible: +19% per-epoch wall exceeds the Lion late-settling budget. Depth axis closed for this budget regime.
+
+**Key takeaways for future experiments:**
+- n_layers=6 per-epoch advantage on Lion is ~2.5% (vs 11.7% on AdamW) — not enough to justify the budget hit
+- Lion variance stabilization at depth=6 confirmed (Δ=0.0044 across runs)
+- n_layers=7 or higher explicitly ruled out by student analysis (ep cap ~12-13)
+- Next directions: output MLP depth (mirrors the preprocess-depth-1 win at the output boundary, no per-epoch wall cost), or Fourier band count
+
+---
+
 ## 2026-04-28 09:10 — PR #613: AoA jittering augmentation (σ=0.02 rad on AoA1/AoA2 at training time) — **CLOSE (regression on all metrics)**
 
 - Branch: `charliepai2d5-thorfinn/aoa-jitter-0p02` (closed)

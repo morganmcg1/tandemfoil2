@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 10:40
+- **Date:** 2026-04-28 11:25
 - **Advisor branch:** `icml-appendix-charlie-pai2d-r5`
 - **Cohort:** charlie-pai2d-r5 (8 students, 1 GPU each)
 - **Most recent human-team direction:** none on file.
@@ -26,12 +26,13 @@ Full reference config: `n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ra
 | #705 | Architecture | edward | n_head 4 to 8 (double attention heads, attention diversity probe) |
 | #680 | Optimizer LR | thorfinn | **CLOSED** — Lion + lr=1e-4 regression (+9.7%), lr=3e-4 confirmed near-optimal |
 | #710 | Schedule | thorfinn | cosine eta_min 0 → 5e-5 (tail floor probe from PR #680 diagnostic) |
-| #679 | Capacity x optim x schedule | fern | n_layers=6 + Lion + budget-matched cosine (--epochs 20) |
+| **#679 CLOSED** | Capacity x optim x schedule | fern | n_layers=6 + Lion + budget-matched cosine — **CLOSED**: +13.9% regression; budget cap kills depth (+19% wall, 3 fewer epochs) |
+| *new* | Output boundary | fern | **output MLP depth +1 residual layer** (mirror of preprocess-depth-1 win at output boundary) — assigning |
 | #593 | Data aug | nezuko | Re jittering (sigma=0.05 on log(Re)) at training time |
 | #380 | Checkpoint | frieren | Best-val checkpoint averaging (top-3) on Lion base |
 | #369 | Regularization | askeladd | Drop-path 0.1 on Lion base |
 
-All 8 students assigned; no idle slots. Thorfinn reassigned after PR #680 close.
+All 8 students assigned; fern reassigned after PR #679 close (n_layers=6 budget-cap failure).
 
 ## Key findings to date
 
@@ -61,7 +62,7 @@ Secondary: preprocess_layers=2 (depth stacking), n_layers=6 (pending fern #679),
 - **Weight decay tuning on Lion**: wd=1e-4 (AdamW default). Lion's decoupled WD acts on momentum differently. wd=1e-5 or wd=5e-4 untested.
 - **Learning rate schedule variants**: SGDR (cosine restarts), OneCycleLR. May help escape local minima.
 - **mlp_ratio for preprocess MLP**: wider hidden dim in residual layers (currently 256 = n_hidden*2). Testing 512 = n_hidden*4 in preprocess layer specifically.
-- **Output MLP depth**: mirror the preprocess-depth win at the output boundary.
+- **Output MLP depth**: mirror the preprocess-depth win at the output boundary. **→ ASSIGNING to fern.**
 
 ## Known issue
 
