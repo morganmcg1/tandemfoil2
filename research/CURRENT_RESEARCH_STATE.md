@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 01:50 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
+- **Last update:** 2026-04-28 02:05 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
 - **Most recent human-team direction:** N/A — no team issues consulted (isolated replicate; only entrypoint-surfaced PRs in scope).
 - **Current baseline (merged): `val_avg/mae_surf_p = 88.227`, `test_avg/mae_surf_p = 78.338`** (PR #391 SwiGLU FFN).
   - PR #282 — Huber loss (δ=1.0). val_avg = 105.999.
@@ -12,7 +12,7 @@
 
 Compound improvements on the round-1 huber baseline. Recover the paper-facing test metric. Test orthogonal levers (capacity, slice count, optimizer recipe, surface weighting, regularization, EMA, channel weighting) so round-3 can stack winners.
 
-## Outcomes to date (11 reviewed)
+## Outcomes to date (12 reviewed)
 
 | Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Δ vs 88.227 (current) | Decision |
 |------|----|---------|------|--------------------------:|----------------------:|----------|
@@ -32,22 +32,22 @@ Compound improvements on the round-1 huber baseline. Recover the paper-facing te
 | 11 | #291 | nezuko | dropout-0p1 | 128.896 | +46.1% | CLOSED |
 | 12 | #295 | tanjiro | pressure-channel-weight | 130.916 | +48.4% | CLOSED |
 | 13 | #281 | askeladd | slice-128 | 154.594 | +75.2% | CLOSED |
-| 14 | #297 | thorfinn | depth-8 | 168.836 | +91.4% | CLOSED |
+| 14 | #279 | alphonse | capacity-medium | 142.446 | +61.5% | CLOSED (compute-infeasible at 30-min cap, 8/50 epochs at 240 s/epoch) |
+| 15 | #297 | thorfinn | depth-8 | 168.836 | +91.4% | CLOSED |
 
 Per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`. Per-experiment JSONL summaries in `research/student_metrics/` (note: nezuko, askeladd & fern did not commit their training metrics files; their PR-comment numbers are recorded as JSONL summaries instead).
 
 
-## In flight from earlier rounds (3 students)
+## In flight from earlier rounds (2 students)
 
 These were branched **before** the SwiGLU merge — they will be ranked against the new SwiGLU baseline (88.227) when they return.
 
 | PR | Student | Slug | Lever | Predicted (vs base at submission) |
 |----|---------|------|-------|------------------------------------|
-| #279 | alphonse | capacity-medium | n_hidden 128→192, n_layers 5→6, n_head 4→6 — branched pre-huber | −5% to −12% |
 | #371 | nezuko | grad-accum-2 | gradient accumulation 2 (effective batch 8) with √2 lr scaling — branched on huber pre-EMA | −1% to −4% |
 | #418 | edward | re-fourier-4 | narrowed Fourier embedding of `log(Re)` (4 bands, max 2^3=8 rad/log_re_unit) — direct test of aliasing diagnosis from #386 | −1% to −4% |
 
-## Round-4 in flight (5 students)
+## Round-4 in flight (6 students)
 
 Built on the merged SwiGLU baseline (88.227). All single-axis tests on top of the new stack.
 
@@ -58,12 +58,14 @@ Built on the merged SwiGLU baseline (88.227). All single-axis tests on top of th
 | #426 | askeladd | ema-decay-099 | EMA decay 0.999 → 0.99 (half-life ~0.18 epochs vs ~1.85 epochs) — student's follow-up #1 from PR #370; tests EMA decay sensitivity on the SwiGLU baseline | −0.5% to −2% (could regress) |
 | #439 | fern | huber-delta-05 | huber `δ=1.0 → 0.5` — push δ in the *opposite* direction from the failed PR #411 (δ=2). Closer to L1 in normalized space; tests whether the δ profile keeps improving toward pure L1 in this regime. | −1% to −3% |
 | #440 | tanjiro | silu-everywhere | switch GELU → SiLU in preprocess MLP and `mlp2` output head (LLaMA-style consistency with the SwiGLU FFN). Param-identical (no learnable activation params). | −0.5% to −2% |
+| #450 | alphonse | rmsnorm-everywhere | replace `nn.LayerNorm` with `RMSNorm` (manual implementation) in all 3 norm sites in `TransolverBlock`. LLaMA-style pairing with SwiGLU; ~−1.9K params, marginally faster. | −0.5% to −1.5% |
 
 ## Disconfirmed directions (do not retry on this branch)
 
 - **Per-channel surface loss weighting toward `p`** — falsified across PR #295 (`[1,1,2.5]`, +23.5%) and PR #362 (`[0.5,0.5,2.5]`, +1.81%). Mechanism works (Ux/Uy degraded relatively more than `p`) but absolute `mae_surf_p` got worse in both. Move on.
 - **Per-channel output heads** — falsified by PR #412 (+19.7% vs SwiGLU baseline; canary `val_geom_camber_rc` regressed most). Combined with the mlp_ratio=4 failure (PR #392), capacity in the head/FFN is not the bottleneck on this problem. Architectural form (SwiGLU) matters more than capacity.
 - **Pure depth scale at default budget** — PR #297 (`n_layers=8`) compute-infeasible at 30-min budget (9/50 epochs). Revisit only if the timeout changes or per-epoch throughput improves.
+- **Balanced capacity scale-up** — PR #279 (`n_hidden=192, n_layers=6, n_head=6`) compute-infeasible at 30-min budget (8/50 epochs at 240 s/epoch). Same shape as #297. Combined with the SwiGLU+param-matched win (#391), the lesson is that **architectural quality matters more than raw capacity** at this budget.
 - **`max_norm=1.0` grad clipping under MSE on this problem** — PR #284 showed it clips 100% of batches with pre-clip mean 30–200, masking any other lever it's combined with. Always pair clipping decisions with the loss's actual gradient scale.
 - **Huber `δ=2.0`** — PR #411 (+21.97% vs SwiGLU). At the high-error early-training regime we're stuck in, δ=2's quadratic region for moderate errors underweights the bulk. δ=1 is the sweet spot above; PR #439 testing whether δ<1 helps further.
 
