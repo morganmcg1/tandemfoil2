@@ -386,6 +386,7 @@ def save_model_artifact(
         "weight_decay": cfg.weight_decay,
         "batch_size": cfg.batch_size,
         "surf_weight": cfg.surf_weight,
+        "huber_delta": cfg.huber_delta,
         "epochs_configured": cfg.epochs,
         "schedule": cfg.schedule,
         "onecycle_peak_lr": cfg.onecycle_peak_lr,
