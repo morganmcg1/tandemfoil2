@@ -1,5 +1,33 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 10:40 — PR #704: Double physics attention slices: slice_num 64→128 (rc OOD fix) — **CLOSE (hypothesis falsified; +36.1% regression)**
+
+- Branch: `charliepai2d5-tanjiro/slice-num-128` (closed)
+- Hypothesis: val_geom_camber_rc is bottlenecked by slice attention granularity. Doubling slice_num 64→128 gives 2× more physics partitions per head, potentially allowing the model to separately track geometric-induced flow changes in rc-tandem configurations.
+
+### Results (best epoch 13/24 — wall-time limited)
+
+| metric | slice=128 (ep13) | Baseline PR #627 (ep18) | delta |
+|---|---:|---:|---:|
+| val_avg/mae_surf_p | 73.244 | 53.799 | **+36.1%** |
+| val_geom_camber_rc | 89.701 | 70.855 | **+26.6%** |
+| val_single_in_dist | 89.596 | 54.314 | +65.0% |
+| val_geom_camber_cruise | 45.930 | 35.210 | +30.4% |
+| val_re_rand | 67.749 | 54.816 | +23.6% |
+
+| split | slice=128 (test) | Baseline (test) | delta |
+|---|---:|---:|---:|
+| test_single_in_dist | 76.752 | 47.910 | +60.2% |
+| test_geom_camber_rc | 76.792 | 63.233 | +21.5% |
+| test_re_rand | 60.619 | 45.351 | +33.7% |
+| **3-clean mean** | **71.387** | **52.165** | **+36.8%** |
+
+Compute: n_params=746,903 (+1.4%), median epoch wall=146.9s (+41.6%), peak memory=49.40GB (+44.2%), only 13/24 epochs completed.
+
+- Analysis: Hypothesis comprehensively falsified. val_geom_camber_rc — the supposed beneficiary — got *worse* not better at both equal-epoch (+9.7% same-epoch) and equal-wall (+26.6%) comparisons. Every split regressed uniformly, including in-distribution, indicating the change made optimization harder. Wall blowup was 3× the predicted amount (predicted ~110-120s, actual 146.9s) because the slice_weights tensor [B, heads, N, slice_num] with N up to 242K dominates activation memory at large N. Even at equal epoch count the bigger slice model is worse — ruling out simple under-training. The 64-partition default saturates dataset signal. **Attention granularity is definitively NOT the rc OOD bottleneck.** Closed.
+
+---
+
 ## 2026-04-28 11:20 — PR #679: n_layers=6 + Lion optimizer + budget-matched cosine (--epochs 20) — **CLOSE (budget-cap kills depth; +13.9% regression vs current best)**
 
 - Branch: `charliepai2d5-fern/lion-n-layers-6-epochs-20` (closed)
