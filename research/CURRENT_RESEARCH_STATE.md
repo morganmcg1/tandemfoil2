@@ -1,17 +1,19 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 07:10
+- **Date:** 2026-04-28 07:35
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
 
 ## Current research focus
 
-**Current best:** PR #539 (askeladd, Huber β=0.3 + Config default flip to 0.5 + everything else), merged commit 893ea4c. `val_avg/mae_surf_p = 55.43` (EMA-evaluated), `test_avg/mae_surf_p = 47.98`. **-3.4% vs PR #484 on val, -2.0% on test.** Paired comparison shows -6.2% val, -4.9% test, **all 4 val and all 4 test splits gain**. Cumulative **-56.2% from PR #287's first baseline**, **-59.2% from the published-baseline-equivalent**.
+**Current best:** PR #549 (alphonse, linear warmup=3 + Huber β=0.5 + Fourier + EMA + clip + bf16 + compile + cudagraph_skip — but pre-FiLM, pre-β=0.3), merged commit c234239. `val_avg/mae_surf_p = 54.12` (EMA-evaluated), `test_avg/mae_surf_p = 47.54`. **-2.4% vs PR #539 on val, -0.9% on test.** Paired comparison shows -7.23% val, -5.50% test. Cumulative **-57.3% from PR #287's first baseline**, **-60.1% from the published-baseline-equivalent**.
 
-**Compounding evidence accumulating across 9 stacked levers** (now with β=0.3 even more aggressive): β=0.3 (PR #539) + FiLM (PR #484) + Huber base (PR #467 → β default 0.5 from #539) + Fourier (PR #368) + Huber-formulation base (PR #289) + EMA + clip (PR #381) + compile (PR #401) + bf16 (PR #372). Strict monotone β trend across 5-point grid {0.3, 0.5, 0.7, 1.0, 2.0}; no interior optimum. Per-channel mechanism: cruise pressure -11.6% — heavy-tailed residuals benefit most from L1-leaning shape.
+**Compounding evidence — 10 stacked levers** all positive (β=0.3 from #539 + FiLM from #484 measured separately from warmup=3 from #549; combining all three is currently untested but the merged train.py supports it). Mechanism diagnosed cleanly via grad-norm trajectory: warmup keeps epoch-1 grad norms 2-2.5× smaller (max 40 vs 178), AdamW m/v initializes properly. Crossover at epoch 20: warmup arms start behind in LR ramp, pull ahead in cosine tail. Cleaner trajectory generalizes — warmup=3 wins val_geom_camber_rc by -9.9% vs warmup=0.
 
-**Open infrastructure note**: Config defaults are now `huber_beta=0.5` (flipped by #539, verified via no-flag config.yaml proof) and `film=False` (still). Reproducing the merged best-known requires explicit `--huber_beta 0.3 --film`. Caveat: askeladd's β=0.3 measurement was **without FiLM** (branch was pre-#484); the combined β=0.3+FiLM merged config has not been directly measured, predicted to compound to ~54-55 range.
+**Open: combined config is untested**. The merged train.py allows `--huber_beta 0.3 --film --warmup_epochs 3` but none of our actual measurements have all three at once. PR #594 (thorfinn FiLM-all-blocks) and PR #599 (askeladd β finer-still {0.1, 0.2, 0.4}) are both rebased onto the most recent merge state and will be the first measurements to combine them. Predicted combined value: ~52-53 val.
+
+**Open infrastructure note**: Config defaults remain `huber_beta=0.5`, `film=False`, `warmup_epochs=0`. Reproducing the best-known requires `--huber_beta 0.5 --warmup_epochs 3` for #549 (or `--huber_beta 0.3 --film` for #539). Future PRs should explicitly enable all three.
 
 **Open infrastructure issue:** 2 of 4 launches at the rebased compile + EMA + clip + bf16 stack crash with CUDAGraph private-pool blowup at variable mesh sizes. Alphonse's depth experiment (#435) hit the same OOM at depth=8, requiring `mode="default"` workaround (~10-15% throughput cost). PR #466 (alphonse) bundles the fix: `cudagraph_skip_dynamic_graphs=True` flag + cosine T_max retune to actually-reachable epoch count.
 
@@ -30,7 +32,8 @@
 | alphonse | #401 | compile-bf16-emaclip | Throughput (torch.compile reduce-overhead, dynamic) | -5% to -15% | **MERGED** 5f2edca → val_avg=**66.89** (NEW BEST, -37.1%) |
 | alphonse | #435 | deeper8-droppath01-compile | Architecture (n_layers 5→8 + DropPath 0.1) | -5% to -10% | **CLOSED** — +30% (cosine T_max=50 mismatched with 22 reached epochs) |
 | alphonse | #466 | tmax32-cudagraph-skip | Infra (cosine_epochs flag + cudagraph_skip robustness) | -1% to -5% | **MERGED** e0a902b (revision) — cosine_epochs flag plumbed at default 50 (no behavior change); cudagraph_skip auto-deduped with #467 |
-| alphonse | #549 | warmup-cosine-sweep | Schedule (linear warmup ∈ {2, 3, 5} + cosine to existing endpoint) | -1% to -3% | WIP |
+| alphonse | #549 | warmup-cosine-sweep | Schedule (linear warmup ∈ {2, 3, 5}) | -1% to -3% | **MERGED** c234239 → val_avg=**54.12** (NEW BEST, -2.4% vs #539, paired -7.23%) |
+| alphonse | #623 | higher-lr-warmup3 | Schedule (lr ∈ {7e-4, 1e-3} on top of warmup=3) | -1% to -4% | WIP |
 | askeladd | #289 | huber-loss | Loss formulation (MSE→SmoothL1) | -5% to -10% | **MERGED** 906a2c1 → val_avg=**63.33** (NEW BEST, -5.31%) |
 | askeladd | #467 | huber-beta-sweep | Loss formulation (β ∈ {0.5, 1.0, 2.0} sweep) | β=0.5 predicted -1% to -4% | **MERGED** eb5168f → val_avg=**57.50** (NEW BEST, -8.65% vs #368) |
 | askeladd | #539 | huber-beta-finer | Loss formulation (β ∈ {0.3, 0.5, 0.7} + flip Config default to 0.5) | -1% to -3% | **MERGED** 893ea4c → val_avg=**55.43** (NEW BEST, β=0.3 wins -3.4% vs #484) |
