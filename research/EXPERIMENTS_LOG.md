@@ -1,5 +1,34 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 03:50 — PR #333 (sent back, round-1 ablation): surf_weight ∈ {15, 25, 40} on PR #312 base
+
+- branch: `willowpai2d1-thorfinn/surf-weight-sweep` (in flight as draft)
+- hypothesis: surf_weight > 10 puts more gradient on surface, improves
+  surface-pressure MAE.
+
+### Results (vs PR #312 reference, 14 epochs, no bf16/FF/compile)
+
+| surf_weight | val_avg/mae_surf_p | test_avg/mae_surf_p |
+|---|---|---|
+| 15 | **130.25** (best) | 119.35 |
+| 25 | 136.02 | 125.34 |
+| 40 | 133.52 | 122.19 |
+| (10) baseline PR #312 | 144.21 | 131.18 |
+
+### Analysis & conclusions
+
+- **Sent back, not closed.** Sweep is a clean round-1 ablation: sw=15
+  wins, sw>15 shows diminishing returns and volume-channel degradation
+  (test mae_vol_p 128.74 → 142.42 → 149.33 for sw=15/25/40). Surface
+  vs volume tradeoff is favorable at sw=15, reverses by sw=40.
+- vs current Huber+compile+FF baseline (69.83), all three sweep results
+  are +86% or worse (stale base).
+- Single-seed val noise is large (~80 points epoch-to-epoch); ranking
+  among {15, 25, 40} is inside the noise band.
+- Send-back: rebase + run **sw=15 only** on the Huber+compile+FF
+  baseline. If the directional finding (sw=15 > sw=10) transfers, merge;
+  if not, default sw=10 stays.
+
 ## 2026-04-28 03:42 — PR #314 round-3 (merged, NEW BASELINE): SmoothL1/Huber + bf16 + FF + `torch.compile`
 
 - branch: `willowpai2d1-edward/huber-loss` (deleted on merge)
