@@ -27,7 +27,7 @@
 | fern | [#317](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/317) | **Surface-vs-volume balance** — `surf_weight` sweep {5, 20, 40, 80} | **rebase + re-run** | In-sweep −10.1% (143.93→129.41 at sw=20); abs below new bar; clean U-shape, volume tradeoff visible. |
 | frieren | [#319](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/319) | **Depth** — `n_layers` 5 → 8 (sweep 6/8/10) | **CLOSED** | Compute-confounded at 30-min budget (deeper = fewer epochs); n_layers=6 wins in-sweep at 143.33, below new bar. Bug fix cherry-picked. |
 | nezuko | [#320](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/320) | **LR schedule** — linear warmup + peak LR ∈ {5e-4, 1e-3, 2e-3} | **MERGED** | **−21.5%** (147.55 → 115.84); peak_lr=1e-3 wins |
-| tanjiro | [#322](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/322) | **Channel weighting** — upweight pressure in surface loss (sweep p_w ∈ {1, 2, 3, 5}) | **rebase + re-run** | In-sweep −9.1% (138.87→126.18 at p_w=3); abs below new bar; clean U-shape with sharp optimum. |
+| tanjiro | [#322](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/322) | **Channel weighting** — upweight pressure in surface loss (sweep p_w ∈ {1, 2, 3, 5}) | **CLOSED** | Round 2 rebased: optimum shifted (3.0→5.0) and r1 winner regressed +29 MAE. Lever effect (~10 MAE) below seed-noise floor (~15–30 MAE). Direction/magnitude consistent across rounds — *parked, not failed*. Revisit post-multi-seed. |
 | thorfinn | [#323](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/323) | **FFN expressivity** — `mlp_ratio` 2 → 4 (sweep 2/4/6) | **CLOSED** | Round-2 rebased sweep: ratio=2 control (140.70) > ratio=4 (145.36) > ratio=6 (154.40). Lever does not stack. **Surfaced critical seed-variance finding**: PR #320's 115.84 was single favorable seed — true baseline mean unknown until PR #482 (multi-seed) lands. |
 
 These eight axes were chosen for **orthogonality** so that improvements compound when winners are merged sequentially: loss function, width, slice count, surface/volume balance, depth, LR schedule, channel weighting, and FFN expressivity touch nearly disjoint parts of the model and training stack.
@@ -53,16 +53,16 @@ These eight axes were chosen for **orthogonality** so that improvements compound
 | Student | PR | Lever | Predicted Δ |
 |---|---|---|---|
 | nezuko | [#502](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/502) | **AdamW betas + weight_decay sweep** — β1∈{0.85, 0.9}, β2∈{0.99, 0.999, 0.9995}, wd∈{1e-4, 1e-3, 1e-2}; 1D-axis + 2D-corner design | −1 to −5% |
+| tanjiro | [#508](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/508) | **Per-sample inverse-std weighting** — rebalance loss by per-sample y_std (10× dynamic range across samples) | **−5 to −15%** |
 
 ## In-flight rebase PRs (Round 1, against new baseline)
 
 | Student | PR | Lever | In-sweep Δ |
 |---|---|---|---|
-| **alphonse** | [#294](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/294) | **Huber surface loss δ=0.5** | In-sweep 106.36 at OLD LR (vs single-seed bar 115.84). With variance ~25 points known now, hard to call this a confident win pre-rebase, but it's the strongest signal we have. |
+| **alphonse** | [#294](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/294) | **Huber surface loss δ=0.5** | In-sweep 106.36 at OLD LR (vs single-seed bar 115.84). The strongest pre-rebase signal we have. |
 | fern | [#317](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/317) | `surf_weight=20` | −10.1% in-sweep at OLD LR (143.93→129.41). Within-sweep delta is robust because all runs share their seed environment. |
-| tanjiro | [#322](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/322) | `surf_p_weight=3.0` | −9.1% in-sweep at OLD LR (138.87→126.18). Within-sweep delta is robust. |
 
-**Decision shift after the variance finding:** within-sweep deltas (where all runs in a group share their seed-noise environment) remain the cleanest signal. Cross-PR comparisons against the 115.84 single-seed baseline are unreliable. Once PR #482 lands, in-flight rebase PRs will be evaluated against the multi-seed mean ± std.
+**Decision shift after the variance finding:** within-sweep deltas (where all runs in a group share their seed-noise environment) remain the cleanest signal — but only when the lever effect is *larger* than the seed-noise floor (~15–30 MAE at this budget). Channel-weighting (#322) was a counterexample: lever ~10 MAE < noise → couldn't confidently merge. Future lever-design should aim for predicted-effect-size > 25 MAE to be merge-able from a single-seed sweep before PR #482 lands.
 
 ## Potential next research directions
 

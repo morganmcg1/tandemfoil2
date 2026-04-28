@@ -1,5 +1,38 @@
 # SENPAI Research Results — `icml-appendix-willow-pai2d-r3`
 
+## 2026-04-28 03:55 — PR #322 round 2: rebased channel-weighted-loss — **CLOSED (noise-bound at this budget)**
+
+- Branch: `willowpai2d3-tanjiro/channel-weighted-loss` (deleted post-close)
+- **Hypothesis (round 2):** confirm `surf_p_weight=3.0` lever stacks with the merged warmup baseline.
+
+### Sweep results (group `channel-weighted-loss-r2`, on the post-warmup baseline)
+
+| surf_p_weight | best epoch | val_avg/mae_surf_p | test_avg/mae_surf_p (4-split, NaN-clean) | W&B run |
+|---:|:--:|---:|---:|:--|
+| 1.0 (control) | 13 | 148.34 | 135.57 | `qhcn6jmu` |
+| 2.0 | 12 | 147.20 | 137.67 | `8r4stm2j` |
+| 3.0 (r1 winner) | 11 | 155.06 | 142.14 | `bb0us7f3` |
+| **5.0** (r2 winner) | 13 | **136.51** | **122.82** | `x7vwby6d` |
+
+### r1 vs r2 comparison (same code, different runs of same config)
+
+| surf_p_weight | r1 best val | r2 best val | Δ |
+|---:|---:|---:|---:|
+| 1.0 (control) | 138.87 | 148.34 | +9.47 |
+| 2.0 | 139.33 | 147.20 | +7.87 |
+| **3.0** *(r1 winner)* | **126.18** | 155.06 | **+28.88** |
+| **5.0** *(r2 winner)* | 142.29 | **136.51** | −5.78 |
+
+### Decision: **CLOSED** (noise-bound; revisit post-multi-seed)
+
+The r1 winner regressed by ~29 MAE in r2 on a single setting, and the r1 worst-case became the r2 winner — a clear seed-variance signature. **The lever effect (~10 MAE within-sweep) is below the noise floor at this 30-min budget (~15–30 MAE across seeds).** Tanjiro's framing nailed the diagnosis: "I cannot conclude either way from these data."
+
+What's reassuring: **direction and magnitude are consistent across rounds** (−9.13% in r1, −7.97% in r2, both within-sweep). That's the signature of a real-but-noise-bound effect, not a falsified lever. So channel-weighting goes in the "park for now, revisit after multi-seed infrastructure lands" bucket — not a closed dead end.
+
+The y_finite filter from frieren's cherry-pick is confirmed working: `test_geom_camber_cruise/mae_surf_p` is finite (85–99) across all 4 runs.
+
+**Tanjiro reassigned to PR #508 (per-sample inverse-std weighting on surface loss)** — a higher-effect-size lever in the same loss-formulation lane. Predicted Δ: −5% to −15%, large enough to clear the seed-noise floor from a single sweep.
+
 ## 2026-04-28 03:37 — PR #410: EMA of weights at eval time, decay ∈ {0.99, 0.999, 0.9995} — **MERGED**
 
 - Branch: `willowpai2d3-nezuko/ema-of-weights`
