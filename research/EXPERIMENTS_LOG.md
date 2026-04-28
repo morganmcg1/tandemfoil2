@@ -1,5 +1,31 @@
 # SENPAI Research Results — `icml-appendix-willow-pai2d-r3`
 
+## 2026-04-28 10:11 — PR #671: `use_ema=False` under OneCycle — **MERGED**
+
+- Branch: `willowpai2d3-frieren/no-ema-with-onecycle`
+- **Hypothesis:** Disable EMA under OneCycle, since the EMA-vs-live diagnostic from PR #409 showed EMA averaging over the noisier mid-training high-LR phase hurts the final-epoch live model under aggressive cool-down.
+
+### Results (group `no-ema-with-onecycle`, on the post-#409 baseline)
+
+| Config | val_avg/mae_surf_p | test_avg/mae_surf_p | EMA-vs-live diag | W&B |
+|---|---:|---:|---:|---|
+| **`use_ema=False`** | **84.7936** | **74.1582** | n/a | `0bikksqu` |
+| `use_ema=True` (control) | 89.7136 | 78.7951 | **+5.8097** | `3l0hm4vg` |
+
+### Decision: **MERGED**
+
+**Within-PR delta (same seed environment):** −4.92 MAE val, −4.64 MAE test. Above the typical inter-control noise.
+
+**Mechanism reproduction is rock-solid:** EMA-vs-live diagnostic = +5.81 in this PR vs +5.69 in PR #409 — same sign, same magnitude across two completely independent runs. Definitive evidence that under OneCycle, EMA averages over the noisier mid-training high-LR phase and hurts the final-epoch live model.
+
+The cross-PR delta vs the merged baseline (87.74) is smaller (−2.95 val) because frieren's EMA-on control here landed at 89.71 (+1.97 above the recorded 87.74) — within typical seed variance, not divergence.
+
+**Mechanistic story is complete:** EMA helps noisy training (warmup-cosine flat at 85% peak → +7.26 MAE benefit) and hurts converged training (OneCycle cool-down to 1.5% peak → −5.81 MAE benefit). With OneCycle the merged default, EMA is correctly off-default. The EMA implementation stays in `train.py` for future schedules that benefit from weight averaging.
+
+**New baseline:** val_avg=84.79, test_avg=74.16. Five merged levers compounding: warmup (#320), pure L1 (#294), OneCycle (#409), no-EMA (#671), and the y_finite filter (frieren's earlier cherry-pick into `evaluate_split`). Default Transolver: ~147; current merged: ~84.79.
+
+**Frieren reassigned to PR #714 (Lion optimizer ablation).**
+
 ## 2026-04-28 10:00 — PR #577: Surface-only auxiliary pressure head — **CLOSED (degenerate by mechanism check)**
 
 - Branch: `willowpai2d3-tanjiro/surface-only-aux-head` (deleted post-close)

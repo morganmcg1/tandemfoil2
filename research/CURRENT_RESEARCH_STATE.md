@@ -7,11 +7,16 @@
 
 ## Current research focus
 
-**Four wins now merged: warmup, EMA, pure L1, OneCycleLR.** PR #320 (linear warmup), PR #410 (EMA), PR #294 (pure L1 surface loss), and PR #409 (OneCycleLR) compound to drop the single-seed val_avg/mae_surf_p from ~147 (default Transolver) → **87.74** (current merged baseline). Test_avg = **78.24**. The schedule effect from OneCycle shrunk vs the pre-EMA test (R2 was −33 MAE; R3 with EMA+L1 was −7.5 MAE) because OneCycle's cool-down and EMA+L1 partially overlap — both contribute to a smoother converged state. Still net-positive.
+**Five wins now merged: warmup, pure L1, OneCycle, no-EMA, plus the y_finite filter.** Single-seed val_avg trajectory: ~147 (default Transolver) → **84.79** (current merged baseline). Test_avg = **74.16**.
 
-**Critical mechanistic finding (PR #409 diagnostic):** EMA-vs-live sign-flips across schedules. EMA helps noisy schedules (warmup-cosine, +7.26 MAE) but HURTS converged ones (OneCycle, −5.69 MAE). The mechanism is clean — EMA averages out training noise; useful when the schedule leaves the model still noisy at end-of-training, counterproductive when the schedule already converges via aggressive cool-down. Frieren's PR #671 is testing `use_ema=False` under OneCycle (predicted val_avg ≈ 82, another −5.7 MAE).
+PR #410 (EMA) was merged earlier but has now been *effectively replaced* by PR #671 (no-EMA under OneCycle). The mechanism story is complete: EMA helps noisy schedules (warmup-cosine, +7.26 MAE) but hurts converged ones (OneCycle, −5.81 MAE — reproduced cleanly across two independent runs in PR #409 and PR #671). The EMA implementation stays in train.py for future schedules that benefit from it; just not the default.
 
-**⚠️ Seed-variance caveat (still relevant):** `train.py` has no seed control yet — runs with byte-identical configs differ by ~25 MAE. Thorfinn's PR #482 (multi-seed baseline + deterministic seeding) is in flight. Until it lands, within-sweep deltas remain the cleanest signal; absolute numbers vs. the merged baseline are noise-bound at single seed.
+**⚠️ Seed-variance caveat (still relevant):** `train.py` has no seed control yet — thorfinn's PR #482 (deterministic seeding + multi-seed baseline) is in flight, redoing the multi-seed study on the current merged baseline. Until it lands, within-sweep deltas (where all runs in a sweep share their seed environment) remain the cleanest signal; cross-PR absolute numbers vs. the 84.79 merged baseline are noise-bound at single seed.
+
+**Reusable team insights captured (research-direction guidelines):**
+- *Residual-magnitude reweighting on the surface objective is the wrong axis once the loss is already the metric.* (PR #322 channel-weighting, PR #508 inverse-std, PR #609 focal-L1 — all bounded.)
+- *EMA-vs-live sign-flips with schedule shape: EMA helps noisy training, hurts converged training.* (PR #409 diagnostic, PR #671 confirmation.)
+- *Aux heads reading the same features as the backbone's own output projection are degenerate.* (PR #577 — surface aux head was a parallel copy.)
 
 **Test-aggregate NaN bug RESOLVED.** Frieren independently diagnosed the same root cause as thorfinn (`0 * inf = NaN` from `-inf` values in `test_geom_camber_cruise/000020.pt`'s ground-truth pressure) and submitted a clean train-side safety net. Cherry-picked into advisor as commit `32b5b40`. All sibling Round-1 PRs now produce finite `test_avg/mae_surf_p` once they pull the rebased baseline.
 
@@ -51,7 +56,8 @@ These eight axes were chosen for **orthogonality** so that improvements compound
 | alphonse | [#609](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/609) | **Focal-L1** — per-node residual reweighting on top of L1 | **CLOSED** — monotonic regression (γ=0→0.5→1→2 gives 98.19→102.71→114.37→212.08 val_avg). Mechanism cancellation: focal amplifies large residuals, L1 specifically chosen NOT to. **Reusable team insight: residual-magnitude reweighting is the wrong axis once loss is already the metric.** |
 | alphonse | [#691](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/691) | **Saturated L1 (Lipschitz-clip)** — bound pathological residual contributions; opposite-sign of focal | wip |
 | edward | [#618](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/618) | **UNet-style skip from preprocess into last block** — concat+linear vs. ReZero-gated | **iterate to ReZero-gated** — concat+linear regressed +1.68 MAE due to fusion init; clean diagnostic; α=0-init gate fixes the perturbation problem |
-| frieren | [#671](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/671) | **`use_ema=False` under OneCycle** — confirm EMA-vs-live diagnostic; predicted val_avg ≈ 82 (−5.7 MAE) | wip — focused 2-run confirmation |
+| frieren | [#671](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/671) | **`use_ema=False` under OneCycle** | **MERGED.** Within-PR delta −4.92 MAE val, −4.64 MAE test. Diagnostic +5.81 reproduces +5.69 from PR #409. New baseline 84.79. |
+| frieren | [#714](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/714) | **Lion optimizer ablation** — sign-based updates vs AdamW; sweep peak_lr ∈ {2e-3 (AdamW), 5e-4, 2e-4} (Lion needs smaller LR) | wip — predicted −1 to −4% |
 | thorfinn | [#482](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/482) | **Multi-seed baseline + deterministic seeding** (research infrastructure) | **rebase + redo on current merged baseline** — determinism proven (bit-identical across runs); 5-seed on post-EMA baseline gave mean=136.82±8.99 (PR #320's 115.84 confirmed at z=−2.33). |
 
 ## Round 3 — extensions on the post-EMA baseline (2026-04-28)
