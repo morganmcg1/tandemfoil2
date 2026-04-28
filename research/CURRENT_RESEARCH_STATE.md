@@ -1,12 +1,11 @@
 # SENPAI Research State
-- 2026-04-28 05:20 — round 1.5 active; **nine big wins merged** (5 var-reduction + 1 architectural + 1 optimizer-family + 1 loss-form + **1 throughput**): #356, #374, #402, #408, #417, #398, #430, #352, **#491 (TF32, −1.47 %)**
+- 2026-04-28 05:30 — round 1.5 active; **ten big wins merged** (5 var-reduction + 1 architectural + 1 optimizer-family + 2 loss-form + 1 throughput): #356, #374, #402, #408, #417, #398, #430, #352, #491, **#535 (SmoothL1 β=0.5, −2.70 %)**
 - Primary metric: `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across the four val splits); ranking final metric is `test_avg/mae_surf_p`
 
-## Current best (post-PR-#491)
-- **`val_avg/mae_surf_p` = 63.218** (EMA, ep14/50 timeout-cut, **TF32 enabled**)
-- **`test_avg/mae_surf_p` = 55.398**
+## Current best (post-PR-#535)
+- **`val_avg/mae_surf_p` = 61.508** (EMA, ep12/50 timeout-cut)
+- **`test_avg/mae_surf_p` = 52.336**
 - See `BASELINE.md` for the full per-split breakdown.
-- **Throughput**: 131 s/epoch steady-state (−13 % vs eager), 14 epochs in 30-min budget (vs 12 prior). Permanent multiplier for all subsequent PRs.
 - **Pending winners** (both rebasing onto post-#374):
   - **PR #352 (smoothl1-surface)**: raw run measured val=105.56, test=95.39 (−20.2 % / −19.2 % vs prior #356). Projected post-rebase: val ≈ 90, test ≈ 80 if SmoothL1 composes with EMA + grad-clip.
   - **PR #394 (torch.compile)**: confirmed −23.1 % per-epoch (17 vs 13 epochs in 30 min). Metric vs current #374 was +0.79 % / +2.13 % (run pre-dated grad-clip). Projected post-rebase: val ~108–110, test ~95–97 (compile + grad-clip + 17 epochs).
@@ -53,12 +52,13 @@
 | ~~#507~~ | ~~tanjiro~~ | ~~lion-lr-3p3e-4~~ | ~~`lr_lion = 1.7e-4 → 3.3e-4` on merged #430 baseline~~ | **CLOSED 04-28 04:35**: val +8.45 % / test +6.10 % vs #430 (+14.5 % / +12.8 % vs current #352). Lose mechanism: raw floor rises faster than EMA can smooth at higher Lion lr. Bracket: 1.7e-4 in basin, 3.3e-4 past it. Reassigned to #536. |
 | ~~#513~~ | ~~frieren~~ | ~~swiglu-mlp-dropout-0p05~~ | ~~Dropout p=0.1 → 0.05~~ | **CLOSED 04-28 04:48**: val +1.27 % vs #430 / +6.92 % vs current #352. Dropout dead under SwiGLU+Lion. Bracket fully mapped (p=0 wins, p=0.05/0.1 lose monotonically). Reassigned to #545. |
 | ~~#514~~ | ~~nezuko~~ | ~~swiglu-inner-192~~ | ~~`swiglu_inner = 168 → 192`~~ | **CLOSED 04-28 04:55**: val +1.61 % vs #430 / +7.28 % vs current #352. Combined with #475 (256, +5 %), gives clean curve: 168 (best) < 192 (wash) < 256 (lose). SwiGLU(168) is local optimum. Reassigned to #552 (GeGLU). |
-| #535 | edward | smoothl1-beta-0p5 | SmoothL1 β=1.0 → 0.5 on merged #352 baseline | Edward's own follow-up #1; β-sweep narrowing. Honest band −2 % to +2 %. |
+| #535 | edward | smoothl1-beta-0p5 | SmoothL1 β=1.0 → 0.5 on merged #352 baseline | **MERGED 05:27** as new baseline (val=61.508 / test=52.336; −2.70 % / −5.53 % vs #491). Per-split signature inversion: single_in_dist becomes dominant winner (−8.3 % val) — high-Re-tail story re-asserts under wider L1-regime. |
 | #536 | tanjiro | lion-lr-2p5e-4 | Lion `lr=1.7e-4 → 2.5e-4` on merged #352 baseline | Tanjiro's bracket-narrowing midpoint. Honest band −2 % to +3 %. |
 | #545 | frieren | lion-beta1-0p95 | Lion `betas = (0.9, 0.99) → (0.95, 0.99)` on merged #352 baseline | Slower momentum decay; tests whether more inertial Lion direction smooths epoch-to-epoch raw variance. Honest band −1 % to +2 %. |
 | #546 | askeladd | lion-batch-8 | `batch_size = 4 → 8` on merged #352 baseline (no lr scaling) | First batch-side probe under Lion. Different math than #403's closed AdamW+batch=8 (Lion's bounded `lr × sign` per step). Honest band −2 % to +5 %. |
 | #552 | nezuko | geglu-mlp-matched | `silu(value) → gelu(value)` in gated MLP (same `geglu_inner=168`) | Gating-activation A/B at matched params after the SwiGLU capacity axis is locked. Tests whether silu-specific shape is load-bearing or any gating mechanism wins. Honest band −1 % to +1 %. |
 | #560 | fern | cosine-tmax-14-on-lion | `T_max=50 → 14`, `eta_min=1e-5` on merged #491 baseline | Replaces fern's earlier closed #465 (T_max=13 under AdamW). Under Lion's bounded sign-update, late-epoch lr ~1e-5 still produces ~1e-5 per-param movement (no AdamW adaptive denominator collapse). Honest band −2 % to +2 %. |
+| #567 | edward | smoothl1-beta-0p25 | SmoothL1 β=0.5 → 0.25 on merged #535 baseline | Edward's own follow-up #1; further β-axis bracket-narrowing. Tests whether L1-tail mechanism continues to scale or saturates. Honest band −2 % to +1 %. |
 
 ## Updated picture from round-1 returns
 - **#356 (EMA) merged** at val=132.276 (−3.1 % vs same-run best raw).

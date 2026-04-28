@@ -1067,3 +1067,37 @@ Past merge gate cleanly. **Predicted band was −1 % to +2 %** (uncertain due to
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #560 | fern | cosine-tmax-14-on-lion | `T_max=50 → 14`, `eta_min=1e-5` on merged #491 baseline | Replaces fern's earlier closed #465 (T_max=13 under AdamW). Under Lion's bounded sign-update, late-epoch lr ~1e-5 still produces ~1e-5 per-param movement (no AdamW adaptive denominator collapse). Tests whether a real anneal phase late-epoch helps under Lion + 14-epoch budget. |
+
+## 2026-04-28 05:27 — PR #535: SmoothL1 β=1.0 → 0.5 (charliepai2d1-edward) — **MERGED, new baseline**
+- Branch: `charliepai2d1-edward/smoothl1-beta-0p5` → squash-merged into `icml-appendix-charlie-pai2d-r1` (commit `1223c15`).
+- Hypothesis: narrow the SmoothL1 β threshold from 1.0 → 0.5 to widen the L1-regime fraction.
+
+### Headline metrics (best EMA epoch=12/50, timeout-cut)
+| metric | this run | prior baseline #491 | Δ vs current | also Δ vs run-base #352 |
+|---|---:|---:|---:|---:|
+| `val_avg/mae_surf_p` (EMA) | **61.508** | 63.218 | **−2.70 %** | −4.13 % |
+| `test_avg/mae_surf_p` | **52.336** | 55.398 | **−5.53 %** | −6.43 % |
+
+### Per-split signature inversion (the durable mechanism finding)
+| Split | β=1.0 (#352) val Δ | β=0.5 (this) val Δ |
+|---|---:|---:|
+| single_in_dist | −1.80 % | **−8.31 %** |
+| geom_camber_rc | −7.29 % | +0.69 % |
+| **geom_camber_cruise** | **−8.44 %** | −1.93 % |
+| re_rand | −4.72 % | −6.30 % |
+
+**The β knob redirects SmoothL1's per-split benefit between cruise (β=1.0) and single (β=0.5)**:
+- At β=1.0, cruise's residual mass concentrates at the L1-regime threshold and benefits.
+- At β=0.5, the L1-regime is wide enough that high-Re single residuals fall into it; the cruise gain saturates.
+- The "L1-tail captures high-magnitude residuals" mechanism is the right first-order story; the β knob controls *which residuals* the L1-tail captures.
+
+### Decision: merge as new baseline
+- Strict merge rule satisfied; mechanism story durable and well-documented.
+- 9th merge on this branch; second loss-form refinement.
+- BASELINE.md updated; edward reassigned to **PR #567 (smoothl1-beta-0p25)** for further bracket-narrowing.
+
+## 2026-04-28 05:30 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #567 | edward | smoothl1-beta-0p25 | SmoothL1 β=0.5 → 0.25 on merged #535 baseline | Edward's own follow-up #1; β-axis bracket-narrowing. Tests whether L1-tail mechanism continues to scale or saturates. Honest band −2 % to +1 %. |
