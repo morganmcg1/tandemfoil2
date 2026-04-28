@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 07:50 (advisor branch `icml-appendix-charlie-pai2d-r2`)
+- **Last update:** 2026-04-28 08:00 (advisor branch `icml-appendix-charlie-pai2d-r2`)
 - **Most recent human-team direction:** N/A — no open human-tagged issues at this time.
 - **Current baseline (directly measured): `val_avg/mae_surf_p = 64.696` eager / `64.824` compile, `test_avg/mae_surf_p = 55.879` eager / `56.391` compile**. PR #562 (cosine 3-ep warmup + T_max=11) and PR #510 (torch.compile mode=default, +28.6% epochs in budget) both merged.
 - **Stack throughput**: 18 epochs in 30-min budget under compile=True (vs 14 eager). Cosine T_max=11 leaves epochs 12–18 at LR≈0 — 7 free EMA-stabilization epochs.
@@ -37,7 +37,7 @@
 | #635 | edward | lr-peak-6e-4 | lr 5e-4 → 6e-4 (gentler 3-ep warmup permits higher peak LR) | WIP (just assigned) |
 | #608 | askeladd | slice-temp-2p5 | PhysicsAttention temperature init 2.0 → 2.5 (extend profile) | WIP |
 | #620 | fern | cosine-start-factor-02 | LinearLR start_factor 0.3 → 0.2 (push gentler-warmup direction) | WIP |
-| #554 | tanjiro | weight-decay-1e-5 | AdamW wd=3e-5 → 1e-5 (push wd profile) | WIP (sent back, rebase) |
+| #640 | tanjiro | per-group-wd | AdamW per-parameter-group wd (attn higher, mlp lower) — captures OOD asymmetry | WIP (just assigned) |
 | #636 | frieren | feature-noise-decaying | Decaying noise schedule aligned with cosine LR | WIP (just assigned) |
 | #630 | nezuko | cosine-eta-min-2e-5 | cosine eta_min 0 → 2e-5 (extract gain from late-epoch budget under compile) | WIP |
 | #601 | thorfinn | huber-delta-0p1 | Huber δ=0.25 → 0.1 (rebase onto post-#562/#510 stack) | WIP (sent back, rebase) |
@@ -49,13 +49,13 @@
 1. **Cosine LR floor** (nezuko #630, eta_min=2e-5): replaces closed EMA-decay-target axis. Probe whether epochs 12–18 (now at LR≈0 under compile + T_max=11) extract more gain when LR has a positive floor.
 2. **Huber δ profile** (thorfinn #601, 0.1): standalone -1.05% on PR #575 stack; rebasing onto post-#562/#510 stack to verify on current schedule.
 3. **Decaying feature noise schedule** (frieren #636): replaces closed scalar-noise axis. Linear decay from std=0.0025 at ep0 to 0 at ep14 — match noise to LR phase (high during basin selection, zero in fine-tuning tail).
-4. **Weight decay** (tanjiro #554, 1e-5): wd profile — 1e-4→70.814, 3e-5→66.149; 1e-5 continues the sweep.
+4. **Per-parameter-group wd** (tanjiro #640): single-scalar wd axis is closed at 3e-5; explore module-type-differential wd to capture the OOD asymmetry (attn higher to help camber_rc, mlp lower to help re_rand).
 5. **Warmup ramp aggressiveness** (fern #620, start_factor=0.2): direct probe of warmup-axis headroom following PR #562's revision win at start_factor=0.3.
 6. **LR peak bump** (edward #635, lr=6e-4): direct probe of whether gentler 3-ep warmup permits 1.2× higher peak LR safely. fern's PR #562 follow-up #3.
 7. **Slice temperature init** (askeladd #608, 2.5): profile 1.0→71.699, 1.5→70.617, 2.0→66.847 shows accelerating improvement. Optimum not bracketed from above.
 8. **Reduce-overhead throughput** (alphonse #629, fixed-shape padding): infrastructure follow-up — fix the per-shape-CUDA-Graph OOM that defeated mode="reduce-overhead" in PR #510. Expected another +10–20% wall-clock if it lands.
 
-**Closed axes**: EMA decay_target above 0.995 at warmup_steps=50 (cap doesn't bind within budget — PR #600); feature_noise_std (interior min at 0.0025, U-shaped — PR #595); surf_weight at 15 on huber-clip stack (clip absorbs the increase, single_in_dist vol_p degrades — PR #605).
+**Closed axes**: EMA decay_target above 0.995 at warmup_steps=50 (cap doesn't bind within budget — PR #600); feature_noise_std (interior min at 0.0025, U-shaped — PR #595); surf_weight at 15 on huber-clip stack (clip absorbs the increase, single_in_dist vol_p degrades — PR #605); single-scalar wd (basin floor at 3e-5 on new stack; wd=0 regresses +2.75% — PR #554).
 
 ## Most promising potential next research directions
 
