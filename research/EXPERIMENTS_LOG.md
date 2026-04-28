@@ -1,5 +1,42 @@
 # SENPAI Research Results — `icml-appendix-willow-pai2d-r3`
 
+## 2026-04-28 09:45 — PR #482: Multi-seed baseline + deterministic seeding — **SENT BACK FOR REBASE (infrastructure ready; multi-seed needs current baseline)**
+
+- Branch: `willowpai2d3-thorfinn/multi-seed-baseline`
+- **Hypothesis:** Add deterministic seeding to `train.py` and characterize the merged-baseline variance with 5 seeds. Predicted Δ on val_avg = 0% (infrastructure PR).
+
+### Determinism: rock-solid
+
+Two separate seed-0 runs produced **bit-identical val_avg/mae_surf_p across 8 epochs** (different GPUs, hours apart). Four-line block (`torch.manual_seed`, `np.random.seed`, `random.seed`, `torch.cuda.manual_seed_all`) placed right after `cfg = sp.parse(Config)`. `cudnn.deterministic` deliberately not enabled (perf cost).
+
+### Multi-seed study (5 seeds on the post-EMA baseline — pre-#294, pre-#409)
+
+| metric | mean | std | min | max |
+|---|---:|---:|---:|---:|
+| **best_val_avg/mae_surf_p** | **136.8210** | **8.9868** | 128.2880 | 148.8332 |
+| test_avg/mae_surf_p | 123.40 | 7.91 | 115.07 | 135.14 |
+
+**Per-split variance (val):** `val_single_in_dist` 30%, `val_geom_camber_rc` 25%, `val_geom_camber_cruise` 17%, `val_re_rand` 14% (relative std). Aggregated val_avg has ~6.6% relative std because splits aren't perfectly correlated.
+
+**Reference points vs the multi-seed distribution:**
+
+| reference | val_avg | z-score |
+|---|---:|---:|
+| PR #320's `w3mjq2ua` (recorded baseline) | 115.84 | **−2.33 σ** |
+| Thorfinn's r2 mlp_ratio control `xklvptvl` | 140.70 | +0.43 σ |
+
+**PR #320's 115.84 confirmed as a lucky outlier** (z=−2.33, ~1% probability under a Gaussian assumption). Thorfinn's r2 control was completely typical at z=+0.43.
+
+### Decision: **REQUEST CHANGES (rebase + redo multi-seed at current merged baseline)**
+
+The seeding infrastructure is the deliverable — small, focused, well-tested. **But** the 5-seed study characterizes an *obsolete* baseline (post-EMA-only, mean 136.82) rather than the current operational baseline (post-#409 OneCycle + EMA + L1, single-seed 87.74). For the multi-seed mean ± std to be useful as the merge bar, it needs to be at the current config.
+
+Additionally, the PR has merge conflicts (DIRTY) since PR #294 and #409 both modified Config.
+
+Sent back for rebase + 5-seed redo on the current merged baseline. Smoke test first (two `--seed 0 --debug` runs) to confirm seeding survives the rebase, then 5-seed production sweep. Total ~2.5h GPU.
+
+The historical 5-seed numbers on the post-EMA baseline remain useful as a reference for past merge-decision recalibration — kept in the report rather than discarded.
+
 ## 2026-04-28 09:30 — PR #609: Focal-L1 (per-node residual reweighting on top of L1) — **CLOSED (clean negative result + reusable team insight)**
 
 - Branch: `willowpai2d3-alphonse/focal-l1-surface` (deleted post-close)

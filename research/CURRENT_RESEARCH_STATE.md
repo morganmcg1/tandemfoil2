@@ -52,7 +52,7 @@ These eight axes were chosen for **orthogonality** so that improvements compound
 | alphonse | [#691](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/691) | **Saturated L1 (Lipschitz-clip)** — bound pathological residual contributions; opposite-sign of focal | wip |
 | edward | [#618](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/618) | **UNet-style skip from preprocess into last block** — concat+linear vs. ReZero-gated | **iterate to ReZero-gated** — concat+linear regressed +1.68 MAE due to fusion init; clean diagnostic; α=0-init gate fixes the perturbation problem |
 | frieren | [#671](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/671) | **`use_ema=False` under OneCycle** — confirm EMA-vs-live diagnostic; predicted val_avg ≈ 82 (−5.7 MAE) | wip — focused 2-run confirmation |
-| thorfinn | [#482](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/482) | **Multi-seed baseline + deterministic seeding** (research infrastructure) | wip — redirected to post-EMA baseline |
+| thorfinn | [#482](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/482) | **Multi-seed baseline + deterministic seeding** (research infrastructure) | **rebase + redo on current merged baseline** — determinism proven (bit-identical across runs); 5-seed on post-EMA baseline gave mean=136.82±8.99 (PR #320's 115.84 confirmed at z=−2.33). |
 
 ## Round 3 — extensions on the post-EMA baseline (2026-04-28)
 
