@@ -1,6 +1,6 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 05:10
+- **Date:** 2026-04-28 05:30
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
@@ -55,7 +55,7 @@
 | thorfinn | #310 | per-channel-surf-weights | Loss weighting (3× p) | -3% to -8% | **CLOSED** — +13% regression |
 | thorfinn | #379 | surface-aware-decoder | Architecture (substitutive surface MLP head) | -3% to -7% | **CLOSED** — within noise vs own baseline-ref; substitutive design wastes vol head signal |
 | thorfinn | #436 | additive-surf-head | Architecture (additive surface head) | -2% to -7% | **CLOSED** — +3.47% (trunk interference is deeper bottleneck) |
-| thorfinn | #484 | surface-film | Architecture (surface-conditional FiLM in last block, no parallel pathway) | -1% to -4% | WIP |
+| thorfinn | #484 | surface-film | Architecture (surface-conditional FiLM in last block) | -1% to -4% | **SENT BACK** — paired -2.34% val / -3.23% test (mechanism strong, vol MAE also gains); auto-merge CONFLICTING with #467; rebase + re-run with β=0.5 |
 
 ## Lessons from round 1 so far
 

@@ -1,5 +1,50 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 05:25 — PR #484: Surface-conditional FiLM in last TransolverBlock
+- Branch: `charliepai2d4-thorfinn/surface-film` (still in flight after revision)
+- Student: charliepai2d4-thorfinn
+- **Outcome: SENT BACK** (mechanism strong, paired -2.34% val / -3.23% test, but auto-merge CONFLICTING with #467; rebase to post-β=0.5 baseline + re-run).
+
+### Headline (epoch 33, EMA-evaluated, both runs in PR)
+| Run | val_avg | test_avg | n_params |
+|---|---|---|---|
+| baseline-ref (no FiLM) | 63.21 | 55.57 | 662,359 |
+| surface-film | **61.73** | **53.78** | 662,871 (+512) |
+| Δ vs paired | **-2.34%** | **-3.23%** | +0.08% |
+
+### Per-split val (3/4 gain)
+| Split | Δ |
+|---|---|
+| val_single_in_dist     | **-5.25%** (largest) |
+| val_geom_camber_rc     | +0.65% (smallest, within noise) |
+| val_geom_camber_cruise | -3.82% |
+| val_re_rand            | -1.45% |
+
+### Per-split test (4/4 gain)
+| Split | Δ |
+|---|---|
+| test_single_in_dist     | **-5.67%** |
+| test_geom_camber_rc     | -1.26% (val regression on rc reverses on test → noise read confirmed) |
+| test_geom_camber_cruise | -4.32% |
+| test_re_rand            | -2.08% |
+
+### Bonus mechanism finding: volume MAE also improves
+| Split | mae_vol_p Δ |
+|---|---|
+| val_single_in_dist     | **-11.42%** (large) |
+| val_geom_camber_rc     | -3.44% |
+| val_geom_camber_cruise | -1.20% |
+| val_re_rand            | -2.43% |
+
+The PR predicted vol MAE should match baseline. **Wrong**: gamma_vol/beta_vol are also learned, so the shared mlp2 receives different affine inputs from surface vs volume nodes → trunk produces one shared representation, FiLM-modulated decoder acts as a tiny domain-conditional decoder for **both** modes. The structural insight from #436's post-mortem ("no parallel pathway → no trunk interference") is empirically validated AND extended: domain-conditional decoder helps everywhere, not just the surface side it was designed for.
+
+### Why send back rather than merge
+- Auto-merge CONFLICTING with PR #467 (β=0.5 just merged). Both changes touch train.py model class + Config; need manual rebase.
+- Absolute val 61.73 is +7.4% above the new merged baseline (#467 at 57.50). The paired comparison is what makes this interesting; the rebased FiLM + β=0.5 combo is the cleaner test.
+- Mechanisms are mathematically orthogonal (FiLM = affine modulation in last block; β = loss curve shape), so they should compound. Expected post-rebase val: 55-57 range.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=484 records, 70 lines from both runs).
+
 ## 2026-04-28 05:05 — PR #467: Huber β sweep — β=0.5 wins, **NEW BASELINE (-8.65% vs #368)**
 - Branch: `charliepai2d4-askeladd/huber-beta-sweep` (deleted on merge)
 - Student: charliepai2d4-askeladd
