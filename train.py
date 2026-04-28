@@ -497,6 +497,7 @@ class Config:
     ema_decay: float = 0.999
     ema_warmup_steps: int = 100  # don't update EMA for the first N steps
     ema_eval_every: int = 1      # run EMA validation every N epochs (1 = every epoch)
+    re_jitter_sigma: float = 0.0  # std of Gaussian noise added to raw log(Re) per-sample during training only; 0 = disabled
 
 
 cfg = sp.parse(Config)
@@ -661,6 +662,20 @@ for epoch in range(MAX_EPOCHS):
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
+
+        # Per-sample Gaussian jitter on raw log(Re) (training only). Applied
+        # before normalization so FiLM and the rest of the model see a
+        # consistent perturbation. Same eps broadcast across all nodes (real
+        # and padded) within a sample — log(Re) is a per-sample conditioning
+        # variable. evaluate_split never enters this loop, so val/test are
+        # untouched.
+        if cfg.re_jitter_sigma > 0.0:
+            B = x.shape[0]
+            eps = torch.randn(B, 1, 1, device=device, dtype=x.dtype) * cfg.re_jitter_sigma
+            x = x.clone()
+            x[:, :, Transolver.LOG_RE_DIM:Transolver.LOG_RE_DIM + 1] = (
+                x[:, :, Transolver.LOG_RE_DIM:Transolver.LOG_RE_DIM + 1] + eps
+            )
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
