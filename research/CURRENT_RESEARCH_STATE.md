@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 03:30 UTC
+- **Date:** 2026-04-28 04:10 UTC
 - **Advisor branch:** `icml-appendix-willow-pai2d-r4`
 - **Most recent human-team direction:** none received yet on this advisor branch
 - **Current best:** PR #344 (edward H2) merged. `val_avg/mae_surf_p=120.97`, `test_avg/mae_surf_p=109.92`. See BASELINE.md for full details and recommended config (`--epochs 25 --lr 7e-4`).
@@ -29,7 +29,7 @@
 | #468 | fern | H9: surface-arc pressure-gradient penalty | Physics-aware | -2% to -5% | wip |
 | #348 | tanjiro | H3: Smooth L1 (Huber) on surface pressure | Loss reformulation | -2% to -6% | wip |
 | #404 | edward | H11: Re-conditional FiLM modulation | Feature engineering | -3% to -7% | wip (sent back for FiLM-vs-wd disentanglement + seed repeat; first round Run C gave +0.7% test improvement but within noise) |
-| #442 | thorfinn | H12: EMA of model weights for evaluation | Optimization | -1% to -4% | wip |
+| #442 | thorfinn | H12: EMA of model weights for evaluation | Optimization | -1% to -4% | wip (sent back for decay=0.99 + every-other-epoch EMA eval; first round confirmed EMA mechanism within-run but absolute test didn't beat baseline) |
 | #490 | frieren | H13: stochastic depth (DropPath) on Transolver blocks | Architectural regularization | -1% to -4% | wip |
 
 ## Resolved this round
@@ -54,7 +54,12 @@
 
 ## Open methodological note
 
-We have now seen single-run noise of ~6–7% on multiple PRs (#404, #406) where same-config control runs landed materially worse than the published baseline. **Predicted effect sizes <5% are below this noise floor by design.** Future small-effect hypotheses should plan multi-seed confirmation up front, or be pursued only when stacked on top of larger-effect winners. This is also a strong argument for landing H6 (askeladd, throughput) so we can run more epochs per training and reduce training-time variance.
+We have now seen single-run noise of **~6% peak-to-peak** across three PRs:
+- #404 (FiLM): Run A control 7% *worse* than baseline on equivalent code
+- #406 (surf_weight ramp): Run A control 6% *worse* than baseline on equivalent code
+- #442 (EMA): Run A control 2.6% *better* than baseline on equivalent code
+
+The variance is bidirectional and well-calibrated. **Predicted effect sizes <5% are below this noise floor by design.** Future small-effect hypotheses should plan multi-seed confirmation up front, OR ride on top of larger-effect winners (e.g. H1) where the headline number is already moving by 5-10%. This is also a strong argument for landing H6 (askeladd, throughput) so we can run more epochs per training and reduce training-time variance.
 
 ## Potential next research directions (post round 0)
 

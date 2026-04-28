@@ -31,6 +31,40 @@
 
 ---
 
+## 2026-04-28 04:07 — PR #442: H12 EMA of model weights — **SENT BACK FOR DECAY=0.99 RUN**
+
+- Branch: `willowpai2d4-thorfinn/h12-ema-weights`
+- Hypothesis: EMA of weights at decay 0.999 reduces noise from B=4 stochastic gradients; should reduce `val_avg/mae_surf_p` by 1–4% via late-training oscillation smoothing.
+- 3-cell matrix in W&B group `h12-ema` (all `--epochs 25 --lr 7e-4`):
+
+| Run | EMA | best epoch | val_avg/mae_surf_p (raw) | val_avg_ema/mae_surf_p | active source | test_avg/mae_surf_p | W&B |
+|-----|-----|-----------:|-------------------------:|-----------------------:|:-------------:|--------------------:|-----|
+| A — sanity | off | 14 | **117.85** | n/a | raw | **106.89** | `pqrn0wez` |
+| B — canonical | decay 0.999 | 13 | 138.91 (e12) | **125.81** | ema | 112.28 | `er4p0s4t` |
+| C — longer window | decay 0.9995 | 13 | **131.63** | 156.09 | raw | 119.31 | `yqbcleng` |
+
+### Conclusions
+
+- **Run A's accidental finding: ~6% peak-to-peak seed-variance floor.** EMA off = identity behavior = same code as merged baseline, yet Run A landed at val=117.85 / test=106.89 vs the published baseline's 120.97 / 109.92 — **2.6% / 2.8% improvement from seed luck** in the opposite direction of the variance we saw on PRs #404 and #406. Combined with those, the seed-variance floor on this dataset/budget is ~6% peak-to-peak.
+- **EMA mechanism IS real within-run.** Run B's val_ema=125.81 vs val_raw=139.97 → EMA is **10% better than raw** at the best epoch. Crosses below raw at epoch 8 and stays below for every subsequent epoch. Matches the canonical late-training-noise-smoothing prediction.
+- **Run C confirms decay-too-high failure mode.** Half-life ~3.7 epochs in a 13-epoch run means EMA never catches up. Always 18–30% worse than raw.
+- **Absolute test numbers don't beat baseline.** Run B at val=125.81 / test=112.28 is +4% / +2% regression vs published baseline. Two confounders: (a) dual-eval cost ate ~1 training epoch, (b) decay=0.999 still slightly too high for our 13-14 epoch budget.
+
+### Action
+
+Sent back for one focused run: **Run D — decay=0.99 + every-other-epoch EMA eval**. Half-life ~0.2 epoch lets EMA track the fast early improvement *and* smooth late oscillations; halving the EMA-eval frequency recovers the lost training epoch. Decision rule: merge if Run D's val_ema clearly beats val_raw AND lands below the merged baseline (120.97); close cleanly otherwise.
+
+### Methodological note
+
+This is the third PR in a row exposing the seed-variance floor (~±3% per direction, ~6% peak-to-peak):
+- #404: Run A control 7% *worse* than baseline on equivalent code path
+- #406: Run A control 6% *worse* than baseline on equivalent code path
+- #442: Run A 2.6% *better* than baseline on equivalent code path
+
+This bound is now well-calibrated for this branch's runs. Predicted effect sizes <5% require multi-seed confirmation up front, OR can ride on top of larger-effect winners (e.g. H1) where the headline number is already moving by 5-10%.
+
+---
+
 ## 2026-04-28 03:13 — PR #406: H10 surf_weight ramp curriculum — **CLOSED**
 
 - Branch: `willowpai2d4-frieren/h10-surf-weight-ramp`
