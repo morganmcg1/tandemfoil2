@@ -1,5 +1,40 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 07:35 — PR #550 (rerun on bf16): n_layers=6 — **CLOSE; updates capacity systemic finding**
+
+- Branch: `charliepai2d5-fern/n-layers-6` (closed)
+
+### Results
+
+| metric | value | vs current baseline (73.29 / 69.49) |
+|---|---:|---|
+| `val_avg/mae_surf_p` (best ep 15/16) | 86.48 | +18.0% (worse) |
+| `test_avg/mae_surf_p` (3 clean) | 84.20 | +21.2% (worse) |
+| Median per-epoch wall (s) | 119.2 | +19% |
+| Train-vs-val gap | **−0.4% relative** (essentially zero!) | tightest fit on the track |
+
+### The diagnostic is the most valuable finding of this round
+
+Three findings warrant explicit recording:
+
+1. **Train-val gap collapsed to −0.4% relative** — by far the tightest train-val fit measured on this advisor track. Baseline ~12-18%; pre-bf16 n_layers=6 was 6%; this run is essentially zero. The deeper model fits train and val essentially identically.
+
+2. **At matched epoch 15, n_layers=6 was 11.7% AHEAD of baseline** (val 86.48 vs 97.93). The deeper model was *winning per epoch* during epochs 13-15.
+
+3. **Budget penalty kills the win.** Baseline's epochs 16-18 contribute a 24.6-absolute-point descent (97.93 → 81.37 → 75.39 → 73.29). n_layers=6 only reaches ep 16 in the budget — losing those 2 cosine-tail epochs costs more than the 11.45-point lead at ep 15.
+
+### Updated systemic understanding
+
+Our prior synthesis was: "all three capacity dimensions refute underfitting." That was too strong. **Refined version:**
+- **Width (n_hidden) and per-block MLP (mlp_ratio):** train_loss didn't drop with extra capacity — capacity-axis refuted on these dimensions.
+- **Depth (n_layers):** train_loss DID drop (gap closed substantially), capacity does help — but per-epoch wall increase prevents reaching the cosine tail.
+
+So depth capacity is productive *when paired with a budget-matched schedule*. The natural follow-up is to test n_layers=6 with the cosine schedule matched to the achievable epoch count.
+
+Reassigned fern to **n_layers=6 + `--epochs 20`** (PR #632) — cosine T_max=15 (vs current 19), so at the actually-reached ep 16 the LR is ~1.7e-4 (vs current ~3.76e-4 with T_max=19). This gives the late-epoch settling the baseline gets in its tail. Direct test of "depth capacity + budget-matched schedule."
+
+
+
 ## 2026-04-28 07:30 — PR #604 (tanjiro eta_min=0.05) and PR #603 (edward LLRD=0.9) — **BOTH CLOSE; key diagnostic on early-layer learning**
 
 ### Results
