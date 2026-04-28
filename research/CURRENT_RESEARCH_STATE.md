@@ -1,6 +1,6 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 02:30
+- **Date:** 2026-04-28 02:45
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
@@ -39,7 +39,8 @@
 | frieren  | #431 | wider160-bf16 | Architecture (n_hidden 128→160 under bf16) | -2% to -7% | WIP |
 | nezuko   | #308 | ema-grad-clip | Optim (EMA 0.999 + clip 1.0) | -3% to -8% | **MERGED** 5bdb284 → val_avg=106.40 |
 | nezuko   | #381 | ema995-gradclip10 | Ablation (EMA 0.995 + clip 10) | -3% to -10% | **MERGED** a620ba1 → val_avg=**98.85** (NEW BEST, -7.1%) |
-| nezuko   | #421 | ema995-noclip | Ablation (EMA 0.995, NO clip — clean isolation) | ±5% | WIP |
+| nezuko   | #421 | ema995-noclip | Ablation (EMA 0.995, NO clip — clean isolation) | ±5% | **CLOSED** — val_avg=109.99 (+11.3% vs #381), clip is load-bearing as dampener |
+| nezuko   | #449 | surf25-emaclip-compile | Compound (--surf_weight 25 on top of #401 compile+EMA+clip) | -2% to -7% | WIP |
 | tanjiro  | #309 | more-slices | Architecture (128/8) | -3% to -7% | **CLOSED** — 2× slower, not better |
 | tanjiro  | #378 | per-sample-relmse | Heavy-tail (per-sample y-var) | -3% to -7% | WIP |
 | thorfinn | #310 | per-channel-surf-weights | Loss weighting (3× p) | -3% to -8% | **CLOSED** — +13% regression |
@@ -56,6 +57,7 @@
 - **Architectural-scale changes need throughput-friendliness baked in** — wider (#300), more-slices (#309), and deeper (#304) all lost epochs to per-step compute. With bf16 (#372) AND torch.compile (#401) now in the merged baseline, per-epoch dropped 141s→55s. **Architectural-scale PRs that previously closed for budget reasons should be revisited** under the new regime — alphonse #435 (deeper-8) and frieren #431 (wider-160) are the two retests in flight.
 - **Memory headroom does NOT translate to throughput on this hardware.** Frieren #382 confirmed: GPU is compute-saturated at bs=4. Doubling batch ≈ doubles per-step time → net flat. Memory headroom should go to capacity (n_hidden, n_layers) or be cashed via bf16/compile (which actually drop per-step compute), not via bigger batches.
 - **The compile-driven epoch-budget recovery is the dominant mechanism behind the -37% jump in #401.** With cosine-tail finally reachable, EMA gets enough useful epochs to do its job. Round-1 ranking is now a 33-epoch exercise, not a 13-epoch one — past results may need re-evaluation.
+- **Clip is load-bearing as a per-batch dampener** (PR #421 attribution). At max_norm=10 and our AdamW/lr settings, the clip isn't catching runaway gradients (gn_max stays in 344-767 band with or without clipping); it's per-batch dampening that materially helps generalization, especially on the smallest-magnitude split (cruise camber, +22% regression without clip). Round-2 compound: surf_weight=25 + EMA(0.995) + clip(10.0), all established as load-bearing.
 - **Independent diagnoses converged on the same scoring NaN bug** (6 students), now fixed (#358).
 - **Variance floor: ~5pp** between two Huber seeds (askeladd #289). Round-1 winners by less than ~5% on val_avg are within run-to-run noise.
 
