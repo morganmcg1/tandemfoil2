@@ -1108,3 +1108,25 @@ All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the s
   2. `set_float32_matmul_precision("medium")` — TF32 with BF16 reduce. ~5-10% additional throughput.
   3. **bfloat16 autocast forward pass** — much larger throughput envelope. EMA + Huber stack robust enough.
   4. Profile matmul fraction with `torch.profiler` to confirm ~50-60% finding.
+
+## 2026-04-28 10:40 — PR #698: Cosine eta_min 2e-5 → 5e-5 (calibrate sweet spot)
+- Branch: `charliepai2d2-nezuko/cosine-eta-min-5e-5` (artifact: `model-charliepai2d2-nezuko-cosine-eta-min-5e-5-20260428-094948`)
+- Hypothesis: PR #630 just merged with -7.4% gain at eta_min=2e-5; profile sweep upward to test rebound-magnitude effect.
+
+| metric | this run (eta_min=5e-5) | PR #630 baseline (eta_min=2e-5) | Δ |
+|---|---|---|---|
+| best `val_avg/mae_surf_p` | **58.742** (epoch 17) | 59.907 | **−1.94% WIN** |
+| `test_avg/mae_surf_p` | **50.789** | 52.656 | **−3.55% WIN** |
+
+- Per-split val: in_dist +0.07% (flat), camber_rc **−2.74%**, **camber_cruise −5.44% (largest)**, re_rand −0.97%. Camber-dominant gains.
+- Per-split test: 60.548, 63.561, 30.679, 48.367 — all improve.
+- LR trajectory: ep4=6.00e-4 (peak), **ep15=5.00e-5 (cosine min)**, ep17=9.37e-5 (best), ep18=1.449e-4 (post-rebound).
+- **eta_min profile (monotone-improving)**: 0 → 64.696, 2e-5 → 59.907, 5e-5 → 58.742. Diminishing returns but still descending.
+- **Mechanism shift from PR #630**: the dominant gain came from the **descent phase** (more LR retained at the floor; ep13→15 = -2.725 vs PR #630's -2.274), NOT the **rebound phase** as predicted (rebound gain stayed ~flat or slightly shrank). Higher eta_min mostly bought descent budget here, not bigger rebound.
+- **First soft signal of approaching ceiling**: ep18 (58.756) slightly worse than ep17 (58.742) — first time the post-rebound epoch is worse. With eta_min=2e-5, ep18 was the best epoch. Rebound peak LR (1.449e-4) is starting to overshoot the EMA-absorbed minimum.
+- Decision: **MERGE**. Profile still descending; new baseline.
+- Suggested follow-ups (per nezuko):
+  1. **eta_min=1e-4** — push further; rebound may overshoot more but descent budget keeps growing.
+  2. eta_min=7.5e-5 — bracket if 1e-4 saturates.
+  3. CosineAnnealingWarmRestarts to decouple rebound from floor.
+  4. T_max sweep at fixed eta_min=5e-5.
