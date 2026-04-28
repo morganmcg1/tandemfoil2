@@ -1,30 +1,41 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-27
+- **Date:** 2026-04-28
 - **Advisor branch:** `icml-appendix-willow-pai2d-r3`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r3`
 - **Most recent human-team direction:** none received (fresh launch)
 
 ## Current research focus
 
-Establish a strong baseline above the default Transolver on TandemFoilSet by sweeping **eight orthogonal first-round levers** in parallel. Primary metric is `val_avg/mae_surf_p` (equal-weight mean surface-pressure MAE across the four val splits); paper-facing number is `test_avg/mae_surf_p` from the best-val checkpoint.
+First Round-1 winner merged: **PR #320** (linear warmup + peak LR 1e-3) drops `val_avg/mae_surf_p` from 147.55 → **115.84** (−21.5%, uniform across all 4 val splits). This sets the in-track baseline. Other 7 Round-1 PRs (#294, #315, #316, #317, #319, #322, #323) are still in flight and will be reviewed against the 115.84 baseline.
 
-No in-track baseline established yet — the first wave of round-1 results will define the reference numbers for this advisor branch's BASELINE.md.
+A pre-existing NaN failure in `test_geom_camber_cruise` (model emits non-finite pressure predictions on at least one test sample, regardless of LR) is now the bottleneck for paper-facing `test_avg/mae_surf_p`. Follow-up assigned to nezuko (PR #397).
 
 ## Round 1 — orthogonal axes assigned (2026-04-27)
 
-| Student | PR | Lever | Predicted Δ on `val_avg/mae_surf_p` |
-|---|---|---|---|
-| alphonse | [#294](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/294) | **Loss alignment** — Huber surface loss (sweep δ ∈ {0.5, 1.0, 2.0}) | −3 to −8% |
-| askeladd | [#315](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/315) | **Width** — `n_hidden` 128 → 192 (sweep 160/192/256) | −5 to −10% |
-| edward | [#316](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/316) | **Slice count** — `slice_num` 64 → 128 (sweep 96/128/192) | −5 to −12% |
-| fern | [#317](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/317) | **Surface-vs-volume balance** — `surf_weight` sweep {5, 20, 40, 80} | −3 to −8% |
-| frieren | [#319](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/319) | **Depth** — `n_layers` 5 → 8 (sweep 6/8/10) | −3 to −8% |
-| nezuko | [#320](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/320) | **LR schedule** — linear warmup + higher peak LR (sweep peak ∈ {5e-4, 1e-3, 2e-3}) | −3 to −7% |
-| tanjiro | [#322](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/322) | **Channel weighting** — upweight pressure in surface loss (sweep p_w ∈ {1, 2, 3, 5}) | −3 to −6% |
-| thorfinn | [#323](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/323) | **FFN expressivity** — `mlp_ratio` 2 → 4 (sweep 2/4/6) | −3 to −7% |
+| Student | PR | Lever | Status | Result |
+|---|---|---|---|---|
+| alphonse | [#294](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/294) | **Loss alignment** — Huber surface loss (sweep δ ∈ {0.5, 1.0, 2.0}) | wip | — |
+| askeladd | [#315](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/315) | **Width** — `n_hidden` 128 → 192 (sweep 160/192/256) | wip | — |
+| edward | [#316](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/316) | **Slice count** — `slice_num` 64 → 128 (sweep 96/128/192) | wip | — |
+| fern | [#317](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/317) | **Surface-vs-volume balance** — `surf_weight` sweep {5, 20, 40, 80} | wip | — |
+| frieren | [#319](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/319) | **Depth** — `n_layers` 5 → 8 (sweep 6/8/10) | wip | — |
+| nezuko | [#320](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/320) | **LR schedule** — linear warmup + peak LR ∈ {5e-4, 1e-3, 2e-3} | **MERGED** | **−21.5%** (147.55 → 115.84); peak_lr=1e-3 wins |
+| tanjiro | [#322](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/322) | **Channel weighting** — upweight pressure in surface loss (sweep p_w ∈ {1, 2, 3, 5}) | wip | — |
+| thorfinn | [#323](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/323) | **FFN expressivity** — `mlp_ratio` 2 → 4 (sweep 2/4/6) | wip | — |
 
 These eight axes were chosen for **orthogonality** so that improvements compound when winners are merged sequentially: loss function, width, slice count, surface/volume balance, depth, LR schedule, channel weighting, and FFN expressivity touch nearly disjoint parts of the model and training stack.
+
+## In-track baseline (post-PR #320 merge)
+
+- `val_avg/mae_surf_p`: **115.84** (best epoch 14, run `w3mjq2ua`).
+- `test_avg/mae_surf_p`: **NaN** — pre-existing `test_geom_camber_cruise` NaN-prediction bug. Mean of the 3 valid test splits: 112.78.
+- Hyperparams: `peak_lr=1e-3, warmup_epochs=2, weight_decay=1e-4, batch_size=4, surf_weight=10.0, epochs=50, n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2`.
+- All Round-1 sweep runs hit the 30-min timeout at ~epoch 14 of 50; cosine never fully annealed at this budget.
+
+## Follow-ups in flight
+
+- **nezuko PR [#397](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/397)** — Diagnose + fix `test_geom_camber_cruise` NaN predictions (gradient clipping + W&B-visible safety net). Unblocks `test_avg/mae_surf_p` for *all* in-flight Round-1 PRs.
 
 ## Potential next research directions
 
