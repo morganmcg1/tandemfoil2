@@ -512,6 +512,26 @@ Round-1 reviews. Primary ranking metric: `val_avg/mae_surf_p` (lower is better).
 - **Mechanism (definitive)**: late-training smoothing IS load-bearing. The regression is concentrated on the splits where weight-space averaging matters most (single_in_dist, camber_rc — same splits DropPath improved). The OOD `val_re_rand` is unaffected, confirming that split's bottleneck is data-coverage rather than checkpoint smoothing.
 - Decision: **CLOSE.** EMA decay axis is closed in the DOWN direction. Student's follow-up #2 (decay=0.995, the UP direction — longer late-training memory) is the orthogonal next probe. Queued as round-7 reassignment.
 
+## 2026-04-28 06:00 — PR #556: SwiGLU FFN mlp_ratio 2 → 3 (LLaMA-style capacity bump)
+
+- Branch: `charliepai2d2-edward/swiglu-mlp-ratio-3` — metrics committed.
+- Hypothesis: SwiGLU's gate selectivity may benefit from more intermediate dim differently than the original GELU MLP (which failed at mlp_ratio=4, PR #392). Predicted −0.5% to +2%.
+- Result: best `val_avg/mae_surf_p = 73.764` at epoch 13. **+9.6% vs current 67.306 baseline; +2.9% vs slice-temp baseline 71.6985.** test +9.8%/+4.0%. n_params = 824K (+23% vs 670K baseline). Wall-clock +5.7% per epoch (143.1 s vs 135.4 s) → got 13 epochs vs baseline's 14.
+- Per-epoch convergence: **essentially identical** to slice-temp-1p0 baseline at ep13 (73.76 vs 73.73). **No per-epoch architectural signal from the FFN width bump.** Same failure mode as edward's #519 n_head=8 (wall-clock penalty without offsetting per-epoch gain).
+- **Key finding (combined with frieren's #392 mlp_ratio=4)**: capacity in the FFN is NOT the bottleneck on this problem at 670–824K param scale. The gating mechanism (SwiGLU vs original GELU) doesn't change this; both architectures show the same shape of failure on capacity bumps.
+- Decision: **CLOSE.** FFN-width axis is now disconfirmed across both gated and non-gated MLPs. Adding to "Disconfirmed directions".
+
+## 2026-04-28 06:00 — PR #555: Bias-corrected EMA warmup_steps 50 → 100
+
+- Branch: `charliepai2d2-askeladd/bias-corrected-ema-warmup-100` — metrics committed.
+- Hypothesis: warmup_steps profile is monotone-improving (10 → 50 won), so push to 100. Predicted −0.3% to −1%.
+- Result: best `val_avg/mae_surf_p = 72.4145` at epoch 14. **+1.38% vs ws=50 baseline (71.428); +7.6% vs current 67.306.** test +1.34%/+8.4%.
+- **Profile saturated and reversed**: ws=50 is the sweet spot.
+- Per-split val: mixed signal — 3 splits improved (single_in_dist −0.55%, cruise −2.74%, re_rand +1.50%), val_geom_camber_rc regressed sharply (+5.76% val, +8.68% test) and dragged the average up.
+- Effective decay never reaches the 0.99 asymptote (peak ~0.9815 at end of budget; clamp would happen at step ~9800, ~6 epochs past timeout). At ws=100 the EMA effectively becomes a near-live tracker.
+- **Mechanism**: the small-lookback smoothing at ws=50 was load-bearing for the unseen-camber-RC generalization split. Pushing further into "live tracker" regime loses that smoothing benefit specifically on the OOD-geometry axis. The "ramp longer = always better" expectation breaks down where smoothing-vs-tracking trade-offs become split-dependent.
+- Decision: **CLOSE.** warmup_steps direction is closed at 50. Don't push to 200+.
+
 ## Test-metric NaN follow-up (cross-PR)
 
 All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the student diagnoses:
