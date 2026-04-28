@@ -387,6 +387,10 @@ def save_model_artifact(
         "batch_size": cfg.batch_size,
         "surf_weight": cfg.surf_weight,
         "epochs_configured": cfg.epochs,
+        "schedule": cfg.schedule,
+        "onecycle_peak_lr": cfg.onecycle_peak_lr,
+        "onecycle_pct_start": cfg.onecycle_pct_start,
+        "onecycle_total_epochs": cfg.onecycle_total_epochs,
         "use_ema": cfg.use_ema,
         "ema_decay": cfg.ema_decay,
         "ema_warmup_steps": cfg.ema_warmup_steps,
@@ -446,6 +450,15 @@ class Config:
     huber_delta: float = 1.0  # surface-loss Huber threshold (normalized space)
     epochs: int = 50
     n_layers: int = 5
+    schedule: str = "onecycle"  # {"warmup-cosine", "onecycle"}
+    onecycle_peak_lr: float = 2e-3
+    onecycle_pct_start: float = 0.1
+    # OneCycle's cool-down is fraction-of-total_steps-based; training is
+    # wall-clock-bounded and reliably reaches ~14 epochs in 30 min, so
+    # configuring epochs=cfg.epochs leaves the cool-down barely fired.
+    # Calibrate to ~15 so the cool-down completes by the actual exit,
+    # with one full epoch of safety margin against OneCycleLR step-overflow.
+    onecycle_total_epochs: int = 15
     use_ema: bool = True
     ema_decay: float = 0.999
     ema_warmup_steps: int = 100
@@ -506,16 +519,36 @@ if ema is not None:
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.peak_lr, weight_decay=cfg.weight_decay)
 
-warmup_iters = max(cfg.warmup_epochs, 1)
-warmup = torch.optim.lr_scheduler.LinearLR(
-    optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_iters,
-)
-cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-    optimizer, T_max=max(MAX_EPOCHS - cfg.warmup_epochs, 1),
-)
-scheduler = torch.optim.lr_scheduler.SequentialLR(
-    optimizer, schedulers=[warmup, cosine], milestones=[cfg.warmup_epochs],
-)
+if cfg.schedule == "onecycle":
+    # OneCycleLR is per-step: total_steps = epochs * steps_per_epoch.
+    # scheduler.step() must be called after each optimizer.step() (in the inner loop).
+    # Use onecycle_total_epochs (calibrated to wall-clock budget), NOT MAX_EPOCHS,
+    # so the cool-down phase actually fires before the timeout cuts in.
+    steps_per_epoch = len(train_loader)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=cfg.onecycle_peak_lr,
+        epochs=cfg.onecycle_total_epochs,
+        steps_per_epoch=steps_per_epoch,
+        pct_start=cfg.onecycle_pct_start,
+        anneal_strategy="cos",
+        cycle_momentum=False,
+        div_factor=25.0,
+        final_div_factor=1e4,
+    )
+elif cfg.schedule == "warmup-cosine":
+    warmup_iters = max(cfg.warmup_epochs, 1)
+    warmup = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_iters,
+    )
+    cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(MAX_EPOCHS - cfg.warmup_epochs, 1),
+    )
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer, schedulers=[warmup, cosine], milestones=[cfg.warmup_epochs],
+    )
+else:
+    raise ValueError(f"Unknown schedule: {cfg.schedule!r} (expected 'warmup-cosine' or 'onecycle')")
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -595,6 +628,11 @@ for epoch in range(MAX_EPOCHS):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        if cfg.schedule == "onecycle":
+            # Guard against OneCycleLR step-overflow if training somehow runs
+            # past the configured horizon (faster hardware than calibrated for).
+            if scheduler.last_epoch < scheduler.total_steps:
+                scheduler.step()
         if ema is not None:
             ema.update(model)
         global_step += 1
@@ -618,7 +656,8 @@ for epoch in range(MAX_EPOCHS):
         epoch_surf_outlier_n += 1
         n_batches += 1
 
-    scheduler.step()
+    if cfg.schedule != "onecycle":
+        scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
