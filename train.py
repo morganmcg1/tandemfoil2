@@ -556,11 +556,16 @@ for epoch in range(MAX_EPOCHS):
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
         sq_err = (pred - y_norm) ** 2
+        abs_err = (pred - y_norm).abs()
+        # SmoothL1 (Huber) on surface: MSE-like inside |err|<beta, L1-like outside.
+        # beta=1.0 in normalized space ≈ one std of the channel.
+        beta = 1.0
+        smooth_l1 = torch.where(abs_err < beta, 0.5 * sq_err / beta, abs_err - 0.5 * beta)
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        surf_loss = (smooth_l1 * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
