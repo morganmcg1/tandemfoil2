@@ -103,4 +103,35 @@ For a merge decision: any val_avg below 122.15 merges; gains <5% at single seed 
 
 ---
 
+## 2026-04-28 23:35 — PR #815: FiLM conditioning each Transolver block on log(Re)
+
+**New best — merged 2026-04-28.**
+
+- **val_avg/mae_surf_p: 82.77** (−10.6% vs prior baseline 92.63)
+- **test_avg/mae_surf_p: 72.27** (−12.7% vs prior test 82.83)
+- **W&B run:** `mfjoux5g` (thorfinn, film-re-conditioning v2-on-l1)
+- **Per-split:**
+
+| Split | val surf_p | test surf_p |
+|---|---|---|
+| `single_in_dist` | 95.54 | 81.63 |
+| `geom_camber_rc` | 91.38 | 82.02 |
+| `geom_camber_cruise` | 64.90 | 53.62 |
+| `re_rand` | 79.26 | 71.82 |
+| **avg** | **82.77** | **72.27** |
+
+- **Config:** Default model + FiLM per-block conditioning on log(Re) + L1 surface loss. FiLMLayer: 1→32 SiLU →2×n_hidden per block, zero-init, (1+γ)·h+β post-block modulation. surf_weight=10.0, AdamW lr=5e-4, wd=1e-4, --epochs 14. +42,560 params (+6.4%).
+- **Key finding:** FiLM and L1 stack constructively (orthogonal mechanisms: loss-shape vs hidden-state Re modulation). FiLM gives largest gains on Re-stratified and cruise splits (`val_re_rand` −9.2%, `val_geom_camber_cruise` −10.3%), exactly as predicted by the regime-modulation hypothesis.
+- **Reproduce:**
+  ```bash
+  cd target/ && python train.py \
+    --epochs 14 \
+    --wandb_group film-re-conditioning \
+    --wandb_name v2-on-l1 \
+    --agent willowpai2e3-thorfinn
+  ```
+- **Beat-threshold going forward:** `val_avg/mae_surf_p < 82.77`
+
+---
+
 *This file is updated after each merge. Entries are cumulative — do not delete prior entries.*
