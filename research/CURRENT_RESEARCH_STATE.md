@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 05:00 UTC
+- **Date:** 2026-04-28 05:25 UTC
 - **Advisor branch:** `icml-appendix-willow-pai2d-r4`
 - **Most recent human-team direction:** none received yet on this advisor branch
 - **Current best:** PR #404 (edward H11) merged. `val_avg/mae_surf_p=119.36`, `test_avg/mae_surf_p=107.54`. See BASELINE.md for full details and recommended config (`--film_re True --epochs 25 --lr 7e-4 --weight_decay 5e-4 --seed 123`).
@@ -29,7 +29,7 @@
 | #348 | tanjiro | H3: Smooth L1 (Huber) on surface pressure | Loss reformulation | -2% to -6% | wip |
 | #442 | thorfinn | H12: EMA of model weights for evaluation | Optimization | -1% to -4% | wip (sent back for decay=0.99 + every-other-epoch EMA eval; first round confirmed EMA mechanism within-run but absolute test didn't beat baseline) |
 | #468 | fern | H9: surface-arc pressure-gradient penalty | Physics-aware | -2% to -5% | wip |
-| #490 | frieren | H13: stochastic depth (DropPath) on Transolver blocks | Architectural regularization | -1% to -4% | wip |
+| #561 | frieren | H15: test-time z-mirror augmentation (TTA) | Inference-time regularization | -1% to -3% | wip |
 | #523 | edward | H14: 5-D conditioning vector for FiLM | Feature engineering | -1% to -4% | wip |
 
 ## Resolved this round
@@ -41,13 +41,14 @@
 | #349 | thorfinn | H8: slice_num scaling matrix | closed (regression vs baseline) | 148.65 (+23% vs baseline) |
 | #345 | fern | H4: surface-only norm + distance feature | closed (cruise OOD structural regression) | 129.13 (+6.7% vs baseline) |
 | #406 | frieren | H10: surf_weight ramp curriculum | closed (within-experiment +4.3% vs A but +1.6% regression vs baseline; effect below seed-variance floor) | 122.90 (+1.6% vs baseline) |
+| #490 | frieren | H13: stochastic depth (DropPath) | closed (B-vs-A signature matched prediction strongly but absolute effect below noise floor) | 120.57 (+1.0% vs current baseline) |
 | #404 | edward | H11: Re-conditional FiLM modulation | **merged** (after disentanglement) | **119.36** (Run E, −1.3% vs prior baseline) |
 
 ## Held in reserve / promising follow-ups
 
 - **Edward's `--epochs 14` lr-frontier follow-up** — finish testing the schedule frontier on the merged code.
 - **Thorfinn's slice_num=96 follow-up** — never tested below the slice 128 winner; the 128→256 curve goes sharply up which hints 64 may already be slightly over-partitioned.
-- **Frieren's TTA (test-time augmentation) study** — evaluate predictions on (x, mirror(x)) at test time. Tests whether the symmetry exists in the trained model, divorced from training-time corruption.
+- ~~**Frieren's TTA (test-time augmentation) study**~~ — now in flight as PR #561 (H15).
 - **Frieren's domain-conditional augmentation** — restrict mirroring to cruise-only with proper gap sign-flip; small but clean physics.
 - **Fern's C2-Lite ablation + multi-scale distance feature** — milder loss-rebalancing variants that *might* dodge the cruise structural regression.
 - **Per-domain `surf_weight`** — closely related to H10's failure mode; revisit if H10 mechanism can be salvaged.
@@ -62,8 +63,9 @@ We have now seen single-run noise of **~6% peak-to-peak** across multiple PRs:
 - #404 (FiLM, round 1): Run A control 7% *worse* than baseline on equivalent code
 - #406 (surf_weight ramp): Run A control 6% *worse* than baseline on equivalent code
 - #442 (EMA): Run A control 2.6% *better* than baseline on equivalent code
+- #490 (DropPath): Run A control 7.7% *worse* than baseline on equivalent code
 
-The variance is bidirectional and well-calibrated. **Predicted effect sizes <5% are below this noise floor by design.** Going forward:
+The variance is bidirectional and well-calibrated at ~6% peak-to-peak. **Predicted effect sizes <5% are below this noise floor by design.** Going forward:
 - New small-effect hypotheses should plan multi-seed confirmation up front (PR #404 round 2 was the model — Run D for disentanglement + Run E with `--seed 123` for variance check).
 - The `--seed` CLI flag shipped via PR #404 makes seed-controlled comparisons cheap; future PRs that depend on small effects should reuse it.
 - Landing H6 (askeladd, throughput) so we can run more epochs per training is a strong argument for compounding effect-vs-noise improvements.

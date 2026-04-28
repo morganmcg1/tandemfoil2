@@ -31,6 +31,39 @@
 
 ---
 
+## 2026-04-28 05:14 — PR #490: H13 stochastic depth (DropPath) on Transolver blocks — **CLOSED**
+
+- Branch: `willowpai2d4-frieren/h13-stochastic-depth`
+- Hypothesis: DropPath at peak rate 0.10 with linear-per-block scaling should reduce `val_avg/mae_surf_p` by 1–4% via implicit ensembling.
+- 3-cell matrix in W&B group `h13-stochastic-depth` (all `--epochs 25 --lr 7e-4`):
+
+| Run | drop_path_rate | val_avg/mae_surf_p | test_avg/mae_surf_p | best_epoch | W&B |
+|-----|---------------:|---------------------:|----------------------:|-----------:|-----|
+| A — sanity | 0.00 | 130.27 | 118.64 | 13 | `tkbdhacg` |
+| **B** | **0.10** | **120.57** | **109.38** | **14** | `j4ypz8o3` |
+| C — aggressive | 0.20 | 139.78 | 125.30 | 12 | `ddy0ymee` |
+
+### Conclusions
+
+- **Run B is approximately tied with PR #344 baseline (120.97 / 109.92) but +1.0% / +1.7% regression vs current PR #404 baseline (119.36 / 107.54).** Below the noise floor; can't claim a real effect.
+- **Run A is the fourth data point on the seed-variance floor.** Same code as merged baseline (DropPath returns x unchanged when rate=0), +7.7% worse on val. Combined with prior PRs, bidirectional ~6% peak-to-peak noise.
+- **Run B vs Run A within-experiment shows the predicted OOD-favoring signature strongly:** `test_geom_camber_rc` -17.3%, `test_re_rand` -8.3%, with single_in_dist and cruise basically flat. DropPath IS doing the regularization work it advertises — the mechanism is real, but the absolute effect at single-seed is too small to attribute against the noise floor.
+- **Run C (0.20) underfits.** Best epoch arrives at 12 vs 13-14 for A/B; curve still trending down at timeout. PR's failure-mode prediction was correct.
+- **Multi-seed confirmation would burn 3-5 more runs for a likely 0-2% effect.** Not worth the GPU spend given that more promising hypotheses are landing on rebase.
+
+### Useful follow-ups (deferred)
+
+- **Multi-seed at 0.10** if at any point we have spare compute and want to nail down regularizer effects below the noise floor.
+- **Lower rate sweep `{0.05, 0.075, 0.10}`** if we want to find the optimum.
+- **Compound with round-0 winners** — DropPath is orthogonal to feature/loss/architecture changes; candidate for a "stack-the-winners" PR once 2–3 separate ideas have merged.
+- **Longer epochs after H6 lands** — DropPath's mechanism (implicit ensemble) benefits from more forward passes.
+
+### Action
+
+Closed; reassigning frieren to H15 (test-time z-mirror augmentation / TTA) — her own follow-up #3 from H7, builds on her domain knowledge of the dataset's z-symmetry structure. Clean decisive yes/no test of whether the trained model has learned z-symmetry on cruise samples (where physics holds) without the training-time corruption that killed H7.
+
+---
+
 ## 2026-04-28 04:53 — PR #347 (resubmit): H5 random Fourier features on (x, z) — **SENT BACK FOR REBASE-ONTO-#404**
 
 - Branch: `willowpai2d4-nezuko/h5-fourier-features` (rebased onto post-#344 advisor branch, but **not yet rebased onto post-#404**)
