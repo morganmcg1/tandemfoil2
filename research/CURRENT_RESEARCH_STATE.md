@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Last updated**: 2026-04-28 20:30 UTC
+- **Last updated**: 2026-04-28 21:30 UTC
 - **Branch**: `icml-appendix-charlie-pai2e-r3`
 - **Most recent direction from human researcher team**: none on file. Default contract from `target/program.md` stands — drive `val_avg/mae_surf_p` (and the matching `test_avg/mae_surf_p` from best val checkpoint) down on the equal-weight 4-split mean.
 
