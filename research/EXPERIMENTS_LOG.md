@@ -2,6 +2,27 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 04:25 — PR #441: bf16 mixed precision standalone (2-seed) — **SENT BACK (intent to merge)**
+- Branch: `willowpai2d5-alphonse/bf16-standalone` (sits on intermediate advisor commit; train.py diff clean, research/*.md staleness only)
+- Two seeds on advisor HEAD (slice_num=64) with bf16 autocast in train + eval, fp32 upcast before squaring & before denormalization
+
+| Seed | best_epoch | epochs done | val_avg/mae_surf_p | s/epoch | peak VRAM |
+|---|---:|---:|---:|---:|---:|
+| seed 0 (cgitj1dc) | 17 | 19 | 116.77 | 96.2 | 32.95 GB |
+| seed 1 (i45ys5ih) | 17 | 19 | 117.97 | 96.6 | 32.95 GB |
+| **mean ± std** | — | — | **117.37 ± 0.85** | **96.4** | **32.95** |
+
+- **vs implied baseline cluster (~131): -10.4%**
+- **Wall-clock speedup matches PR #331 prediction:** s/epoch 131 → 96 = -26.4%. Converted into 5 extra epochs (14 → 19), enough to push best-checkpoint past the fp32-baseline cliff.
+- **Variance dramatically tighter than #331's MSE band** (CV ~0.7% vs ±10-15%). Attribution: bf16 stable + late-cosine annealing reaching real LR decay at epoch 17.
+- **Per-channel improvement on every split.** Test/val gap stays under 2 (3-finite-split test mean 115.59 vs val 117.37).
+- **Decision: send back for research/*.md rebase only, then merge.** train.py diff is clean. Will become new advisor baseline ~117.
+- Cross-cutting findings preserved:
+  - bf16 zero overflow at our dynamic range (clamp_count=0 — second confirmation after #331)
+  - Peak VRAM unchanged at 32.95 GB; bf16 alone doesn't unlock bigger models on this N-dominated workload
+  - The "larger-than-predicted gain" is the budget recovery, not a numerical effect — fp32 baseline was terminating mid-descent
+- Strategic angle: merging this first sets up askeladd PR #413 (Huber) for a clean orthogonal-stack test on rebase. Both axes are independent (loss vs ergonomics) so we expect additive composition.
+
 ## 2026-04-28 03:45 — PR #339: Larger batch (8) with sqrt(2) LR scaling — **CLOSED**
 - Branch: `willowpai2d5-nezuko/batch8-lr-sqrt2` (deleted; CLEAN diff — pure CLI flag run, no train.py changes)
 - Three runs on post-#433 advisor (slice_num=64):

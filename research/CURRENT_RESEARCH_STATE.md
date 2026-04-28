@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 03:50
+- **Date:** 2026-04-28 04:30
 - **Advisor branch:** `icml-appendix-willow-pai2d-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r5`
 - **Most recent human research direction:** none received yet
@@ -22,7 +22,7 @@ Round 1 in progress. Strategy:
 
 | PR | Student | Hypothesis | Status |
 |----|---------|------------|--------|
-| #441 | alphonse  | bf16 mixed precision standalone (2-seed for variance)           | wip (new; bf16 buys ~26% wall-clock back per #331 — every other PR's hypothesis test becomes more decisive) |
+| #441 | alphonse  | bf16 mixed precision standalone (2-seed for variance)           | wip (sent back; 2-seed mean 117.37 ± 0.85 = -10.4% vs cluster baseline; train.py diff clean, awaiting research/*.md rebase, then immediate merge) |
 | #413 | askeladd  | Huber loss for surface pressure (delta=1.0)                     | wip (sent back; pre-rebase 2-seed mean 118.47 = -15.3% vs slice=128 baseline; awaiting rebase + slice_num=64 confirmation, then merge) |
 | #427 | frieren   | Budget-aware cosine (T_max=11 matched to realized epochs)       | wip (new; replaces closed #338) |
 | #505 | nezuko    | Lower LR exploration: `lr=3e-4` (2-seed for variance)           | wip (new; replaces closed #339 — bs=8 lost as binding constraint is wall-clock at our cap, lower LR is the orthogonal lever) |
