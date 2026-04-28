@@ -342,6 +342,7 @@ def save_model_artifact(
         "weight_decay": cfg.weight_decay,
         "batch_size": cfg.batch_size,
         "surf_weight": cfg.surf_weight,
+        "surf_weight_end": cfg.surf_weight_end,
         "epochs_configured": cfg.epochs,
     }
 
@@ -395,6 +396,7 @@ class Config:
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 10.0
+    surf_weight_end: float | None = None  # if set, ramp surf_weight linearly from surf_weight to surf_weight_end across total_steps
     epochs: int = 50
     warmup_frac: float = 0.05  # fraction of total steps used for linear LR warmup
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
@@ -403,6 +405,13 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+
+
+def current_surf_weight(step: int, total_steps: int, start: float, end: float | None) -> float:
+    if end is None or end == start:
+        return start
+    progress = min(step / max(1, total_steps), 1.0)
+    return start + (end - start) * progress
 
 
 cfg = sp.parse(Config)
@@ -531,7 +540,8 @@ for epoch in range(MAX_EPOCHS):
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
         surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+        sw = current_surf_weight(global_step, total_steps, cfg.surf_weight, cfg.surf_weight_end)
+        loss = vol_loss + sw * surf_loss
 
         optimizer.zero_grad()
         loss.backward()
@@ -541,6 +551,7 @@ for epoch in range(MAX_EPOCHS):
         wandb.log({
             "train/loss": loss.item(),
             "lr": scheduler.get_last_lr()[0],
+            "surf_weight": sw,
             "global_step": global_step,
         })
 
@@ -553,8 +564,9 @@ for epoch in range(MAX_EPOCHS):
 
     # --- Validate ---
     model.eval()
+    sw_now = current_surf_weight(global_step, total_steps, cfg.surf_weight, cfg.surf_weight_end)
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, sw_now, device)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -620,8 +632,9 @@ if best_metrics:
             name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
             for name, ds in test_datasets.items()
         }
+        sw_final = current_surf_weight(global_step, total_steps, cfg.surf_weight, cfg.surf_weight_end)
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, sw_final, device)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
