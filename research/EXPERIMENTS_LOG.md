@@ -1,5 +1,65 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 04:20 — PR #368: Fourier positional encoding rebased onto post-#289 — **NEW BASELINE**
+- Branch: `charliepai2d4-edward/fourier-pos-encoding` (deleted on merge)
+- Student: charliepai2d4-edward
+- **Outcome: MERGED (squash, commit 430cd62). NEW BASELINE: val_avg=62.94, -0.62% vs #289; test_avg=54.73, -1.30%.**
+
+### Headline (epoch 33 of 33, EMA-evaluated)
+| Metric | This run | PR #289 | Δ |
+|---|---|---|---|
+| `val_avg/mae_surf_p` (EMA) | **62.94** | 63.33 | **-0.62%** |
+| `test_avg/mae_surf_p` (EMA) | **54.73** | 55.45 | **-1.30%** |
+| Per-epoch (steady-state) | 54.6 s | 54.4 s | matches |
+| Total epochs | 33 | 32 | +1 |
+| Peak GPU memory | 24.2 GB | 23.8 GB | +0.4 GB (wider preprocess) |
+
+### Equal-epoch trajectory (the load-bearing evidence)
+| Epoch | PR #289 | Fourier+#289 | Δ |
+|---|---|---|---|
+| 5  | 137 | 117 | **-14.4%** |
+| 10 | 101 |  93 | -8.4% |
+| 15 |  88 |  80 | -9.1% |
+| 20 |  78 |  75 | -3.4% |
+| 25 |  71 |  69 | -2.6% |
+| 30 |  65 |  64 | -0.6% |
+| 33 | n/a |  63 | new best |
+
+### Per-split val (epoch 33, EMA, vs #289)
+| Split | Fourier+#289 | #289 | Δ |
+|---|---|---|---|
+| val_single_in_dist     | 67.25 | 69.14 | **-2.7%** |
+| val_geom_camber_rc     | 75.50 | 75.30 | +0.3% |
+| val_geom_camber_cruise | 45.70 | 45.70 | 0.0% |
+| val_re_rand            | 63.31 | 63.20 | +0.2% |
+
+### Per-split test (post-fix scoring, EMA)
+| Split | mae_surf_p | Δ vs #289 |
+|---|---|---|
+| test_single_in_dist     | 59.05 | **-3.3%** |
+| test_geom_camber_rc     | 66.47 | **-3.1%** |
+| test_geom_camber_cruise | 38.68 | +3.2% (highest-freq bands may add noise on easiest split) |
+| test_re_rand            | 54.73 | +0.1% |
+
+### Analysis
+- **Mechanism interpretation: Fourier features accelerate convergence rather than raise asymptote.** Through epochs 5-15 the gap is -8 to -14%; cosine decay narrows the gap as both runs near their respective minima. Edward correctly notes T_max retune (alphonse #466) would let the Fourier advantage persist into the cosine tail.
+- **Test side stronger than val** (-1.30% vs -0.62%), and gains concentrate on the **hardest splits** (single_in_dist and geom_camber_rc, the two raceCar-dominated splits with the heaviest pressure tails). Mechanism-coherent: Fourier features should help most where pressure has sharp local features (suction peaks at leading edges).
+- **No throughput regression** despite +8K params on the preprocess MLP — compile + dynamic=True absorbed the change cleanly.
+- **Compounding evidence**: Fourier compounds with Huber (#289), EMA (#381), compile (#401), bf16 (#372) without observable interference. 4 stacked levers all positive.
+
+### Cumulative trajectory (round 1 to date)
+| PR | val_avg/mae_surf_p | Δ from prior best |
+|---|---|---|
+| #287 | 126.67 | (first baseline) |
+| #308 | 106.40 | -16.2% |
+| #381 |  98.85 |  -7.1% |
+| #401 |  66.89 | -32.3% |
+| #289 |  63.33 |  -5.3% |
+| #368 |  62.94 |  -0.6% |
+| **Cumulative** | | **-50.3% from #287, -53% from published-baseline-equivalent** |
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=368 records, 35 lines from final rebased run).
+
 ## 2026-04-28 04:00 — PR #453: Linear w_p ramp 0.5 → 1.0 over training
 - Branch: `charliepai2d4-fern/pchannel-p-ramp05-10` (still in flight)
 - Student: charliepai2d4-fern
