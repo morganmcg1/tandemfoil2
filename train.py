@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -463,6 +464,22 @@ model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
 
+metrics_dir = Path("metrics")
+metrics_dir.mkdir(parents=True, exist_ok=True)
+_metrics_stem = (cfg.wandb_name or cfg.agent or "run").replace("/", "-")
+metrics_path = metrics_dir / f"{_metrics_stem}-{run.id}.jsonl"
+with open(metrics_path, "w") as f:
+    f.write(json.dumps({
+        "event": "config",
+        "wandb_run_id": run.id,
+        "config": asdict(cfg),
+        "model_config": model_config,
+        "n_params": n_params,
+        "max_epochs": MAX_EPOCHS,
+        "max_timeout_min": MAX_TIMEOUT_MIN,
+    }) + "\n")
+print(f"Metrics JSONL: {metrics_path}")
+
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
 global_step = 0
@@ -487,12 +504,12 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+        abs_err = (pred - y_norm).abs()
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        vol_loss = (abs_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+        surf_loss = (abs_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
@@ -534,6 +551,8 @@ for epoch in range(MAX_EPOCHS):
     for k, v in val_avg.items():
         log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
     wandb.log(log_metrics)
+    with open(metrics_path, "a") as f:
+        f.write(json.dumps({"event": "epoch", "epoch": epoch + 1, **log_metrics}) + "\n")
 
     tag = ""
     if avg_surf_p < best_avg_surf_p:
@@ -566,6 +585,14 @@ if best_metrics:
         "best_val_avg/mae_surf_p": best_avg_surf_p,
         "total_train_minutes": total_time,
     })
+    with open(metrics_path, "a") as f:
+        f.write(json.dumps({
+            "event": "best",
+            "best_epoch": best_metrics["epoch"],
+            "best_val_avg/mae_surf_p": best_avg_surf_p,
+            "total_train_minutes": total_time,
+            "per_split": {k: v for k, v in best_metrics["per_split"].items()},
+        }) + "\n")
 
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
@@ -596,6 +623,8 @@ if best_metrics:
             test_log[f"test_{k}"] = v
         wandb.log(test_log)
         wandb.summary.update(test_log)
+        with open(metrics_path, "a") as f:
+            f.write(json.dumps({"event": "test", **test_log}) + "\n")
 
     save_model_artifact(
         run=run,
