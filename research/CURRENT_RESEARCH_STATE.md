@@ -1,15 +1,15 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 01:10
+- **Date:** 2026-04-28 01:35
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
 
 ## Current research focus
 
-**Current best:** PR #308 (nezuko, EMA decay=0.999 + grad clip max_norm=1.0), merged commit 5bdb284. `val_avg/mae_surf_p = 106.40` (EMA-evaluated), `test_avg/mae_surf_p = 93.99`. **-16.2% over PR #287** (the prior baseline at surf_weight=25 → 126.67).
+**Current best:** PR #381 (nezuko, EMA decay=0.995 + grad clip max_norm=10.0), merged commit a620ba1. `val_avg/mae_surf_p = 98.85` (EMA-evaluated), `test_avg/mae_surf_p = 87.81`. **-7.1% over PR #308** (which itself was -16.2% over the prior #287 baseline). Cumulative **-22% from the published-baseline-equivalent**.
 
-**Critical attribution caveat:** nezuko's grad clip at `max_norm=1.0` fired on 100% of batches (pre-clip gn_mean ≈ 50-100 vs threshold 1.0), so it acted as implicit unit-norm SGD on top of AdamW rather than as outlier protection. The 16% gain is shared between EMA's late-epoch smoothing and the implicit-lr-dampener effect in unknown proportion. **Ablation queued (PR #381): EMA decay=0.995 + clip=10.0** to isolate.
+**Attribution still ambiguous:** clip at max_norm=10 fires 87-100% of batches (gn_max stays in 344-767 band). The −7.1% win is the joint effect of (faster EMA decay 0.999→0.995) + (10× looser clip threshold 1.0→10.0). New ablation queued (PR #421): **EMA decay=0.995 + no clip** to isolate the EMA contribution. If 98.85 holds without clip, EMA does the work; if it regresses, clip-as-dampener is doing more than expected.
 
 **Round 1 status:** 8 PRs assigned across 4 axes (loss formulation, loss weighting, architecture, optimization). PR #372 (bf16) merged as infrastructure → **the 14-epoch ranking exercise is now a 19-epoch ranking exercise** in the same wall-clock budget (1.36× speedup). torch.compile (PR #401) targets another 1.2-1.5× on top, potentially pushing to 25-30 epochs.
 
@@ -29,11 +29,13 @@
 | edward   | #358 | fix-scoring-nan-mask | Maintenance | n/a | **MERGED** 010235e |
 | edward   | #368 | fourier-pos-encoding | Input (8-freq Fourier on (x,z)) | -3% to -8% | **SENT BACK** — 117.68 promising but pre-#308; rebase + re-run with EMA |
 | fern     | #304 | deeper-model-droppath | Depth (5→8 + DropPath 0.1) | -3% to -8% | **CLOSED** — 210 s/epoch, 9/50 epochs, equal-epoch worse |
-| fern     | #388 | arcsinh-pressure | Heavy-tail (arcsinh on p target only) | -5% to -15% | WIP |
+| fern     | #388 | arcsinh-pressure | Heavy-tail (arcsinh on p target) | -5% to -15% | **CLOSED** — +15.1% regression; sinh decode amplifies tail errors |
+| fern     | #422 | pchannel-p-w05 | Loss weighting (per-channel w_p=0.5 to free velocity gradient) | -2% to -7% | WIP |
 | frieren  | #307 | warmup-cosine-1e3 | Optim (warmup + lr 1e-3) | -2% to -6% | **CLOSED** — 134.58, 26% worse than #308 |
 | frieren  | #382 | batch8-lr7e-4 | Throughput (larger batch + sqrt-lr) | -5% to -15% | WIP |
-| nezuko   | #308 | ema-grad-clip | Optim (EMA 0.999 + clip 1.0) | -3% to -8% | **MERGED** 5bdb284 → val_avg=106.40 (NEW BEST) |
-| nezuko   | #381 | ema995-gradclip10 | Ablation (EMA 0.995 + clip 10) | -3% to -10% | WIP |
+| nezuko   | #308 | ema-grad-clip | Optim (EMA 0.999 + clip 1.0) | -3% to -8% | **MERGED** 5bdb284 → val_avg=106.40 |
+| nezuko   | #381 | ema995-gradclip10 | Ablation (EMA 0.995 + clip 10) | -3% to -10% | **MERGED** a620ba1 → val_avg=**98.85** (NEW BEST, -7.1%) |
+| nezuko   | #421 | ema995-noclip | Ablation (EMA 0.995, NO clip — clean isolation) | ±5% | WIP |
 | tanjiro  | #309 | more-slices | Architecture (128/8) | -3% to -7% | **CLOSED** — 2× slower, not better |
 | tanjiro  | #378 | per-sample-relmse | Heavy-tail (per-sample y-var) | -3% to -7% | WIP |
 | thorfinn | #310 | per-channel-surf-weights | Loss weighting (3× p) | -3% to -8% | **CLOSED** — +13% regression |
@@ -43,8 +45,9 @@
 
 - **The 30-min cap is binding** at ~14 epochs for the published Transolver. Compute, not memory, is the bottleneck (peak 42-82 GB / 96 across all runs).
 - **Round 1 is a 14-epoch ranking exercise** — the cosine schedule's tail is unreached. Round-1 winners may need re-validation under longer training.
-- **EMA late-epoch smoothing is high-value** in this regime (PR #308 hit best on every one of 13 epochs). Decay=0.999 has a slow warmup; decay=0.995 should pay off earlier in the budget.
-- **Aggressive grad clipping is implicit lr dampening** — useful side-effect, but worth attributing cleanly.
+- **EMA late-epoch smoothing is high-value** in this regime. PR #381 confirmed: decay=0.995 crosses online at epoch 2 vs ~10 at decay=0.999 (PR #308); 11 useful EMA epochs in the budget instead of 3.
+- **Aggressive grad clipping is implicit lr dampening** — at max_norm=1 (#308) 100% of batches fire; at max_norm=10 (#381) still 87-100% fire because gn_mean is 44-107. We don't yet have a clean EMA-only number; PR #421 (nezuko, no clip) is the isolation test.
+- **Heavy-tail target reparametrization (arcsinh)** — fundamentally wrong direction for an equal-weight physical-space MAE metric. Decode through nonlinear functions amplifies tail errors disproportionately. Per-channel scalar weights are the right lever.
 - **Architectural-scale changes need throughput-friendliness baked in** — wider (#300), more-slices (#309), and deeper (#304) all lost epochs to per-step compute. We've now closed three PRs on the same axis pattern; the lesson is firmly priced in.
 - **Independent diagnoses converged on the same scoring NaN bug** (6 students), now fixed (#358).
 - **Variance floor: ~5pp** between two Huber seeds (askeladd #289). Round-1 winners by less than ~5% on val_avg are within run-to-run noise.
