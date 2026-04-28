@@ -6,7 +6,7 @@
 
 ## Current research focus
 
-**Round baseline is PR #531 (fern, per-Re sqrt sampling on pure L1): val_avg = 54.09, test_avg = 46.40** — cumulative **−62.5% / −64.6%** vs original PR #312 reference (144.21 → 54.09). Seven merged interventions: bf16 + FF K=8 + `torch.compile(dynamic=True)` + pure L1 + cosine T_max=50 + per-Re sqrt sampling. Per-Re stacks at **94% efficiency** with L1 baseline.
+**Round baseline is PR #324 v4 (nezuko, EMA decay=0.999 every-2-epochs gating on per-Re sqrt L1): val_avg = 52.12, test_avg = 45.00** — cumulative **−63.9% / −65.7%** vs original PR #312 reference (144.21 → 52.12). Eight merged interventions: bf16 + FF K=8 + `torch.compile(dynamic=True)` + pure L1 + cosine T_max=50 + per-Re sqrt sampling + EMA(0.999) every-2-epochs.
 
 **Schedule alignment for pure L1 confirmed**: T_max=50 wins by 3.14% over T_max=37. Mechanism is `sign(r)` constant-magnitude gradient + non-zero terminal LR = continued refinement. Per-epoch val jumps in last epochs are LARGEST of the run (epoch 36→37: -5.4%). **rc-camber is the only split unmoved by schedule** — rc is representation-limited, not residual-refinement-limited. Schedule + loss interventions can't move rc; need geometry-side or capacity-side experiments.
 
@@ -19,7 +19,7 @@
 | PR | Student | Theme | Hypothesis |
 |---|---|---|---|
 | #321 | frieren | Optimization & schedule | warmup + cosine peak=7e-4 (sent back from peak=1e-3; will need rebase onto new T_max=37 baseline) |
-| #324 v4 | nezuko | Stability / regularization | EMA-only decay=0.999 with **every-2-epochs validation** to recover the 4 epochs lost to swap overhead (was schedule-budget-bound, mechanism confirmed: test_avg −2.23%, rc-camber test −6.07%) |
+| **#614** | **nezuko** | **Stability / regularization** | **grad_clip alone (max_norm=1.0)** on top of L1+EMA+per-Re — original PR v1 had it bundled with EMA, never tested in isolation under L1's already-bounded `sign(r)` gradient regime |
 | **#564** | **tanjiro** | **Spatial features (on pure L1)** | **FF on saf (dims 2-3) parallel to FF on (x, z) — followup #4 from PR #327** |
 | **#584** | **edward** | **Schedule (with L1)** | **--epochs 70 probe — extends T_max=50 finding; tests if even longer schedule continues the trend** |
 | **#570** | **thorfinn** | **Loss / metric alignment** | **surf_weight=8 single probe on pure-L1** (followup from #544 close: 3-point monotonic curve under L1 suggests sw<10 may be optimum, single-flag test) |
@@ -52,7 +52,8 @@
 | #407 | fern | Merged → superseded by #504 | T_max=37 alignment with Huber: val_avg=69.74 (−0.13%). Empty PR — CLI flag change. |
 | #504 | edward | Merged → superseded by #541 | Pure L1 replacing SmoothL1: val_avg=57.29 (−17.96% vs Huber). |
 | #541 | edward | Merged → superseded by #531 | T_max=50 confirmed for L1, fresh-seed rerun: val_avg=56.22 (-1.07% vs PR #504 same config). |
-| **#531** | **fern** | **Merged (CURRENT BASELINE)** | **Per-Re sqrt sampling: val_avg=54.09 (-3.79% vs PR #541), test_avg=46.40 (-4.18%). Cumulative −62.5% / −64.6%. Stacks at 94% efficiency.** |
+| #531 | fern | Merged → superseded by #324 | Per-Re sqrt sampling: val_avg=54.09 (-3.79% vs PR #541), test_avg=46.40 (-4.18%). Stacks at 94% efficiency. |
+| **#324 v4** | **nezuko** | **Merged (CURRENT BASELINE)** | **EMA(0.999) + every-2-epochs gating: val_avg=52.12 (-3.65%), test_avg=45.00 (-3.00%). Cumulative −63.9% / −65.7%. Four-version diagnostic-driven iteration arc.** |
 
 ## Throughput levers status
 

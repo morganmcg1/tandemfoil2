@@ -1,5 +1,64 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 07:00 — PR #324 v4 (merged, NEW BASELINE): EMA decay=0.999 with every-2-epochs validation gating
+
+- branch: `willowpai2d1-nezuko/ema-and-grad-clip` (deleted on merge)
+- hypothesis: every-2-epochs gating recovers the schedule budget that v3's
+  per-epoch swap-validate-swap was eating (~7 s/epoch). Predicted post-fix
+  val_avg in 55-56 range.
+
+### Results
+
+| Metric | Value | vs PR #531 (per-Re sqrt baseline) |
+|---|---|---|
+| Best `val_avg/mae_surf_p` | **52.1155** (epoch 36 of 36) | **−3.65%** (better than 55-56 prediction) |
+| `test_avg/mae_surf_p` | **45.0018** | **−3.00%** |
+| Per-epoch wall | ~52.9 s | +6% (vs 50 s baseline; EMA val ~3-4 s amortized) |
+| Epochs completed | 36 / 50 | matches baseline budget exactly |
+| Peak GPU memory | 24.1 GB | unchanged |
+| W&B run | `qsplc76j` | |
+
+Cumulative improvement: **−63.9% val_avg / −65.7% test_avg** since original PR #312 reference.
+
+### Per-split val deltas vs PR #531
+
+| Split | Δ |
+|---|---|
+| val_single_in_dist | −4.02% |
+| val_geom_camber_rc | **−5.10%** (finally a non-trivial rc gain) |
+| val_geom_camber_cruise | −3.24% |
+| val_re_rand | −1.74% |
+
+### EMA val curve smoothness (textbook variance reduction)
+
+18 EMA validation points (epochs 2, 4, ..., 36), every successive value
+strictly decreased. Raw val swings more (epoch 30 raw=62.77, epoch 32
+raw=58.17 — bigger swings than EMA's 55.97 → 54.60 over the same window).
+
+### Analysis & conclusions
+
+- **Merged. New round baseline at val_avg=52.12.** Better than the 55-56
+  prediction.
+- **Four-version arc on this PR** is the cleanest example of diagnostic-
+  driven iteration in the round: v1 EMA decay=0.9999 catastrophic
+  (warmup pathology) → v2 decay=0.999 + drop grad_clip but on stale FF
+  baseline → v3 rebase to L1 but blocked by val overhead → v4
+  every-2-epochs gating recovers full schedule. Each step had a clear
+  hypothesis from prior failure.
+- **rc-camber convergence story**: the four interventions that have
+  moved rc-camber best (FF -3.3%, compile -25.8% via schedule, per-Re
+  sampling -5.0%, EMA -5.1%) collectively confirm rc has **multiple
+  failure components** — schedule, representation, distribution, and
+  parameter-trajectory variance. None dominates; each contributes.
+- v3 rc-camber test gain (−6.07%) on pure-L1 alone shrunk to −2.57% on
+  the per-Re+L1 baseline → per-Re sampling absorbed part of the v3 rc
+  gain, EMA still adds on the splits where per-Re sampling helped less.
+- Followups: grad_clip alone (assigned PR #614 — original PR v1 had it
+  bundled, never tested in isolation under L1's already-bounded gradient
+  regime). Decay sweep, aux-head composition, T_max alignment — all queued.
+
+
+
 ## 2026-04-28 06:13 — PR #529 (sent back): Surface-only auxiliary p head on PR #407 baseline
 
 - branch: `willowpai2d1-alphonse/surface-only-aux-p-head` (in flight as draft after send-back)
