@@ -489,10 +489,10 @@ optimizer = torch.optim.AdamW(
     weight_decay=cfg.weight_decay,
     betas=(0.9, 0.95),
 )
-warmup_epochs = 1
-cosine_epochs = 13
+warmup_epochs = 3
+cosine_epochs = 11
 warmup = torch.optim.lr_scheduler.LinearLR(
-    optimizer, start_factor=0.5, end_factor=1.0, total_iters=warmup_epochs,
+    optimizer, start_factor=0.3, end_factor=1.0, total_iters=warmup_epochs,
 )
 cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
     optimizer, T_max=cosine_epochs,
