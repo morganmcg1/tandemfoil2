@@ -49,6 +49,10 @@ from data import (
 
 NUM_FOURIER_FREQS = 8
 
+# Per-channel weight on the volume loss (Ux, Uy, p).
+# Boost p to 3x to align gradient with the metric (which is p-only).
+VOL_CH_WEIGHT = (1.0, 1.0, 3.0)
+
 
 def fourier_pos_features(pos: torch.Tensor, num_freqs: int = NUM_FOURIER_FREQS) -> torch.Tensor:
     """Multi-frequency sin/cos encoding of normalised (x, z) coordinates.
@@ -259,10 +263,11 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             err = pred - y_norm
             sq_err = err ** 2
             abs_err = err.abs()
+            vol_ch_weight = torch.tensor(VOL_CH_WEIGHT, device=pred.device, dtype=pred.dtype)
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
-                (sq_err * vol_mask.unsqueeze(-1)).sum()
+                (sq_err * vol_ch_weight * vol_mask.unsqueeze(-1)).sum()
                 / vol_mask.sum().clamp(min=1)
             ).item()
             surf_loss_sum += (
@@ -498,9 +503,10 @@ for epoch in range(MAX_EPOCHS):
         sq_err = err ** 2
         abs_err = err.abs()
 
+        vol_ch_weight = torch.tensor(VOL_CH_WEIGHT, device=pred.device, dtype=pred.dtype)
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+        vol_loss = (sq_err * vol_ch_weight * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
         surf_loss = (abs_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
