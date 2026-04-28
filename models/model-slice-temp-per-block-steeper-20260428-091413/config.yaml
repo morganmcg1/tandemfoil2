@@ -1,0 +1,38 @@
+agent: charliepai2d2-askeladd
+batch_size: 4
+compile: true
+debug: false
+drop_path_max: 0.1
+epochs: 50
+experiment_name: slice-temp-per-block-steeper
+feature_noise_std: 0.0025
+lr: 0.0006
+model_config:
+  drop_path_max: 0.1
+  fun_dim: 22
+  mlp_ratio: 2
+  n_head: 4
+  n_hidden: 128
+  n_layers: 5
+  out_dim: 3
+  output_dims:
+  - 1
+  - 1
+  - 1
+  output_fields:
+  - Ux
+  - Uy
+  - p
+  slice_num: 64
+  space_dim: 2
+n_params: 670679
+skip_test: false
+splits_dir: /mnt/new-pvc/datasets/tandemfoil/splits_v2
+surf_weight: 10.0
+train_samples: 1499
+val_samples:
+  val_geom_camber_cruise: 100
+  val_geom_camber_rc: 100
+  val_re_rand: 100
+  val_single_in_dist: 100
+weight_decay: 3.0e-05

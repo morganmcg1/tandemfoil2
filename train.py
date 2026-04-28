@@ -213,7 +213,7 @@ class Transolver(nn.Module):
         self.n_hidden = n_hidden
         self.space_dim = space_dim
         drop_rates = torch.linspace(0.0, drop_path_max, n_layers).tolist()
-        slice_temp_inits = torch.linspace(1.5, 3.0, n_layers).tolist()
+        slice_temp_inits = torch.linspace(1.0, 3.0, n_layers).tolist()
         print(f"Per-block slice_temp_init schedule: {slice_temp_inits}")
         self.blocks = nn.ModuleList([
             TransolverBlock(
