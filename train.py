@@ -427,6 +427,7 @@ class Config:
     epochs: int = 50
     drop_path_max: float = 0.1
     feature_noise_std: float = 0.0025
+    compile: bool = False  # enable torch.compile(mode="default") on the model
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
@@ -475,12 +476,25 @@ model_config = dict(
 )
 
 model = Transolver(**model_config).to(device)
-ema = WeightEMA(model, decay_target=0.995, warmup_steps=50)
 n_params = sum(p.numel() for p in model.parameters())
 swiglu_inter = model.blocks[0].mlp.intermediate
+
+if cfg.compile:
+    # NOTE: mode="reduce-overhead" OOMs on this codebase: pad_collate produces a
+    # different shape per batch, so CUDA Graphs records a fresh graph per shape
+    # and private pools blow past 90 GB within ~25 iters. mode="default" gives
+    # TorchInductor fusion without CUDA Graphs and trains within VRAM.
+    print("Wrapping model in torch.compile(mode='default')...")
+    model = torch.compile(model, mode="default")
+    # EMA's copy.deepcopy is brittle on compiled wrappers; build it from _orig_mod.
+    ema = WeightEMA(model._orig_mod, decay_target=0.995, warmup_steps=50)
+    print("Compiled.")
+else:
+    ema = WeightEMA(model, decay_target=0.995, warmup_steps=50)
 print(
     f"Model: Transolver ({n_params/1e6:.2f}M params) + EMA(decay_target=0.995, warmup_steps=50) "
     f"[SwiGLU MLP intermediate={swiglu_inter}]"
+    + (" [torch.compile default]" if cfg.compile else "")
 )
 
 optimizer = torch.optim.AdamW(
@@ -642,7 +656,7 @@ print(f"\nTraining done in {total_time:.1f} min")
 def _temperatures_per_block(m: nn.Module) -> list[float]:
     return [b.attn.temperature.detach().abs().mean().item() for b in m.blocks]
 
-live_temps = _temperatures_per_block(model)
+live_temps = _temperatures_per_block(model._orig_mod if cfg.compile else model)
 ema_temps = _temperatures_per_block(ema.module)
 print(f"\nFinal temperature (mean abs across heads) per block — live: {live_temps}")
 print(f"Final temperature (mean abs across heads) per block — EMA:  {ema_temps}")
@@ -656,7 +670,10 @@ append_metrics_jsonl(metrics_jsonl_path, {
 if best_metrics:
     print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    # EMA state_dict was saved from the uncompiled module; route load through
+    # `_orig_mod` when torch.compile wrapped the model.
+    load_target = model._orig_mod if cfg.compile else model
+    load_target.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
 
     test_metrics = None
