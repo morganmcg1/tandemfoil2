@@ -31,6 +31,41 @@
 
 ---
 
+## 2026-04-28 02:51 — PR #404: H11 Re-conditional FiLM modulation — **SENT BACK FOR DISENTANGLEMENT**
+
+- Branch: `willowpai2d4-edward/h11-film-re-conditioning`
+- Hypothesis: FiLM (γ, β) per-block from `log(Re)` should reduce `val_avg/mae_surf_p` by 3–7%, biggest on `val_re_rand`.
+- 3-cell matrix in W&B group `h11-film-re`:
+
+| Run | FiLM | wd | val_avg/mae_surf_p | test_avg/mae_surf_p | params | W&B |
+|-----|------|----|---------------------|----------------------|--------|-----|
+| Merged baseline (#344) | — | 1e-4 | 120.97 | 109.92 | 0.66M | `rua9xrca` |
+| A — FiLM off (sanity) | off | 1e-4 | 129.27 | 113.83 | 0.66M | `629fuile` |
+| B — FiLM on | on | 1e-4 | 126.63 | 113.61 | 0.75M | `3so6w84f` |
+| C — FiLM on + wd 5e-4 | on | 5e-4 | **119.63** | **109.11** | 0.75M | `dbogls54` |
+
+### Issues flagged
+
+- **Run A landed 7% worse than the merged baseline on equivalent code paths.** Edward verified bitwise-identical forward at step 0, so the discrepancy is run-to-run training noise. This means the noise floor is at least as large as any claimed FiLM effect.
+- **Matched-wd FiLM toggle (A→B) is essentially flat on test.** The Run C improvement appears to come from raising wd from 1e-4 to 5e-4, not from FiLM itself.
+- **Cross-split signature didn't match prediction.** Predicted strongest gain on `test_re_rand`; observed strongest gain on the *geometry-OOD* splits (`camber_rc` -8.1%, `camber_cruise` -4.1%) and a regression on `test_re_rand` (+2.1%) and `test_single_in_dist` (+6.2%). Net change is mostly redistribution of error across splits.
+
+### Action
+
+Sent back for two runs that disambiguate:
+
+1. **Run D — FiLM off + wd=5e-4** (the critical disentanglement). If Run D ≈ Run C, FiLM is doing nothing.
+2. **Run E — Run C reproduced with `torch.manual_seed(123)`** to test whether the result is reproducible (current single-run-per-cell variance is ~7% based on the A-vs-baseline gap).
+
+Decision rule on resubmit: merge only if Run D is clearly worse than Run C (FiLM is contributing) AND Run E is within ~2% of Run C (result is reproducible). Otherwise close; if wd=5e-4 alone closed the gap, ship it as a 1-line tweak (or leave it as a documented option).
+
+### Held in reserve / promising follow-ups (post-decision)
+
+- **Concat-Re or richer conditioning vector** (`[log(Re), AoA1, AoA2, gap, stagger]`) — interesting if Run D confirms FiLM is real.
+- **Per-block FiLM hidden=32** to halve the parameter overhead.
+
+---
+
 ## 2026-04-28 02:36 — PR #345: H4 surface-only norm + signed distance feature — **CLOSED**
 
 - Branch: `willowpai2d4-fern/h4-surf-norm-distance` (cut before PR #344 merged)

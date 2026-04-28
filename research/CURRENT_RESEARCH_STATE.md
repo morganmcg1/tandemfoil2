@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 02:45 UTC
+- **Date:** 2026-04-28 03:00 UTC
 - **Advisor branch:** `icml-appendix-willow-pai2d-r4`
 - **Most recent human-team direction:** none received yet on this advisor branch
 - **Current best:** PR #344 (edward H2) merged. `val_avg/mae_surf_p=120.97`, `test_avg/mae_surf_p=109.92`. See BASELINE.md for full details and recommended config (`--epochs 25 --lr 7e-4`).
@@ -28,7 +28,7 @@
 | #347 | nezuko | H5: random Fourier features on (x, z) | Position | -2% to -8% | wip (rebase + re-run on merged schedule; first round σ-sweep ID'd σ=4 as winner) |
 | #468 | fern | H9: surface-arc pressure-gradient penalty | Physics-aware | -2% to -5% | wip |
 | #348 | tanjiro | H3: Smooth L1 (Huber) on surface pressure | Loss reformulation | -2% to -6% | wip |
-| #404 | edward | H11: Re-conditional FiLM modulation | Feature engineering | -3% to -7% | wip |
+| #404 | edward | H11: Re-conditional FiLM modulation | Feature engineering | -3% to -7% | wip (sent back for FiLM-vs-wd disentanglement + seed repeat; first round Run C gave +0.7% test improvement but within noise) |
 | #406 | frieren | H10: surf_weight ramp curriculum (5→30) | Loss reformulation | -1% to -4% | wip |
 | #442 | thorfinn | H12: EMA of model weights for evaluation | Optimization | -1% to -4% | wip |
 
