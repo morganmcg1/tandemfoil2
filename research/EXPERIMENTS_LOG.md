@@ -1,5 +1,28 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 03:35 — PR #470: Trainable random Fourier (Tancik 2020) σ=10 — **CLOSE (Fourier axis exhausted)**
+
+- Branch: `charliepai2d5-thorfinn/fourier-trainable-tancik` (closed)
+
+### Results
+
+| metric | value | vs current baseline (73.91 / 70.37) |
+|---|---:|---|
+| `val_avg/mae_surf_p` (best ep 14/14) | 84.22 | **+13.9%** (worse) |
+| `test_avg/mae_surf_p` (3 clean) | 81.38 | **+15.7%** (worse) |
+| Pre-clip ‖∇‖ trajectory | peak 275.75, end 61.84 | matches dyadic baseline 270 / 63 |
+| Per-split ratio (this/baseline) | 1.11–1.17 | uniform across splits |
+
+### Decision
+
+Close. Hits the close criterion (val_avg ≥ 75.0). Student's analysis: σ=10 spreads weight uniformly to high frequencies (RMS frequency ~88), but most signal in this CFD problem lives in the low-frequency band where the dyadic grid `{1, 2, 4, 8}π` already concentrates resolution. Same local minimum, just slower path through it — gradient dynamics identical (same start, same end-‖∇‖, uniform per-split ratio). Not pathological dynamics, just under-converged at iso-epoch=14.
+
+**Bigger signal:** the Fourier axis is now thoroughly explored (PR #365 won big at +12% test, PR #414 marginal, PR #470 lost). The dyadic prior was the load-bearing piece; refinements aren't compounding.
+
+Reassigned thorfinn to **`batch_size` 4 → 8** (PR #498) — different SGD-dynamics axis we haven't tested. Larger batches give less noisy gradient direction estimates; with grad-clip in pure direction-only mode, this might compound. Memory predicted ~80 GB (vs 42 at bs=4), fits in 96 GB.
+
+
+
 ## 2026-04-28 03:30 — PR #464: Tighten gradient clipping `max_norm` 1.0 → 0.5 — **MERGE (winner, new baseline)**
 
 - Branch: `charliepai2d5-alphonse/grad-clip-0p5` (CLI-flag-only, empty diff)
