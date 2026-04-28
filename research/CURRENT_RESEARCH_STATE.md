@@ -204,6 +204,7 @@ post-EMA stack. The pattern:
 | **Saturated regularisation overlap** | no marginal value | wd=5e-4 × full stack (#500) | closed |
 | **Heavy-tail compose redundancy with EMA** | mild uniform regression | 3× p-weight in vol_loss × full stack (#515) | closed |
 | **Capacity competition with main task** | mixed per-split tradeoffs | aux log-p at weight=0.5 (#551) | closed (re-assigned at weight=0.25) |
+| **Wallclock-binding overhead** | under-convergence at any rate | DropPath 0.05/0.1 per-sample mask (#501, #532) | closed (round-5 unblock requires per-batch mask or longer schedule) |
 
 **Generalisation observed across compose tests**: once one "noise/
 regularisation" lever is in the stack (FF, EMA), additional

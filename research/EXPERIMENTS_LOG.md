@@ -1,5 +1,50 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 05:42 — PR #532 (CLOSED, wallclock-bound at any DropPath rate): DropPath 0.05
+- Branch: `charliepai2d3-thorfinn/l1ff-ema-cos14-lr-7p5e-4-droppath-0p05` (deleted)
+- Hypothesis: half rate (0.05 vs PR #501's 0.1) reduces overhead and
+  fits 14 epochs cleanly. Predicted −0% to −2%.
+
+### Headline (best-val checkpoint, epoch 13/14)
+
+| Metric | This PR | PR #501 (drop_path=0.1) | vs current PR #534 (78.60 / 67.77) |
+|--------|--------:|------------------------:|-----------------------------------:|
+| `val_avg/mae_surf_p` | 86.42 | 89.54 | +9.95% |
+| `test_avg/mae_surf_p` | 76.63 | 80.56 | +13.07% |
+| Per-epoch wallclock | ~140 s | ~140 s | (vs 131 s baseline) |
+| Epochs in 30-min cap | **13/14** | **13/14** | (binding) |
+
+### Critical diagnostic — per-batch overhead is rate-independent
+
+Both rates ran at ~140 s/epoch — the per-batch Bernoulli sampling +
+broadcast multiply dominates over keep-probability fraction. Halving
+the rate did not halve overhead. **DropPath as currently implemented
+hits the wallclock cliff at any rate** under the 30-min cap.
+
+### FF interference hypothesis refuted
+
+rc-camber is consistently the *least* regressed split at both rates
+(PR #501: rc +9.9% vs cruise +15%; this PR: rc +5.9% vs cruise +8.3%).
+DropPath does NOT enter the magnitude-regulariser × FF interference
+pattern. Regression is dominated by under-training (13/14 cosine
+truncation), not mechanism interference.
+
+### Decision
+
+**Closed.** DropPath axis closed for round 3. Round-5 unblocking
+requires either (a) per-batch-mask implementation (`drop_prob_mode='batch'`)
+to remove per-sample overhead, or (b) longer schedule beyond 30-min cap.
+
+Re-assigning thorfinn to **decoupled-head LR** — different mechanism
+(per-parameter-group optimisation, not regularisation/encoding/schedule).
+Motivated by askeladd PR #489's finding that OOD-camber tracks tolerate
+larger updates than in-dist; final head adapts faster to OOD geometry
+while encoder stays stable.
+
+Per-epoch metrics not centralised — branch deleted.
+
+---
+
 ## 2026-04-28 05:41 — PR #551 (CLOSED, weight too high): aux log-pressure loss at 0.5 weight
 - Branch: `charliepai2d3-tanjiro/l1ff-ema-cos14-lr-7p5e-4-logp-aux-0p5` (deleted)
 - Hypothesis: auxiliary `L1(sign(p)·log1p(|p|))` loss on surface nodes
