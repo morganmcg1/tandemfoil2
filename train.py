@@ -18,11 +18,13 @@ Usage:
 from __future__ import annotations
 
 import os
+import random
 import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import numpy as np
 import simple_parsing as sp
 import torch
 import torch.nn as nn
@@ -46,6 +48,12 @@ from data import (
     pad_collate,
 )
 
+SENPAI_SEED = int(os.environ.get("SENPAI_SEED", "0"))
+torch.manual_seed(SENPAI_SEED)
+torch.cuda.manual_seed_all(SENPAI_SEED)
+random.seed(SENPAI_SEED)
+np.random.seed(SENPAI_SEED)
+
 # ---------------------------------------------------------------------------
 # Transolver model
 # ---------------------------------------------------------------------------
@@ -60,6 +68,21 @@ ACTIVATION = {
     "ELU": nn.ELU,
     "silu": nn.SiLU,
 }
+
+
+class RMSNorm(nn.RMSNorm):
+    """Root-mean-square layer normalization (Zhang & Sennrich 2019).
+
+    Thin wrapper over PyTorch's fused ``nn.RMSNorm`` so the throughput
+    unlock vs ``nn.LayerNorm`` actually materializes — a hand-rolled
+    chain of ``pow / mean / rsqrt`` ops launches ~5 separate kernels per
+    norm site and is measurably *slower* than the fused LayerNorm. The
+    fused PyTorch op (single CUDA kernel, fp32-safe internally) is what
+    LLaMA / Gemma / Mistral use.
+    """
+
+    def __init__(self, hidden_dim: int, eps: float = 1e-6):
+        super().__init__(hidden_dim, eps=eps)
 
 
 class MLP(nn.Module):
@@ -141,16 +164,16 @@ class TransolverBlock(nn.Module):
                  mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
         super().__init__()
         self.last_layer = last_layer
-        self.ln_1 = nn.LayerNorm(hidden_dim)
+        self.ln_1 = RMSNorm(hidden_dim)
         self.attn = PhysicsAttention(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
             dropout=dropout, slice_num=slice_num,
         )
-        self.ln_2 = nn.LayerNorm(hidden_dim)
+        self.ln_2 = RMSNorm(hidden_dim)
         self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
                        n_layers=0, res=False, act=act)
         if self.last_layer:
-            self.ln_3 = nn.LayerNorm(hidden_dim)
+            self.ln_3 = RMSNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim), nn.GELU(),
                 nn.Linear(hidden_dim, out_dim),
@@ -201,8 +224,9 @@ class Transolver(nn.Module):
             trunc_normal_(m.weight, std=0.02)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
-        elif isinstance(m, (nn.LayerNorm, nn.BatchNorm1d)):
-            nn.init.constant_(m.bias, 0)
+        elif isinstance(m, (nn.LayerNorm, nn.BatchNorm1d, RMSNorm)):
+            if hasattr(m, "bias") and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
     def forward(self, data, **kwargs):
@@ -449,6 +473,8 @@ run = wandb.init(
         "n_params": n_params,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
+        "senpai_seed": SENPAI_SEED,
+        "norm_layer": "RMSNorm",
     },
     mode=os.environ.get("WANDB_MODE", "online"),
 )
