@@ -71,6 +71,35 @@ ACTIVATION = {
 
 N_FREQS = 8
 
+DOMAIN_NAMES = ("single", "rc_tandem", "cruise_tandem")
+
+
+def detect_domain(x: torch.Tensor) -> torch.Tensor:
+    """One-hot 3-way domain over {single, raceCar tandem, cruise tandem}.
+
+    Uses two per-sample features that give a clean partition (verified 100%
+    on the full train + val_geom_camber_* splits):
+      - z_min (mesh-min of dim 1, the z position): cruise has a freestream
+        domain extending to z ≈ -9.5; raceCar has a ground at z=0 so z_min ≥ 0
+        (padded zeros also leave the threshold robust on either side).
+      - gap (dim 22) == 0 → single foil; otherwise raceCar tandem.
+    Cruise singles do not exist in the dataset.
+
+    Note: PR #633 originally specified an AoA-sign heuristic; the per-split
+    sanity check confirmed it mis-labels ~47% of cruise samples as raceCar
+    tandem (cruise AoA range overlaps raceCar's). z_min is clean.
+    """
+    gap = x[..., 0, 22]
+    z_min = x[..., 1].min(dim=-1).values  # min over node dim → [B]
+    is_cruise_tandem = z_min < -1.0
+    is_single = (gap.abs() < 1e-6) & (~is_cruise_tandem)
+    is_rc_tandem = (~is_cruise_tandem) & (~is_single)
+    domain = torch.zeros((x.shape[0], 3), device=x.device, dtype=x.dtype)
+    domain[:, 0] = is_single.to(domain.dtype)
+    domain[:, 1] = is_rc_tandem.to(domain.dtype)
+    domain[:, 2] = is_cruise_tandem.to(domain.dtype)
+    return domain
+
 
 def fourier_features(pos: torch.Tensor, n_freqs: int = N_FREQS) -> torch.Tensor:
     """Multi-scale sinusoidal encoding of a 2-D position vector.
@@ -166,10 +195,13 @@ class PhysicsAttention(nn.Module):
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
                  mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
-                 film=False):
+                 film=False, domain_film=False):
         super().__init__()
         self.last_layer = last_layer
-        self.film = film
+        self.domain_film = domain_film and last_layer
+        # domain_film takes precedence: when set, the surface FiLM site is
+        # disabled entirely (don't allocate dead params or pay weight decay).
+        self.film = film and last_layer and not self.domain_film
         self.ln_1 = nn.LayerNorm(hidden_dim)
         self.attn = PhysicsAttention(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
@@ -184,19 +216,28 @@ class TransolverBlock(nn.Module):
                 nn.Linear(hidden_dim, hidden_dim), nn.GELU(),
                 nn.Linear(hidden_dim, out_dim),
             )
+            # gamma init to 1, beta to 0 → FiLM is identity at init.
             if self.film:
-                # gamma init to 1, beta to 0 → FiLM is identity at epoch 1.
                 self.gamma_surf = nn.Parameter(torch.ones(hidden_dim))
                 self.gamma_vol = nn.Parameter(torch.ones(hidden_dim))
                 self.beta_surf = nn.Parameter(torch.zeros(hidden_dim))
                 self.beta_vol = nn.Parameter(torch.zeros(hidden_dim))
+            if self.domain_film:
+                # 3 domains × (gamma, beta) — domain selection by [B, 3] one-hot.
+                self.gamma_domain = nn.Parameter(torch.ones(3, hidden_dim))
+                self.beta_domain = nn.Parameter(torch.zeros(3, hidden_dim))
 
-    def forward(self, fx, is_surface=None):
+    def forward(self, fx, is_surface=None, domain=None):
         fx = self.attn(self.ln_1(fx)) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
             h = self.ln_3(fx)
-            if self.film and is_surface is not None:
+            # domain_film takes precedence over surface film when both flags set
+            if self.domain_film and domain is not None:
+                gamma = (domain @ self.gamma_domain).unsqueeze(1)
+                beta = (domain @ self.beta_domain).unsqueeze(1)
+                h = gamma * h + beta
+            elif self.film and is_surface is not None:
                 m = is_surface.unsqueeze(-1).to(h.dtype)
                 gamma = m * self.gamma_surf + (1 - m) * self.gamma_vol
                 beta = m * self.beta_surf + (1 - m) * self.beta_vol
@@ -211,7 +252,7 @@ class Transolver(nn.Module):
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None,
-                 film: bool = False):
+                 film: bool = False, domain_film: bool = False):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -228,12 +269,14 @@ class Transolver(nn.Module):
         self.n_hidden = n_hidden
         self.space_dim = space_dim
         self.film = film
+        self.domain_film = domain_film
         self.blocks = nn.ModuleList([
             TransolverBlock(
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
                 film=film and (i == n_layers - 1),
+                domain_film=domain_film and (i == n_layers - 1),
             )
             for i in range(n_layers)
         ])
@@ -252,11 +295,12 @@ class Transolver(nn.Module):
     def forward(self, data, **kwargs):
         x = data["x"]
         is_surface = data.get("is_surface", None)
+        domain = data.get("domain", None)
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         last_idx = len(self.blocks) - 1
         for i, block in enumerate(self.blocks):
-            if i == last_idx and is_surface is not None:
-                fx = block(fx, is_surface=is_surface)
+            if i == last_idx:
+                fx = block(fx, is_surface=is_surface, domain=domain)
             else:
                 fx = block(fx)
         return {"preds": fx}
@@ -297,12 +341,13 @@ def evaluate_split(model, loader, stats, surf_weight, device, huber_beta=1.0) ->
                     continue
                 x, y, is_surface, mask = x[keep], y[keep], is_surface[keep], mask[keep]
 
+            domain = detect_domain(x)
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             ff = fourier_features(x_norm[..., :2], n_freqs=N_FREQS)
             x_in = torch.cat([x_norm, ff], dim=-1)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                pred = model({"x": x_in, "is_surface": is_surface})["preds"]
+                pred = model({"x": x_in, "is_surface": is_surface, "domain": domain})["preds"]
             pred = pred.float()
 
             elem_loss = F.smooth_l1_loss(pred, y_norm, reduction="none", beta=huber_beta)
@@ -328,6 +373,68 @@ def evaluate_split(model, loader, stats, surf_weight, device, huber_beta=1.0) ->
     out = {"vol_loss": vol_loss, "surf_loss": surf_loss,
            "loss": vol_loss + surf_weight * surf_loss}
     out.update(finalize_split(mae_surf, mae_vol, n_surf, n_vol))
+    return out
+
+
+def evaluate_per_domain(model, loader, stats, device) -> dict[str, dict[str, float]]:
+    """Per-detected-domain MAE breakdown on a single split (PR #633 diagnostic).
+
+    Buckets samples into {single, rc_tandem, cruise_tandem} via detect_domain
+    and reports per-bucket MAE in the same form as ``finalize_split``.
+    """
+    accs = {
+        n: {
+            "mae_surf": torch.zeros(3, dtype=torch.float64, device=device),
+            "mae_vol": torch.zeros(3, dtype=torch.float64, device=device),
+            "n_surf": 0, "n_vol": 0, "n_samples": 0,
+        }
+        for n in DOMAIN_NAMES
+    }
+
+    with torch.no_grad():
+        for x, y, is_surface, mask in loader:
+            x = x.to(device, non_blocking=True)
+            y = y.to(device, non_blocking=True)
+            is_surface = is_surface.to(device, non_blocking=True)
+            mask = mask.to(device, non_blocking=True)
+
+            y_finite = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)
+            if not y_finite.all():
+                keep = y_finite.nonzero(as_tuple=True)[0]
+                if keep.numel() == 0:
+                    continue
+                x, y, is_surface, mask = x[keep], y[keep], is_surface[keep], mask[keep]
+
+            domain = detect_domain(x)
+            x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            ff = fourier_features(x_norm[..., :2], n_freqs=N_FREQS)
+            x_in = torch.cat([x_norm, ff], dim=-1)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                pred = model({"x": x_in, "is_surface": is_surface, "domain": domain})["preds"]
+            pred_orig = pred.float() * stats["y_std"] + stats["y_mean"]
+
+            domain_class = domain.argmax(dim=-1)  # [B]
+            for d_idx, d_name in enumerate(DOMAIN_NAMES):
+                idx = (domain_class == d_idx).nonzero(as_tuple=True)[0]
+                if idx.numel() == 0:
+                    continue
+                ds, dv = accumulate_batch(
+                    pred_orig[idx], y[idx], is_surface[idx], mask[idx],
+                    accs[d_name]["mae_surf"], accs[d_name]["mae_vol"],
+                )
+                accs[d_name]["n_surf"] += ds
+                accs[d_name]["n_vol"] += dv
+                accs[d_name]["n_samples"] += idx.numel()
+
+    out: dict[str, dict[str, float]] = {}
+    for d_name, m in accs.items():
+        if m["n_surf"] == 0 and m["n_vol"] == 0:
+            continue
+        metrics = finalize_split(m["mae_surf"], m["mae_vol"], m["n_surf"], m["n_vol"])
+        metrics["n_samples"] = m["n_samples"]
+        metrics["n_surf_nodes"] = m["n_surf"]
+        metrics["n_vol_nodes"] = m["n_vol"]
+        out[d_name] = metrics
     return out
 
 
@@ -427,6 +534,8 @@ class Config:
     debug: bool = False
     skip_test: bool = False  # skip final test evaluation
     film: bool = True  # surface-conditional FiLM in last block (PR #484)
+    domain_film: bool = False  # 3-way domain-conditional FiLM in last block (PR #633).
+    # When True takes precedence over surface FiLM at the same site.
 
 
 cfg = sp.parse(Config)
@@ -455,6 +564,28 @@ val_loaders = {
     for name, ds in val_splits.items()
 }
 
+
+def _domain_distribution(ds, max_samples: int = 200) -> dict[str, int]:
+    counts = {n: 0 for n in DOMAIN_NAMES}
+    for i in range(min(len(ds), max_samples)):
+        x, _, _ = ds[i]
+        # Single-sample mirror of detect_domain (no batch dim).
+        z_min = x[:, 1].min().item()
+        gap = x[0, 22].item()
+        if z_min < -1.0:
+            counts["cruise_tandem"] += 1
+        elif abs(gap) < 1e-6:
+            counts["single"] += 1
+        else:
+            counts["rc_tandem"] += 1
+    return counts
+
+
+print("Domain detection sanity check (per split, first up to 200 samples):")
+for name, ds in val_splits.items():
+    print(f"  {name:<26s} {_domain_distribution(ds)}")
+print(f"  {'train':<26s} {_domain_distribution(train_ds)}")
+
 model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2 + 4 * N_FREQS,
@@ -467,6 +598,7 @@ model_config = dict(
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
     film=cfg.film,  # surface-conditional FiLM in last block (PR #484)
+    domain_film=cfg.domain_film,  # 3-way domain-conditional FiLM (PR #633)
 )
 
 model = Transolver(**model_config).to(device)
@@ -565,6 +697,7 @@ for epoch in range(MAX_EPOCHS):
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
 
+        domain = detect_domain(x)
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         # Time the very first forward to surface the compile cost.
@@ -575,7 +708,7 @@ for epoch in range(MAX_EPOCHS):
         ff = fourier_features(x_norm[..., :2], n_freqs=N_FREQS)
         x_in = torch.cat([x_norm, ff], dim=-1)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            pred = model({"x": x_in, "is_surface": is_surface})["preds"]
+            pred = model({"x": x_in, "is_surface": is_surface, "domain": domain})["preds"]
         if _first_fwd:
             torch.cuda.synchronize()
             print(f"First compile+forward took {time.time() - _t_fwd0:.1f}s")
@@ -694,6 +827,25 @@ if best_metrics:
     # uncompiled base, so no _orig_mod prefix); load into the base module.
     _ema_base.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     ema_model.eval()
+
+    # Per-domain breakdown on the val splits at best EMA — load-bearing diagnostic
+    # for PR #633. Logged once at end of training (cheaper than per-epoch).
+    print("\nPer-domain val MAE breakdown (best EMA, by detected domain):")
+    val_per_domain = {}
+    for split_name, loader in val_loaders.items():
+        val_per_domain[split_name] = evaluate_per_domain(ema_model, loader, stats, device)
+        for d_name, m in val_per_domain[split_name].items():
+            print(
+                f"  {split_name:<26s} {d_name:<14s} "
+                f"n={m['n_samples']:3d}  "
+                f"surf_p={m['mae_surf_p']:.4f}  "
+                f"vol_p={m['mae_vol_p']:.4f}"
+            )
+    append_metrics_jsonl(metrics_jsonl_path, {
+        "event": "val_per_domain",
+        "best_epoch": best_metrics["epoch"],
+        "per_split": val_per_domain,
+    })
 
     test_metrics = None
     test_avg = None
