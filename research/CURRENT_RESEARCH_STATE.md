@@ -32,16 +32,16 @@
 
 ## Active WIP Experiments (Round 4)
 
-| PR | Student | Hypothesis | Assigned |
-|----|---------|------------|----------|
-| #747 | thorfinn | Per-sample norm loss rebase onto advisor branch (sw=10 → sw=20 combo) | ~22:00 |
-| #813 | frieren | Zero weight decay (weight_decay=0.0) with sw=20, epochs=14 | ~21:13 |
-| #868 | edward | Per-sample norm + lower LR (2e-4) + sw=20 | 22:27 |
-| #870 | alphonse | Wider arch (n_hidden=192, n_layers=6) + per-sample norm + sw=20 | 22:30 |
-| #871 | fern | Per-sample norm + surf_weight=40 | 22:31 |
-| #874 | nezuko | Per-channel p weighting + per-sample norm + sw=20 | 22:33 |
-| #876 | tanjiro | Re-stratified sampling + per-sample norm + sw=20 | 22:34 |
-| #877 | askeladd | Gradient clipping (max_norm=1.0) + per-sample norm + sw=20 | 22:34 |
+| PR | Student | Hypothesis | Notes |
+|----|---------|------------|-------|
+| #747 | thorfinn | Per-sample norm loss rebase (awaiting student rebase onto current advisor branch) | Sent back for rebase ~20:58 |
+| #813 | frieren | Zero weight decay (weight_decay=0.0) + per-sample norm + sw=20, epochs=14 | Running since ~21:13 |
+| #868 | edward | Per-sample norm + lower LR (2e-4) + sw=20 | Assigned 22:27 |
+| #870 | alphonse | n_layers=6 + per-sample norm + sw=20 (capacity + loss fix stack) | Assigned 22:30 |
+| #871 | askeladd | Grad clip + lr=2e-4 + per-sample norm (triple stabilization) | Assigned 22:31 |
+| #874 | fern | Checkpoint averaging (last K=5 epochs, free post-training gain) | Assigned 22:31 |
+| #876 | nezuko | Per-channel p weighting (channel_weights=[1,1,5]) + per-sample norm | Assigned 22:33 |
+| #877 | tanjiro | Stronger regularization: weight_decay=1e-3 + per-sample norm + sw=20 | Assigned 22:34 |
 
 ## Key Technical Findings
 
@@ -53,26 +53,24 @@
 6. **Per-split heterogeneity is substantial** — 52-point spread in PR #845 (val_geom_camber_cruise=79.12 vs val_single_in_dist=130.99). Regime imbalance is a key lever.
 7. **NaN in test_geom_camber_cruise** — sample 20 has -inf ground truth; val splits unaffected. Pre-existing pipeline issue.
 
-## Potential Next Research Directions
+## Potential Next Research Directions (for next round, after Round 4 results are in)
 
-### Tier 1 — Direct follow-ons to current best (per-sample norm + sw=20 = 105.97)
-1. **Per-sample norm + lower LR (2e-4)** — in-flight PR #868 (edward). LR 5e-4→2e-4 gave +12.3% at sw=20 (PR #812); should stack with per-sample norm.
-2. **Wider arch + per-sample norm** — in-flight PR #870 (alphonse). Wider model had acceptable per-epoch time; per-sample norm may help it converge faster.
-3. **Per-sample norm + surf_weight=40** — in-flight PR #871 (fern). Extrapolating sw=10→20 gain.
-4. **Gradient clipping + per-sample norm** — in-flight PR #877 (askeladd). Reduce oscillation on surface-pressure loss spikes.
+### Tier 1 — Combinations from Round 4 winners
+1. **Per-sample norm + lr=2e-4 + checkpoint averaging** — if PR #868 and #874 both win, combine them. Most likely combination to hit sub-95.
+2. **Re-stratified sampling + per-sample norm + lr=2e-4** — after PR #868 lands, add sampling diversity. The 52-point per-split spread is a primary lever.
+3. **n_layers=6 + lr=2e-4 + per-sample norm** — mixed capacity at optimal LR; PR #870 tests capacity alone first.
+4. **surf_weight=40 with per-sample norm** — still unresolved from round 3; reassign if thorfinn's rebase gives a strong data point.
 
-### Tier 2 — Regime diversity and sampling
-5. **Re-stratified sampling + per-sample norm** — in-flight PR #876 (tanjiro). 52-point per-split spread suggests regime imbalance; stratified sampling + per-sample norm may together eliminate it.
-6. **Per-channel p weighting + per-sample norm** — in-flight PR #874 (nezuko). Extra p-channel emphasis within sample-normalized loss.
-7. **CosineAnnealingWarmRestarts** — cyclic LR restarts within 30-min budget may escape local minima.
+### Tier 2 — Advanced loss formulations
+5. **Per-channel relative L2** — normalize each channel (Ux, Uy, p) independently. PR #747 identified this gap: current per-sample-norm conflates inter-channel scale differences.
+6. **CosineAnnealingWarmRestarts** — cyclic LR restarts with T_0=7, T_mult=1 within 14-epoch budget may escape local minima.
+7. **Learned uncertainty weighting (Kendall et al.)** — adaptive channel weights via homoscedastic uncertainty; replaces fixed weight_decay and channel_weights scalars.
 
 ### Tier 3 — Architecture innovation
-8. **n_hidden=192, n_layers=6 at lr=2e-4** — mixed-capacity design with lower LR; in-flight PR #870 tests part of this.
-9. **Learned uncertainty weighting (Kendall et al.)** — adaptive channel weights instead of fixed scalars.
-10. **Input feature enrichment** — curvature, arc-length gradients, local normals as extra node features.
+8. **Input feature enrichment** — curvature, arc-length gradients, local normals as extra node features. Zero parameter cost, rich geometric signal.
+9. **Positional encoding improvement** — learnable 2D positional encoding on surface nodes.
 
-### Tier 4 — Bold structural changes (if plateau persists near 95-100)
-11. **GNN-augmented architecture** — replace or augment Transolver with GNN layers using mesh connectivity.
-12. **Ensemble / checkpoint averaging** — average final K checkpoints (free post-training gain).
-13. **Physics-consistency auxiliary loss** — soft enforcement of continuity equation.
-14. **Completely different architecture** — FNO, DeepONet, or U-Net style encoder-decoder.
+### Tier 4 — Bold structural changes (if plateau persists below 95)
+10. **GNN-augmented architecture** — replace or augment Transolver with GNN layers using mesh connectivity.
+11. **Physics-consistency auxiliary loss** — soft enforcement of continuity equation (div u = 0 in incompressible regions).
+12. **Completely different architecture** — FNO, DeepONet, or U-Net style encoder-decoder on mesh-structured grids.
