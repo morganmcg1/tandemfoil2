@@ -254,8 +254,9 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             mask = mask.to(device, non_blocking=True)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
-            ff = fourier_features(x_norm[..., :2])
-            x_norm = torch.cat([x_norm, ff], dim=-1)
+            ff_xz = fourier_features(x_norm[..., :2])
+            ff_saf = fourier_features(x_norm[..., 2:4])
+            x_norm = torch.cat([x_norm, ff_xz, ff_saf], dim=-1)
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
 
             with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
@@ -437,7 +438,7 @@ val_loaders = {
 
 model_config = dict(
     space_dim=2,
-    fun_dim=X_DIM - 2 + 4 * FOURIER_K,
+    fun_dim=X_DIM - 2 + 8 * FOURIER_K,
     out_dim=3,
     n_hidden=128,
     n_layers=5,
@@ -472,7 +473,9 @@ run = wandb.init(
         "model_config": model_config,
         "n_params": n_params,
         "fourier_k": FOURIER_K,
-        "fourier_dims": 4 * FOURIER_K,
+        "fourier_dims_xz": 4 * FOURIER_K,
+        "fourier_dims_saf": 4 * FOURIER_K,
+        "fourier_total_dims": 8 * FOURIER_K,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
     },
@@ -518,8 +521,9 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
-        ff = fourier_features(x_norm[..., :2])
-        x_norm = torch.cat([x_norm, ff], dim=-1)
+        ff_xz = fourier_features(x_norm[..., :2])
+        ff_saf = fourier_features(x_norm[..., 2:4])
+        x_norm = torch.cat([x_norm, ff_xz, ff_saf], dim=-1)
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
 
         with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
