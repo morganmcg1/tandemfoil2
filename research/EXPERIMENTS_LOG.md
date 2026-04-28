@@ -1,5 +1,78 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 05:13 — PR #324 v3 (sent back): EMA decay=0.999 rebased on pure L1 baseline
+
+- branch: `willowpai2d1-nezuko/ema-and-grad-clip` (in flight as draft after send-back)
+- hypothesis: EMA(decay=0.999) on top of pure L1 baseline. Predicted -2 to -5%.
+
+### Results
+
+| Metric | Value | vs PR #504 (pure L1, current baseline) |
+|---|---|---|
+| Best `val_avg/mae_surf_p` | **58.71** (epoch 32 of 32 wall-cap, still descending) | **+2.49%** (regression) |
+| `test_avg/mae_surf_p` | **50.21** | **−2.23%** (better) |
+| Test Δ on `test_geom_camber_rc` | 64.10 vs 71.57 | **−6.07%** (huge OOD win) |
+| Test Δ on `test_re_rand` | 48.67 vs 50.83 | **−3.11%** |
+| Per-epoch wall | ~57 s (vs 49 s baseline; +8 s EMA val overhead) | +14% |
+| Epochs completed | 32 / 50 (vs 36 baseline) | -4 epochs |
+| Peak GPU memory | 24.2 GB | unchanged |
+| W&B run | `tq07pkuf` | |
+
+### Analysis & conclusions
+
+- **Sent back** for EMA val overhead optimization. Val regression is
+  schedule-budget, not mechanism failure:
+  - Val curve still descending at end (epochs 28-32: 61.7 → 58.7,
+    ~0.7-0.9/epoch decay).
+  - Projection to 36 epochs: val_avg ≈ 55.9 (would beat baseline).
+  - EMA shadow fully warm (`0.999^12000 ≈ 6e-6` initial contamination).
+- **Mechanism is confirmed**: EMA preferentially helps OOD splits
+  (test_geom_camber_rc −6.07%, test_re_rand −3.11%), exactly where
+  variance-reduction-in-parameter-space predicts.
+- **Val/test ratio improved** (1.116 → 1.169): EMA produces a model
+  more conservative on val (less overfit to val-specific noise) that
+  transfers better to held-out test.
+- Send-back instructions: gate EMA swap-validate-swap on epoch parity
+  (every 2nd epoch), recovers ~3-4 s/epoch → ~36 reachable epochs.
+  Predicted post-fix val_avg in 55-56 range.
+
+## 2026-04-28 05:13 — PR #544 (closed): surf_weight=15 on pure-L1 baseline
+
+- branch: `willowpai2d1-thorfinn/sw15-on-pure-l1-baseline` (deleted on close)
+- hypothesis: round-1 sw=15 directional finding from PR #333 transfers to
+  pure L1 baseline. Predicted -1 to -3%.
+
+### Results
+
+| Metric | Value | vs PR #504 (pure L1, current baseline) |
+|---|---|---|
+| Best `val_avg/mae_surf_p` | **62.26** (epoch 30 of 31) | **+8.69%** (clear regression) |
+| `test_avg/mae_surf_p` | 53.76 | +4.69% |
+| Surface Ux MAE (val_avg) | 0.85 | **+9.4%** (val_single_in_dist: **+28%**!) |
+| Surface Uy MAE (val_avg) | 0.42 | +4.6% |
+| W&B run | `jvl533ne` | |
+
+### Analysis & conclusions
+
+- **Closed.** sw=15 doesn't transfer from MSE to L1.
+- **Mechanism**: L1 has constant-magnitude gradient `sign(r)/N`. With
+  sw=15, the surface gets 1.5× constant pull throughout training (not
+  decaying with residual like under MSE). This accelerates early
+  surface fit (epoch 19: val 79.3 vs baseline ~107) but causes
+  **oscillation near convergence** (epoch 25-31 val swings 62-80) instead
+  of clean descent.
+- **Velocity-pressure coupling biting** (askeladd #451 prediction): surface
+  Ux regressed +9.4% val / +28% on single_in_dist, surface Uy regressed
+  +4.6%. Distorting volume velocity (chasing surface fit) breaks
+  Navier-Stokes-respecting flow → hurts surface pressure prediction.
+- **Three-point monotonic curve confirms** under pure L1: sw=10 baseline
+  → sw=15 (+8.7%) → sw=50 effective via PR #451 (+59%). Surface
+  overweighting under L1 is bad; sw=10 may be near or below optimum.
+- Reassigned thorfinn to **sw=8 probe** (PR #570) — single-flag test of
+  whether sw<10 is the right direction.
+- Followup #1 from this PR (annealed sw=15→10 warmup) held for if
+  sw<10 doesn't move the metric.
+
 ## 2026-04-28 05:11 — PR #443 (closed): Gaussian RFF (K=16, σ=10) replacing deterministic FF
 
 - branch: `willowpai2d1-tanjiro/gaussian-random-fourier` (deleted on close)
