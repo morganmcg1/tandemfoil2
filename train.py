@@ -29,6 +29,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import yaml
+from copy import deepcopy
 from einops import rearrange
 from timm.layers import trunc_normal_
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
@@ -368,6 +369,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 30.0
     epochs: int = 50
+    ema_decay: float = 0.999
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
@@ -417,6 +419,11 @@ model_config = dict(
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+
+ema_model = deepcopy(model)
+for p in ema_model.parameters():
+    p.requires_grad_(False)
+ema_model.eval()
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 warmup_epochs = 5
@@ -476,6 +483,13 @@ for epoch in range(MAX_EPOCHS):
         loss.backward()
         optimizer.step()
 
+        with torch.no_grad():
+            d = cfg.ema_decay
+            for p_ema, p in zip(ema_model.parameters(), model.parameters()):
+                p_ema.data.mul_(d).add_(p.data, alpha=1.0 - d)
+            for b_ema, b in zip(ema_model.buffers(), model.buffers()):
+                b_ema.data.copy_(b.data)
+
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
         n_batches += 1
@@ -484,14 +498,32 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
-    # --- Validate ---
-    model.eval()
+    # --- Validate (using EMA weights) ---
+    ema_model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
     avg_surf_p = val_avg["avg/mae_surf_p"]
+
+    # Diagnostic-only: also evaluate the live (non-EMA) model on val splits so
+    # we can compare how closely EMA tracks the live model. Does NOT drive
+    # checkpoint selection. Throttled to every 5 epochs (plus the last) to
+    # keep training time inside the wall-clock budget.
+    do_live_eval = ((epoch + 1) % 5 == 0) or (epoch + 1 == MAX_EPOCHS)
+    if do_live_eval:
+        model.eval()
+        live_split_metrics = {
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            for name, loader in val_loaders.items()
+        }
+        live_val_avg = aggregate_splits(live_split_metrics)
+        live_avg_surf_p = live_val_avg["avg/mae_surf_p"]
+    else:
+        live_split_metrics = None
+        live_avg_surf_p = None
+
     dt = time.time() - t0
 
     tag = ""
@@ -502,11 +534,11 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        torch.save(ema_model.state_dict(), model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
-    append_metrics_jsonl(metrics_jsonl_path, {
+    record = {
         "event": "epoch",
         "epoch": epoch + 1,
         "seconds": dt,
@@ -516,11 +548,16 @@ for epoch in range(MAX_EPOCHS):
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
-    })
+    }
+    if do_live_eval:
+        record["live_val_avg/mae_surf_p"] = live_avg_surf_p
+        record["live_val_splits"] = live_split_metrics
+    append_metrics_jsonl(metrics_jsonl_path, record)
+    live_str = f" live={live_avg_surf_p:.4f}" if do_live_eval else ""
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
-        f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
+        f"val_avg_surf_p[ema={avg_surf_p:.4f}{live_str}]{tag}"
     )
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
@@ -532,8 +569,8 @@ print(f"\nTraining done in {total_time:.1f} min")
 if best_metrics:
     print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-    model.eval()
+    ema_model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    ema_model.eval()
 
     test_metrics = None
     test_avg = None
@@ -545,7 +582,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
