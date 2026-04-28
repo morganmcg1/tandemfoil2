@@ -1,5 +1,70 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 01:35 — PR #395 (CLOSED, validated on L1 / loses to L1+FF): weight_decay 1e-4 → 1e-3
+- Branch: `charliepai2d3-frieren/l1-wd-1e-3` (deleted on close)
+- Hypothesis: 10× weight_decay bump on the L1 baseline addresses
+  under-regularisation on the small training set; predicted −1% to −5%.
+- Config: L1 surface loss baseline (PR #280), `weight_decay=1e-3`, all
+  other knobs at defaults. CLI-only diff.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs L1 baseline (PR #280, 102.64) | vs current L1+FF baseline (PR #400, 91.87) |
+|--------|--------:|---------------------------------:|-------------------------------------------:|
+| `val_avg/mae_surf_p`  | 100.99 | **−1.6% (validated, in predicted band)** | **+9.9% (loses to current)** |
+| `test_avg/mae_surf_p` |  91.68 | **−6.2% (validated, larger than predicted)** | +13.0% (loses to current) |
+| Per-epoch wallclock   | ~132 s | unchanged | unchanged |
+| Peak GPU memory       | 42.1 GB | unchanged | unchanged |
+
+### Per-split val (best epoch 14) — regularisation hypothesis confirmed
+
+| split | L1 baseline | this PR | Δ |
+|-------|------------:|--------:|--:|
+| val_single_in_dist     | 121.18 | 128.64 | **+6.2% (worse)** |
+| val_geom_camber_rc     | 125.01 | 110.16 | **−11.9% (much better)** |
+| val_geom_camber_cruise |  73.22 |  74.98 | +2.4% (slight worse) |
+| val_re_rand            |  91.14 |  90.19 | −1.0% |
+
+### Decision
+
+**Closed.** Same merge-order pattern as PR #298 (nezuko's MSE-side
+Fourier features): the lever was validated on its assigned baseline
+(L1) but loses to the current baseline (L1+FF) which landed mid-round.
+
+**The per-split signal validates the regularisation hypothesis
+precisely.** Student predicted that improvement on OOD axes + slight
+regression on in-dist would be direct evidence that the L1 regime was
+under-regularised on OOD axes specifically — and that pattern is
+exactly what the data shows (`val_geom_camber_rc` −11.9% with
+`val_single_in_dist` +6.2%).
+
+But that OOD-axis work overlaps with the spatial-FF lever that landed
+in PR #400 (which also improved `val_geom_camber_rc` by 20.8%). The
+compose question is: is `wd=1e-3` doing additional OOD-camber work
+beyond FF, or redundant work? **Re-assigning frieren to the compose
+test** to find out.
+
+### Round-4 implications
+
+- **wd sweep (5e-3, 1e-2, 3e-2)** is round-5 priority #1 if the compose
+  test wins. The per-split signal — OOD up, in-dist down, but not yet
+  in-dist-dominated — suggests there's more headroom.
+- **DropPath / stochastic depth** is the orthogonal regularisation
+  alternative. Different mechanism (residual paths vs weight magnitude)
+  — would compose with wd if both win.
+- **Logged-loss accumulator NaN**: same as nezuko's PR #400 finding.
+  `evaluate_split`'s squared-error sum doesn't have the per-sample skip
+  that `accumulate_batch` got in commit `2eb5c7f`. Round-5 cleanup PR.
+- **Schedule truncation**: every round-3 PR is at a 14-of-50-epoch cap.
+  PR #389 (matched cosine `--epochs 14`) is the diagnostic for whether
+  full convergence changes any of these per-PR rankings.
+
+Per-epoch metrics not centralised in `EXPERIMENT_METRICS.jsonl` —
+branch deleted on close. Headline numbers above are from the PR
+results comment.
+
+---
+
 ## 2026-04-28 01:30 — PR #400 (MERGED): L1 + 8-frequency Fourier positional features (compose)
 - Branch: `charliepai2d3-nezuko/l1-fourier-pos-8freq`
 - Hypothesis: port the validated FF lever (PR #298, won −13.7% on MSE)

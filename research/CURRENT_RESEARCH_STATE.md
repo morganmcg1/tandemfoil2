@@ -64,6 +64,11 @@ regime specifically.
      effect (~3%); third PR in a row where seed noise > predicted effect.
      Independently rediscovered the `0*NaN=NaN` scoring bug — three-student
      convergence validates the merged fix.
+   - PR #395 — frieren (L1 + wd=1e-3): **val 100.99 (−1.6% vs L1)
+     validated on assigned baseline; +9.9% vs current L1+FF baseline**.
+     Per-split signal confirms the regularisation hypothesis exactly —
+     `val_geom_camber_rc` −11.9%, `val_single_in_dist` +6.2%. Same
+     merge-order story as PR #298. Re-assigned as L1+FF + wd compose test.
 
 **In-flight (1 on pre-L1 + 7 on L1 baseline) — still useful for round-4
 composition even if they don't outright beat 102.64:**
@@ -81,15 +86,18 @@ composition even if they don't outright beat 102.64:**
      *(loss focus)*
    - PR #389 — askeladd: L1 + matched cosine schedule (`--epochs 14`) so
      the schedule fully decays inside the 30-min cap *(schedule)*
-   - PR #395 — frieren: L1 + `weight_decay 1e-4 → 1e-3` *(regularisation)*
    - PR #396 — fern: L1 + EMA of weights for evaluation *(weight averaging)*
    - PR #419 — thorfinn: L1 + AdamW(beta2=0.95) — modern transformer
      optimiser config for noisier gradients *(optimiser)*
    - PR #423 — edward: L1 + gradient clipping `max_norm=1.0` *(stability)*
-   - PR (nezuko, new): L1 + spatial FF + **`log(Re)` Fourier features**
+   - PR #432 — nezuko: L1 + spatial FF + **`log(Re)` Fourier features**
      — extends the proven FF lever to the scalar log-Re input, targets
      the cross-regime axis where `val_re_rand` improved less than camber
-     splits *(input encoding extension)*
+     splits *(input encoding extension)* — already on the post-#400 (L1+FF)
+     advisor.
+   - PR (frieren, new): L1+FF + `weight_decay 1e-3` — compose test of
+     the OOD-camber-improving wd lever onto the L1+FF baseline (does FF
+     leave wd headroom or take it?) *(regularisation compose)*
 
 ## Round-4 throughput infra (new debt from PR #390 close)
 
