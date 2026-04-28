@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -240,15 +241,15 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
-            sq_err = (pred - y_norm) ** 2
+            abs_err = (pred - y_norm).abs()
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
-                (sq_err * vol_mask.unsqueeze(-1)).sum()
+                (abs_err * vol_mask.unsqueeze(-1)).sum()
                 / vol_mask.sum().clamp(min=1)
             ).item()
             surf_loss_sum += (
-                (sq_err * surf_mask.unsqueeze(-1)).sum()
+                (abs_err * surf_mask.unsqueeze(-1)).sum()
                 / surf_mask.sum().clamp(min=1)
             ).item()
             n_batches += 1
@@ -460,8 +461,29 @@ wandb.define_metric("lr", step_metric="global_step")
 model_dir = Path(f"models/model-{run.id}")
 model_dir.mkdir(parents=True, exist_ok=True)
 model_path = model_dir / "checkpoint.pt"
+metrics_path = model_dir / "metrics.jsonl"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
+
+
+def _write_jsonl(record: dict) -> None:
+    with open(metrics_path, "a") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+_write_jsonl({
+    "type": "run_start",
+    "run_id": run.id,
+    "wandb_name": cfg.wandb_name,
+    "agent": cfg.agent,
+    "git_commit": _git_commit_short(),
+    "loss_kind": "mae",
+    "config": asdict(cfg),
+    "model_config": model_config,
+    "n_params": n_params,
+    "max_epochs": MAX_EPOCHS,
+    "max_timeout_min": MAX_TIMEOUT_MIN,
+})
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
@@ -487,12 +509,12 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+        abs_err = (pred - y_norm).abs()
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        vol_loss = (abs_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+        surf_loss = (abs_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
@@ -535,6 +557,9 @@ for epoch in range(MAX_EPOCHS):
         log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
     wandb.log(log_metrics)
 
+    epoch_record = {"type": "epoch", "epoch": epoch + 1, **log_metrics}
+    _write_jsonl(epoch_record)
+
     tag = ""
     if avg_surf_p < best_avg_surf_p:
         best_avg_surf_p = avg_surf_p
@@ -556,6 +581,7 @@ for epoch in range(MAX_EPOCHS):
         print_split_metrics(name, split_metrics[name])
 
 total_time = (time.time() - train_start) / 60.0
+peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
 print(f"\nTraining done in {total_time:.1f} min")
 
 # --- Test evaluation + artifact upload ---
@@ -596,6 +622,23 @@ if best_metrics:
             test_log[f"test_{k}"] = v
         wandb.log(test_log)
         wandb.summary.update(test_log)
+
+    _write_jsonl({
+        "type": "run_summary",
+        "best_epoch": best_metrics["epoch"],
+        "best_val_avg/mae_surf_p": best_avg_surf_p,
+        "best_per_split": {
+            name: {k: float(v) for k, v in m.items()}
+            for name, m in best_metrics["per_split"].items()
+        },
+        "test_avg": dict(test_avg) if test_avg is not None else None,
+        "test_per_split": (
+            {name: {k: float(v) for k, v in m.items()} for name, m in test_metrics.items()}
+            if test_metrics is not None else None
+        ),
+        "total_train_minutes": total_time,
+        "peak_gb": peak_gb,
+    })
 
     save_model_artifact(
         run=run,
