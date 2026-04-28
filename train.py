@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -419,7 +420,7 @@ model_config = dict(
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
-    n_layers=5,
+    n_layers=7,
     n_head=4,
     slice_num=64,
     mlp_ratio=2,
@@ -462,6 +463,31 @@ model_dir.mkdir(parents=True, exist_ok=True)
 model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
+
+metrics_tag = cfg.wandb_name or cfg.agent or run.id
+metrics_tag = _sanitize_artifact_token(metrics_tag)
+metrics_dir = Path("metrics")
+metrics_dir.mkdir(parents=True, exist_ok=True)
+metrics_path = metrics_dir / f"{metrics_tag}-{run.id}.jsonl"
+metrics_file = open(metrics_path, "w", buffering=1)
+
+
+def jsonl_log(record: dict) -> None:
+    metrics_file.write(json.dumps(record, default=float) + "\n")
+
+
+jsonl_log({
+    "event": "start",
+    "run_id": run.id,
+    "wandb_name": cfg.wandb_name,
+    "agent": cfg.agent,
+    "config": asdict(cfg),
+    "model_config": model_config,
+    "n_params": n_params,
+    "max_epochs": MAX_EPOCHS,
+    "max_timeout_min": MAX_TIMEOUT_MIN,
+    "git_commit": _git_commit_short(),
+})
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
@@ -536,6 +562,7 @@ for epoch in range(MAX_EPOCHS):
     wandb.log(log_metrics)
 
     tag = ""
+    is_best = False
     if avg_surf_p < best_avg_surf_p:
         best_avg_surf_p = avg_surf_p
         best_metrics = {
@@ -545,8 +572,23 @@ for epoch in range(MAX_EPOCHS):
         }
         torch.save(model.state_dict(), model_path)
         tag = " *"
+        is_best = True
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+    jsonl_log({
+        "event": "epoch",
+        "epoch": epoch + 1,
+        "epoch_time_s": dt,
+        "lr": scheduler.get_last_lr()[0],
+        "peak_gb": peak_gb,
+        "train_vol_loss": epoch_vol,
+        "train_surf_loss": epoch_surf,
+        "val_loss_mean": val_loss_mean,
+        "val_avg": val_avg,
+        "val_splits": split_metrics,
+        "is_best": is_best,
+        "best_avg_surf_p": best_avg_surf_p,
+    })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
@@ -557,6 +599,7 @@ for epoch in range(MAX_EPOCHS):
 
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
+jsonl_log({"event": "train_done", "total_train_minutes": total_time})
 
 # --- Test evaluation + artifact upload ---
 if best_metrics:
@@ -596,6 +639,13 @@ if best_metrics:
             test_log[f"test_{k}"] = v
         wandb.log(test_log)
         wandb.summary.update(test_log)
+        jsonl_log({
+            "event": "test",
+            "best_epoch": best_metrics["epoch"],
+            "best_val_avg/mae_surf_p": best_avg_surf_p,
+            "test_avg": test_avg,
+            "test_splits": test_metrics,
+        })
 
     save_model_artifact(
         run=run,
@@ -611,5 +661,9 @@ if best_metrics:
     )
 else:
     print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping artifact upload.")
+
+jsonl_log({"event": "end", "metrics_path": str(metrics_path)})
+metrics_file.close()
+print(f"Metrics written to {metrics_path}")
 
 wandb.finish()
