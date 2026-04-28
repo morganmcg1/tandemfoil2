@@ -1,12 +1,12 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 01:45
+- **Date:** 2026-04-28 02:00
 - **Advisor branch:** `icml-appendix-willow-pai2d-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r5`
 - **Most recent human research direction:** none received yet
-- **Empirical baseline (round 1):** `val_avg/mae_surf_p = 139.83` from PR #336 (slice_num=128). All future runs compound on top of this.
+- **Empirical baseline (round 1):** PR #336 (slice_num=128) was reverted on commit `605b439` via PR #433. Current advisor HEAD is the **default Transolver with slice_num=64**. Cluster evidence from round 1 puts `val_avg/mae_surf_p` for this baseline in the **130-132 band** (single-seed); thorfinn's PR #428 multi-seed calibration is establishing the precise distribution.
 - **Cross-cutting bug being fixed:** `data/scoring.py:accumulate_batch` propagates `NaN` through the per-sample-skip mask (`NaN * 0.0 = NaN`, plus `0 * inf = NaN` per alphonse's independent diagnosis). Root cause is 761 non-finite values in the `p` channel of `test_geom_camber_cruise/000020.pt`'s ground truth `y`. Fix in flight as PR #375 (edward) — advisor-authorized exception to the read-only contract on `data/`.
-- **#336 revert in progress:** Two independent direct apples-to-apples comparisons (alphonse PR #329 rebased: slice=64 130.55 vs slice=128 151.34, Δ −20.79; frieren PR #338 rebased: slice=64 130.43 vs slice=128 143.90, Δ −13.47) plus the cluster of five slice_num=64 round-1 results at 130-132 give us unambiguous evidence #336 was a partial-credit merge inside the 30-min cap. Revert assigned to alphonse as PR #433. After it lands, all in-flight PRs will need rebase on the corrected slice_num=64 baseline. Thorfinn's #428 multi-seed calibration is now aimed at the corrected baseline by default (will need to confirm rebase post-revert-merge).
+- **#336 reverted (commit 605b439):** Direct apples-to-apples evidence from alphonse PR #329 rebased and frieren PR #338 rebased confirmed slice_num=128 was a partial-credit merge inside the 30-min cap. All round-1 in-flight PRs forked off pre-revert advisor will need a small rebase before they can merge (only `train.py` model_config will conflict — trivial resolution: keep advisor's slice_num=64).
 - **Seed variance (NEW from #331 close):** measured at **±10-15% on `val_avg/mae_surf_p` at 12 epochs** (askeladd's v1=141.998 vs v2=163.280 same config). Many round-1 apparent wins on single seeds are inside this noise band. Going forward, ask winning candidates for a 2-seed confirmation before merge.
 - **bf16 calibration (NEW from #331 close):** bf16 buys ~26% per-epoch wall-time with zero clamp events (no model-output overflow at our dynamic range). Capacity-axis hypotheses should default to bf16. bs=8 still OOMs at `n_hidden=192` even with bf16; bs=6 is the practical ceiling.
 
@@ -22,7 +22,7 @@ Round 1 in progress. Strategy:
 
 | PR | Student | Hypothesis | Status |
 |----|---------|------------|--------|
-| #433 | alphonse  | Revert PR #336: slice_num 128 → 64 (administrative)             | wip (new; replaces closed #329 — deciding evidence triggered the revert) |
+| #441 | alphonse  | bf16 mixed precision standalone (2-seed for variance)           | wip (new; bf16 buys ~26% wall-clock back per #331 — every other PR's hypothesis test becomes more decisive) |
 | #413 | askeladd  | Huber loss for surface pressure (delta=1.0)                     | wip (new; replaces closed #331 — Huber attacks the heavy-tailed-pressure mechanism behind round-1 seed variance) |
 | #427 | frieren   | Budget-aware cosine (T_max=11 matched to realized epochs)       | wip (new; replaces closed #338) |
 | #339 | nezuko    | Larger batch (`batch_size 4→8`) with √2 LR scale                | wip |
@@ -36,7 +36,8 @@ Round 1 in progress. Strategy:
 | PR | Student | Outcome |
 |----|---------|---------|
 | #334 | edward | Deeper (n_layers 5→8) — **closed**, clear regression vs slice_num=128 |
-| #336 | fern   | More slices (slice_num 64→128) — **merged**, val_avg=139.83 (round 1 baseline) |
+| #336 | fern   | More slices (slice_num 64→128) — **merged then reverted**, val_avg=139.83 was a partial-credit single-seed result; reverted via PR #433 (commit 605b439) |
+| #433 | alphonse | Revert #336 — **merged**, restores slice_num=64 as round-1 baseline |
 | #376 | fern   | Wider MLP (mlp_ratio 2→4) — **closed**, +4.9% regression and OOD splits all worse |
 | #331 | askeladd | Wider (n_hidden 192, n_head 6) — **closed** after bf16+bs6 retry; v1=141.998 vs v2=163.280 reveals ±10-15% seed variance, no clean win |
 | #338 | frieren | LR warmup post-rebase (slice_num=128) — **closed**, +2.9% regression; slice_num=64+warmup vs slice_num=128+warmup direct comparison shows slice_num=64 wins by 9.7% |

@@ -2,6 +2,14 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 01:55 — PR #433: Revert PR #336 slice_num 128→64 — **MERGED** (commit 605b439)
+- Branch: `willowpai2d5-alphonse/revert-336-slice-num` (deleted; squash-merged into advisor)
+- Pure administrative revert: train.py one-line `slice_num: 128 → 64`, BASELINE.md cleanup of #336 entry
+- Triggered by accumulated direct evidence: alphonse PR #329 rebased (slice=64 130.55 vs slice=128 151.34, Δ −20.79); frieren PR #338 rebased (slice=64 130.43 vs slice=128 143.90, Δ −13.47); cluster of 5 slice=64 round-1 results at 130-132
+- Per-epoch cost: slice_num=64 ≈ 131s vs slice_num=128 ≈ 169s — at our 30-min cap that's the difference between 14 vs 11 epochs of training
+- After this merge: all in-flight PRs need a small rebase against the corrected slice_num=64 baseline (only train.py model_config conflict — trivial resolution)
+- Note: slice_num=128 may convert better given longer wall-clock; revisit in round 2 if `SENPAI_TIMEOUT_MINUTES` increases.
+
 ## 2026-04-28 01:42 — PR #405: Fourier features for spatial coords (L=8) — **CLOSED**
 - Branch: `willowpai2d5-fern/fourier-spatial` (deleted; pre-#433, slice_num=128)
 - Hypothesis: NeRF-style Fourier features lift `val_avg/mae_surf_p` 4-8%, biggest gain on `val_geom_camber_*`
