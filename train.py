@@ -17,10 +17,12 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import simple_parsing as sp
@@ -418,9 +420,9 @@ model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=128,
-    n_layers=5,
-    n_head=4,
+    n_hidden=256,
+    n_layers=7,
+    n_head=8,
     slice_num=64,
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
@@ -447,7 +449,7 @@ run = wandb.init(
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
     },
-    mode=os.environ.get("WANDB_MODE", "online"),
+    mode=os.environ.get("WANDB_MODE", "offline"),
 )
 
 wandb.define_metric("global_step")
@@ -462,6 +464,35 @@ model_dir.mkdir(parents=True, exist_ok=True)
 model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
+
+# Local JSONL metrics file — committed with the PR for advisor review.
+metrics_dir = Path("research")
+metrics_dir.mkdir(parents=True, exist_ok=True)
+_jsonl_label = _sanitize_artifact_token(cfg.wandb_name or cfg.agent or "tandemfoil")
+metrics_path = metrics_dir / f"metrics_{_jsonl_label}_{run.id}.jsonl"
+
+
+def _jsonl_write(record: dict) -> None:
+    record = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), **record}
+    with open(metrics_path, "a") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+_jsonl_write({
+    "event": "config",
+    "run_id": run.id,
+    "run_name": run.name,
+    "agent": cfg.agent,
+    "wandb_name": cfg.wandb_name,
+    "git_commit": _git_commit_short(),
+    "model_config": model_config,
+    "n_params": n_params,
+    "cfg": asdict(cfg),
+    "max_epochs": MAX_EPOCHS,
+    "max_timeout_min": MAX_TIMEOUT_MIN,
+    "train_samples": len(train_ds),
+    "val_samples": {k: len(v) for k, v in val_splits.items()},
+})
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
@@ -555,6 +586,19 @@ for epoch in range(MAX_EPOCHS):
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
 
+    _jsonl_write({
+        "event": "epoch",
+        "epoch": epoch + 1,
+        "epoch_time_s": dt,
+        "lr": scheduler.get_last_lr()[0],
+        "peak_vram_gb": peak_gb,
+        "global_step": global_step,
+        "train": {"vol_loss": epoch_vol, "surf_loss": epoch_surf},
+        "val_avg": val_avg,
+        "splits": split_metrics,
+        "is_best": bool(tag),
+    })
+
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
 
@@ -597,6 +641,13 @@ if best_metrics:
         wandb.log(test_log)
         wandb.summary.update(test_log)
 
+        _jsonl_write({
+            "event": "test",
+            "best_epoch": best_metrics["epoch"],
+            "test_avg": test_avg,
+            "splits": test_metrics,
+        })
+
     save_model_artifact(
         run=run,
         model_path=model_path,
@@ -609,7 +660,23 @@ if best_metrics:
         n_params=n_params,
         model_config=model_config,
     )
+
+    _peak_vram = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+    _jsonl_write({
+        "event": "summary",
+        "best_epoch": best_metrics["epoch"],
+        "best_val_avg/mae_surf_p": best_avg_surf_p,
+        "test_avg/mae_surf_p": (test_avg or {}).get("avg/mae_surf_p"),
+        "total_train_minutes": total_time,
+        "peak_vram_gb": _peak_vram,
+        "n_params": n_params,
+    })
 else:
     print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping artifact upload.")
+    _jsonl_write({
+        "event": "summary",
+        "best_epoch": None,
+        "total_train_minutes": total_time,
+    })
 
 wandb.finish()
