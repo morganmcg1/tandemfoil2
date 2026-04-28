@@ -31,6 +31,36 @@
 
 ---
 
+## 2026-04-28 01:46 — PR #349: H8 slice_num scaling matrix — **CLOSED**
+
+- Branch: `willowpai2d4-thorfinn/h8-slice-num-scaling`
+- Hypothesis: scaling Transolver `slice_num` from 64 → 128/256, optionally with width compensation, should reduce `val_avg/mae_surf_p` by 2–7%.
+- 4-cell matrix in W&B group `h8-slice-num`. Branch was cut before PR #344 merged so all runs use the pre-merge schedule (`CosineAnnealingLR` per-epoch, no warmup); not directly comparable to the merged baseline:
+
+| Run | slice_num | n_hidden | n_head | bs | params | s/epoch | best_epoch | val_avg/mae_surf_p | test_avg/mae_surf_p | W&B |
+|-----|-----------|----------|--------|----|---------|---------|------------|---------------------|---------------------|-----|
+| A | 128 | 128 | 4 | 4 | 0.67M | 171 | 11/11 | **148.65** | **136.69** | `29ltc5zn` |
+| B | 256 | 128 | 4 | 4 | 0.69M | 252 | 4/8 | 179.57 | 172.21 | `a9hy5emm` |
+| C | 128 | 192 | 6 | 4 | 1.46M | 263 | 7/7 | 158.61 | 144.72 | `a4lnwgv4` |
+| D | 192 | 192 | 6 | 2† | 1.47M | 304 | 6/6 | 173.08 | 158.38 | `noco1c7f` |
+
+†Run D OOM'd at bs=4 (PR was advised to drop to bs=2 as the failure-mode mitigation).
+
+### Conclusions
+
+- **Slice scan plateaued at 128 — within the scan.** Run A (slice 128, h 128) wins on every val/test split. Run B (slice 256) regressed with a val curve that plateaued at epoch 4 then bounced 180–205, the partition-collapse signature.
+- **Best run is +23% regression vs the merged baseline** (val=148.65 vs 120.97). Even after rebasing to inherit PR #344's schedule fix, slice_num=128 is unlikely to recover the gap given the within-scan ordering.
+- **Width was not the missing lever.** Run C (slice 128 + h=192) underperformed Run A on every metric.
+- **Compute fairness caveat:** Runs B/C/D completed only 4–8 epochs vs Run A's 11. The slice-scan ordering on Run B is robust (val plateau visible) but Runs C/D were still descending — those *might* narrow with more compute.
+- **NaN fix was duplicated** (independently reproduced edward's PR #344 fix). Equivalent functionality, no merge action needed.
+- **Useful follow-ups (deferred):** try slice_num=96 (the curve from 128→256 went sharply up; we never tested below 128 in this scan), and revisit width+slice scaling once H6 throughput lands.
+
+### Action
+
+Closed; reassigning thorfinn to H12 (EMA of weights) — a cheap compounding lever well-suited to layer onto whatever round-1 winner emerges.
+
+---
+
 ## 2026-04-28 00:38 — PR #346: H7 z-mirror augmentation — **CLOSED**
 
 - Branch: `willowpai2d4-frieren/h7-zmirror-augmentation`
