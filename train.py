@@ -48,15 +48,22 @@ from data import (
 )
 
 
-def fourier_features(pos: torch.Tensor, num_freq: int = 8) -> torch.Tensor:
-    """Sinusoidal Fourier features for [B, N, 2] node positions.
+class FourierFeatures(nn.Module):
+    """Tancik et al. 2020 random Gaussian Fourier features for [B, N, in_dim] inputs.
 
-    Returns [B, N, 4 * num_freq] features: sin/cos at frequency bands
-    1, 2, 4, ..., 2^(num_freq-1) cycles, scaled by pi.
+    Projection matrix B is sampled once at init from N(0, sigma^2) and frozen.
+    Returns [B, N, 2 * num_freq] features (sin and cos of 2*pi*x@B).
     """
-    freqs = (2.0 ** torch.arange(num_freq, device=pos.device, dtype=pos.dtype)) * torch.pi
-    proj = pos.unsqueeze(-1) * freqs                        # [B, N, 2, num_freq]
-    return torch.cat([proj.sin(), proj.cos()], dim=-1).flatten(-2)  # [B, N, 4 * num_freq]
+
+    def __init__(self, in_dim: int, num_freq: int = 16, sigma: float = 10.0):
+        super().__init__()
+        proj = torch.randn(in_dim, num_freq) * sigma
+        self.register_buffer("B", proj)
+        self.num_freq = num_freq
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        proj = (x @ self.B) * (2.0 * torch.pi)
+        return torch.cat([proj.sin(), proj.cos()], dim=-1)
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +237,7 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, ff_model, loader, stats, surf_weight, device) -> dict[str, float]:
     """Evaluate a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -251,7 +258,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            ff = fourier_features(x_norm[..., :2], num_freq=8)
+            ff = ff_model(x_norm[..., :2])
             x_norm = torch.cat([x_norm, ff], dim=-1)
             pred = model({"x": x_norm})["preds"]
 
@@ -369,6 +376,7 @@ class Config:
     surf_weight: float = 30.0
     epochs: int = 50
     grad_clip_norm: float = 1.0  # max gradient L2 norm; set <=0 to disable
+    fourier_sigma: float = 10.0  # std of random Gaussian Fourier projection (Tancik 2020)
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
@@ -419,6 +427,12 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
+# Random Gaussian Fourier projection (Tancik 2020). Seeded for reproducibility
+# of the projection matrix B; model init above remains stochastic.
+torch.manual_seed(42)
+ff_model = FourierFeatures(in_dim=2, num_freq=16, sigma=cfg.fourier_sigma).to(device)
+print(f"FourierFeatures: in_dim=2, num_freq=16, sigma={cfg.fourier_sigma}")
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 warmup_epochs = 5
 warmup = LinearLR(optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_epochs)
@@ -463,7 +477,7 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        ff = fourier_features(x_norm[..., :2], num_freq=8)
+        ff = ff_model(x_norm[..., :2])
         x_norm = torch.cat([x_norm, ff], dim=-1)
         pred = model({"x": x_norm})["preds"]
         abs_err = (pred - y_norm).abs()
@@ -494,7 +508,7 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, ff_model, loader, stats, cfg.surf_weight, device)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -554,7 +568,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, ff_model, loader, stats, cfg.surf_weight, device)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
