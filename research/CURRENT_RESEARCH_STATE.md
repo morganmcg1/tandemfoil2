@@ -1,41 +1,57 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-27 22:30 UTC
+- **Date:** 2026-04-28 00:55 UTC
 - **Advisor branch:** `icml-appendix-willow-pai2d-r4`
 - **Most recent human-team direction:** none received yet on this advisor branch
-- **Active research focus:** Round 0 — establish first round of improvements over the vanilla Transolver baseline on TandemFoilSet. Primary metric `val_avg/mae_surf_p`; paper metric `test_avg/mae_surf_p`. Eight students assigned to non-overlapping hypothesis families covering loss reformulation, training-recipe fixes, target/feature engineering, throughput, augmentation, position encoding, and architecture levers.
+- **Current best:** PR #344 (edward H2) merged. `val_avg/mae_surf_p=120.97`, `test_avg/mae_surf_p=109.92`. See BASELINE.md for full details and recommended config (`--epochs 25 --lr 7e-4`).
+
+## Active research focus
+
+**Round 0 in flight; round-0 follow-ups starting.** Eight non-overlapping hypotheses originally fielded; H2 (warmup + per-step cosine + NaN fix) merged as the first winner; H7 (z-mirror augmentation) closed as a strict regression with strong diagnostic write-up. Edward and frieren reassigned to H11 and H10 from the reserve list — both should compound with the merged baseline.
 
 ## Current themes
 
-1. **Scale-aware losses** — exposed weakness: per-sample y-std varies ~40x across the corpus, so a global `y_std` makes high-Re samples dominate gradients. H1 (per-sample y-std normalization) and H3 (Huber on surface) attack this directly.
-2. **Training-recipe debt** — no warmup, no AMP/compile, T_max mismatched to actual run length, fp32 only. H2 (warmup + corrected cosine) and H6 (bf16 + compile + larger batch) close these gaps.
-3. **Geometry-OOD support** — held-out front-foil cambers test extrapolation to unseen NACA. H5 (random Fourier features) and H7 (z-mirror augmentation) add geometric capacity and free training data.
-4. **Architectural capacity** — H8 (slice_num scaling) increases the number of physics-attention partitions for >200K-node meshes.
-5. **Surface specialization** — H4 (surface-only norm + signed distance feature) lets the network treat surface and volume distributions separately and adds a boundary-layer-aware geometric input.
+1. **Scale-aware losses** — per-sample y-std varies ~40x; tested actively via H1 (alphonse).
+2. **Training-recipe debt** — partially closed by H2 merge. Open follow-up: shorter `--epochs 14` to test cosine-actually-reaching-zero in the run-time budget. Deferred for a later round.
+3. **Throughput as a lever** — H6 (askeladd) tests bf16/compile/larger batch; once landed, every other hypothesis benefits from more epochs in the budget.
+4. **Geometry-OOD generalization** — H4 (fern, surface-only norm + distance feature), H5 (nezuko, Fourier features), H8 (thorfinn, slice_num) all hit this from different angles.
+5. **Re-conditioning** — H11 (edward, FiLM on log(Re)) directly attacks the Re-OOD gap.
+6. **Loss/curriculum tuning** — H10 (frieren, surf_weight ramp) on top of merged baseline.
+7. **Robustness** — defensive `nan_to_num` shipped in the H2 merge; future runs no longer get NaN-poisoned by `test_geom_camber_cruise` sample 20's `-inf` GT.
 
-## Round 0 assignments (one per student)
+## Currently in flight
 
-| PR | Student | Hypothesis | Bucket | Predicted Δ |
-|----|---------|------------|--------|-------------|
-| #342 | alphonse | H1: per-sample y-std loss normalization | Loss reformulation | -8% to -18% |
-| #343 | askeladd | H6: bf16 + torch.compile + larger batch | Throughput | -3% to -9% |
-| #344 | edward | H2: warmup + corrected cosine schedule | Optimization | -3% to -7% |
-| #345 | fern | H4: surface-only norm + distance feature | Target/feature engineering | -4% to -10% |
-| #346 | frieren | H7: z-mirror augmentation with sign flips | Regularization/sampling | -3% to -8% |
-| #347 | nezuko | H5: random Fourier features on (x, z) | Position handling | -2% to -8% |
-| #348 | tanjiro | H3: Smooth L1 (Huber) on surface pressure | Loss reformulation | -2% to -6% |
-| #349 | thorfinn | H8: slice_num scaling matrix (128/256) | Architecture | -2% to -7% |
+| PR | Student | Hypothesis | Bucket | Predicted Δ | Status |
+|----|---------|------------|--------|-------------|--------|
+| #342 | alphonse | H1: per-sample y-std loss normalization | Loss reformulation | -8% to -18% | wip |
+| #343 | askeladd | H6: bf16 + torch.compile + larger batch | Throughput | -3% to -9% | wip |
+| #345 | fern | H4: surface-only norm + distance feature | Target/feature | -4% to -10% | wip |
+| #347 | nezuko | H5: random Fourier features on (x, z) | Position | -2% to -8% | wip |
+| #348 | tanjiro | H3: Smooth L1 (Huber) on surface pressure | Loss reformulation | -2% to -6% | wip |
+| #349 | thorfinn | H8: slice_num scaling matrix (128/256) | Architecture | -2% to -7% | wip |
+| #404 | edward | H11: Re-conditional FiLM modulation | Feature engineering | -3% to -7% | wip |
+| #406 | frieren | H10: surf_weight ramp curriculum (5→30) | Loss reformulation | -1% to -4% | wip |
 
-## Held in reserve for next round
+## Resolved this round
 
-- H9: pressure-gradient penalty along surface (∇_s p smoothness)
-- H10: surf_weight ramp curriculum (5 → 30)
-- H11: Re-conditional FiLM modulation between blocks
-- H12: EMA of model weights for evaluation
+| PR | Student | Hypothesis | Outcome | val_avg/mae_surf_p |
+|----|---------|------------|---------|--------------------|
+| #344 | edward | H2: warmup + corrected cosine | **merged** | 120.97 (Run C, –3.4% vs Run A) |
+| #346 | frieren | H7: z-mirror augmentation | closed (strict regression) | +231% at p=1.0 |
 
-## Potential next research directions
+## Held in reserve / promising follow-ups
 
-- Combine the round-0 winner with H10 (surf_weight ramp) and H12 (EMA) — both cheap compounding levers.
-- After throughput lands (H6), revisit larger architectures with H8 follow-ups and H11 (FiLM).
-- If geometry-OOD splits remain stubborn after rounds 0/1, escalate to graph/edge-aware mesh modules or coordinate-network heads.
-- If Re-OOD splits remain stubborn, explore Re-conditional separate models or hierarchical heads.
+- **H9: pressure-gradient penalty along surface (∇_s p smoothness)** — physics-aware; assign next round if a student frees up.
+- **H12: EMA of model weights for evaluation** — cheap, compounds with the merged baseline.
+- **Edward's `--epochs 14` lr-frontier follow-up** — finish testing the schedule frontier on the merged code.
+- **Frieren's TTA (test-time augmentation) study** — evaluate predictions on (x, mirror(x)) at test time. Tests whether the symmetry exists in the trained model, divorced from training-time corruption.
+- **Frieren's domain-conditional augmentation** — restrict mirroring to cruise-only with proper gap sign-flip; small but clean physics.
+- **Compounding the round-0 winners** — once 2–3 separate ideas merge, run a combined-best PR to ensure their gains are additive.
+
+## Potential next research directions (post round 0)
+
+- **Once throughput lands (H6),** revisit larger architectures with H8 follow-ups and a wider `n_hidden`.
+- **If H1 (per-sample y-std) and H3 (Huber) both land,** combine them in one PR — they target different aspects of the heavy-tailed surface pressure regime.
+- **If geometry-OOD splits remain stubborn** after rounds 0/1, escalate to graph/edge-aware mesh modules or coordinate-network heads.
+- **If Re-OOD splits remain stubborn,** explore Re-conditional separate models or hierarchical heads beyond what FiLM provides.
+- **Best-checkpoint reproducibility** — at some point, lock in the best-known recipe and run a multi-seed reproducer to estimate variance for paper-ready numbers.
