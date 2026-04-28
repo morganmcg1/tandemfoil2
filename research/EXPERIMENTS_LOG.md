@@ -681,3 +681,40 @@ All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the s
   2. Re-probe `decay_target=0.999` with `warmup_steps=10` (where cap binds at step ~9990, still beyond budget but ramps differently).
   3. Confirm 0.995 minimum with a second seed.
   4. Treat 0.995 ↔ 0.999 as a soft tie for downstream stack decisions.
+
+## 2026-04-28 07:45 — PR #605: surf_weight 10 → 15 (push primary metric weighting)
+- Branch: `charliepai2d2-edward/surf-weight-15` (artifact: `model-surf-weight-15-20260428-065256`)
+- Hypothesis: bigger surface weight reallocates capacity toward the primary metric. PR #286 historically blew up vol MAE at sw=25 (+10–17%); sw=15 should stay below that threshold under huber-δ=0.25 + clip_grad_norm.
+
+| metric | this run | baseline at run-time (PR #582 = 66.149) | Δ |
+|---|---|---|---|
+| best `val_avg/mae_surf_p` | **66.037** (epoch 14) | 66.149 | **−0.17%** |
+| `test_avg/mae_surf_p` | **57.733** | 57.654 | **+0.14% regression** |
+
+- Vs **current** baseline (post-PR #562 = 64.696): val_avg 66.037 = **+2.07% regression** (cross-stack).
+- Per-split val: in_dist +1.31%, camber_rc +1.36%, camber_cruise −2.46%, re_rand −2.22%. Mixed signature, 2-up / 2-down.
+- Per-split test: same direction as val on each split, but in_dist & camber_rc regress more (+2.65% / +2.45%) — net test +0.14%.
+- Vol MAE rose modestly (+2% val, +4% test). single_in_dist vol regressed most (+7.12% val, +8.47% test) — tilting further toward surface starves vol capacity for that split.
+- Mechanism explanation (per edward): huber-δ=0.25 caps per-element loss-gradient at ~1.0; clip_grad_norm(10) caps total norm. The 1.5× scalar passes through both filters, so effective signal increase is much less than 1.5×. Clip rate jumped 85.6% → 92.5% in epoch 1 — most of the extra surface signal is being clipped away.
+- Per-epoch trajectory: sw=15 leads by 4–5 MAE during epochs 2–4 (mid-warmup, where surf-weight bites hardest), then gap closes to ~0 by epoch 14 as cosine LR decays.
+- Decision: **CLOSE** — student's own recommendation against; standalone gain marginal/within noise; test regressed; mechanism is exhausted (clip absorption); current-stack regression would be ~+2%. Direction bracketed [10, 15] with current stack at sw=10. Probe sw=12 if other axes stall.
+
+## 2026-04-28 07:45 — PR #595: feature_noise std=0.0 + std=0.001 (close noise direction)
+- Branch: `charliepai2d2-frieren/feature-noise-zero-vs-schedule` (artifacts: `model-feature-noise-zero-20260428-062330`, `model-feature-noise-0001-20260428-065640`)
+- Hypothesis: closing the noise direction by probing both 0.0 and a midpoint 0.001. Profile was previously (0.005 → 67.306, 0.0025 → 66.841) — appeared still descending toward zero.
+
+| variant | std | val_avg | vs 66.841 baseline |
+|---|---:|---:|---:|
+| A | 0.0 | **68.383** | +2.31% regression |
+| B | 0.001 | **67.957** | +1.67% regression |
+| (PR #563) | 0.0025 | 66.841 | **interior MIN** |
+| (PR #525) | 0.005 | 67.306 | +0.70% |
+
+- Profile shape: U-shaped with **interior minimum at std=0.0025**. Both adjacent points (0.001 and 0.005) regress; std=0 regresses most. Noise direction is now BRACKETED.
+- Per-split (std=0 vs 0.0025 baseline): in_dist +1.43%, camber_rc +3.15%, **camber_cruise +4.69%**, re_rand +0.57%.
+- Mechanism: damage concentrated on OOD splits (camber_rc, camber_cruise) — explicit feature noise is doing non-redundant regularization vs DropPath/huber/EMA/wd; specifically buys OOD generalization. In-dist barely cares.
+- Asymmetric basin: leaving optimum DOWN more costly than UP (DropPath redundancy may absorb high-noise side, no other lever fills the role on low-noise side).
+- Decision: **CLOSE** — student's own recommendation. Noise hyperparameter axis closed at 0.0025; further sweep is wasted compute on this direction. Frieren's suggested next probes:
+  1. **Surface-only feature noise** (apply only to per-node positional/SDF features dims 0–12, not per-sample dims 13–23).
+  2. **Decaying noise schedule** aligned with cosine LR — high noise during basin selection, decay to zero in the LR≈0 fine-tuning tail.
+  3. **Per-split EMA decay** — cruise has the biggest single-split headroom signal.
