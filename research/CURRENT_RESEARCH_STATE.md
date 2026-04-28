@@ -40,10 +40,11 @@
 | ~~#403~~ | ~~frieren~~ | ~~batch8-lr-sqrt2~~ | ~~`batch_size=4 → 8`, `lr=5e-4 → 7e-4` (√2 scaling)~~ | **CLOSED 04-28 02:11**: val +75 % / test +74 % vs current baseline. Step-count starvation dominates (b=8 halves steps/ep, √2 LR under-compensates). Variance-reduction lever real (grad_norm −16 %), but eaten by missing late-training updates. Reassigned frieren to #458. |
 | #408 | fern | higher-lr-1e3 | `Config.lr = 5e-4 → 1e-3` on merged grad-clip baseline | **MERGED 01:41** as new baseline (val=107.957 / test=95.675; −2.59 % / −2.33 % vs #402). Pre-clip grad norm halved at lr=1e-3 — AdamW preconditioner adapts; clip envelope dominates per-step magnitude. |
 | #417 | askeladd | ema-decay-0p99 | `ema_decay = 0.999 → 0.99` | **MERGED 01:54** as new baseline (val=98.581 / test=87.881; −8.69 % / −8.15 % vs #408). Mechanism confirmed: under-converged iterate is improving fast, shorter EMA window captures recent (better) iterate. Raw at ep13 essentially unchanged — gain came from better shadow extraction. |
-| #430 | tanjiro | lion-optimizer | Lion (sign-of-momentum) replacing AdamW; `lr=1.7e-4`, `wd=3e-4`, betas=(0.9, 0.99) | Fresh axis after three merged variance-reduction wins (#356/#374/#402). Reported 1–3 % gains on transformer-shaped problems; sign-update naturally bounds per-param step magnitude |
-| #438 | fern | lr-2e-3 | `Config.lr = 1e-3 → 2e-3` on merged #408 baseline | Fern's own follow-up #1; tests how far the LR-scaling-under-clip envelope extends. Single-knob continuation. |
+| #430 | tanjiro | lion-optimizer | Lion (sign-of-momentum) replacing AdamW; `lr=1.7e-4`, `wd=3e-4`, betas=(0.9, 0.99) | **Strong win on prior baseline** (val=79.46 vs #402 110.82 = −28.30 %). **Sent back 02:35** for rebase onto post-#417 (Lion-recipe must override AdamW lr=1e-3). Vs current baseline still −19.4 % / −20.3 %. Predicted post-rebase: val ~70–80 / test ~62–72. Biggest single-PR signal yet. |
+| ~~#438~~ | ~~fern~~ | ~~lr-2e-3~~ | ~~`Config.lr = 1e-3 → 2e-3` on merged #408 baseline~~ | **CLOSED 04-28 02:35**: val +6.75 % / test +8.33 % vs #408 (+16.92 % / +17.94 % vs current #417). LR ceiling for max_norm=0.5 envelope now bracketed (1e-3 wins, 2e-3 loses). Reassigned fern to #465. |
 | #445 | askeladd | ema-decay-0p95 | `ema_decay = 0.99 → 0.95` on merged #417 baseline | Askeladd's own follow-up #1; tests where the EMA-decay responsiveness curve bottoms out. Honest predicted band −1 % to +5 %. |
 | #458 | frieren | weight-decay-5e-4 | `Config.weight_decay = 1e-4 → 5e-4` on merged #417 baseline | Replaces closed #403; standard regularization sweep. Plausibly helps OOD splits where capacity bumps (#355/#373) showed in-dist-helps / OOD-regresses. Honest band −1 % to +2 %. |
+| #465 | fern | cosine-tmax-13 | `T_max=50 → 13`, `eta_min=1e-5` on merged #417 baseline | Replaces closed #438; cashes fern's follow-up #2. Cosine schedule has been degenerate (best-at-last with lr ~95 % of peak) across every merged baseline. Single-knob fix. |
 
 ## Updated picture from round-1 returns
 - **#356 (EMA) merged** at val=132.276 (−3.1 % vs same-run best raw).
@@ -51,9 +52,10 @@
 - **#402 (grad-clip(0.5)) merged** at val=110.822 (−2.07 %), test=97.955 (−1.38 %). **Diminishing-returns curve on clipping lever now mapped**: any-clip = −14 %, 1.0 → 0.5 = −2 %.
 - **#408 (lr=1e-3) merged** at val=107.957 (−2.59 %), test=95.675 (−2.33 %). Pre-clip grad norm halved at lr=1e-3 (mean ~44 vs ~73). AdamW preconditioner adapts; clip envelope dominates per-step magnitude. "Higher LR safe under clip" hypothesis confirmed.
 - **#417 (EMA decay 0.999 → 0.99) merged** at val=98.581 (−8.69 % vs #408), test=87.881 (−8.15 %). Mechanism: at 13-epoch under-converged budget, shorter EMA window captures recent (better) iterate before old (worse) iterate drags the shadow back. Raw at ep13 essentially unchanged — all gain from better shadow extraction.
-- **#352 (SmoothL1) raw run** beats prior #356 baseline by −20.2 % / −19.2 % — strongest single-lever delta seen. Pending rebase onto post-#417.
+- **#352 (SmoothL1) raw run** beats prior #356 baseline by −20.2 % / −19.2 % — pending rebase onto post-#417.
 - **#394 (torch.compile) confirmed −23.1 % per-epoch wall clock**, 17 epochs in 30 min. Pending rebase onto post-#417.
 - **#398 (SwiGLU at matched params) confirmed −15.48 % vs #356**, with per-split breakdown showing it fixes the in-dist-vs-OOD trade-off from closed #355. Pending rebase onto post-#417.
+- **#430 (Lion) confirmed −19.4 % val / −20.3 % test vs current #417** — biggest single-PR signal seen. Pending rebase onto post-#417 (Lion lr/wd recipe must override AdamW values). Predicted post-rebase: val ~70–80, test ~62–72.
 - **Variance reduction is the dominant winning direction so far**:
   - iterate-level: EMA (merged)
   - step-magnitude-level: grad-clip(1.0 then 0.5) (both merged, diminishing returns mapped)

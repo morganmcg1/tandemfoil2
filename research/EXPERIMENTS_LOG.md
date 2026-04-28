@@ -622,3 +622,70 @@ All four val splits improve; `geom_camber_rc` (the harder OOD geom split) gains 
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #458 | frieren | weight-decay-5e-4 | `Config.weight_decay = 1e-4 → 5e-4` on top of merged #417 baseline | Replaces closed #403; standard regularization sweep. Plausibly helps the OOD splits where the closed capacity bumps (#355 / #373) showed in-dist-helps / OOD-regresses. Honest band −1 % to +2 %. |
+
+## 2026-04-28 02:35 — PR #438: lr 1e-3 → 2e-3 (charliepai2d1-fern) — **CLOSED (regression)**
+- Branch: `charliepai2d1-fern/lr-2e-3` (closed + branch deleted)
+- Hypothesis: extend the LR-scaling-under-clip-envelope thread from #408 by doubling LR again (1e-3 → 2e-3).
+
+### Headline metrics (best EMA epoch=13/50, timeout-cut)
+| | val_single_in_dist | val_geom_camber_rc | val_geom_camber_cruise | val_re_rand | **val_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` (EMA) | 136.32 | 132.49 | 88.55 | 103.61 | **115.243** |
+
+| | test_single_in_dist | test_geom_camber_rc | test_geom_camber_cruise | test_re_rand | **test_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` | 121.29 | 118.35 | 73.66 | 101.29 | **103.647** |
+
+- vs #408 base (apples-to-apples for run config): val +6.75 %, test +8.33 %.
+- vs current #417 baseline (post-EMA-decay-tuning): val **+16.92 %**, test **+17.94 %**.
+- Mean pre-clip `train/grad_norm` per epoch: 33.9 (vs ~44 at lr=1e-3, ~73 at lr=5e-4).
+- Per-epoch wall clock: ~141 s (matches baseline). Peak VRAM: 42.11 GB.
+
+### Analysis (fern's writeup is exceptional; key points recorded)
+- **AdamW preconditioner adapts only partially at this LR.** Mean pre-clip norm dropped 24 % going 1e-3 → 2e-3 (vs ~50 % drop going 5e-4 → 1e-3). The `1/√v` preconditioner can compensate for moderate LR bumps but breaks down at higher rates.
+- **Raw curve has a clear noise spike** (ep10: 195.67 vs #408's 156.07). EMA crossover with raw is delayed by one epoch (ep9 vs ep7–8 in #408). EMA never catches up to baseline trajectory — every epoch from ep5 onward, this run's EMA is worse than #408's at the same epoch.
+- **LR ceiling for `max_norm=0.5` envelope now bracketed**: lr=1e-3 wins (#408), lr=2e-3 loses (this PR). Clean ablation cell for the appendix.
+- **Schedule degeneracy reconfirmed**: best-at-last-epoch with cosine still ~95 % of peak, same as #353/#408. Fern's follow-up #2 ("revisit cosine T_max") is the right next experiment.
+
+### Decision: close, reassign to cosine-tmax-13
+- Clear >5 % regression on both val and test vs apples-to-apples baseline. Per CLAUDE.md close criteria.
+- Reassigned fern to **PR #465 (cosine-tmax-13)**: their own follow-up #2 from this PR. `T_max=50 → 13`, `eta_min=1e-5`. Single-knob fix to the schedule degeneracy that's been showing up across multiple PRs.
+
+## 2026-04-28 02:35 — PR #430: Lion optimizer (charliepai2d1-tanjiro) — **sent back for rebase + re-run; will likely merge after**
+- Branch: `charliepai2d1-tanjiro/lion-optimizer` (post-#402 base; pre-#408, pre-#417)
+- Hypothesis: replace AdamW with inline Lion (sign-of-momentum) at the standard `lr/3, wd*3, betas=(0.9, 0.99)` recipe.
+
+### Headline metrics (best EMA epoch=13/50, timeout-cut) — biggest single-PR signal yet
+| | val_single_in_dist | val_geom_camber_rc | val_geom_camber_cruise | val_re_rand | **val_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` (EMA) | 89.72 | 90.25 | 60.63 | 77.25 | **79.46** |
+
+| | test_single_in_dist | test_geom_camber_rc | test_geom_camber_cruise | test_re_rand | **test_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` | 76.95 | 80.22 | 51.27 | 71.87 | **70.08** |
+
+- vs **#402 base** (apples-to-apples for run config): **val −28.30 %, test −28.46 %**.
+- vs **current #417 baseline**: **val −19.43 %, test −20.26 %**.
+- Per-split: every val and test split improves by ≥23 %; `test_single_in_dist` jumps −33.3 %.
+- Wall clock and VRAM unchanged (~141 s/ep, 42 GB peak).
+- Mean pre-clip `train/grad_norm` per epoch: 50 (vs ~73 at #402 baseline). Lion's grad norms systematically lower than AdamW's mid-training, suggesting Lion finds locally-flatter regions.
+
+### Analysis
+- **Lion's gain is decisive across every metric.** Both raw (best-raw 83.89 vs #402's 110.82 = −24.30 %) and EMA contributions are large; even raw-vs-raw beats baseline by a wide margin.
+- **EMA-Lion interaction is part of the gain**: EMA-vs-raw spread is wider on Lion (−6.4 pts at ep11) than on AdamW (−4.2 pts at the same epoch). Lion's uniform-step exploration ("every parameter moves by exactly `lr` per step") is well-averaged by a slow EMA shadow.
+- **Grad-clip is essentially idle under Lion** (sign update is invariant to gradient magnitude). Tanjiro left the line in for apples-to-apples comparison; in a follow-up we can remove it.
+- **No divergence, no NaN**. Predicted "watch for divergence in eps 1–2" trigger never fired. Lion at lr=1.7e-4 was completely stable from ep1 onward.
+
+### Why send back rather than direct merge
+- Tanjiro's run was on the post-#402 base, missing **two intervening merges**: #408 (AdamW lr=5e-4 → 1e-3) and #417 (ema_decay=0.999 → 0.99).
+- The squash-merge has a **conflict on `Config.lr`**: tanjiro's branch changed `5e-4 → 1.7e-4` (Lion recipe); current baseline has `1e-3` (AdamW recipe). Lion at `lr=1e-3` is way too aggressive (`lr × sign` = 1e-3 per param per step). The right resolution is **Lion's recipe overrides #408's AdamW lr** — keep `1.7e-4`. Same for `weight_decay`: keep tanjiro's `3e-4` (Lion-style).
+- Tanjiro themselves flagged that Lion's gain may have an EMA(0.999)-specific component. Need clean apples-to-apples vs current EMA(0.99) baseline.
+
+### Predicted post-rebase
+Lion(lr=1.7e-4, wd=3e-4) + EMA(0.99) + grad-clip(0.5) → val ~70–80, test ~62–72. The −24 % raw-vs-raw standalone Lion gain dominates; the EMA-Lion interaction may shrink (EMA tracks 10× faster at decay 0.99) but not flip sign. **One merge away from being the next baseline by a wide margin.**
+
+## 2026-04-28 02:38 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #465 | fern | cosine-tmax-13 | `T_max=50 → 13`, `eta_min=1e-5` | Replaces closed #438; cashes in fern's follow-up #2 from #353/#408/#438. Schedule has been degenerate across all merged baselines (best-at-last with cosine still 95 % of peak). Single-knob schedule fix that should compound with the merged variance-reduction stack. |
