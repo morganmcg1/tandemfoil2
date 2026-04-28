@@ -1,8 +1,8 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 05:00 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
+- **Last update:** 2026-04-28 05:20 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
 - **Most recent human-team direction:** N/A — no team issues consulted (isolated replicate; only entrypoint-surfaced PRs in scope).
-- **Current baseline (directly measured): `val_avg/mae_surf_p = 71.6985`, `test_avg/mae_surf_p = 62.5824`** (PR #520 slice-temp init 1.0 — first PR to *measurably* beat the conservative target on the full merged stack).
+- **Current baseline**: conservative target `val_avg/mae_surf_p < 71.6985` (PR #520 directly measured). Two more orthogonal compounds just merged on top: PR #527 wd=3e-5 (standalone 70.814) and PR #518 warmup_steps=50 (standalone 71.428). Combined-stack actual val_avg pending future measurement.
   - PR #282 — Huber loss (δ=1.0). val_avg = 105.999.
   - PR #361 — NaN-safe `evaluate_split` workaround. First finite test_avg = 97.957.
   - PR #363 — EMA(decay 0.999). val_avg = 101.350.
@@ -12,20 +12,24 @@
   - PR #463 — Huber δ=1.0 → 0.25. **val_avg = 72.414 (−13.0% vs EMA(0.99)+SwiGLU; −10.0% vs DropPath baseline). test_avg = 63.082.** All 4 val splits improved 10–18%. Cruise canary gained MOST (−17.88%). Largest single-PR delta of the programme.
   - PR #480 — AdamW betas (0.9, 0.999) → (0.9, 0.95). Standalone on EMA(0.99)+SwiGLU pre-DropPath: val_avg = 77.951 (−6.34%). Orthogonal to δ=0.25.
   - PR #479 — Bias-corrected EMA (decay_target=0.99, warmup_steps=10). Standalone: val_avg = 81.251 (−2.37%). MERGED as compound.
-  - PR #520 — PhysicsAttention temperature init 0.5 → 1.0. **val_avg = 71.6985 (−0.99% vs 72.414 reference; first directly-measured improvement on the merged stack). test_avg = 62.5824 (−0.79%).** Mechanism: final per-block temperatures converged to [0.95, 0.99] — 0.5 init was 2× below equilibrium. Optimization-warmup phenomenon, not capacity. Single-token, zero-compute, param-identical change.
+  - PR #520 — PhysicsAttention temperature init 0.5 → 1.0. **val_avg = 71.6985** (first directly-measured improvement). test_avg = 62.5824. Optimization-warmup mechanism.
+  - PR #527 — AdamW weight_decay 1e-4 → 3e-5. Standalone on pre-slice-temp baseline: val_avg = 70.814 (−1.23%). wd profile monotone (3e-5 < 1e-4 < 3e-4); merged stack was over-regularized.
+  - PR #518 — Bias-corrected EMA warmup_steps 10 → 50. Standalone on pre-slice-temp baseline: val_avg = 71.428 (−0.38%). All 4 val splits improved; cruise/re_rand became biggest improvers (were flat under warmup=10).
 
 ## Current research focus
 
 Compound improvements on the round-1 huber baseline. Recover the paper-facing test metric. Test orthogonal levers (capacity, slice count, optimizer recipe, surface weighting, regularization, EMA, channel weighting) so round-3 can stack winners.
 
-## Outcomes to date (29 reviewed)
+## Outcomes to date (32 reviewed)
 
 Sorted by val_avg ascending (best first). Δ column references the current 72.414 conservative target. Full per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`.
 
 | Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Δ | Decision |
 |------|----|---------|------|--------------------------:|--:|----------|
-| 1 | #520 | thorfinn | slice-temp-1p0 | **71.6985** | (current baseline, MERGED) | MERGED — first directly-measured win on full merged stack |
-| 2 | #463 | fern | huber-delta-025 | 72.414 | +1.00% | MERGED — biggest single-PR delta |
+| 1 | #527 | tanjiro | weight-decay-3e-5 | 70.814 (standalone, pre-slice-temp) | −1.23% vs 71.6985 | MERGED — orthogonal compound |
+| 2 | #518 | askeladd | bias-corrected-ema-warmup-50 | 71.428 (standalone, pre-slice-temp) | −0.38% vs 71.6985 | MERGED — orthogonal compound |
+| 3 | #520 | thorfinn | slice-temp-1p0 | **71.6985** | (directly measured) | MERGED — first directly-measured win |
+| 4 | #463 | fern | huber-delta-025 | 72.414 | +1.00% | MERGED — biggest single-PR delta |
 | 2 | #480 | nezuko | adamw-betas-095 | 77.951 (on EMA(0.99)+SwiGLU baseline) | +7.6% standalone | MERGED — orthogonal compound (β₂=0.95) |
 | 3 | #455 | thorfinn | stochastic-depth-01 | 80.480 | +11.1% | MERGED (DropPath intermediate) |
 | 4 | #460 | frieren | per-sample-feature-noise | 81.437 | +12.5% | CLOSED (diagnosis confirmed; doesn't beat current) |
@@ -77,13 +81,13 @@ Built on the merged baseline. Conservative target val_avg < 72.414.
 
 | PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
 |----|---------|------|-------|-------------------------------------|
-| #518 | askeladd | bias-corrected-ema-warmup-50 | EMA warmup_steps 10 → 50 | −0.5% to −1.5% |
-| #519 | edward | n-head-8 | Multi-head attention 4 → 8 (head_dim 32 → 16, param-matched) | −0.5% to −1.5% |
 | #525 | fern | cosine-warmup-tmax-aligned | 1-ep linear warmup + cosine T_max=13 (aligns LR decay with the 14-ep realistic budget) | −0.5% to −2% |
 | #526 | frieren | feature-noise-005 | Semantics-aware feature noise std 0.01 → 0.005 (sweep DOWN per #495 diagnosis) | −0.5% to −1.5% |
-| #527 | tanjiro | weight-decay-3e-5 | AdamW weight_decay 1e-4 → 3e-5 (sweep DOWN per #494 diagnosis) | −0.5% to −1.5% |
 | #540 | nezuko | ema-decay-target-095 | Bias-corrected EMA decay_target 0.99 → 0.95 | −0.5% to −1.5% (could regress) |
-| #548 | thorfinn | slice-temp-1p5 | PhysicsAttention temperature init 1.0 → 1.5 (push profile, characterize equilibrium asymmetry — his own follow-up #1 from #520) | −0.5% to +1.0% |
+| #548 | thorfinn | slice-temp-1p5 | PhysicsAttention temperature init 1.0 → 1.5 (push profile, characterize equilibrium asymmetry) | −0.5% to +1.0% |
+| #554 | tanjiro | weight-decay-1e-5 | AdamW weight_decay 3e-5 → 1e-5 (push wd profile further; profile monotone over 3e-5 < 1e-4 < 3e-4) | −0.5% to −1.5% (could bottom out) |
+| #555 | askeladd | bias-corrected-ema-warmup-100 | EMA warmup_steps 50 → 100 (push warmup profile further; monotone-improving so far at 10/50) | −0.3% to −1% |
+| #556 | edward | swiglu-mlp-ratio-3 | SwiGLU FFN mlp_ratio 2 → 3 (LLaMA-style capacity bump on the gated path; +23% params) | −0.5% to +2% |
 
 ## Disconfirmed directions (do not retry on this branch)
 
