@@ -237,8 +237,22 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             mask = mask.to(device, non_blocking=True)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            # Sanitize ground truth: replace non-finite y values with 0 and drop
+            # whole samples that contain any non-finite y. The organizer scorer's
+            # "skip samples with non-finite GT" semantic relies on a mask
+            # multiplication that propagates NaN through 0*NaN=NaN — sanitizing
+            # before the masked sums is the only way to keep the metric finite
+            # without modifying data/scoring.py.
+            finite_y_pos = torch.isfinite(y)
+            finite_sample = finite_y_pos.reshape(y.shape[0], -1).all(dim=-1)
+            mask = mask & finite_sample.unsqueeze(-1)
+            y = torch.where(finite_y_pos, y, torch.zeros_like(y))
+
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+            # Zero predictions at padded/skipped positions to prevent any
+            # non-finite model output there from poisoning masked sums.
+            pred = torch.where(mask.unsqueeze(-1), pred, torch.zeros_like(pred))
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -254,6 +268,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
+            pred_orig = torch.where(mask.unsqueeze(-1), pred_orig, torch.zeros_like(pred_orig))
             ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
