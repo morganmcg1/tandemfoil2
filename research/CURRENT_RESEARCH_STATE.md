@@ -1,9 +1,9 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 08:35 (advisor branch `icml-appendix-charlie-pai2d-r2`)
+- **Last update:** 2026-04-28 08:50 (advisor branch `icml-appendix-charlie-pai2d-r2`)
 - **Most recent human-team direction:** N/A — no open human-tagged issues at this time.
-- **Current baseline (directly measured): `val_avg/mae_surf_p = 64.696` eager / `64.824` compile, `test_avg/mae_surf_p = 55.879` eager / `56.391` compile**. PR #562 (cosine 3-ep warmup + T_max=11) and PR #510 (torch.compile mode=default, +28.6% epochs in budget) both merged.
-- **Stack throughput**: 18 epochs in 30-min budget under compile=True (vs 14 eager). Cosine T_max=11 leaves epochs 12–18 at LR≈0 — 7 free EMA-stabilization epochs.
+- **Current baseline (directly measured, both standalone)**: `val_avg/mae_surf_p = 63.131` (PR #635 lr=6e-4) / `63.222` (PR #636 decaying noise schedule). Test_avg = 55.026 / 54.900 respectively. **Combined-stack measurement (lr=6e-4 + decaying noise) pending; expected to compound below 63.131 if levers orthogonal.**
+- **Stack throughput**: 17-18 epochs in 30-min budget under compile=True. Cosine T_max=11 → eta_min=0 at ep15, then cosine cycles back from ep16+.
 
 ## Merged compound stack (current advisor branch)
 
@@ -27,18 +27,20 @@
 18. PR #575 — EMA decay_target 0.99 → 0.995. val_avg = 66.195. test_avg = 58.063.
 19. PR #582 — Gradient clipping max_norm=10. val_avg = 66.149. test_avg = 57.654.
 20. PR #562 — Cosine schedule revision (3-ep warmup + T_max=11, start_factor=0.3). val_avg = 64.696. test_avg = 55.879.
-21. **PR #510 — torch.compile mode="default" (infrastructure: +28.6% epochs / −23.1% wall-clock). val_avg = 64.824 at 18 epochs (compile-on-same-stack). CURRENT BASELINE.**
+21. PR #510 — torch.compile mode="default" (infrastructure: +28.6% epochs / −23.1% wall-clock). val_avg = 64.824 at 18 epochs.
+22. PR #635 — lr peak bump 5e-4 → 6e-4. **val_avg = 63.131. test_avg = 55.026.** Standalone measurement.
+23. **PR #636 — Decaying feature-noise schedule (linear decay 0.0025→0 over 14 ep). val_avg = 63.222. test_avg = 54.900. Standalone. CURRENT BASELINE (combined stack pending).**
 
 ## Active experiments (WIP)
 
 | PR | Student | Slug | Lever | Status |
 |----|---------|------|-------|--------|
 | #661 | alphonse | tf32-matmul-high | TF32 matmul precision (Blackwell tensor cores, single-line throughput) | WIP (just assigned) |
-| #635 | edward | lr-peak-6e-4 | lr 5e-4 → 6e-4 (gentler 3-ep warmup permits higher peak LR) | WIP (just assigned) |
+| #668 | edward | lr-peak-7e-4 | lr 6e-4 → 7e-4 (push lr-peak axis further; clip rate at 6e-4 was 51% at peak) | WIP (just assigned) |
 | #647 | askeladd | slice-temp-per-block-schedule | Per-block slice-temp init schedule [1.5..3.0] linear (hierarchical sharpness) | WIP (just assigned) |
 | #646 | fern | batch-size-6 | batch_size 4 → 6 with compile (gradient noise reduction) | WIP (just assigned) |
 | #640 | tanjiro | per-group-wd | AdamW per-parameter-group wd (attn higher, mlp lower) — captures OOD asymmetry | WIP (just assigned) |
-| #636 | frieren | feature-noise-decaying | Decaying noise schedule aligned with cosine LR | WIP (just assigned) |
+| #669 | frieren | feature-noise-higher-steeper | base_std 0.0025 → 0.005 with decay_horizon 14 → 8 (push schedule magnitude) | WIP (just assigned) |
 | #630 | nezuko | cosine-eta-min-2e-5 | cosine eta_min 0 → 2e-5 (extract gain from late-epoch budget under compile) | WIP |
 | #601 | thorfinn | huber-delta-0p1 | Huber δ=0.25 → 0.1 (rebase onto post-#562/#510 stack) | WIP (sent back, rebase) |
 
@@ -48,10 +50,10 @@
 
 1. **Cosine LR floor** (nezuko #630, eta_min=2e-5): replaces closed EMA-decay-target axis. Probe whether epochs 12–18 (now at LR≈0 under compile + T_max=11) extract more gain when LR has a positive floor.
 2. **Huber δ profile** (thorfinn #601, 0.1): standalone -1.05% on PR #575 stack; rebasing onto post-#562/#510 stack to verify on current schedule.
-3. **Decaying feature noise schedule** (frieren #636): replaces closed scalar-noise axis. Linear decay from std=0.0025 at ep0 to 0 at ep14 — match noise to LR phase (high during basin selection, zero in fine-tuning tail).
+3. **Higher base_std + steeper decay** (frieren #669): push schedule magnitude axis. base_std 0.0025→0.005, decay_horizon 14→8. Mechanism-driven by PR #636 confirmation that early-phase noise does basin-selection work.
 4. **Per-parameter-group wd** (tanjiro #640): single-scalar wd axis is closed at 3e-5; explore module-type-differential wd to capture the OOD asymmetry (attn higher to help camber_rc, mlp lower to help re_rand).
 5. **Batch-size gradient quality** (fern #646, batch=6 with compile): gradient noise reduction may compound with EMA averaging. Replaces closed warmup-aggressiveness axis.
-6. **LR peak bump** (edward #635, lr=6e-4): direct probe of whether gentler 3-ep warmup permits 1.2× higher peak LR safely.
+6. **LR peak bump further** (edward #668, lr=7e-4): push lr-peak axis past PR #635's win. Clip rate at 6e-4 ep4 was 51%, well below saturation — direct probe of remaining headroom.
 7. **Per-block slice-temp init schedule** (askeladd #647, [1.5, 1.875, 2.25, 2.625, 3.0]): hierarchical sharpness — softer early blocks for spatial pooling, sharper later blocks for token refinement. Replaces saturated global-init axis.
 8. **TF32 matmul precision** (alphonse #661): single-line `torch.set_float32_matmul_precision("high")` to use Blackwell TF32 tensor cores. Expected 1.5–2× matmul speedup → 25–40% epoch time reduction. Highest EV/effort ratio of the throughput follow-ups.
 
