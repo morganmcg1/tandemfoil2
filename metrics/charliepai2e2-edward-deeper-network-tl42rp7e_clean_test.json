@@ -1,0 +1,60 @@
+{
+  "event": "test_clean",
+  "note": "Test metrics computed with err zeroed before mask multiplication, to avoid inf*0=NaN propagation when a per-sample y_finite mask filters a sample that has -inf in its GT. Result is identical to data/scoring.py output if no batch contained a non-finite GT sample.",
+  "test_splits": {
+    "test_single_in_dist": {
+      "mae_surf_Ux": 2.8209839657174722,
+      "mae_vol_Ux": 6.441901070212501,
+      "mae_surf_Uy": 1.034442731273348,
+      "mae_vol_Uy": 2.7502772983160906,
+      "mae_surf_p": 194.06879162327505,
+      "mae_vol_p": 174.3489390818295,
+      "n_surf_nodes": 317003,
+      "n_vol_nodes": 16894200
+    },
+    "test_geom_camber_rc": {
+      "mae_surf_Ux": 3.625718213181935,
+      "mae_vol_Ux": 6.396919785728395,
+      "mae_surf_Uy": 1.2775991148940367,
+      "mae_vol_Uy": 3.2860439228851726,
+      "mae_surf_p": 146.9901806815572,
+      "mae_vol_p": 153.8826914855913,
+      "n_surf_nodes": 495325,
+      "n_vol_nodes": 25625023
+    },
+    "test_geom_camber_cruise": {
+      "mae_surf_Ux": 2.187370835762912,
+      "mae_vol_Ux": 4.408805899844029,
+      "mae_surf_Uy": 0.7335806126388195,
+      "mae_vol_Uy": 1.8984201579277744,
+      "mae_surf_p": 102.96027222361391,
+      "mae_vol_p": 108.43533571874855,
+      "n_surf_nodes": 645258,
+      "n_vol_nodes": 40766242
+    },
+    "test_re_rand": {
+      "mae_surf_Ux": 2.699671276726298,
+      "mae_vol_Ux": 5.202507774865988,
+      "mae_surf_Uy": 1.0492711175689542,
+      "mae_vol_Uy": 2.5476637714783017,
+      "mae_surf_p": 139.76526154323915,
+      "mae_vol_p": 141.32942247629254,
+      "n_surf_nodes": 576126,
+      "n_vol_nodes": 34085067
+    }
+  },
+  "test_avg": {
+    "avg/mae_surf_Ux": 2.8334360728471544,
+    "avg/mae_surf_Uy": 1.0237233940937895,
+    "avg/mae_surf_p": 145.94612651792133,
+    "avg/mae_vol_Ux": 5.612533632662728,
+    "avg/mae_vol_Uy": 2.6206012876518345,
+    "avg/mae_vol_p": 144.49909719061546
+  },
+  "n_skipped_per_split": {
+    "test_single_in_dist": 0,
+    "test_geom_camber_rc": 0,
+    "test_geom_camber_cruise": 1,
+    "test_re_rand": 0
+  }
+}

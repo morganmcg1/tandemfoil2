@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -419,7 +420,7 @@ model_config = dict(
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
-    n_layers=5,
+    n_layers=8,
     n_head=4,
     slice_num=64,
     mlp_ratio=2,
@@ -462,6 +463,28 @@ model_dir.mkdir(parents=True, exist_ok=True)
 model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
+
+# Local JSONL metrics — committed in the PR for advisor review.
+metrics_dir = Path("metrics")
+metrics_dir.mkdir(parents=True, exist_ok=True)
+metrics_tag = cfg.wandb_name or cfg.agent or run.id
+metrics_tag = "".join(c if c.isalnum() or c in "-_." else "-" for c in metrics_tag).strip("-_.") or "run"
+metrics_path = metrics_dir / f"{metrics_tag}-{run.id}.jsonl"
+metrics_file = open(metrics_path, "w", buffering=1)
+metrics_file.write(json.dumps({
+    "event": "config",
+    "run_id": run.id,
+    "wandb_name": cfg.wandb_name,
+    "agent": cfg.agent,
+    "model_config": model_config,
+    "n_params": n_params,
+    "cfg": asdict(cfg),
+    "max_epochs": MAX_EPOCHS,
+    "max_timeout_min": MAX_TIMEOUT_MIN,
+    "train_samples": len(train_ds),
+    "val_samples": {k: len(v) for k, v in val_splits.items()},
+}) + "\n")
+print(f"Metrics JSONL: {metrics_path}")
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
@@ -555,8 +578,29 @@ for epoch in range(MAX_EPOCHS):
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
 
+    metrics_file.write(json.dumps({
+        "event": "epoch",
+        "epoch": epoch + 1,
+        "epoch_time_s": dt,
+        "peak_gb": peak_gb,
+        "lr": scheduler.get_last_lr()[0],
+        "train": {"vol_loss": epoch_vol, "surf_loss": epoch_surf},
+        "val_avg": val_avg,
+        "val_splits": split_metrics,
+        "is_best": tag == " *",
+        "best_val_avg/mae_surf_p": best_avg_surf_p,
+        "best_epoch": best_metrics.get("epoch") if best_metrics else None,
+    }) + "\n")
+
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
+
+metrics_file.write(json.dumps({
+    "event": "training_done",
+    "total_train_minutes": total_time,
+    "best_epoch": best_metrics.get("epoch") if best_metrics else None,
+    "best_val_avg/mae_surf_p": best_avg_surf_p if best_metrics else None,
+}) + "\n")
 
 # --- Test evaluation + artifact upload ---
 if best_metrics:
@@ -597,6 +641,12 @@ if best_metrics:
         wandb.log(test_log)
         wandb.summary.update(test_log)
 
+        metrics_file.write(json.dumps({
+            "event": "test",
+            "test_avg": test_avg,
+            "test_splits": test_metrics,
+        }) + "\n")
+
     save_model_artifact(
         run=run,
         model_path=model_path,
@@ -612,4 +662,6 @@ if best_metrics:
 else:
     print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping artifact upload.")
 
+metrics_file.close()
+print(f"Wrote metrics JSONL: {metrics_path}")
 wandb.finish()
