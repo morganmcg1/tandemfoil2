@@ -981,3 +981,26 @@ All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the s
   2. EMA decay 0.99 (less aggressive — may let more high-LR signal through).
   3. Warmup shape variations (start_factor, warmup_epochs).
   4. **Cosine T_max=11 → 14** to align cosine with realized 18-epoch budget; current schedule has post-cosine LR oscillation at ep15-18.
+
+## 2026-04-28 09:35 — PR #630: Cosine eta_min 0 → 2e-5 (extract gain from late-epoch budget)
+- Branch: `charliepai2d2-nezuko/cosine-eta-min-2e-5` (artifact: `model-cosine-eta-min-2e-5-20260428-085728`)
+- Hypothesis: replaces closed EMA-decay-target axis. Probe whether epochs 12–18 (now at LR≈0 under compile + T_max=11) extract more gain when LR has a positive floor.
+
+| metric | this run (eta_min=2e-5) | baseline (PR #562 = 64.696 / PR #510 compile = 64.824 / current PR #647 = 61.872) | Δ |
+|---|---|---|---|
+| best `val_avg/mae_surf_p` | **59.907** (epoch 18) | 64.696 / 64.824 / 61.872 | **−7.40% / −7.58% / −3.18%** |
+| `test_avg/mae_surf_p` | **52.656** | 55.879 / 56.391 / 54.555 | **−5.77% / −6.62% / −3.48%** |
+
+- **Per-split val (vs PR #562)**: in_dist −10.01%, camber_rc −3.51%, **camber_cruise −10.90% (biggest)**, re_rand −6.40%. All 4 splits massively improve.
+- **Per-split test**: 62.955, 66.248, 32.300, 49.122. All 4 test splits massively improve.
+- **CRITICAL mechanism finding (per nezuko)**: `CosineAnnealingLR` with T_max=11 is **periodic, not a floor**. Formula `η_min + (η_max−η_min)·(1+cos(πt/T_max))/2` is symmetric around T_max — after ep15 hits the minimum 2e-5, LR rebounds in the second half-cycle (ep16: 2.97e-5, ep17: 5.81e-5, **ep18: 1.03e-4**).
+- **Gain decomposition**:
+  - **ep13-15 (LR descending into floor 5.8e-5 → 2.0e-5)**: −2.96 cumulative. Matches the predicted floor-mechanism. Model fine-tunes at small but nonzero LR; EMA averages a moving target.
+  - **ep16-18 (LR ascending out of floor 2.97e-5 → 1.03e-4)**: −2.49 cumulative. The cosine half-cycle rebound. The model continues improving even as LR rises ~5×. EMA(0.995, warmup=50) effectively smooths the higher-LR steps.
+  - **Half the gain comes from the unintended ascending half-cycle**, behaving like a SGDR warm-restart half-cycle.
+- Decision: **MERGE**. Standalone -3.18% vs current baseline (61.872 → 59.907). Mechanically orthogonal to all merged levers. Mechanism is now clear (rebound is doing real work, not just floor).
+- Suggested follow-ups (per nezuko):
+  1. **T_max=14 with eta_min=2e-5** (disentangle floor vs rebound) — if T_max=14 underperforms, rebound is doing the work; if it matches/wins, floor is doing the work. Note: edward's #697 tests T_max=14 with eta_min=0; nezuko's #1 adds eta_min=2e-5.
+  2. **Explicit warm restart**: `CosineAnnealingWarmRestarts(T_0=11, T_mult=1, eta_min=2e-5)` — make the rebound an explicit SGDR feature.
+  3. **Sweep eta_min ladder**: 1e-5, 2e-5, 5e-5, 1e-4 — calibrate sweet spot.
+  4. Stretch T_max to match epoch budget (T_max=15 → 3+15=18 = compile budget exactly).
