@@ -240,6 +240,8 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
+            # N (mesh-node) dim varies across batches; tell dynamo not to specialize.
+            torch._dynamo.maybe_mark_dynamic(x_norm, 1)
             with torch.amp.autocast("cuda", dtype=torch.bfloat16):
                 pred = model({"x": x_norm})["preds"]
             pred = pred.float()
@@ -393,6 +395,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    compile_mode: str = "none"  # "none" | "default" | "reduce-overhead" | "max-autotune"
 
 
 cfg = sp.parse(Config)
@@ -452,6 +455,27 @@ print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
+compile_active = cfg.compile_mode != "none"
+compile_setup_s = 0.0
+if compile_active:
+    valid_modes = {"default", "reduce-overhead", "max-autotune"}
+    if cfg.compile_mode not in valid_modes:
+        raise ValueError(
+            f"compile_mode must be one of {valid_modes | {'none'}}, got {cfg.compile_mode!r}"
+        )
+    # Variable mesh size (N=74K..242K) → bump cache to avoid eager fallback after 8 shapes.
+    torch._dynamo.config.cache_size_limit = 64
+    torch._dynamo.config.accumulated_cache_size_limit = 256
+    if cfg.compile_mode == "reduce-overhead":
+        # CUDAGraphs need static tensor addresses; gracefully skip when shape varies
+        # rather than re-recording per N (would balloon memory and compile time).
+        torch._inductor.config.triton.cudagraph_skip_dynamic_graphs = True
+    print(f"Applying torch.compile(mode={cfg.compile_mode!r}, dynamic=True)...")
+    _t0 = time.time()
+    model = torch.compile(model, mode=cfg.compile_mode, dynamic=True)
+    compile_setup_s = time.time() - _t0
+    print(f"  (compile setup took {compile_setup_s:.2f}s; first batch trace will add ~30-120s)")
+
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
     project=os.environ.get("WANDB_PROJECT"),
@@ -466,6 +490,8 @@ run = wandb.init(
         "val_samples": {k: len(v) for k, v in val_splits.items()},
         "amp_dtype": "bf16",
         "seed": SEED,
+        "compile_active": compile_active,
+        "compile_setup_s": compile_setup_s,
     },
     mode=os.environ.get("WANDB_MODE", "online"),
 )
@@ -487,6 +513,8 @@ best_avg_surf_p = float("inf")
 best_metrics: dict = {}
 global_step = 0
 train_start = time.time()
+first_step_done = not compile_active  # only measure first-step compile cost when active
+compile_first_step_s = 0.0
 
 for epoch in range(MAX_EPOCHS):
     if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
@@ -506,6 +534,9 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
+        # N (mesh-node) dim varies across batches; tell dynamo not to specialize.
+        torch._dynamo.maybe_mark_dynamic(x_norm, 1)
+        step_t0 = time.time() if not first_step_done else 0.0
         with torch.amp.autocast("cuda", dtype=torch.bfloat16):
             pred = model({"x": x_norm})["preds"]
         pred = pred.float()
@@ -520,6 +551,12 @@ for epoch in range(MAX_EPOCHS):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        if not first_step_done:
+            torch.cuda.synchronize()
+            compile_first_step_s = time.time() - step_t0
+            first_step_done = True
+            wandb.summary["compile/first_step_s"] = compile_first_step_s
+            print(f"  [compile] first train step took {compile_first_step_s:.1f}s (graph trace + first kernel launches)")
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
@@ -551,6 +588,7 @@ for epoch in range(MAX_EPOCHS):
         "lr": scheduler.get_last_lr()[0],
         "epoch_time_s": dt,
         "peak_GB": peak_gb,
+        "epoch": epoch + 1,
         "global_step": global_step,
     }
     for split_name, m in split_metrics.items():
@@ -568,7 +606,9 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        # Save the underlying (uncompiled) module's state_dict so the checkpoint
+        # is portable across compiled / non-compiled reloads.
+        torch.save(getattr(model, "_orig_mod", model).state_dict(), model_path)
         tag = " *"
 
     print(
@@ -591,7 +631,9 @@ if best_metrics:
         "total_train_minutes": total_time,
     })
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    getattr(model, "_orig_mod", model).load_state_dict(
+        torch.load(model_path, map_location=device, weights_only=True)
+    )
     model.eval()
 
     test_metrics = None
