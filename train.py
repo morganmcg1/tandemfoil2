@@ -81,6 +81,19 @@ class MLP(nn.Module):
         return self.linear_post(x)
 
 
+class GeGLU(nn.Module):
+    """GeGLU MLP from Shazeer 2020 (arXiv:2002.05202). Two parallel projections, one gated by GELU."""
+
+    def __init__(self, n_input, n_hidden, n_output):
+        super().__init__()
+        self.proj_in = nn.Linear(n_input, n_hidden * 2)
+        self.proj_out = nn.Linear(n_hidden, n_output)
+
+    def forward(self, x):
+        x, gate = self.proj_in(x).chunk(2, dim=-1)
+        return self.proj_out(x * F.gelu(gate))
+
+
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
@@ -147,8 +160,7 @@ class TransolverBlock(nn.Module):
             dropout=dropout, slice_num=slice_num,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
-        self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
-                       n_layers=0, res=False, act=act)
+        self.mlp = GeGLU(hidden_dim, hidden_dim * mlp_ratio, hidden_dim)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
@@ -419,10 +431,10 @@ model_config = dict(
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
-    mlp_ratio=2,
+    n_layers=3,      # was 5 (compound)
+    n_head=1,        # was 4 (compound)
+    slice_num=16,    # was 64 (compound)
+    mlp_ratio=4,     # was 2 — GeGLU compensation (Shazeer 2020)
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
