@@ -84,3 +84,30 @@ Best epoch = 14 of 50 (30-min timeout). LR at epoch 14 ≈ 8e-4 (barely into cos
 - **Decision: Merged (current best).** val_avg=127.87 beats new baseline of 141.42 after #763 merged. Schedule change is orthogonal to features change — both merged cleanly.
 - **Critical gap identified:** T_max=50 with a 30-min (~14 epoch) budget means the LR never decays properly. Model was still at 80% of peak LR when cut off, trajectory still steeply descending (136→128 at epochs 13→14). Budget-matched re-run (epochs=14, warmup=2) assigned to fern as PR #809.
 - **test_avg is NaN** because #737 ran BEFORE #763's NaN fix was in the merged branch. Future runs will be clean.
+
+---
+
+## 2026-04-28 20:30 — PR #733: Increase slice_num from 64 to 256 for richer physics decomposition
+
+- **Branch:** `willowpai2e5-askeladd/more-slices` (closed)
+- **W&B run:** `8l3pbq6x` — group `more-slices`
+- **Hypothesis:** Quadrupling slice tokens (64→256) gives the model finer-grained physics decomposition for boundary layer / wake / freestream separation.
+
+### Results
+
+| Split | val/mae_surf_p | test/mae_surf_p |
+|-------|----------------|-----------------|
+| `val_single_in_dist` | 185.28 | 161.17 |
+| `val_geom_camber_rc` | 179.72 | 160.89 |
+| `val_geom_camber_cruise` | 111.53 | NaN (pre-fix) |
+| `val_re_rand` | 129.46 | 130.14 |
+| **avg** | **151.50** | NaN (3-split avg ≈ 150.73) |
+
+Best epoch = 8 of 50 (30-min timeout). slice_num=256 fits in 82.3 GB VRAM. Per-epoch wall-time: 4.2 min vs 2.2 min for slice_num=64.
+
+### Commentary
+
+- **Decision: Closed (regression).** val_avg=151.50 vs current baseline 127.87 = 18.5% regression, well above the 5% close threshold.
+- **Throughput penalty is structural, not tunable.** ~2× per-epoch cost meant 8 epochs vs ~14 for baseline-config runs in the same 30-min cap. Val curve still steeply falling at cutoff (161→151 epochs 7→8), so even granting "256 needs more time," it's strictly worse for our compute budget. Would need a budget extension or a separate throughput improvement to revisit.
+- Student also flagged the same `test_geom_camber_cruise` NaN issue thorfinn diagnosed in #763 — but that's already fixed in the current merged baseline. Confirms the bug is global (not slice-num-specific).
+- Askeladd reassigned to `mixed-precision-bf16` (PR #811) — directly attacks the throughput constraint this PR exposed.

@@ -31,7 +31,8 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 |---------|----|--------|--------|
 | alphonse | #732 | Closed | val_avg=154.95 ref; NaN test; 6/50 epochs |
 | alphonse | #796 | WIP | FiLM-Re conditioning |
-| askeladd | #733 | WIP | More slices (slice_num 64→256) |
+| askeladd | #733 | Closed | val_avg=151.50; +18.5% regression; throughput cost decisive |
+| askeladd | #811 | WIP | Mixed-precision BF16 — platform throughput improvement |
 | edward | #734 | WIP | Higher surf_weight (10→50) |
 | fern | #737 | **Merged** | val_avg=127.87 ← best; warmup+cosine |
 | fern | #809 | WIP | Schedule sized to budget (epochs=14, warmup=2) |
