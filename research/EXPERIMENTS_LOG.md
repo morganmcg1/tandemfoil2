@@ -1,5 +1,28 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 00:20 — PR #278 (rerun): surf_p_weight=5 on top of L1 — **CLOSE (hypothesis falsified)**
+
+- Branch: `charliepai2d5-alphonse/pressure-surface-weight` (rebased onto L1, not onto current L1+warmup)
+
+### Results
+
+| metric | value | vs L1 baseline (101.87) | vs current baseline (94.54) |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` (best ep 13/14) | **108.63** | +6.6% (worse) | +14.9% (worse) |
+| `val_single_in_dist/mae_surf_p` | 134.66 | +7.5% | — |
+| `val_geom_camber_rc/mae_surf_p` | 132.11 | **+22.3%** | — |
+| `val_geom_camber_cruise/mae_surf_p` | 70.31 | −6.6% | — |
+| `val_re_rand/mae_surf_p` | 97.44 | −1.5% | — |
+| `test_avg/mae_surf_p` (3 clean) | 112.49 | +9.6% | — |
+
+### Decision
+
+Close. Hypothesis cleanly falsified: `surf_p_weight=5` on L1 is **+6.6% worse** than L1 baseline (past the 5% close threshold), with the dominant cost on `val_geom_camber_rc` (+22.3%). Student's analysis is excellent — under L1, gradient magnitudes are sign-based and per-element, so 5× channel weighting routes 71% of surface gradient onto `p`, starving Ux/Uy. Since the model is parameter-shared across channels, degraded velocity learning hurts the joint flow representation that pressure prediction relies on.
+
+The same gradient-budget reasoning predicts that any `surf_p_weight > 1` under L1 trades Ux/Uy starvation for pressure emphasis with no good operating point — channel weighting and L1 don't compose well. Reassigned alphonse to **gradient clipping `max_norm=1.0`** (PR #387) — a no-cost stability hypothesis that may also reduce the test-time non-finite-prediction patterns alphonse helped diagnose.
+
+---
+
 ## 2026-04-28 00:15 — PR #365: Fourier positional features (8 freqs, normalized x,z) — **REQUEST CHANGES (rebase mechanic only)**
 
 - Branch: `charliepai2d5-thorfinn/fourier-features`
