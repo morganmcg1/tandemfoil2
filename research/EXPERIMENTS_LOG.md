@@ -1383,3 +1383,57 @@ Honest predicted band: **−5 % to +25 %** vs current 52.116. Combined with #592
 
 ### Reassignment
 - Askeladd stays on PR #580 — re-running on rebased branch with `lr: 2.5e-4 → 1.2e-4` (resolve conflict by taking askeladd's value); β2=0.999 inherits from advisor cleanly.
+
+## 2026-04-28 06:55 — PR #592: Lion lr 2.5e-4 → 2.85e-4 (charliepai2d1-tanjiro) — **sent back for rebase + re-run**
+- Run config: `lr: 2.5e-4 → 2.85e-4` in `Config` dataclass. Branched from post-#536 baseline (lr=2.5e-4, β=0.5, β2=0.99). Single-line edit.
+
+### Headline metrics (best EMA epoch=14/50, timeout-cut)
+| metric | this run | run base #536 | current baseline #571 |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` (EMA) | 55.904 | 60.478 (**−7.56 %**) | 52.116 (**+7.27 %**) |
+| `test_avg/mae_surf_p` | 49.224 | 52.676 (**−6.55 %**) | 45.413 (+8.39 %) |
+| best raw val | 70.093 (ep13) | — | — |
+| EMA−raw spread mean | −15.85 | −20.27 (#536) | — |
+| Mean pre-clip grad-norm | 13.92 | 12.25 (#536) | — |
+
+### Per-split — uniform broad-based gain (vs run base #536)
+| Split | val Δ vs #536 | test Δ vs #536 |
+|---|---:|---:|
+| single_in_dist | **−9.85 %** | −5.26 % |
+| geom_camber_rc | −2.61 % (laggard) | −5.54 % |
+| geom_camber_cruise | **−9.22 %** | **−8.13 %** |
+| re_rand | **−9.83 %** | **−8.31 %** |
+
+All 4 splits gain (rc as laggard, same pattern as #536); 3 of 4 splits clear −9 % val.
+
+### Mechanism finding (durable for the appendix lr-axis basin map under β2=0.99)
+
+**Basin upper edge under β2=0.99 is in [2.85e-4, 3.3e-4]** — tighter than expected:
+
+| PR | lr | val | test | mean grad_n | best_ep | outcome |
+|---|---:|---:|---:|---:|---:|---|
+| #536 (merged) | 2.5e-4 | 60.478 | 52.676 | 12.25 | 12 | win |
+| **#592 (this)** | **2.85e-4** | **55.904** | **49.224** | **13.92** | **14** | **win (stronger than predicted)** |
+| #507 (closed) | 3.3e-4 | 73.456 | n/a | 29.65 | — | lose |
+
+Healthy training, not edge-of-stability:
+- Spread *narrowed* (20.27 → 15.85), opposite of the lose-case mechanism (raw floor eats EMA). Both raw and EMA descend faster.
+- Grad-norm scaling sub-linear in lr (12.25 → 13.92 for +14 % lr) — Lion's sign-of-momentum keeps directional updates well-conditioned.
+- Late-epoch raw descent accelerates: ep13/14 raw values (70.09/74.66) that #536 didn't reach in budget.
+
+Combined with #580 (lower-edge probe under β2=0.99): lr=1.2e-4 → −9.69 %, lr=2.85e-4 → −7.56 %. Asymmetric basin under β2=0.99 with optimum in [1.2e-4, 2.85e-4] — wider than expected on both edges, with stronger sensitivity downward than upward.
+
+### Why send back, not close, not merge
+- Past close threshold (>5 %) at +7.27 % val vs current.
+- **Squash-merge would be mechanically clean** (lr line in different code region from β2 optimizer line) — but recorded metric is at lr=2.85e-4 + β2=0.99, NOT at the post-merge live config (lr=2.85e-4 + β2=0.999). Without the measurement, can't validate.
+- The upper edge **under β2=0.999 is unmapped**. β2=0.999's smoother direction may shift the basin (compound, subsume, or interfere with the lr=2.85e-4 effect).
+
+### Predicted re-run outcome (three competing hypotheses)
+- **Compound (most likely)**: lr=2.85e-4 wins on β2=0.999 baseline by similar % — both target different physical effects. Predict val ~48–50.
+- **Subsume**: β2=0.999's smoother direction makes lr=2.85e-4's larger steps less impactful. Predict val ~50–53.
+- **Interfere**: β2=0.999 changes basin shape; lr=2.85e-4 is past the upper edge under smoother direction. Predict val ~54–58.
+
+Honest predicted band: **−15 % to +12 %** vs current 52.116. Combined with askeladd's #580 lower-edge re-run on the same baseline, locks the new-baseline basin.
+
+### Reassignment
+- Tanjiro stays on PR #592 — re-running on rebased branch (lr line cleanly applied, β2=0.999 inherits from advisor).
