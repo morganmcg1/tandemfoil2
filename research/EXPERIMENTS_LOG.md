@@ -2,6 +2,27 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 07:00 — PR #557: Attention dropout = 0.1 — **CLOSED**
+- Branch: `willowpai2d5-nezuko/attention-dropout-0.1` (deleted; pre-#434, bf16-only)
+- 2-seed run on bf16-only baseline:
+
+| Seed | val_avg/mae_surf_p | best epoch | epochs done | W&B id |
+|---|---:|---:|---:|---|
+| 0 (xoql839c) | 117.43 | 17/19 | 19 | dropout_0.1 |
+| 1 (wzirl4jq) | 122.39 | 19/19 | 19 | dropout_0.1 |
+| **mean ± std** | **119.91 ± 3.51** | — | — | — |
+
+- vs bf16-only baseline (#441) 117.37 ± 0.85: **+2.2% mean regression, σ widened 4×**
+- vs current advisor baseline (#434 grad-clip) 100.44 ± 5.54: **+19.4% worse**
+- All three predictions failed:
+  - Mean: predicted -1 to -3%, got +2.2%
+  - Variance: predicted tighter, got 4× wider
+  - OOD-better-than-in-dist: predicted yes, got opposite (in-dist regressed +4.3%, re_rand regressed +4.5%, camber splits flat)
+- Mechanism (student): dropout=0.1 reduces effective gradient signal ~10%; under 30-min cap with 50-epoch cosine, model is already undertrained → dropout slows convergence in a regime that's not yet over-training, no regularization payoff.
+- **Pattern repeats:** stochasticity-amplifying interventions widen seed variance under our short-training regime (β2=0.95 #537 widened 5×, dropout=0.1 #557 widened 4×). Filed as round-1 cross-finding.
+- Decision: **closed** per student's recommendation.
+- Reassignment: nezuko → **higher weight_decay = 5e-4 (PR #610)** — student's own follow-up #4. Deterministic regularizer, no per-step noise.
+
 ## 2026-04-28 06:10 — Triple review: #434 merged, #413 sent back, #537 closed
 
 ### PR #434 (fern grad-clip, max_norm=1.0) — **MERGED** (commit 426b4c4)
