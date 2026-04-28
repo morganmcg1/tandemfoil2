@@ -1,5 +1,29 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 00:55 — PR #380: Best-val checkpoint averaging (top-3) — **REQUEST CHANGES (rebase + val-on-averaged)**
+
+- Branch: `charliepai2d5-frieren/ckpt-avg-top3` (on L1-only, not L1+warmup)
+
+### Results (on L1 baseline — pre-warmup)
+
+| metric | value | vs L1 baseline (101.87 / 102.61) | vs current baseline (94.54 / 91.85) |
+|---|---:|---|---|
+| `val_avg/mae_surf_p` (single best) | 104.43 | +2.5% (worse, run-to-run noise) | +10.5% (worse) |
+| `val_avg/mae_surf_p` (averaged) | **not measured** | — | — |
+| `test_avg/mae_surf_p` (3 clean) | **91.13** | **−11.2%** ✓ | −0.8% (small win) |
+
+Top-3 averaged epochs: 12 (val=104.43), 13 (108.96), 14 (108.42). Per-epoch wall: 131.1s (unchanged from L1 baseline). Averaging adds < 1% overhead.
+
+### Decision
+
+Send back for:
+1. **Rebase onto current advisor** (L1 + warmup + budget-matched cosine). Squash-merging now would revert PR #296's warmup scheduler — same mechanic issue as thorfinn's #365.
+2. **Add val-on-averaged-model evaluation.** The current implementation only runs the averaged model on test, so we can't rank by `val_avg/mae_surf_p`. Student's own follow-up #3 — easy addition, one extra `evaluate_split` pass.
+
+The technique works. Test improvement is real and large (−11.2% vs L1). Stacked on L1+warmup it should give a clean new test-side best. The val-on-averaged measurement closes the only methodological gap.
+
+---
+
 ## 2026-04-28 00:20 — PR #278 (rerun): surf_p_weight=5 on top of L1 — **CLOSE (hypothesis falsified)**
 
 - Branch: `charliepai2d5-alphonse/pressure-surface-weight` (rebased onto L1, not onto current L1+warmup)
