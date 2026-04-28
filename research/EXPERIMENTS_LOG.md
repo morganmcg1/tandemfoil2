@@ -1,5 +1,30 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 01:10 — PR #385: weight_decay 1e-4 → 5e-4 — **REQUEST CHANGES (rebase mechanic)**
+
+- Branch: `charliepai2d5-fern/weight-decay-5e-4` (on L1+warmup, pre-Fourier)
+
+### Results (on L1+warmup baseline — pre-Fourier)
+
+| metric | value | vs PR #296 baseline (94.54 / 91.85) | vs current baseline (87.86 / 84.22) |
+|---|---:|---|---|
+| `val_avg/mae_surf_p` (best ep 14/14) | **87.27** | **−7.7%** | −0.7% (essentially tied) |
+| `val_single_in_dist/mae_surf_p` | 103.56 | −9.4% | — |
+| `val_geom_camber_rc/mae_surf_p` | 98.71 | −6.4% | — |
+| `val_geom_camber_cruise/mae_surf_p` | 65.96 | −6.4% | — |
+| `val_re_rand/mae_surf_p` | 80.84 | −8.1% | — |
+| `test_avg/mae_surf_p` (3 clean) | **83.68** | **−8.9%** | −0.6% (essentially tied) |
+
+Per-epoch wall unchanged from baseline (~132s). Train-vs-val L1 gap small at final epoch (−0.185). Best epoch landed at the very end of cosine decay (14/14).
+
+### Decision
+
+Send back for rebase mechanic. Squash-merging now would revert PR #365's Fourier features; current branch is comparable to the Fourier baseline through a different mechanism (regularization vs feature augmentation), but stacking them is the obvious next experiment. Pure CLI flag tweak post-rebase.
+
+Notable directional finding from the run: WD gain was broad-based and **largest on `val_single_in_dist`** (the in-distribution split), not the OOD camber holdouts as the hypothesis predicted. Updates us toward "WD=1e-4 was simply too low globally" rather than "WD targets OOD specifically." Generalizes cleanly to the rebased baseline.
+
+---
+
 ## 2026-04-28 01:00 — PR #365 (rerun): Fourier features (8 freqs, normalized x,z) — **MERGE (winner, new baseline)**
 
 - Branch: `charliepai2d5-thorfinn/fourier-features` (rebased onto L1+warmup post-PR-#296 merge)
