@@ -84,11 +84,13 @@ class MLP(nn.Module):
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
-    def __init__(self, dim, heads=8, dim_head=64, dropout=0.0, slice_num=64):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.0, slice_num=64,
+                 use_linear: bool = False):
         super().__init__()
         inner_dim = dim_head * heads
         self.dim_head = dim_head
         self.heads = heads
+        self.use_linear = use_linear
         self.softmax = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(dropout)
         self.temperature = nn.Parameter(torch.ones([1, heads, 1, 1]) * 0.5)
@@ -125,11 +127,23 @@ class PhysicsAttention(nn.Module):
         q = self.to_q(slice_token)
         k = self.to_k(slice_token)
         v = self.to_v(slice_token)
-        out_slice = F.scaled_dot_product_attention(
-            q, k, v,
-            dropout_p=self.dropout.p if self.training else 0.0,
-            is_causal=False,
-        )
+        if self.use_linear:
+            # Linear attention with ELU+1 non-negative features (Katharopoulos et al.).
+            # phi(Q), phi(K) shapes: [B, H, S, d_head]. Non-causal full attention.
+            phi_q = F.elu(q) + 1.0
+            phi_k = F.elu(k) + 1.0
+            # KV: [B, H, d_head, d_head] = phi(K)^T @ V
+            kv = torch.einsum("bhsd,bhse->bhde", phi_k, v)
+            # Normalizer Z: phi(Q) @ sum_s phi(K_s), clamp for numerical safety
+            k_sum = phi_k.sum(dim=2)  # [B, H, d_head]
+            z = torch.einsum("bhsd,bhd->bhs", phi_q, k_sum).unsqueeze(-1).clamp(min=1e-5)
+            out_slice = torch.einsum("bhsd,bhde->bhse", phi_q, kv) / z
+        else:
+            out_slice = F.scaled_dot_product_attention(
+                q, k, v,
+                dropout_p=self.dropout.p if self.training else 0.0,
+                is_causal=False,
+            )
 
         out_x = torch.einsum("bhgc,bhng->bhnc", out_slice, slice_weights)
         out_x = rearrange(out_x, "b h n d -> b n (h d)")
@@ -138,13 +152,15 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 use_linear: bool = False):
         super().__init__()
         self.last_layer = last_layer
         self.ln_1 = nn.LayerNorm(hidden_dim)
         self.attn = PhysicsAttention(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
             dropout=dropout, slice_num=slice_num,
+            use_linear=use_linear,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
         self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
@@ -169,7 +185,8 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 use_linear: bool = False):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -190,6 +207,7 @@ class Transolver(nn.Module):
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                use_linear=use_linear,
             )
             for i in range(n_layers)
         ])
@@ -428,6 +446,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    linear_attention: bool = False  # ELU+1 linear attention in slice attn
 
 
 cfg = sp.parse(Config)
@@ -469,6 +488,7 @@ model_config = dict(
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
+    use_linear=cfg.linear_attention,
 )
 
 model = Transolver(**model_config).to(device)
