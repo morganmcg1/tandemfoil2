@@ -278,12 +278,41 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def tta_zmirror_input(x_raw):
+    """Mirror an input tensor across z=0. Operates on raw (un-normalized) x.
+
+    Sign-flips dim 1 (z), dim 3 (saf z-component), dim 14 (AoA1),
+    dim 18 (AoA2). Leaves dim 22 (gap) and dim 23 (stagger) unchanged
+    (per H7 research: gap/stagger are decomposed in chord-aligned frame
+    for raceCar; cruise gap should sign-flip but the conservative
+    no-flip is appropriate for the mixed cohort at test time too).
+    """
+    x = x_raw.clone()
+    x[..., 1:2] = -x[..., 1:2]      # z position
+    x[..., 3:4] = -x[..., 3:4]      # saf z-component
+    x[..., 14:15] = -x[..., 14:15]  # AoA1
+    x[..., 18:19] = -x[..., 18:19]  # AoA2
+    return x
+
+
+def tta_zmirror_output(pred):
+    """Unmirror prediction: flip Uy (channel 1). Ux and p invariant."""
+    pred = pred.clone()
+    pred[..., 1:2] = -pred[..., 1:2]
+    return pred
+
+
+def evaluate_split(model, loader, stats, surf_weight, device, tta_zmirror=False) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
     ``score.py`` (float64, non-finite samples skipped).
+
+    If ``tta_zmirror`` is True, predictions are averaged over the original
+    input and a z-mirrored copy (whose prediction is unmirrored before
+    averaging). The training loop is unaffected — this is a test-time only
+    augmentation.
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
@@ -308,13 +337,23 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y_clean - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            pred_main = model({"x": x_norm})["preds"]
             # Defensive: zero out non-finite predictions so a stray NaN/inf
             # at any (sample, node, channel) position cannot propagate
             # through `pred * mask = inf * 0 = NaN` into the metric. The
             # masked-out positions are excluded from the loss/MAE anyway,
             # so this only changes behavior when the model produces NaN.
-            pred = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)
+            pred_main = torch.nan_to_num(pred_main, nan=0.0, posinf=0.0, neginf=0.0)
+
+            if tta_zmirror:
+                x_m = tta_zmirror_input(x)
+                x_m_norm = (x_m - stats["x_mean"]) / stats["x_std"]
+                pred_m = model({"x": x_m_norm})["preds"]
+                pred_m = torch.nan_to_num(pred_m, nan=0.0, posinf=0.0, neginf=0.0)
+                pred_m_unmirrored = tta_zmirror_output(pred_m)
+                pred = 0.5 * (pred_main + pred_m_unmirrored)
+            else:
+                pred = pred_main
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -466,6 +505,7 @@ class Config:
     film_re: bool = True  # FiLM modulation conditioned on log(Re), per-block
     film_hidden: int = 64  # hidden width of the FiLM MLP (1 → hidden → 2*L*H)
     seed: int | None = None  # if set, torch.manual_seed for variance checks
+    tta_zmirror: bool = False  # at val/test time, average preds on (x, mirror(x))
 
 
 cfg = sp.parse(Config)
@@ -624,7 +664,8 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                             tta_zmirror=cfg.tta_zmirror)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -691,7 +732,8 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                                 tta_zmirror=cfg.tta_zmirror)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
