@@ -432,8 +432,8 @@ print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
 
-# --- Per-Re weighted sampling (sqrt(Re / Re_median[domain])) ---
-# Multiply existing per-domain weights by sqrt(Re / Re_median[domain]) so high-Re
+# --- Per-Re weighted sampling (linear Re / Re_median[domain]) ---
+# Multiply existing per-domain weights by Re / Re_median[domain] so high-Re
 # samples (which drive the mae_surf_p tail) receive more training emphasis.
 # Per-domain mass stays balanced; within-domain emphasis shifts toward high-Re.
 re_sampling_variant = "none_debug"
@@ -459,13 +459,13 @@ if not cfg.debug:
 
     re_weight_per_sample = torch.tensor(
         [
-            math.sqrt(train_re[i].item() / re_median_per_domain[idx_to_group[i]])
+            train_re[i].item() / re_median_per_domain[idx_to_group[i]]
             for i in range(len(train_ds))
         ],
         dtype=torch.float64,
     )
     sample_weights = sample_weights * re_weight_per_sample
-    re_sampling_variant = "sqrt_re_per_domain_median"
+    re_sampling_variant = "linear_re_per_domain_median"
 
     re_weight_diagnostics = {}
     print(f"Per-domain Re medians: {re_median_per_domain}")
