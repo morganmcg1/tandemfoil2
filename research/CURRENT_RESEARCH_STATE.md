@@ -6,7 +6,9 @@
 - **`val_avg/mae_surf_p` = 113.157** (EMA, ep13/50 timeout-cut)
 - **`test_avg/mae_surf_p` = 99.322**
 - See `BASELINE.md` for the full per-split breakdown.
-- **Pending winner**: PR #352 (smoothl1-surface) raw run measured val=105.56, test=95.39 (−20.2 % / −19.2 % vs the *prior* baseline 132.276 / 118.041). Once rebased onto post-#374 baseline + EMA, projected to land near **val ≈ 90, test ≈ 80** (assuming SmoothL1's gain composes with EMA + grad-clip).
+- **Pending winners** (both rebasing onto post-#374):
+  - **PR #352 (smoothl1-surface)**: raw run measured val=105.56, test=95.39 (−20.2 % / −19.2 % vs prior #356). Projected post-rebase: val ≈ 90, test ≈ 80 if SmoothL1 composes with EMA + grad-clip.
+  - **PR #394 (torch.compile)**: confirmed −23.1 % per-epoch (17 vs 13 epochs in 30 min). Metric vs current #374 was +0.79 % / +2.13 % (run pre-dated grad-clip). Projected post-rebase: val ~108–110, test ~95–97 (compile + grad-clip + 17 epochs).
 
 ## Resolved: scoring NaN bug
 - **Root cause** (independently flagged by tanjiro on #356 and askeladd on #351): one sample (`test_geom_camber_cruise` idx 20) has non-finite `y[p]`. `data/scoring.py:accumulate_batch` builds the right per-sample mask but does `err = |pred − y|` *before* the masked sum, so IEEE-754 `NaN*0 = NaN` (and `inf*0 = NaN`) defeats it and poisons the float64 accumulator → `mae_surf_p`/`mae_vol_p` go NaN for the whole split.
@@ -32,7 +34,7 @@
 |----|---------|------|-------|-----|
 | ~~#373~~ | ~~frieren~~ | ~~mixed-slice-last-layer~~ | ~~Last-layer-only `slice_num=128`~~ | **CLOSED 04-28 00:48**: val=133.49 (+0.92 %), test=120.85 (+2.38 %); same in-dist-helps/OOD-regresses pattern as closed #355. Reassigned to #403. |
 | #374 | tanjiro | grad-clip-1p0 | Gradient clipping at `max_norm=1.0` between backward and step | **MERGED 00:43** as second round-1 baseline (val=113.157, test=99.322) — −14.45 % val / −15.86 % test vs #356. Pre-clip norm 50–100× max_norm → effective LR cap. |
-| #394 | thorfinn | torch-compile-throughput | `torch.compile(model, ema_model)` mode=reduce-overhead, dynamic=True | Replaces closed #357; structural throughput improvement — every subsequent PR gets more epochs in the 30-min timeout |
+| #394 | thorfinn | torch-compile-throughput | `torch.compile(model, ema_model)` mode=default, dynamic=True | **Throughput delivery confirmed −23.1 % per-epoch (108.4 s/ep, 17 epochs in 30 min). Sent back 04-28 01:18** for rebase onto post-#374 (was on pre-grad-clip base). Predicted post-rebase: val ~108–110, test ~95–97 → new baseline + throughput multiplier (every future PR fits 17 epochs). |
 | #398 | nezuko | swiglu-mlp-matched | SwiGLU MLP `(W_g(x)⊙silu(W_v(x)))W_o` at `swiglu_inner=168`, matched to baseline param count | Replaces closed #355; cleaner per-node-nonlinearity test (no capacity/wall-clock confound vs `mlp_ratio=4 GELU`) |
 | #402 | tanjiro | grad-clip-0p5 | Aggressive grad-clip: `max_norm=1.0 → 0.5` | Tanjiro's own follow-up; with pre-clip norms 50–100× threshold on #374, more aggressive damping might compound or might starve the optimizer |
 | #403 | frieren | batch8-lr-sqrt2 | `batch_size=4 → 8`, `lr=5e-4 → 7e-4` (√2 scaling) | Replaces closed #373; variance reduction at the gradient-aggregation level, complementary to EMA + grad-clip |

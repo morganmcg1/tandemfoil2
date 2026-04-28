@@ -381,3 +381,41 @@ The hypothesis didn't beat even the simplest raw baseline.
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #417 | askeladd | ema-decay-0p99 | `ema_decay = 0.999 → 0.99` | Replaces closed #351; tests whether the under-converged 13-epoch budget is being short-changed by an EMA shadow that averages over too many updates (nezuko's #355 diagnosis) |
+
+## 2026-04-28 01:18 — PR #394: torch.compile(model, ema_model) (charliepai2d1-thorfinn) — **sent back for rebase + re-run; will merge after**
+- Branch: `charliepai2d1-thorfinn/torch-compile-throughput` (post-#356 base; pre-#374)
+- Hypothesis: `torch.compile(model, mode="default", dynamic=True)` for kernel fusion → ≥15 % per-epoch wall-clock reduction → more epochs in the 30-min budget. Throughput is the deliverable; metric Δ is incidental.
+
+### Headline metrics (best EMA epoch=17/50, run cut by 30-min timeout but at higher epoch count due to throughput)
+| | val_single_in_dist | val_geom_camber_rc | val_geom_camber_cruise | val_re_rand | **val_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` (EMA) | 137.74 | 122.26 | 91.05 | 105.15 | **114.051** |
+
+| | test_single_in_dist | test_geom_camber_rc | test_geom_camber_cruise | test_re_rand | **test_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` | 116.44 | 111.29 | 76.59 | 101.42 | **101.436** |
+
+### Throughput (the deliverable)
+| | baseline (#356) | this run | Δ |
+|---|---:|---:|---:|
+| `epoch_1_seconds` (compile warmup) | 142.3 | 150.6 | +5.8 % |
+| `mean_epoch_2plus_seconds` (steady) | 140.8 | **108.4** | **−23.1 %** |
+| epochs in 30-min timeout | 13 | **17** | +4 |
+| peak VRAM | ~42 | 42.1 | flat |
+
+Per-epoch steady-state σ ≈ 0.7s — compile is locked in, no recompile spam. **−23.1 % wall clock per epoch is right in the predicted band (−20 % to −35 %, conservative end).**
+
+### Comparisons
+- vs #356 (post-EMA, pre-grad-clip): val −13.8 %, test −14.1 % — clear win because torch.compile let the cosine schedule descend into 4 extra epochs.
+- vs **current baseline #374** (post-grad-clip): val **+0.79 %**, test **+2.13 %** — within run-to-run noise on val, slightly behind on test. Run was on pre-grad-clip base, so grad-clip is missing.
+
+### Analysis
+- **Throughput delivery is exactly what we asked for.** −23.1 % is conservative-end of predicted band; locked in across all 16 steady-state epochs (σ=0.7s). Compile + EMA + NaN-safe path co-exist cleanly.
+- **`mode="reduce-overhead"` OOM was correctly diagnosed.** The dataloader pads each batch to that batch's `N_max` (variable across batches); inductor with `dynamic=True` still tries to capture a CUDA graph per distinct shape, and 9 distinct shapes consumed ~68 GB of private graph pools. `mode="default"` (kernel fusion only, no graph capture) avoided the trap. Padding to a small fixed bucket of `N_max` values would unlock `reduce-overhead` for an additional ~10 % gain — but that's a `data/loader.py` change and out of scope.
+- **Save/load via `_orig_mod` works.** `OptimizedModule` wrappers at `state_dict()`/`load_state_dict()` boundaries handled correctly via `model._orig_mod`.
+- **Metric Δ vs current baseline (#374) is essentially noise.** This run is on the pre-grad-clip base, and the baseline moved while it was running. Right comparison: needs grad-clip + compile layered.
+
+### Decision: send back for rebase + re-run
+- Throughput delivery is unambiguous and durable; would normally merge directly. But the metric vs current baseline is +0.79 %/+2.13 % (within noise but technically slightly behind), so per CLAUDE.md merge rule (must be `<` baseline) this can't merge as-is.
+- Rebase resolution: thorfinn's diff touches lines around `ema_model = copy.deepcopy(model)` (compile call) and the save/load code (`_orig_mod` accessor). The grad-clip diff touches the train loop's backward/step block. Different regions — should rebase cleanly with no conflicts.
+- After rebase, run will have: EMA + NaN-safe + grad-clip(1.0) + torch.compile + 17 epochs. Predicted: val ~108–110, test ~95–97 — clear merge win and ships the throughput multiplier as the new baseline. Every subsequent PR fits 17 epochs.
