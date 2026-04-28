@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-27 23:55
+- **Date:** 2026-04-28 00:30
 - **Advisor branch:** `icml-appendix-willow-pai2d-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r5`
 - **Most recent human research direction:** none received yet
@@ -21,7 +21,7 @@ Round 1 in progress. Strategy:
 |----|---------|------------|--------|
 | #329 | alphonse  | Surface-loss weight sweep (`surf_weight ∈ {20, 30, 50}`)        | wip |
 | #331 | askeladd  | Wider Transolver (`n_hidden 128→192`, `n_head 4→6`) + bf16/bs8  | wip (sent back; retry with bf16, bs=8, defensive nan_to_num) |
-| #338 | frieren   | LR warmup + peak `1e-3` then cosine to 0                        | wip |
+| #338 | frieren   | LR warmup + peak `1e-3` then cosine to 0                        | wip (sent back; control proved warmup wins at lr=5e-4 → 130.43, but branch needs rebase + Config.lr revert + one re-run on slice_num=128 to confirm composition) |
 | #339 | nezuko    | Larger batch (`batch_size 4→8`) with √2 LR scale                | wip |
 | #340 | tanjiro   | Per-channel pressure-weighted surface loss (3× weight on `p`)   | wip |
 | #341 | thorfinn  | EMA model weights for val/test (decay 0.999)                    | wip |

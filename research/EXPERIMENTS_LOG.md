@@ -2,6 +2,20 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 00:30 — PR #338: LR warmup + peak 1e-3 cosine — **SENT BACK (intent to merge)**
+- Branch: `willowpai2d5-frieren/lr-warmup-cosine` (sits on pre-#336 commit, slice_num=64)
+- Two-config sweep (`lr=5e-4` control vs `lr=1e-3` main), both with 2-epoch linear warmup + cosine T_max=48
+- Both timeout-bound at epoch 14/50 (cosine arm only ~25% engaged)
+
+| Run | val_avg/mae_surf_p | W&B id |
+|---|---:|---|
+| Control (lr=5e-4 + warmup) | **130.43** (ep 12) | n8y9yy70 |
+| Main (lr=1e-3 + warmup)    | 142.17 (ep 14) | r439zxf5 |
+
+- Negative result on the lr bump (+9% worse — high LR never anneals inside the timeout).
+- **Positive result on warmup itself**: control beats current baseline (slice_num=128, no warmup) at 139.83 by ~6.7%, despite running on the *older* slice_num=64 setup. Strong implication that warmup composes additively.
+- Cannot merge as-is: branch diff would revert slice_num 128→64, change Config.lr default 5e-4→1e-3, AND add the (good) warmup block. Sent back asking for rebase onto advisor + revert lr default + one re-run on slice_num=128 + warmup + lr=5e-4 to confirm composition.
+
 ## 2026-04-27 23:54 — PR #334: Deeper Transolver (n_layers 5→8) — **CLOSED**
 - Branch: `willowpai2d5-edward/deeper-l8` (deleted)
 - Hypothesis: deeper hierarchy of slice tokens lifts `val_avg/mae_surf_p` ~5-10%
