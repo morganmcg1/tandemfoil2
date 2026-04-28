@@ -1,5 +1,76 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 06:28 — PR #572 (MERGED): aux log-pressure loss at weight=0.25
+- Branch: `charliepai2d3-tanjiro/l1ff-ema-cos14-lr-7p5e-4-logp-aux-0p25`
+- Hypothesis: half PR #551's weight (0.5 → 0.25) for a sweet spot
+  below the capacity-competition regime. Predicted −0% to −1.5%.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs PR #534 baseline (78.60) |
+|--------|--------:|----------------------------:|
+| `val_avg/mae_surf_p` | **77.78** | **−1.06%** (just above noise floor) |
+| `test_avg/mae_surf_p` | **67.71** | −0.09% (essentially tied) |
+
+### Per-split tradeoff — consistent val/test
+
+| split | val Δ | test Δ |
+|-------|------:|------:|
+| single_in_dist | +1.61% | +2.91% |
+| geom_camber_rc | +0.62% | +1.53% |
+| geom_camber_cruise | **−5.74%** | **−4.29%** |
+| re_rand | −2.78% | −2.46% |
+
+Cruise/re_rand (low-magnitude pressure) improve cleanly;
+single_in_dist/rc-camber (high-magnitude pressure) regress mildly.
+**Direction consistent val/test** — confirms this is a real per-split
+tradeoff, not val checkpoint overfitting.
+
+### Decision
+
+**Merged.** Tenth merge of round 3. Marginal val win at noise floor
+plus tied test, per the merge criterion ("lower than current
+baseline, even by a small amount").
+
+### Mechanistic reading — opposite of the original hypothesis
+
+The aux loss was hypothesised as a heavy-tail emphasiser (compress
+extreme pressure values). **The data shows it acts as a low-magnitude
+emphasiser** — pulls the model toward predicting low-magnitude
+pressure cleanly (where log compression has well-defined gradient
+signal) at the cost of high-magnitude pressure fidelity. The
+non-monotone cruise behaviour vs PR #551 (cruise improvement *grew*
+with smaller weight, opposite the predicted dose-response) reinforces
+this reading.
+
+### Round-3 narrative — per-split-tradeoff lever family
+
+This is the third round-3 lever showing per-split tradeoffs (after
+PR #383 alphonse 3× p-surface-weight on L1-only, in flight, and
+PR #551 aux log-p at 0.5). Both flat-or-marginal headline with clear
+per-split direction. Qualitatively different from the additive-
+distributional levers that dominate the merged stack.
+
+### Round-3 baseline lineage updated (10 merges)
+
+| PR | val | test | lever |
+|----|----:|-----:|-------|
+| 280 | 102.64 | 97.73 | + L1 surface |
+| 400 | 91.87 | 81.11 | + 8-freq spatial FF |
+| 447 | 82.97 | 73.58 | + EMA(0.999) |
+| 461 | 80.28 | 70.92 | + lr=7.5e-4 |
+| 462 | 80.06 | 70.04 | + grad clipping |
+| 506 | 78.80 | 69.13 | + FF=12 |
+| 534 | 78.60 | 67.77 | + EMA=0.997 |
+| **572** | **77.78** | **67.71** | + aux log-p (weight=0.25) |
+
+Cumulative −42.5% on val, −45.0% on test from PR #306 reference.
+
+Re-assigning tanjiro to **weight=0.10** (half current 0.25) — the
+non-monotone behaviour suggests further headroom may exist below.
+
+---
+
 ## 2026-04-28 06:09 — PR #566 (CLOSED, LR bracket closure): lr=7e-4 on EMA stack
 - Branch: `charliepai2d3-askeladd/l1ff-ema-cos14-lr-7e-4` (deleted)
 - Hypothesis: bracket LR downward from 7.5e-4 to 7e-4 on EMA-augmented

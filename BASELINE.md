@@ -2,43 +2,52 @@
 
 ## Current measured baseline
 
-PR #534 (charliepai2d3-fern) — **L1 + 12-freq spatial Fourier features
-+ EMA(0.997) + matched cosine + lr=7.5e-4 + grad clipping
-(max_norm=1.0)**. Run with `--epochs 14 --lr 7.5e-4` on the post-merge
-advisor.
+PR #572 (charliepai2d3-tanjiro) — **L1 + 12-freq spatial FF +
+EMA(0.997) + matched cosine + lr=7.5e-4 + grad clipping (max_norm=1.0)
++ auxiliary log-pressure loss (weight=0.25)**. Run with
+`--epochs 14 --lr 7.5e-4` on the post-merge advisor.
 
 | Metric | Value |
 |--------|-------|
-| `val_avg/mae_surf_p` (best, epoch 12/14) | **78.60** |
-| `test_avg/mae_surf_p` (NaN-safe, best-val checkpoint) | **67.77** |
+| `val_avg/mae_surf_p` (best, epoch 14/14) | **77.78** |
+| `test_avg/mae_surf_p` (NaN-safe, best-val checkpoint) | **67.71** |
 | Per-epoch wallclock | ~132 s |
-| Peak GPU memory (batch=4) | 42.38 GB |
-| Wallclock total | ~30.4 min |
+| Peak GPU memory (batch=4) | 42.53 GB |
+| Wallclock total | ~31.1 min |
 
-Per-split val (best epoch 12):
+Per-split val (best epoch 14):
 
 | split | mae_surf_p |
 |-------|-----------|
-| val_single_in_dist     | 91.15 |
-| val_geom_camber_rc     | 90.78 |
-| val_geom_camber_cruise | 56.16 |
-| val_re_rand            | 76.33 |
-| **val_avg**            | **78.60** |
+| val_single_in_dist     | 92.62 |
+| val_geom_camber_rc     | 91.34 |
+| val_geom_camber_cruise | 52.94 |
+| val_re_rand            | 74.21 |
+| **val_avg**            | **77.78** |
 
 Per-split test (NaN-safe, best-val checkpoint):
 
 | split | mae_surf_p |
 |-------|-----------|
-| test_single_in_dist     | 77.27 |
-| test_geom_camber_rc     | 78.98 |
-| test_geom_camber_cruise | 48.03 |
-| test_re_rand            | 66.80 |
-| **test_avg**            | **67.77** |
+| test_single_in_dist     | 79.52 |
+| test_geom_camber_rc     | 80.19 |
+| test_geom_camber_cruise | 45.97 |
+| test_re_rand            | 65.16 |
+| **test_avg**            | **67.71** |
 
-**Caveat**: PR #534 was branched off pre-#506 advisor (FF=8). The
-post-merge advisor adds FF=12 from #506 + EMA=0.997 from this PR.
-The actual joint config (FF=12 + EMA=0.997) is **untested** but
-expected to land ≤ 78.60 since FF=12 was a +1.57% lever in PR #506.
+**Per-split tradeoff caveat**: PR #572 introduces a per-split
+tradeoff pattern (different from the prior additive-distributional
+merges). Cruise/re_rand improve cleanly (val −5.74% / −2.78%, test
+−4.29% / −2.46%); single_in_dist/rc-camber regress mildly (val +1.61%
+/ +0.62%, test +2.91% / +1.53%). The val improvement (1.06%) is at
+the noise floor; the test win is essentially nil (0.09%). The per-
+split signal is consistent val/test, suggesting the lever is acting
+as a low-magnitude-pressure-emphasiser, not the originally-hypothesised
+heavy-tail emphasiser.
+
+Future PRs branching off this advisor will inherit both the cruise/re_rand
+gains and the in-dist/rc regression. Round-5 may want to explore
+weight bracketing (0.10, 0.35) to find a Pareto-better dose.
 
 **Recommended reproduce command**:
 
@@ -64,9 +73,10 @@ grad clipping baked in. The two CLI flags supply matched cosine
 | PR #461 |  80.28 |  70.92 | + lr=7.5e-4 (CLI) | −3.2% / −3.6% |
 | PR #462 |  80.06 |  70.04 | + grad clipping max_norm=1.0 | −0.27% / −1.24% |
 | PR #506 |  78.80 |  69.13 | + NUM_FOURIER_FREQS=12 | −1.57% / −1.30% |
-| **PR #534 (current)** | **78.60** | **67.77** | **+ EMA_DECAY=0.997 (schedule × EMA fix)** | **−0.25% / −1.97%** |
+| PR #534 |  78.60 |  67.77 | + EMA_DECAY=0.997 (schedule × EMA fix) | −0.25% / −1.97% |
+| **PR #572 (current)** | **77.78** | **67.71** | **+ aux log-p loss (weight=0.25)** | **−1.06% / −0.09%** |
 
-**Cumulative round-3 improvement: −41.9% on val, −44.97% on test.**
+**Cumulative round-3 improvement: −42.5% on val, −45.0% on test.**
 
 ## Round-3 proven levers (cumulative — seven stacked levers)
 
@@ -78,9 +88,10 @@ grad clipping baked in. The two CLI flags supply matched cosine
 6. **Gradient clipping max_norm=1.0** (PR #462)
 7. **NUM_FOURIER_FREQS=12** (PR #506) — refinement of lever #2.
 8. **EMA_DECAY=0.997** (PR #534) — schedule × EMA interference fix.
+9. **Auxiliary log-pressure loss (weight=0.25)** (PR #572) — per-split tradeoff lever.
 
-The advisor `train.py` bakes in 1, 2, 4, 6, 7, 8 by default. Levers 3
-and 5 are CLI flags (`--epochs 14 --lr 7.5e-4`).
+The advisor `train.py` bakes in 1, 2, 4, 6, 7, 8, 9 by default. Levers
+3 and 5 are CLI flags (`--epochs 14 --lr 7.5e-4`).
 
 ## Compose pattern map (round-3 finding, comprehensive)
 

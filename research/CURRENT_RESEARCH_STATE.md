@@ -15,26 +15,30 @@ help across at least three of the four tracks.
 
 ## Round 3 focus
 
-**Current measured baseline (merged 2026-04-28 05:24):**
-PR #534 (fern) — **L1 + spatial FF + EMA(0.997) + matched cosine
-+ lr=7.5e-4 + grad clipping**. `val_avg/mae_surf_p = 78.60`,
-`test_avg/mae_surf_p = 67.77`. Wins on every val and test split.
-Ninth merge of round 3.
+**Current measured baseline (merged 2026-04-28 06:28):**
+PR #572 (tanjiro) — **L1 + 12-freq spatial FF + EMA(0.997) + matched
+cosine + lr=7.5e-4 + grad clipping (max_norm=1.0) + aux log-pressure
+loss (weight=0.25)**. `val_avg/mae_surf_p = 77.78`,
+`test_avg/mae_surf_p = 67.71`. Tenth merge of round 3.
 
-**Cumulative round-3 improvement: −41.9% on val, −45.0% on test**
+**Cumulative round-3 improvement: −42.5% on val, −45.0% on test**
 from PR #306 reference.
 
-**Caveat**: PR #534 was branched off pre-#506 advisor (FF=8). The
-post-merge advisor has FF=12 (from #506) + EMA=0.997 (from this PR).
-The actual joint config (FF=12 × EMA=0.997 + everything else) is
-**untested** but expected to land ≤ 78.60 since FF=12 was a +1.57%
-lever in PR #506.
+**Per-split tradeoff caveat**: PR #572 introduces a per-split
+tradeoff pattern (different from prior additive-distributional
+merges). Cruise/re_rand improve cleanly (val −5.74% / −2.78%, test
+−4.29% / −2.46%); single_in_dist/rc-camber regress mildly (val
++1.61% / +0.62%, test +2.91% / +1.53%). Val improvement (1.06%) is
+at noise floor; test win is essentially nil (0.09%). Direction
+consistent val/test, confirming real per-split tradeoff (not val
+overfit).
 
-**Schedule × averaging interference RESOLVED**: PR #476 (matched
-cosine × EMA(0.999)) was destructive (+1.1% val); PR #534 (matched
-cosine × EMA(0.997)) is clean compose (−0.25% / −1.97%). The fix
-is shorter EMA window (1000 steps → 333 steps), ending averaging
-before cosine tail weight-collapse.
+**Mechanistic insight from PR #572**: the auxiliary `log1p(|p|)` loss
+was hypothesised as a heavy-tail emphasiser (compress extreme pressure
+values). The data shows it acts as a **low-magnitude emphasiser** —
+pulls the model toward cruise/re_rand fidelity at the cost of
+high-magnitude pressure (single_in_dist, rc-camber). Round-5 dose
+bracketing should explore lower weights to find Pareto-better tradeoff.
 
 **Round-3 baseline lineage:**
 | Round | best val | best test | lever | Δ vs prior |
@@ -47,9 +51,10 @@ before cosine tail weight-collapse.
 | PR #461 |  80.28 |  70.92 | + lr=7.5e-4 (CLI) | **−3.2% / −3.6%** |
 | PR #462 |  80.06 |  70.04 | + grad clipping max_norm=1.0 | −0.27% / −1.24% |
 | PR #506 |  78.80 |  69.13 | + NUM_FOURIER_FREQS=12 | −1.57% / −1.30% |
-| **PR #534** | **78.60** | **67.77** | **+ EMA_DECAY=0.997 (schedule × EMA fix)** | **−0.25% / −1.97%** |
+| PR #534 |  78.60 |  67.77 | + EMA_DECAY=0.997 | −0.25% / −1.97% |
+| **PR #572** | **77.78** | **67.71** | **+ aux log-p (weight=0.25)** | **−1.06% / −0.09%** |
 
-**Round-3 proven levers (cumulative, eight stacked)**:
+**Round-3 proven levers (cumulative, nine stacked)**:
 1. L1 surface loss (PR #280)
 2. 8→12-freq spatial FF (PR #400 → PR #506)
 3. Matched cosine `--epochs 14` (PR #389, CLI)
@@ -57,7 +62,9 @@ before cosine tail weight-collapse.
 5. Peak LR `lr=7.5e-4` (PR #461, CLI)
 6. Gradient clipping max_norm=1.0 (PR #462)
 7. NUM_FOURIER_FREQS=12 (PR #506) — refinement of lever #2.
-8. **EMA_DECAY=0.997** (PR #534) — refinement of lever #4.
+8. EMA_DECAY=0.997 (PR #534) — refinement of lever #4.
+9. **Auxiliary log-pressure loss weight=0.25** (PR #572) — per-split
+   tradeoff lever.
 
 Recommended reproduce: `python train.py --epochs 14 --lr 7.5e-4`.
 
@@ -159,9 +166,11 @@ composition even if they don't outright beat 102.64:**
      **n_head=8** — different attention compute structure.
    - PR #587 — edward: **BF16 autocast** (round-5 throughput infra).
    - PR #588 — fern: **SWA-style end-of-training weight averaging**.
-   - PR (askeladd, new): L1+FF12+EMA + `--epochs 14` + `lr=7.5e-4` +
-     **max_norm=5.0** — loosen clip 5× to unlock real LR sensitivity
-     (pre-clip mean grad-norm 20-50× current threshold).
+   - PR #596 — askeladd: L1+FF12+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **max_norm=5.0** — loosen clip 5×.
+   - PR (tanjiro, new): L1+FF12+EMA + aux log-p **weight=0.10** —
+     bracket auxiliary dose downward from merged 0.25 (non-monotone
+     cruise behaviour suggests further headroom may exist below).
    - PR (fern, new): L1+FF12+EMA(0.998) + `--epochs 14` + `lr=7.5e-4`
      — bracket EMA decay slightly upward from 0.997 (window ~500 steps
      vs 333) toward the cosine tail.
