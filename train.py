@@ -213,6 +213,29 @@ class Transolver(nn.Module):
         return {"preds": fx}
 
 
+class WeightEMA:
+    """Exponential moving average of model parameters and buffers.
+
+    `decay` is per optimizer step. After `update()`, `ema.module.state_dict()`
+    contains the EMA-tracked weights ready for evaluation.
+    """
+
+    def __init__(self, model: nn.Module, decay: float = 0.999):
+        import copy
+        self.module = copy.deepcopy(model).eval()
+        for p in self.module.parameters():
+            p.requires_grad_(False)
+        self.decay = decay
+
+    @torch.no_grad()
+    def update(self, model: nn.Module) -> None:
+        d = self.decay
+        for ema_p, p in zip(self.module.parameters(), model.parameters()):
+            ema_p.mul_(d).add_(p.detach(), alpha=1.0 - d)
+        for ema_b, b in zip(self.module.buffers(), model.buffers()):
+            ema_b.copy_(b)
+
+
 # ---------------------------------------------------------------------------
 # Evaluation helpers
 # ---------------------------------------------------------------------------
@@ -414,8 +437,9 @@ model_config = dict(
 )
 
 model = Transolver(**model_config).to(device)
+ema = WeightEMA(model, decay=0.999)
 n_params = sum(p.numel() for p in model.parameters())
-print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+print(f"Model: Transolver ({n_params/1e6:.2f}M params) + EMA(decay=0.999)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
@@ -469,6 +493,7 @@ for epoch in range(MAX_EPOCHS):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        ema.update(model)
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
@@ -478,10 +503,10 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
-    # --- Validate ---
+    # --- Validate (EMA weights) ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(ema.module, loader, stats, cfg.surf_weight, device)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -496,7 +521,7 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        torch.save(ema.module.state_dict(), model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
