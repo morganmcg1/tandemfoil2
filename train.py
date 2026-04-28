@@ -238,7 +238,7 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device, huber_beta=1.0) -> dict[str, float]:
     """Evaluate a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -277,7 +277,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
                 pred = model({"x": x_in})["preds"]
             pred = pred.float()
 
-            elem_loss = F.smooth_l1_loss(pred, y_norm, reduction="none", beta=1.0)
+            elem_loss = F.smooth_l1_loss(pred, y_norm, reduction="none", beta=huber_beta)
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
@@ -389,6 +389,7 @@ class Config:
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 10.0
+    huber_beta: float = 1.0  # SmoothL1 / Huber transition point
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
@@ -460,6 +461,10 @@ _ema_base = ema_model
 # unique shape under dynamic mode, so we bump dynamo's cache size to avoid silent
 # eager fallback when many distinct N values are seen.
 torch._dynamo.config.cache_size_limit = 64
+# Skip CUDAGraph capture for dynamic-shape graphs to avoid private-pool OOM blowup
+# at variable mesh sizes (BASELINE.md "known compile flakiness"). ~10-15% throughput
+# cost vs. CUDAGraph but eliminates the random-OOM failure mode.
+torch._inductor.config.triton.cudagraph_skip_dynamic_graphs = True
 model = torch.compile(model, mode="reduce-overhead", dynamic=True)
 ema_model = torch.compile(ema_model, mode="reduce-overhead", dynamic=True)
 
@@ -526,7 +531,7 @@ for epoch in range(MAX_EPOCHS):
             torch.cuda.synchronize()
             print(f"First compile+forward took {time.time() - _t_fwd0:.1f}s")
         pred = pred.float()
-        elem_loss = F.smooth_l1_loss(pred, y_norm, reduction="none", beta=1.0)
+        elem_loss = F.smooth_l1_loss(pred, y_norm, reduction="none", beta=cfg.huber_beta)
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
@@ -563,14 +568,14 @@ for epoch in range(MAX_EPOCHS):
     model.eval()
     ema_model.eval()
     split_metrics = {
-        name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device, cfg.huber_beta)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
     avg_surf_p = val_avg["avg/mae_surf_p"]
 
     online_split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device, cfg.huber_beta)
         for name, loader in val_loaders.items()
     }
     online_val_avg = aggregate_splits(online_split_metrics)
@@ -649,7 +654,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device, cfg.huber_beta)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
