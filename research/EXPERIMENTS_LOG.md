@@ -1,5 +1,54 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 10:08 — PR #685 (SENT BACK FOR REBASE): Lion optimizer (lr=7.5e-5 backbone, 1.5e-4 head, wd=1e-3)
+- Branch: `charliepai2d3-thorfinn/l1ff12-ema-cos14-lr-7p5e-4-lion`
+- Hypothesis: Lion (sign-of-momentum optimizer) treats all parameters uniformly, may rebalance the magnitude-dependent optimisation that AdamW's adaptive scaling exhibits.
+
+### Headline (best-val checkpoint, epoch 14/14, vs PR #578 base)
+
+| Metric | Lion (this PR) | PR #578 baseline | Δ |
+|--------|---------------:|-----------------:|--:|
+| `val_avg/mae_surf_p` | **66.81** | 75.78 | **−11.83%** |
+| `test_avg/mae_surf_p` | **57.61** | 66.27 | **−13.07%** |
+
+### Per-split val (uniform improvement — all 4 splits gain)
+
+| split | Lion | PR #578 baseline | Δ% |
+|-------|-----:|-----------------:|---:|
+| val_single_in_dist | **72.09** | 84.61 | **−14.79%** |
+| val_geom_camber_rc | **81.89** | 85.83 | **−4.59%** |
+| val_geom_camber_cruise | **47.63** | 58.09 | **−18.00% ★** |
+| val_re_rand | **65.64** | 74.58 | **−11.99%** |
+
+### Critical mechanistic finding
+
+**The Pareto frontier from PR #578 has flipped favourably**: under AdamW + decoupled head LR, large-magnitude in-dist and rc-camber splits gained while small-magnitude cruise mildly regressed (the round-3 frontier). Under Lion, ALL 4 splits gain — and the **largest gain is on the previously-regressing cruise split (−18.0%)**. This is the strongest possible mechanistic confirmation that **Adam's v̂-suppression of large-magnitude features was actively dampening optimisation pressure on the small-magnitude cruise split, and Lion's uniform sign update lifts that constraint.**
+
+Implication: **the Pareto frontier observed across 6+ closed AdamW-baseline levers (cruise wins, others lose) is an artefact of AdamW's adaptive scaling, NOT a fundamental tradeoff in the data**. Some closed AdamW levers (LR overshoot from PR #489, wd × beta2 patterns from PR #437/#446) may re-open under Lion.
+
+### Compose untested: layer scale (PR #657, just merged)
+
+This run was on the **pre-#657 stack** (AdamW + decoupled head LR, no layer scale). Current advisor baseline is **val 67.29 / test 58.39** (PR #657, layer scale γ_init=1e-4 on AdamW). The compose between Lion and layer scale is untested.
+
+Three plausible outcomes for the joint stack:
+1. Super-additive (~63-65 val): both target magnitude allocation via different routes, may compose orthogonally.
+2. Sub-additive (~66-67 val): mechanisms partially redundant.
+3. Negatively (>67.29 val): mechanisms conflict.
+
+### Decision: SENT BACK FOR REBASE
+
+PR #685 returned to thorfinn's WIP. Action requested: rebase onto post-#657 advisor (which has layer scale), re-run with Lion on top. If the joint stack holds val < 67.29, immediate merge. If joint stack regresses, close Lion and document the AdamW-Pareto-artefact insight as the contribution.
+
+Filed for round-5:
+1. Lion × extended schedule (epochs > 14) — model still converging at ep 14.
+2. Lion × β1=0.95 — Lion-paper LLM default.
+3. Lion × higher peak LR (1e-3, 1.5e-3) — Lion's sign-only update may tolerate LR overshoot that AdamW couldn't.
+4. Lion × wd ablation (5e-4 / 2e-3).
+5. Lion × decoupled head LR ratio re-tune.
+6. Lion × loosened clip (max_norm=10) — clip_frac=1.0 every epoch.
+
+---
+
 ## 2026-04-28 09:46 — PR #670 (CLOSED): asymmetric slice budget [64,64,64,32,32]
 - Branch: `charliepai2d3-nezuko/l1ff12-ema-cos14-lr-7p5e-4-slice-asym-64-64-64-32-32` (deleted)
 - Hypothesis: depth-asymmetric slice routing — first 3 blocks at 64 (broad), last 2 at 32 (sharp). Tests if early-block multi-scale capture combined with late-block concentrated routing captures both regimes (in-dist/rc-camber + cruise).

@@ -195,10 +195,13 @@ Recommended reproduce: `python train.py --epochs 14 --lr 7.5e-4`.
    (1.5e-3 with PR #578's 2× multiplier) at epoch 0; mechanistically
    addresses PR #625's in-dist-regression failure mode at higher LR.
 6. **PR #685** — thorfinn: L1+FF12+EMA + **Lion optimizer**
-   (lr=7.5e-5 backbone, 1.5e-4 head, wd=1e-3) — sign-based update treats
-   all parameters uniformly, may rebalance the magnitude-dependent
-   optimisation that AdamW exhibits (the round-3 Pareto frontier
-   suggests Adam's adaptive scaling amplifies the magnitude imbalance).
+   (lr=7.5e-5, head 1.5e-4, wd=1e-3). **Initial result on PR #578
+   base: val 66.81 (−11.83%), test 57.61 (−13.07%) — ALL 4 splits
+   gain, cruise leading at −18.0%.** Sent back for rebase + re-run on
+   post-#657 stack (layer scale × Lion compose untested). The
+   "Pareto-frontier-is-AdamW-artefact" finding may be the most
+   important conceptual insight of round-3 even if the joint stack
+   sub-additive.
 7. **PR #688** — fern: **layer scale γ_init=1e-3** (vertical bracket
    UP from PR #657's merged 1e-4) — tests if faster γ engagement
    recovers the timeout-bounded ep14 headroom and improves further.
