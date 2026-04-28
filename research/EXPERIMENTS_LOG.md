@@ -1,5 +1,79 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 03:10 — PR #289: Huber/SmoothL1 (β=1.0) rebased onto post-#401 — **NEW BASELINE**
+- Branch: `charliepai2d4-askeladd/huber-loss` (deleted on merge)
+- Student: charliepai2d4-askeladd
+- **Outcome: MERGED (squash, commit 906a2c1). NEW BASELINE: val_avg=63.33, -5.31% vs #401.**
+
+### Headline (epoch 32 of 50, EMA-evaluated)
+| Metric | Huber + stack | PR #401 baseline | Δ |
+|---|---|---|---|
+| `val_avg/mae_surf_p` (EMA) | **63.33** | 66.89 | **-5.31%** |
+| `test_avg/mae_surf_p` (EMA) | **55.45** | 57.86 | -4.16% |
+| Per-epoch wall-clock | 54.4 s (median) | 54.6 s | (matches) |
+| Total epochs | 32 | 33 | -1 (slower compile-warmup epoch 1) |
+| Peak GPU memory | 23.8 GB | 23.8 GB | unchanged |
+
+### Per-split val (epoch 32, EMA, vs #401)
+| Split | Huber+stack | #401 | Δ |
+|---|---|---|---|
+| val_single_in_dist     | 69.14 | 75.99 | **-9.0%** (heaviest pressure tails — Huber's mechanism) |
+| val_geom_camber_rc     | 75.30 | 77.53 | -2.9% |
+| val_geom_camber_cruise | 45.70 | 48.50 | -5.8% |
+| val_re_rand            | 63.20 | 65.51 | -3.5% |
+
+### Per-split test (post-fix scoring, EMA)
+| Split | mae_surf_p | Δ vs #401 |
+|---|---|---|
+| test_single_in_dist     | 61.05 | -4.5% |
+| test_geom_camber_rc     | 68.58 | -2.9% |
+| test_geom_camber_cruise | 37.48 | -7.9% (largest test gain) |
+| test_re_rand            | 54.69 | -2.7% |
+
+### Analysis
+- **Compounding evidence**: Huber on the pre-#308 base gave -9.9%; rebased onto post-#401 (which has EMA+clip), Huber gives -5.31%. The gap (-4.6%) is the part of Huber's gain that EMA already absorbs. Mechanism: both Huber's bounded tail and EMA's late-epoch smoothing dampen variance from heavy-tailed pressure samples; they overlap partially.
+- **Per-split pattern preserved**: val_single_in_dist (raceCar high-Re) wins biggest, exactly the mechanism signature.
+- **All 4 test splits gain** including test_geom_camber_cruise (now finite post-#358 scoring fix).
+- **Late-epoch stability nearly identical to baseline** (last-6-epoch std 1.78 vs 1.95) — EMA is dominating the noise floor; Huber's stabilization advantage narrowed.
+- **Variance floor**: at the threshold (~5pp from askeladd's earlier seed estimate), but consistent direction and magnitude across every per-split per-channel breakdown.
+
+### Compile flakiness flag (separate from results)
+2 of 4 launches crashed at the rebased stack: CUDAGraph private-pool blowup with `mode="reduce-overhead"` + `dynamic=True` + variable mesh sizes. Askeladd suggests `torch._inductor.config.triton.cudagraph_skip_dynamic_graphs = True` to eliminate this failure mode (~10-15% perf cost). Queued for alphonse's next PR (cosine T_max retune + cudagraph robustness).
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=289 records, 34 lines from rebased run).
+
+## 2026-04-28 03:05 — PR #435: Deeper Transolver (n_layers=8) + DropPath 0.1 under compile
+- Branch: `charliepai2d4-alphonse/deeper8-droppath01-compile` (deleted on close)
+- Student: charliepai2d4-alphonse
+- **Outcome: CLOSED** (val_avg=87.43 = +30% vs #401; schedule mismatch dominates).
+
+### Headline (epoch 22 of 22, EMA-evaluated)
+| Metric | This run | PR #401 baseline | Δ |
+|---|---|---|---|
+| `val_avg/mae_surf_p` (EMA) | 87.43 | 66.89 | **+30.7% worse** |
+| `test_avg/mae_surf_p` (EMA) | 77.93 | 57.86 | +34.7% |
+| Per-epoch | 80.7 s | 54.6 s | +48% |
+| Total epochs | 22 | 33 | -11 |
+| First compile + forward | 41.1 s | 8.8 s | (under `mode="default"` instead of reduce-overhead) |
+
+### Compile crisis identified by alphonse
+- **Round 1 OOM at depth=8** with `mode="reduce-overhead"`: CUDAGraph Trees private pools (one per unique padded mesh size) exceeded 95 GB. 9 distinct sizes, 68.67 GB allocated in private pools → allocator failed.
+- **Workaround**: switched to `mode="default"` + `dynamic=True` (skips CUDAGraph capture, keeps Inductor compile + kernel fusion). Trade: ~10-15% throughput cost.
+- This is the same flakiness askeladd flagged in #289. Suggests a common fix: `cudagraph_skip_dynamic_graphs=True`.
+
+### Schedule mismatch (the key insight)
+- Cosine T_max=50 (configured), but only 22 epochs reachable at depth=8.
+- LR at termination: ~0.59× peak — model never reaches the cosine tail's fine-tuning regime that #401 (33 epochs) benefits from.
+- Per-epoch loss still descending ~1.5-3 mae units/epoch in the last 5 epochs → even +5-10 epochs wouldn't close the 20-mae gap to baseline at the still-elevated LR.
+- **Depth's actual contribution is essentially untestable in this run**: can't distinguish "depth doesn't help" from "depth helps but only after LR settles, which we never reached."
+
+### Why close, what to do next
+- Per-split breakdown shows uniform 17-24 mae regression across all 4 val splits — the predicted "held-out cambers gain most" pattern did NOT hold. Cleanly negative on the headline metric.
+- Alphonse's follow-up #1 (cosine T_max retune) is the right infrastructure fix and helps every depth/capacity-increasing experiment, not just deeper-8. Assigned next.
+- Once T_max retune lands, depth experiments are revisitable (n_layers=6 or 7 first, since they're a better budget compromise than 8).
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=435 records, 24 lines).
+
 ## 2026-04-28 02:50 — PR #422: Per-channel pressure downweight (w_p = 0.5)
 - Branch: `charliepai2d4-fern/pchannel-p-w05` (deleted on close)
 - Student: charliepai2d4-fern
