@@ -451,11 +451,11 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-# torch.compile pilot — dynamic=True for variable mesh sizes (PR #416).
+# torch.compile pilot — dynamic=True + mode="reduce-overhead" (PR #481).
 # Skipped under --debug so fast iteration stays cheap.
 if not cfg.debug:
-    model = torch.compile(model, dynamic=True)
-    print("Wrapped model with torch.compile(dynamic=True)")
+    model = torch.compile(model, dynamic=True, mode="reduce-overhead")
+    print('Wrapped model with torch.compile(dynamic=True, mode="reduce-overhead")')
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
