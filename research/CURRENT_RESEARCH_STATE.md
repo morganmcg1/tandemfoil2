@@ -24,6 +24,7 @@ Every prior result needs to be re-judged against the new baseline. Specifically,
 
 | PR | Student | Hypothesis | Status |
 |----|---------|------------|--------|
+| #856 | tanjiro | EMA model weights (decay=0.999) for smoother timeout-cut checkpoints | WIP — new assignment on clipping baseline |
 | #826 | tanjiro | AdamW weight decay 1e-5→1e-2 | WIP — first run on clipping baseline, still running |
 | #825 | askeladd | Per-sample loss normalization | WIP — first run on clipping baseline, still running |
 | #800 | alphonse | n_hidden=256 + bf16 AMP | WIP — rebased on clipping baseline, re-running |
@@ -33,7 +34,7 @@ Every prior result needs to be re-judged against the new baseline. Specifically,
 | #767 | fern | surf_weight 10→50 | WIP — rebased on clipping baseline, re-running |
 | #766 | edward | n_layers 5→8 | WIP — first run on clipping baseline, still running |
 
-All 8 students have active WIP assignments. No idle students. Checked 2026-04-28 21:40 — PRs #780 and #772 reviewed and sent back for rebase onto clipping baseline; all 8 experiments now running.
+All 8 students have active WIP assignments. No idle students. Checked 2026-04-28 21:40 — PRs #780 and #772 reviewed and sent back for rebase onto clipping baseline; all 8 experiments now running. PR #856 (EMA for tanjiro) added as a new assignment.
 
 ## Potential Next Research Directions
 
