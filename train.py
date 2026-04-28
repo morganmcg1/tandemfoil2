@@ -518,7 +518,7 @@ print("torch.compile applied to model and ema_model (dynamic=True, mode=default;
 
 optimizer = Lion(model.parameters(), lr=cfg.lr, betas=(0.9, 0.999), weight_decay=cfg.weight_decay)
 print(f"Lion optimizer: lr={cfg.lr}, betas=(0.9, 0.999), weight_decay={cfg.weight_decay}")
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=14, eta_min=1e-5)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20, eta_min=1e-5)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
