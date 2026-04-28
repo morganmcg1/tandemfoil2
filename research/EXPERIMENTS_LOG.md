@@ -1,5 +1,47 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 00:02 — PR #360 (closed): Larger batch (bsz=8, lr=7.07e-4)
+
+- branch: `willowpai2d1-fern/batch-size-8-lr-scaled` (deleted on close)
+- hypothesis: doubling batch size from 4→8 with sqrt-scaled lr gives a
+  meaningful per-epoch wall-clock speedup, letting more cosine schedule run
+  inside the 30-min cap. Predicted -2% to -7%.
+
+### Results
+
+| Metric | Value |
+|---|---|
+| Best `val_avg/mae_surf_p` | **148.7170** (epoch 13 of 14 completed) |
+| `test_avg/mae_surf_p` | 136.3675 |
+| Per-epoch wall | 129.5 s (vs baseline 131 s — **-1.1%, no win**) |
+| Optimizer steps | 2444 (vs baseline 5250 — **-53%**) |
+| Peak GPU memory | 84.2 GB / 96 GB |
+| Stability | clean (no NaN, lr=7.07e-4 was safe) |
+| W&B run | `6977miuh` (`bsz8-lr7e-4`) |
+
+vs baseline: val_avg **+3.12%**, test_avg **+3.95%**. Below 5% close
+threshold, but ruled-out direction with strong diagnosis.
+
+### Analysis & conclusions
+
+- **Closed.** Negative result, but high information value.
+- **Trainer is not kernel-launch-bound at bsz=4.** Doubling B doubled HBM
+  traffic and padded-node count, so per-step compute roughly doubled →
+  per-epoch time barely changed → fewer gradient updates → worse
+  convergence.
+- **Padding waste is the real bottleneck.** `pad_collate` pads to max-N in
+  the batch; with cruise meshes at ~210K and raceCar single at ~85K, every
+  random-composition batch is padded to ~210K nodes regardless of how many
+  small samples it contains. Activations scaled near-linearly with B (42 →
+  84 GB).
+- **Redirect:** fern's own followup — *domain-bucketed batch sampler* — is
+  the right next move; assigned as PR #384.
+- The wider+deeper scale-up is parked until throughput is unblocked.
+- Cosmetic NaN: train.py's `evaluate_split` still uses `(pred-y_norm)**2`
+  with no finite-y filter, so the printed test/cruise normalised loss
+  shows NaN. Doesn't affect MAE rankings (those go through the patched
+  accumulator). Not fixed.
+
 ## 2026-04-27 23:15 — PR #312: Round-1 reference baseline (Transolver default config)
 
 - branch: `willowpai2d1-alphonse/baseline-default`
