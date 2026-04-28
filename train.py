@@ -230,8 +230,17 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(
+    model, loader, stats, surf_weight, device,
+    tta_k: int = 1, tta_drop: float = 0.10,
+) -> dict[str, float]:
     """Evaluate a split and return metrics matching the organizer scorer.
+
+    With ``tta_k > 1``, runs K forward passes per batch with a random
+    ``tta_drop`` fraction of real (non-padded) node inputs zeroed each pass,
+    and averages the predictions before scoring. Permutation-invariant slice
+    attention means each pass is a draw from a distribution centered at the
+    full-input prediction; averaging reduces eval-time variance.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
@@ -241,6 +250,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
     n_surf = n_vol = n_batches = 0
+    n_passes = max(tta_k, 1)
 
     with torch.no_grad():
         for x, y, is_surface, mask in loader:
@@ -249,11 +259,20 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
-            x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            x_norm_base = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            ff = fourier_features(x_norm[..., :2], num_freq=8)
-            x_norm = torch.cat([x_norm, ff], dim=-1)
-            pred = model({"x": x_norm})["preds"]
+
+            pred_sum = None
+            for _ in range(n_passes):
+                x_norm = x_norm_base
+                if n_passes > 1 and tta_drop > 0:
+                    drop = (torch.rand(mask.shape, device=device) < tta_drop) & mask
+                    x_norm = x_norm.masked_fill(drop.unsqueeze(-1), 0.0)
+                ff = fourier_features(x_norm[..., :2], num_freq=8)
+                x_aug = torch.cat([x_norm, ff], dim=-1)
+                pred_k = model({"x": x_aug})["preds"]
+                pred_sum = pred_k if pred_sum is None else pred_sum + pred_k
+            pred = pred_sum / n_passes
 
             abs_err = (pred - y_norm).abs()
             vol_mask = mask & ~is_surface
@@ -369,6 +388,8 @@ class Config:
     surf_weight: float = 30.0
     epochs: int = 50
     grad_clip_norm: float = 0.5  # max gradient L2 norm; set <=0 to disable
+    tta_k: int = 5            # number of forward passes at eval time; predictions averaged. 1 = no TTA.
+    tta_drop: float = 0.10    # fraction of nodes' inputs zeroed per TTA pass (only applied if tta_k > 1)
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
@@ -494,7 +515,10 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(
+            model, loader, stats, cfg.surf_weight, device,
+            tta_k=cfg.tta_k, tta_drop=cfg.tta_drop,
+        )
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -544,6 +568,33 @@ if best_metrics:
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
 
+    # TTA-variance check: re-eval val splits with tta_k=1 from same checkpoint,
+    # so we can see how much TTA actually moves the metric.
+    if cfg.tta_k > 1:
+        print("\nTTA-variance check (tta_k=1 from best checkpoint)...")
+        no_tta_metrics = {
+            name: evaluate_split(
+                model, loader, stats, cfg.surf_weight, device, tta_k=1, tta_drop=0.0,
+            )
+            for name, loader in val_loaders.items()
+        }
+        no_tta_avg = aggregate_splits(no_tta_metrics)
+        print(
+            f"  no-TTA val_avg/mae_surf_p={no_tta_avg['avg/mae_surf_p']:.4f} "
+            f"(TTA was {best_avg_surf_p:.4f}, delta={best_avg_surf_p - no_tta_avg['avg/mae_surf_p']:+.4f})"
+        )
+        for name in VAL_SPLIT_NAMES:
+            print_split_metrics(name, no_tta_metrics[name])
+        append_metrics_jsonl(metrics_jsonl_path, {
+            "event": "tta_variance_check",
+            "best_epoch": best_metrics["epoch"],
+            "tta_k": cfg.tta_k,
+            "tta_drop": cfg.tta_drop,
+            "tta_val_avg/mae_surf_p": best_avg_surf_p,
+            "no_tta_val_avg/mae_surf_p": no_tta_avg["avg/mae_surf_p"],
+            "no_tta_val_splits": no_tta_metrics,
+        })
+
     test_metrics = None
     test_avg = None
     if not cfg.skip_test:
@@ -554,7 +605,10 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(
+                model, loader, stats, cfg.surf_weight, device,
+                tta_k=cfg.tta_k, tta_drop=cfg.tta_drop,
+            )
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
