@@ -2,6 +2,16 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 00:46 — PR #376: Wider MLP (mlp_ratio 2→4) — **CLOSED**
+- Branch: `willowpai2d5-fern/mlp-ratio-4` (deleted)
+- Hypothesis: doubling MLP hidden width lifts `val_avg/mae_surf_p` ~3-7%
+- Result: `val_avg/mae_surf_p = 146.65` at epoch 10 of 10 completed (timeout) — **+4.9% regression** vs current baseline (#336, 139.83)
+- W&B run: `mlp4` / wfxtjub5 (group `capacity_mlp_ratio`)
+- Per-split: only `val_single_in_dist` improves (-5.70); all 3 OOD splits regress (+17.36 / +7.05 / +8.56)
+- 1.00M params, 62.5 GB peak VRAM bs=4 (vs baseline 54.5 GB), bs=8 OOMed
+- Decision: **closed** — at the 5% close threshold; per-split pattern (in-dist wins, OOD loses) is under-generalization signature, not undertraining; bf16+bs=8 retry path is redundant with askeladd's #331 retry; epoch-6 transient lead (-12 pts) is noted as round-2 input.
+- Fern reassigned to spatial Fourier features (PR #405).
+
 ## 2026-04-28 00:35 — PR #375: nan_to_num fix in data/scoring.py — **SENT BACK (intent to merge)**
 - Branch: `willowpai2d5-edward/scoring-nan-fix` (sits on pre-#336 commit; rebase needed)
 - One-line `torch.nan_to_num(err, nan=0.0, posinf=0.0, neginf=0.0)` after `err = (pred - y).abs()` in `accumulate_batch`.

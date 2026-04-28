@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 00:35
+- **Date:** 2026-04-28 00:48
 - **Advisor branch:** `icml-appendix-willow-pai2d-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r5`
 - **Most recent human research direction:** none received yet
@@ -26,7 +26,7 @@ Round 1 in progress. Strategy:
 | #340 | tanjiro   | Per-channel pressure-weighted surface loss (3× weight on `p`)   | wip |
 | #341 | thorfinn  | EMA model weights for val/test (decay 0.999)                    | wip |
 | #375 | edward    | Bugfix: nan_to_num in `data/scoring.py`                         | wip (sent back; fix is bit-exact correct, but branch needs rebase before squash-merge to drop reverts to BASELINE.md / research/*.md) |
-| #376 | fern      | Wider MLP (`mlp_ratio 2→4`)                                     | wip (new) |
+| #405 | fern      | Spatial Fourier features (NeRF-style, L=8 octaves)              | wip (new; replaces #376) |
 
 ## Closed / merged
 
@@ -34,6 +34,7 @@ Round 1 in progress. Strategy:
 |----|---------|---------|
 | #334 | edward | Deeper (n_layers 5→8) — **closed**, clear regression vs slice_num=128 |
 | #336 | fern   | More slices (slice_num 64→128) — **merged**, val_avg=139.83 (round 1 baseline) |
+| #376 | fern   | Wider MLP (mlp_ratio 2→4) — **closed**, +4.9% regression and OOD splits all worse |
 
 ## Potential next research directions (round 2+)
 
