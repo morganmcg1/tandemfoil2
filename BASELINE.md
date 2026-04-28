@@ -2,6 +2,32 @@
 
 Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pressure MAE across the four val splits). Paper-facing metric is `test_avg/mae_surf_p` from the best-val checkpoint.
 
+## 2026-04-28 08:58 — PR #601: Huber δ=0.25 → 0.1 (rebased on post-#562/#510 stack)
+
+- **Best `val_avg/mae_surf_p`** (this PR's standalone measurement, on PR #510 same-stack baseline): **62.879** (epoch 17, −3.00% vs 64.824)
+- **`test_avg/mae_surf_p`** (paper-facing, all 4 splits finite): **54.561** (vs 56.391 PR #510, −3.25%)
+- **Per-split val MAE for `p`** (best epoch 17, EMA, compile=True):
+  - val_single_in_dist: **72.871 (−3.92% — largest gainer)**
+  - val_geom_camber_rc: 76.167 (−2.19%)
+  - val_geom_camber_cruise: 43.897 (−3.39%)
+  - val_re_rand: 58.580 (−2.60%)
+- **Per-split test MAE for `p`** (best ckpt):
+  - test_single_in_dist: 63.120 (−4.02%)
+  - test_geom_camber_rc: 67.894 (−3.42%)
+  - test_geom_camber_cruise: 36.184 (−1.27%)
+  - test_re_rand: 51.046 (−3.42%)
+- **Recipe**: **huber(δ=0.10)** (was 0.25) + bias-corrected EMA(0.995, warmup=50) + SwiGLU + DropPath(0.1) + AdamW betas (0.9, 0.95) + per-parameter-group wd: attn=1e-4, mlp=1e-5, other=3e-5 + PhysicsAttention temperature init=2.0 + cosine 3-ep warmup (start_factor=0.3) + T_max=11 + decaying noise std (linear: ep1=0.0025, ep14=0.000179, ep15+=0) + NaN-safe + clip_grad_norm_(max_norm=10.0) + compile=True + lr=6e-4.
+- **Loss-magnitude diagnostic at convergence**: only 29% of residuals are linear-regime (vs predicted >95% pseudo-L1). δ=0.1 is a "**better hybrid**", not pseudo-L1: linearizes the heavy-tailed minority (~30%) while keeping ~70% in the smooth quadratic well. Per-channel: p=78% quad (smallest linear fraction), Ux=66%, Uy=68%.
+- **Striking finding (second-cycle behavior)**: best epoch 17 in cosine **second half-cycle** (cosine continues past T_max=11 producing a second descent). EMA(0.995) + δ=0.1's smooth-near-zero gradient lets the model squeeze ~1.3 additional pts past the cosine-min minimum.
+- **Same-stack effect grew** from −1.05% (pre-rebase) to −3.00% (post-rebase) — the longer 3-ep warmup + T_max=11 schedule extends the late-training fine-tune window where δ=0.1's better tail handling has more room.
+- **Compound expectation**: this run was on pre-#635/#636/#640 baseline. δ=0.1 is mechanistically orthogonal to lr peak, noise schedule, and per-group wd — should compound below 62.879 on the combined stack.
+- **Metric summary**: `models/model-huber-delta-0p1-rebased-20260428-075855/metrics.jsonl`
+- **Reproduce**:
+  ```bash
+  cd target
+  python train.py --epochs 50 --experiment_name huber-delta-0p1-rebased --agent <name> --compile=True
+  ```
+
 ## 2026-04-28 08:57 — PR #640: Per-parameter-group weight decay (attn=1e-4, mlp=1e-5, other=3e-5)
 
 - **Best `val_avg/mae_surf_p`** (this PR's standalone measurement, on PR #510 same-stack baseline): **62.747** (epoch 17, −3.21% vs 64.824)
