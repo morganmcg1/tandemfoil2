@@ -347,6 +347,38 @@ Round-1 reviews. Primary ranking metric: `val_avg/mae_surf_p` (lower is better).
 - **Student's diagnostic (the keeper)**: train.py runs in eager mode end-to-end — there's no `torch.compile` call anywhere. So TorchInductor was never invoked on either RMSNorm implementation. The 2.8% gain is just eager-mode kernel-launch overhead difference. `nn.LayerNorm` ships an optimized fused CUDA kernel (single kernel for mean + var + normalize + affine); RMSNorm in eager mode dispatches into 4–5 separate kernels per call × 15 norm sites = ~19 s/epoch overhead.
 - Decision: **CLOSE.** The architectural lever (RMSNorm > LayerNorm per-step quality) **may be real** but won't land without `torch.compile` or a custom Triton kernel. Direction is queued but should not be retried via pure-Python `nn.Module` on this build. **Student's follow-up #1 (`torch.compile` the whole model first) is the correct next step** — useful even if RMSNorm doesn't win, because the whole baseline gets faster (more epochs in budget). Queuing as the round-6 reassignment.
 
+## 2026-04-28 04:10 — PR #479: Bias-corrected EMA (decay_target=0.99, warmup_steps=10) — **MERGE as orthogonal compound**
+
+- Branch: `charliepai2d2-askeladd/bias-corrected-ema-099` — branched on EMA(0.99)+SwiGLU pre-DropPath, pre-fern; metrics committed.
+- Hypothesis: combine EMA(0.99)'s fast-tracking strength with the cold-start bias correction layer (Adam-style ramp from PR #454). Predicted −0.5% to −1.5%.
+- Result: best `val_avg/mae_surf_p = 81.251` at epoch 13. **−2.37% vs EMA(0.99)+SwiGLU baseline (83.223), beats predicted upper bound.** test_avg = 72.560 (−1.82% vs 73.904). Vs the current 72.414 conservative target: +12.2% standalone, but the lever is mechanistically orthogonal to fern's δ=0.25 and nezuko's β₂=0.95 (both proven on the same starting baseline).
+- **Both diagnostics passed**:
+  - Cold-start gain: epoch-1 val_avg = 186.1 vs EMA(0.99)'s ~193 (~3.5% better at epoch 1, exactly as predicted from PR #454's cold-start observation).
+  - Fast-tracking preserved: `val_geom_camber_cruise` +0.47% and `val_re_rand` +0.52% (both flat — the splits PR #454's bias-corrected-EMA(0.999) regressed by 7%/4% are now unaffected).
+- Effective decay trajectory: 0.18 at step 1, 0.85 at step 50, 0.92 at step 100, 0.98 at step 500. The ramp `(1+t)/(10+t)` only crosses 0.99 at t ≈ 891 (mid-epoch 3) — the asymptote is approached, not hit, in the 13-epoch budget. The cold-start window is short but real.
+- **The lever is a strict superset of current EMA(0.99)**: setting `warmup_steps=0` reduces to the current behavior; `warmup_steps=10` adds a small ramp at the start. Should give ≥ current performance on any future run.
+- Decision: **MERGE.** Orthogonal compound — same merge-aggressive logic as PR #480 (β₂=0.95). Combined-stack actual to be measured in subsequent rounds.
+
+## 2026-04-28 04:10 — PR #487: LayerScale init 1e-2 (faster gamma maturation in 13-epoch budget)
+
+- Branch: `charliepai2d2-edward/layerscale-1e2` — branched on DropPath baseline pre-fern; metrics committed.
+- Hypothesis: at 1e-2 init, gammas have 100× shorter trip to specialization regime than at 1e-4 init. Predicted gammas reach near 1.0 in 13 epochs and the per-split asymmetry from PR #456 disappears. Predicted −0.5% to −1.5%.
+- Result: best `val_avg/mae_surf_p = 81.314` at epoch 13. **+1.04% vs DropPath baseline (80.480); +12.3% vs current target.** test_avg = 74.302 (+2.73%).
+- **Critical structural finding (the keeper)**: at epoch 13, gammas are at `gamma_attn ∈ [0.0065, 0.0177]` and `gamma_mlp ∈ [0.0300, 0.0480]` — close to where 1e-4 init equilibrates after 250× growth (~0.025), and **most blocks even shrank below the 1e-2 init**. The model spends the entire 13-epoch budget in the *near-identity gating regime*, regardless of init. **The 250×-per-13-epochs growth observed at 1e-4 init was an artifact of how far the parameter sat from its equilibrium, not a constant**. Trip changed; destination didn't.
+- Per-split asymmetry preserved at 1e-2 init: helps single_in_dist (−2.34%) + camber_rc (−2.24%); hurts cruise (+9.66%) + re_rand (+2.79%) — same direction and similar magnitudes as PR #456. **The asymmetry is a structural property of LayerScale gating on this dataset, not an init-dependent transient.** PR #456's hypothesis that "1e-2 init eliminates the asymmetry" is falsified.
+- Early-epoch comparison (epochs 1–3): 1e-2 *did* deliver smoother early descent (epoch 3: 134 vs 144 baseline, −6.7%) — the cold-start advantage is real. But it gets washed out by epoch 14.
+- Decision: **CLOSE.** Two failed LayerScale attempts (1e-4 in PR #456 and 1e-2 here) — direction is firmly disconfirmed. Adding to "Disconfirmed directions".
+
+## 2026-04-28 04:10 — PR #486: Stochastic depth drop_path_max 0.1 → 0.2
+
+- Branch: `charliepai2d2-thorfinn/drop-path-02` — branched on DropPath baseline pre-fern; metrics committed.
+- Hypothesis: push DropPath harder (0.1 → 0.2; effective per-block rates `[0, 0.05, 0.1, 0.15, 0.0]` vs `[0, 0.025, 0.05, 0.075, 0.0]`) for ~2× more stochasticity. DeiT/Swin uses 0.2–0.4 routinely. Predicted −0.5% to −2%.
+- Result: best `val_avg/mae_surf_p = 80.858` at epoch 14. **+0.47% vs DropPath(0.1) baseline (80.480); essentially parity on test (+0.10%, 72.399 vs 72.328).** Vs current 72.414 target: +11.7%.
+- Per-split val: `val_re_rand` improved −4.55% (the only bright spot — Re-axis OOD generalization benefits from stronger stochastic regularization), but other splits regressed +1.3% to +3.8% (camber_cruise worst at +3.78%). Net regression.
+- **Trajectory analysis**: DropPath 0.2 had a faster start (epochs 1–3, by 5–7 MAE units) — stronger inductive bias when model is barely fit. Then it lagged epochs 6–12 (up to +7 MAE) because fewer effective parameters slow the absolute loss reduction. Curves converged by epoch 14 (final gap +0.38).
+- **The regularizer saturated at 0.1 within the 14-epoch budget.** Stronger DropPath would need a longer epoch budget to amortize the slower mid-training fit phase — the closing gap at epoch 14 suggests it might overtake at longer training.
+- Decision: **CLOSE.** Direction not dead in absolute terms (val_re_rand +4.55% is real), but at the 30-min wall-clock budget DropPath=0.1 is the local optimum.
+
 ## Test-metric NaN follow-up (cross-PR)
 
 All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the student diagnoses:
