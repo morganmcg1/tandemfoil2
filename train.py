@@ -308,7 +308,10 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
-            err = F.huber_loss(pred, y_norm, delta=0.1, reduction='none')
+            # Per-channel huber: tighter delta on `p` (heaviest-tailed channel, dominant val metric).
+            err_uxuy = F.huber_loss(pred[..., :2], y_norm[..., :2], delta=0.10, reduction='none')
+            err_p = F.huber_loss(pred[..., 2:3], y_norm[..., 2:3], delta=0.05, reduction='none')
+            err = torch.cat([err_uxuy, err_p], dim=-1)
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
@@ -624,7 +627,10 @@ for epoch in range(MAX_EPOCHS):
             x_norm = x_norm + perturbation
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        err = F.huber_loss(pred, y_norm, delta=0.1, reduction='none')
+        # Per-channel huber: tighter delta on `p` (heaviest-tailed channel, dominant val metric).
+        err_uxuy = F.huber_loss(pred[..., :2], y_norm[..., :2], delta=0.10, reduction='none')
+        err_p = F.huber_loss(pred[..., 2:3], y_norm[..., 2:3], delta=0.05, reduction='none')
+        err = torch.cat([err_uxuy, err_p], dim=-1)
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
