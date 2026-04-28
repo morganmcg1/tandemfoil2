@@ -488,7 +488,17 @@ optimizer = torch.optim.AdamW(
     weight_decay=cfg.weight_decay,
     betas=(0.9, 0.95),
 )
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+warmup_epochs = 1
+cosine_epochs = 13
+warmup = torch.optim.lr_scheduler.LinearLR(
+    optimizer, start_factor=0.5, end_factor=1.0, total_iters=warmup_epochs,
+)
+cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer, T_max=cosine_epochs,
+)
+scheduler = torch.optim.lr_scheduler.SequentialLR(
+    optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs],
+)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -516,6 +526,7 @@ for epoch in range(MAX_EPOCHS):
         break
 
     t0 = time.time()
+    epoch_lr = optimizer.param_groups[0]["lr"]
     model.train()
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
@@ -583,6 +594,7 @@ for epoch in range(MAX_EPOCHS):
         "epoch": epoch + 1,
         "seconds": dt,
         "peak_memory_gb": peak_gb,
+        "lr": epoch_lr,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
         "val_avg/mae_surf_p": avg_surf_p,
