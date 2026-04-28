@@ -4,8 +4,8 @@ Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pr
 
 ## 2026-04-27 23:30 — PR #282: Replace MSE with Huber loss (delta=1.0) in normalized space
 
-- **Best `val_avg/mae_surf_p`**: **105.999** (epoch 14)
-- **`test_avg/mae_surf_p`**: NaN (scoring.py Inf*0 propagation; mean over 3 finite test splits = 105.418)
+- **Best `val_avg/mae_surf_p`** (target to beat): **105.999** (epoch 14, original recipe)
+- **`test_avg/mae_surf_p`** (paper-facing): **97.957** — first finite measurement, from PR #361 rerun under same recipe + NaN-safe eval (val_avg drift to 108.103 there is RNG noise; recipe and val computation are byte-identical to the 105.999 high-water mark).
 - **Per-split val surface MAE for `p`**:
   - `val_single_in_dist`: 134.048
   - `val_geom_camber_rc`: 109.479
@@ -22,7 +22,18 @@ Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pr
   python train.py --epochs 50 --experiment_name huber-loss --agent <name>
   ```
 
-## Known issues affecting `test_avg/mae_surf_p`
+## 2026-04-28 00:10 — PR #361 follow-up: per-split test surface MAE for `p` (first finite test_avg)
 
-- `test_geom_camber_cruise` sample 20 has 761 non-finite values in `y[p]` volume nodes. `data/scoring.py:accumulate_batch` is read-only and propagates Inf via `Inf * 0 = NaN` in the masked sum, poisoning the per-channel test sum.
-- Workaround: filter samples with non-finite `y` in `train.py:evaluate_split` before calling `accumulate_batch`. This will be added in a round-2 PR; subsequent runs should report finite `test_avg/mae_surf_p`.
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---:|---:|---:|
+| `test_single_in_dist`     | 123.760 | 1.737 | 0.746 |
+| `test_geom_camber_rc`     | 104.946 | 2.090 | 0.877 |
+| `test_geom_camber_cruise` |  66.144 | 0.959 | 0.480 |
+| `test_re_rand`            |  96.978 | 1.532 | 0.706 |
+| **avg**                   | **97.957** | **1.579** | **0.702** |
+
+PR #361 added a 3-line filter in `train.py:evaluate_split` that drops samples with any non-finite `y` from the batch before calling `accumulate_batch`. The `data/scoring.py:accumulate_batch` Inf-times-0 propagation bug remains (file is read-only); the workaround triggers exactly once per test pass — on `test_geom_camber_cruise` sample 20 (761 non-finite `y[p]` volume nodes; surface `p` and Ux/Uy unaffected) — and is a no-op everywhere else.
+
+## Ranking note
+
+Future PRs are scored against `val_avg/mae_surf_p < 105.999` (recipe high-water mark from PR #282), **not** against the 108.103 RNG draw from PR #361. The val computation path on PR #361 is byte-identical to the merged recipe (the workaround does not trigger on any val sample); the +1.99% delta is purely run-to-run variance under a 14-epoch timeout-truncated training.
