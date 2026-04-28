@@ -921,3 +921,29 @@ Beats every val and test split by ≥21 %; `geom_camber_cruise` jumps −31.0 % 
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #507 | tanjiro | lion-lr-3p3e-4 | `lr_lion = 1.7e-4 → 3.3e-4` on merged #430 baseline | Tanjiro's own follow-up #1; Lion lr was sized for old AdamW recipe. Current AdamW=1e-3 → Lion equivalent 3.3e-4. Single-knob continuation. Predicted band −2 % to −6 %. |
+
+## 2026-04-28 04:00 — PR #491: TF32 matmul precision (charliepai2d1-fern) — **sent back for rebase onto post-#430**
+- Run config: `torch.set_float32_matmul_precision('high')` on post-#398 base.
+- Headline: **−13 % per-epoch wall-clock** (130.83 s vs ~150 s eager), **14 epochs in 30-min budget vs 12**, val=86.491 (−3.20 % vs #398), test=76.796 (−3.02 %).
+- Vs current Lion baseline #430: val +27.7 %, test +29.2 % (Lion merged ~10 min before results posted).
+- Throughput delivery durable + optimizer-agnostic (TF32 doesn't interact with Lion's sign-update). Predicted post-#430 rebase: val ~63–66, test ~55–58.
+- Sent back for rebase + re-run.
+
+## 2026-04-28 04:00 — PR #483: SwiGLU MLP dropout=0.1 (charliepai2d1-frieren) — **CLOSED (regression)**
+- val=92.901 (+3.97 % vs #398, +37.2 % vs current #430), test=81.959 (+3.49 % / +37.9 %).
+- Frieren's diagnostic (excellent, fifth in a row): clean ep9 crossover — dropout *helps* through ep8, *hurts* from ep10. `geom_camber_rc` (under-fit canary) was the only split that improved (~−0.5 %). Cruise (closest-to-noise-floor split) regressed worst (+9 %).
+- Mechanism: dropout did NOT slow raw train fit (predicted lose-case mechanism); the hit was concentrated in the EMA-shadow trajectory. Different from #458's WD bump (which slowed raw iterate). Useful contrast for the regularization ablation.
+- Closed; reassigned to **PR #513 (swiglu-mlp-dropout-0p05)** — narrow the bracket. Frieren's own follow-up #1.
+
+## 2026-04-28 04:00 — PR #475: SwiGLU swiglu_inner=256 (charliepai2d1-nezuko) — **CLOSED (regression)**
+- val=93.888 (+5.08 % vs #398, +38.6 % vs current #430), test=81.969 (+3.51 % / +38.0 %).
+- Nezuko's diagnostic: **training-budget starvation, not OOD-overfit**. Even `single_in_dist` regressed (+8.46 %), killing the closed-PR-#355 "in-dist memorizes / OOD collapses" hypothesis. With +25 % params at the same budget, larger model lands further from optimum at the timeout cut. Per-epoch curve still descending hard at ep12 (−5.4 between ep11 and ep12).
+- Mechanism reading durable: SwiGLU's "gating fixes OOD" property is **at matched-param count, not capacity-on-top-of-good-shape**.
+- Closed; reassigned to **PR #514 (swiglu-inner-192)** — smaller capacity bump (+14 % MLP / +7 % total). Tests whether *any* upward bump from 168 wins at this budget.
+
+## 2026-04-28 04:05 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #513 | frieren | swiglu-mlp-dropout-0p05 | Dropout p=0.1 → 0.05 in `SwiGLUMLP.forward` on merged #430 baseline | Replaces closed #483; frieren's own follow-up #1. Narrows the dropout bracket — at p=0.05 the late-epoch noise penalty shrinks but the under-fit-regularization signal also shrinks. Predicted band −1 % to +1 %. |
+| #514 | nezuko | swiglu-inner-192 | `swiglu_inner = 168 → 192` (+14 % MLP / +7 % total) on merged #430 baseline | Replaces closed #475; nezuko's own follow-up #1. Smaller capacity bump than 256; tests whether *any* upward bump wins at this budget. |
