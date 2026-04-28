@@ -20,7 +20,7 @@
 |---|---|---|---|
 | #321 | frieren | Optimization & schedule | warmup + cosine peak=7e-4 (sent back from peak=1e-3; will need rebase onto new T_max=37 baseline) |
 | **#614** | **nezuko** | **Stability / regularization** | **grad_clip alone (max_norm=1.0)** on top of L1+EMA+per-Re — original PR v1 had it bundled with EMA, never tested in isolation under L1's already-bounded `sign(r)` gradient regime |
-| **#564** | **tanjiro** | **Spatial features (on pure L1)** | **FF on saf (dims 2-3) parallel to FF on (x, z) — followup #4 from PR #327** |
+| **#619** | **tanjiro** | **Spatial features hyperparam** | **FF K-sweep (K=4 vs K=8 baseline vs K=12) on (x, z) — settles whether K=8 is locally optimal** |
 | **#584** | **edward** | **Schedule (with L1)** | **--epochs 70 probe — extends T_max=50 finding; tests if even longer schedule continues the trend** |
 | **#570** | **thorfinn** | **Loss / metric alignment** | **surf_weight=8 single probe on pure-L1** (followup from #544 close: 3-point monotonic curve under L1 suggests sw<10 may be optimum, single-flag test) |
 | #522 | askeladd | Optimization tuning | lr=3e-4 on Huber+compile+FF (sharp-edge hypothesis) |

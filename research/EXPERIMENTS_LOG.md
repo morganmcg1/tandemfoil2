@@ -1,5 +1,57 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 07:11 — PR #564 (closed): FF on saf (signed arc-length) parallel to FF on (x, z)
+
+- branch: `willowpai2d1-tanjiro/ff-on-saf` (deleted on close)
+- hypothesis: extend deterministic FF idea to saf (chord-frame coordinate)
+  on top of FF on (x, z). Predicted -2 to -5%.
+
+### Results
+
+| Metric | Value | vs PR #504 baseline (assignment-time) | vs PR #324 v4 (current baseline) |
+|---|---|---|---|
+| Best `val_avg/mae_surf_p` | **62.98** (epoch 32 of 32) | **+9.94%** | +20.8% (much worse) |
+| `test_avg/mae_surf_p` | 55.85 | +8.77% | +24.1% |
+| All 4 val splits regressed | yes | cruise +17.4% (worst), rc +5.3% (best) | |
+| Cold compile | 118 s | +2× vs baseline 60 s | |
+| Epochs completed | 32 / 50 | -4 epochs lost to cold compile | |
+| Peak GPU memory | 24.5 GB | +0.4 GB (much less than predicted +6-8) | |
+| W&B run | `emomhqjs` | | |
+
+### Analysis & conclusions
+
+- **Closed.** Two-mechanism explanation from tanjiro is the keeper:
+  1. **saf is only meaningful on surface nodes (~5%)**. For ~95% of
+     nodes (volume), saf is 0/default. Deterministic FF on "saf=0"
+     produces a fixed 32-dim noise signature on volume nodes,
+     consuming encoder bandwidth and amplifying float noise via
+     large-frequency oscillations. **FF on (x, z) doesn't have this
+     issue** — (x, z) is meaningful everywhere.
+  2. **Redundancy with FF on (x, z) for surface nodes**: saf is a 1-D
+     parameterization of position along the curve; (x, z) is 2-D world
+     coordinates of the same point. For axis-aligned foils, FF-on-(x,z)
+     already captures most of the spectral content.
+- **Per-split signal directly confirms the noise-amplification mechanism**:
+  cruise (smallest target magnitudes → noise-amplification dominates)
+  regressed *most* (+17.41% val); rc (predicted beneficiary) moved least
+  (+5.30%). Exact opposite of predicted dose-response.
+
+### FF feature engineering rules (consolidated from PR #327, #443, #564)
+
+The three FF experiments now establish two firm rules:
+1. **FF basis must be axis-aligned** for this geometry (deterministic
+   ladder, not Gaussian) — PR #443 falsified Gaussian RFF.
+2. **FF must be on densely-populated, everywhere-meaningful coordinates**
+   — (x, z) qualifies (PR #327 win); saf doesn't (this PR loss); dsdf
+   has the same structure as saf so would also fail.
+
+**FF feature scaling on this dataset is exhausted.** Further FF
+experiments would need a *gated* approach (FF×is_surface to zero volume
+nodes) — moderate refactor, marginal returns expected.
+
+K=8 deterministic FF on (x, z) is the right choice; tanjiro's next
+experiment (PR #619) sweeps K to settle whether K=8 is locally optimal.
+
 ## 2026-04-28 07:00 — PR #324 v4 (merged, NEW BASELINE): EMA decay=0.999 with every-2-epochs validation gating
 
 - branch: `willowpai2d1-nezuko/ema-and-grad-clip` (deleted on merge)
