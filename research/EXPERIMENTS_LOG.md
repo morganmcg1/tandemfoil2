@@ -328,6 +328,25 @@ Round-1 reviews. Primary ranking metric: `val_avg/mae_surf_p` (lower is better).
 - **Student's mechanistic diagnosis (the keeper)**: per-block SwiGLU gates AFTER attention has mixed the residual stream — gating prunes redundancy in already-learned representations. **Input-projection SwiGLU gates BEFORE mixing**, so `silu(W1·x) * (W2·x)` chooses *which raw input channels survive* into the hidden space — and at the input layer, every raw feature (`log(Re)`, AoA, NACA digits, gap, stagger, positions, dsdf) carries irreducible physical information that the network needs later. **Gating at the input prunes signal.** Trajectory data supports this: this run matched baseline through epoch 5 (coarse structure phase) then fell behind as fine-detail learning kicks in.
 - Decision: **CLOSE.** "LLaMA-everywhere" breaks at the input projection — that's the definitive lesson. Adding to "Disconfirmed directions". Future input-layer capacity should reach for non-gated expansions (wider intermediate, more layers) before SwiGLU-style gating.
 
+## 2026-04-28 03:55 — PR #480: AdamW betas (0.9, 0.95) — **MERGE as orthogonal lever**
+
+- Branch: `charliepai2d2-nezuko/adamw-betas-095` — branched on EMA(0.99)+SwiGLU pre-DropPath, pre-fern; metrics committed.
+- Hypothesis: AdamW β₂ 0.999 → 0.95 (half-life ~700 → ~14 steps) tracks the rapidly-changing gradient distribution under our 13-epoch under-trained regime. Predicted −0.5% to −1.5%.
+- Result: best `val_avg/mae_surf_p = 77.951` at epoch 13. **−6.34% vs EMA(0.99)+SwiGLU baseline she branched on (83.223), 4–13× the predicted gain.** test_avg = 68.753 (−6.97% vs 73.904). Vs the now-current huber-δ=0.25 baseline (72.414): +7.6% — does NOT beat the merged baseline standalone.
+- Per-split val: all 4 improved 4.32–7.98% vs starting baseline; test: all 4 improved 3.87–12.98%, with test_single_in_dist outsized at −12.98%.
+- Trajectory: matched baseline epochs 1–3 (gradients similar at very low step count), then β₂=0.95 opened a persistent ~3–6% lead from epoch 5 onward — gap held through every subsequent epoch. Mechanism: β₂=0.999 is heavily anchored to random gradients for the first ~2 epochs at our batch count; β₂=0.95 reaches steady-state inside the first quarter of epoch 1.
+- **Orthogonal to fern's huber-δ=0.25** (PR #463): different mechanism (optimizer 2nd-moment time constant vs loss curvature). Both proven on the same starting baseline (83.223), so the post-merge stack adds two independent levers.
+- Decision: **MERGE.** The lever is clearly real (−6.34% on its starting baseline). Combining with the now-merged huber-δ=0.25 may compound (additive: ~−18% combined) or be partially redundant (both address under-training). Future round-7 PRs will measure the combined val_avg. β₂=0.95 is a single-line change with zero compute cost — worth merging on the orthogonality argument. The 77.951 standalone number doesn't beat 72.414, but the lever is portable and shouldn't hurt.
+
+## 2026-04-28 03:55 — PR #488: RMSNorm with manual nn.Module (fix nn.RMSNorm wall-clock penalty)
+
+- Branch: `charliepai2d2-alphonse/rmsnorm-manual` — branched on DropPath baseline pre-fern; metrics committed.
+- Hypothesis: hand-written `nn.Module` RMSNorm should compile via TorchInductor and recover wall-clock parity (or beat) `nn.LayerNorm`, letting RMSNorm's per-step quality lead translate to the headline. Predicted −0.5% to −1.5%.
+- Result: best `val_avg/mae_surf_p = 84.149` at epoch 12 (baseline got 13 epochs). **+4.6% vs DropPath baseline (80.480); +16.2% vs current huber-δ=0.25 baseline (72.414).** test_avg = 76.615 (+5.9%).
+- **Wall-clock**: 157.89 s/epoch (manual) vs 162.4 s/epoch (nn.RMSNorm) vs 138.9 s/epoch (nn.LayerNorm). The manual implementation **shaved only 2.8% off the ATen op cost** — did NOT reach LayerNorm parity, lost one epoch under the 30-min cap.
+- **Student's diagnostic (the keeper)**: train.py runs in eager mode end-to-end — there's no `torch.compile` call anywhere. So TorchInductor was never invoked on either RMSNorm implementation. The 2.8% gain is just eager-mode kernel-launch overhead difference. `nn.LayerNorm` ships an optimized fused CUDA kernel (single kernel for mean + var + normalize + affine); RMSNorm in eager mode dispatches into 4–5 separate kernels per call × 15 norm sites = ~19 s/epoch overhead.
+- Decision: **CLOSE.** The architectural lever (RMSNorm > LayerNorm per-step quality) **may be real** but won't land without `torch.compile` or a custom Triton kernel. Direction is queued but should not be retried via pure-Python `nn.Module` on this build. **Student's follow-up #1 (`torch.compile` the whole model first) is the correct next step** — useful even if RMSNorm doesn't win, because the whole baseline gets faster (more epochs in budget). Queuing as the round-6 reassignment.
+
 ## Test-metric NaN follow-up (cross-PR)
 
 All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the student diagnoses:
