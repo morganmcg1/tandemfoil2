@@ -185,11 +185,11 @@ Recommended reproduce: `python train.py --epochs 14 --lr 7.5e-4`.
    modern transformer default (LLaMA, T5, Mistral). May help heavy-tail
    in-dist signal which is the dominant variance source under recent
    levers (4 of last 5 closed PRs had in-dist as worst regressor).
-4. **PR #670** — nezuko: L1+FF12+EMA + **asymmetric slice budget
-   `[64, 64, 64, 32, 32]`** (early broad, late sharp) — direct
-   follow-up to PR #642's per-split signal: cruise wants sharper
-   routing, in-dist/rc-camber want full capacity. Tests whether
-   depth-asymmetric routing captures both regimes.
+4. **PR #702** — nezuko: L1+FF12+EMA + layer scale +
+   **LOG_P_AUX_WEIGHT=0** (drop aux log-p loss) — clean compose test:
+   PR #572's aux log-p added cruise help (−5.74% on its base); PR
+   #657 layer scale also helps cruise (−14.6%). Tests redundancy
+   between the two cruise-improvement mechanisms.
 5. **PR #684** — edward: L1+FF12+EMA + **1-epoch linear LR warmup +
    13-epoch cosine** (schedule axis) — manages high effective head LR
    (1.5e-3 with PR #578's 2× multiplier) at epoch 0; mechanistically

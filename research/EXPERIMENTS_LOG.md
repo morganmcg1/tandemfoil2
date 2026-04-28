@@ -1,5 +1,50 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 09:46 — PR #670 (CLOSED): asymmetric slice budget [64,64,64,32,32]
+- Branch: `charliepai2d3-nezuko/l1ff12-ema-cos14-lr-7p5e-4-slice-asym-64-64-64-32-32` (deleted)
+- Hypothesis: depth-asymmetric slice routing — first 3 blocks at 64 (broad), last 2 at 32 (sharp). Tests if early-block multi-scale capture combined with late-block concentrated routing captures both regimes (in-dist/rc-camber + cruise).
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | this PR | PR #578 | new baseline PR #657 |
+|--------|--------:|--------:|---------------------:|
+| `val_avg/mae_surf_p` | 78.91 | 75.78 (+4.13%) | 67.29 (**+17.3% REGRESSION**) |
+| `test_avg/mae_surf_p` | 68.90 | 66.27 (+3.97%) | 58.39 (+18.0%) |
+
+### Per-split val (vs PR #578)
+
+| split | this PR | PR #578 | Δ% |
+|-------|--------:|--------:|---:|
+| val_single_in_dist | 91.22 | 84.61 | **+7.81% ← worst, larger than uniform-32's +2.26%** |
+| val_geom_camber_rc | 89.56 | 85.83 | +4.35% |
+| val_geom_camber_cruise | 57.95 | 58.09 | **−0.24% (essentially flat — cruise's PR #642 gain LOST)** |
+| val_re_rand | 76.90 | 74.58 | +3.11% |
+
+### Comparison to PR #642 (uniform slice_num=32)
+
+| split | PR #642 (all-32) | this PR (asym) |
+|-------|----------------:|---------------:|
+| val_single_in_dist | +2.26% | **+7.81%** (worse asymmetric than uniform) |
+| val_geom_camber_rc | +4.66% | +4.35% |
+| val_geom_camber_cruise | **−4.55%** | −0.24% (cruise gain lost) |
+| val_re_rand | +1.14% | +3.11% |
+
+### Analysis (key mechanistic finding)
+
+**Two clean readings**:
+1. **Cruise's gain belongs to early blocks, not late ones**. Sharpening only blocks 3-4 captured zero of PR #642's cruise improvement (−0.24% vs −4.55%). The cruise-favouring concentrated routing is an *early-block* property.
+2. **The 64→32 boundary at block 2/3 is actively harmful**. in-dist regresses MORE under asymmetric (+7.81%) than uniform-32 (+2.26%) — even though early 3 blocks have baseline-broad routing. Mixing slice counts across depth introduces a token-mass / routing mismatch at the depth boundary.
+
+**Profound asymmetry between vision and physics-PDE**: the prior ("late blocks operate on more-abstract features, often with fewer tokens") was vision-transformer-shaped intuition. PDE solvers route over the *physical* domain, not abstract token streams — early-block routing IS where per-region flow regime gets identified. **This is the load-bearing miss in the hypothesis.**
+
+### Decision: CLOSED
+
+Slice-routing axis is now lower-priority post-PR #657. Layer scale resolves the cruise-vs-others tension at the merged-stack level by giving each block a learnable magnitude. Inverse asymmetry [32,32,64,64,64] (student's #1 suggestion) is informative for round-5 mechanism analysis but not headline-moving.
+
+Reassigning nezuko to **drop auxiliary log-pressure loss (LOG_P_AUX_WEIGHT=0)** (PR #702) — clean compose test on the new layer scale baseline. PR #572 added aux log-p specifically to help cruise (−5.74% on its branched base); layer scale now achieves cruise −14.6% via different mechanism. Tests if aux log-p is now redundant.
+
+---
+
 ## 2026-04-28 09:30 — PR #657 (MERGED ★ ROUND-3 WINNER): layer scale (CaiT-style residual gating, γ_init=1e-4)
 - Branch: `charliepai2d3-fern/l1ff12-ema-cos14-lr-7p5e-4-layerscale-1e-4` (merged via senpai:merge-winner)
 - Hypothesis: per-channel learnable scalar `γ` (init 1e-4) on each residual branch (`γ_attn` and `γ_mlp` per block) lets the network discover per-block, per-channel contribution magnitudes during training. Mechanism untouched in round 3.
