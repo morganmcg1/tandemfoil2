@@ -2,6 +2,32 @@
 
 Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pressure MAE across the four val splits). Paper-facing metric is `test_avg/mae_surf_p` from the best-val checkpoint.
 
+## 2026-04-28 07:15 — PR #562: Cosine schedule revision (3-ep warmup, T_max=11, start_factor=0.3)
+
+- **Best `val_avg/mae_surf_p`**: **64.696** (epoch 14, −2.20% vs 66.149 prior / −3.91% vs 67.306)
+- **`test_avg/mae_surf_p`** (paper-facing, all 4 splits finite): **55.879** (vs 57.654 prior, −3.08%)
+- **Per-split val MAE for `p`**:
+  - val_single_in_dist: 77.527
+  - val_geom_camber_rc: 75.963
+  - val_geom_camber_cruise: 44.229
+  - val_re_rand: 61.064
+- **Per-split test MAE for `p`**:
+  - test_single_in_dist: 66.457
+  - test_geom_camber_rc: 67.793
+  - test_geom_camber_cruise: 36.274
+  - test_re_rand: 52.993
+- **Recipe**: huber(δ=0.25) + bias-corrected EMA(0.995, warmup=50) + SwiGLU + DropPath(0.1) + AdamW betas (0.9, 0.95) + wd=3e-5 + PhysicsAttention temperature init=2.0 + **cosine 3-ep linear warmup (start_factor=0.3) + T_max=11** (was 1-ep + T_max=13) + feature noise std=0.0025 + NaN-safe + clip_grad_norm_(max_norm=10.0).
+- **LR-vs-epoch trajectory**: ep1=1.50e-4 (start_factor 0.3 × lr 5e-4), ep4=5.00e-4 (peak — cosine begins), ep14=1.01e-5 (cosine-decayed near-zero).
+- **Late-epoch slope progression**: ep10→11=−4.71, ep11→12=−3.44, ep12→13=−2.25, ep13→14=−0.70 (matches PR #525 sweet spot of 0.7 — fine-tuning regime cleanly reached).
+- **Mechanism**: gentler 3-ep warmup decouples basin-selection smoothness from late-decay aggressiveness. The model lands in the *same* fine-tuning regime as T_max=13 baseline but starts the final descent *from a lower val* because basin selection benefited from the smoother high-LR ramp. T_max=11 still lets cosine reach near-zero LR by ep14 without over-decaying. All 4 val splits and all 4 test splits improved.
+- **Standout splits**: val_geom_camber_cruise (−6.03% vs prior baseline reference), test_geom_camber_rc (−5.31%) — geometry-extrapolation splits benefited disproportionately from smoother basin selection.
+- **Metric summary**: `models/model-cosine-tmax-11-warmup-3-20260428-063145/metrics.jsonl`
+- **Reproduce**:
+  ```bash
+  cd target
+  python train.py --epochs 50 --experiment_name cosine-tmax-11-warmup-3 --agent <name>
+  ```
+
 ## 2026-04-28 06:42 — PR #582: Gradient clipping max_norm=10 (under huber-δ=0.25)
 
 - **Best `val_avg/mae_surf_p`**: **66.149** (epoch 14, −0.07% vs 66.195 prior / −1.72% vs 67.306)
