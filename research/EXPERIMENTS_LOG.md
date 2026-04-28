@@ -1,5 +1,50 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 06:09 — PR #566 (CLOSED, LR bracket closure): lr=7e-4 on EMA stack
+- Branch: `charliepai2d3-askeladd/l1ff-ema-cos14-lr-7e-4` (deleted)
+- Hypothesis: bracket LR downward from 7.5e-4 to 7e-4 on EMA-augmented
+  stack. Predicted −0% to −1%.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs current PR #534 (78.60) |
+|--------|--------:|---------------------------:|
+| `val_avg/mae_surf_p` | 80.66 | +2.62% (under-convergence) |
+| `test_avg/mae_surf_p` | 70.13 | +3.48% |
+
+### LR bracket fully characterised
+
+| lr | val | best epoch |
+|---:|----:|-----------:|
+| 7e-4 (this PR) | 80.66 | **14/14** under-converged |
+| **7.5e-4 (current)** | **78.60** | **12/14** converged |
+| 8e-4 (#516) | 80.32 | — |
+| 1e-3 (#489) | 82.08 | — |
+
+**Narrow optimum at 7.5e-4** — both ±0.5e-4 perturbations regress
+~+2-3%. The EMA stack has a **sharp LR well**, not a wide plateau.
+
+### Per-split signal — under-convergence dominates
+
+`val_single_in_dist` regressed +4.28% (worst-hit split), opposite of
+the mechanistic prior that EMA wants more conservative LR for the
+in-dist regime. Confirms regression is under-convergence (best at
+ep 14/14 still descending), not EMA-LR-asymmetry.
+
+### Decision
+
+**Closed.** Above-zero regression. LR bracket closed: 7.5e-4 is the
+optimum on the EMA stack at the 14-epoch budget.
+
+Re-assigning askeladd to **max_norm=5.0** — LR × clip joint axis test.
+Their grad-clip diagnostic shows pre-clip mean is 20-50× the current
+threshold, so clipping is the effective step-size determinant. Loosening
+`max_norm` may unlock the real LR sensitivity dampened by clipping.
+
+Per-epoch metrics not centralised — branch deleted.
+
+---
+
 ## 2026-04-28 06:07 — PR #565 (CLOSED, EMA decay bracket closure): EMA_DECAY=0.998
 - Branch: `charliepai2d3-fern/l1ff-ema998-cos14-lr-7p5e-4` (deleted)
 - Hypothesis: bracket EMA decay slightly upward from 0.997 to 0.998.

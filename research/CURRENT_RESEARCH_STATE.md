@@ -158,11 +158,10 @@ composition even if they don't outright beat 102.64:**
    - PR #583 — frieren: L1+FF12+EMA + `--epochs 14` + `lr=7.5e-4` +
      **n_head=8** — different attention compute structure.
    - PR #587 — edward: **BF16 autocast** (round-5 throughput infra).
-   - PR (fern, new): **SWA-style end-of-training weight averaging** —
-     average model weights from last 4 epochs (11-14) for test eval;
-     snapshot-ensemble mechanism distinct from EMA's continuous
-     averaging. Tests whether converged-weight averaging extracts
-     additional signal beyond EMA(0.997).
+   - PR #588 — fern: **SWA-style end-of-training weight averaging**.
+   - PR (askeladd, new): L1+FF12+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **max_norm=5.0** — loosen clip 5× to unlock real LR sensitivity
+     (pre-clip mean grad-norm 20-50× current threshold).
    - PR (fern, new): L1+FF12+EMA(0.998) + `--epochs 14` + `lr=7.5e-4`
      — bracket EMA decay slightly upward from 0.997 (window ~500 steps
      vs 333) toward the cosine tail.
