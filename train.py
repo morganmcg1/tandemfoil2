@@ -262,19 +262,30 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
                 pred = model({"x": x_norm})["preds"]
-                # Pure L1 (absolute) per-element loss; name kept for diff minimality.
-                sq_err = (pred - y_norm).abs()
-                vol_mask = mask & ~is_surface
-                surf_mask = mask & is_surface
-                vol_loss_sum += (
-                    (sq_err * vol_mask.unsqueeze(-1)).sum()
-                    / vol_mask.sum().clamp(min=1)
-                ).item()
-                surf_loss_sum += (
-                    (sq_err * surf_mask.unsqueeze(-1)).sum()
-                    / surf_mask.sum().clamp(min=1)
-                ).item()
-            n_batches += 1
+                # Filter non-finite-y samples before loss aggregation —
+                # same fix class as data/scoring.py b78f404. Without this,
+                # 0.0 * inf in the masked sum produces NaN and poisons the
+                # running mean (e.g. test_geom_camber_cruise has one Inf-y
+                # sample at 000020.pt).
+                B = y.shape[0]
+                y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+                if y_finite.any():
+                    keep = y_finite.nonzero(as_tuple=True)[0]
+                    pred_keep = pred[keep]
+                    y_norm_keep = y_norm[keep]
+                    vol_mask_keep = mask[keep] & ~is_surface[keep]
+                    surf_mask_keep = mask[keep] & is_surface[keep]
+                    # Pure L1 (absolute) per-element loss; name kept for diff minimality.
+                    sq_err = (pred_keep - y_norm_keep).abs()
+                    vol_loss_sum += (
+                        (sq_err * vol_mask_keep.unsqueeze(-1)).sum()
+                        / vol_mask_keep.sum().clamp(min=1)
+                    ).item()
+                    surf_loss_sum += (
+                        (sq_err * surf_mask_keep.unsqueeze(-1)).sum()
+                        / surf_mask_keep.sum().clamp(min=1)
+                    ).item()
+                    n_batches += 1
 
             pred_orig = pred.float() * stats["y_std"] + stats["y_mean"]
             ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
