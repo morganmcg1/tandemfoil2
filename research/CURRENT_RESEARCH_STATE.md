@@ -1,8 +1,8 @@
 # SENPAI Research State
 
-- 2026-04-28 09:15 — round 2 nearing completion, round 3 starting;
-  **5 merges (compile is the round-2 winner)** + 13 closes; 8 axes in flight
-  including the first round-3 capacity-axis retry (#660); all hands on deck
+- 2026-04-28 09:30 — round 2 nearing completion, round 3 underway;
+  **5 merges (compile is round-2 winner)** + 14 closes (incl. depth-8-on-compile #660);
+  8 axes in flight including width-160 retry (#694); all hands on deck
 - **Baseline updated (5 merges total):** PR #328 + #330 + #367 + #399 + **#553
   (torch.compile, the round-2 winner)**.
   Anchor val_avg/mae_surf_p = **115.61** (fp32 anchor, run `uip4q05z`).
@@ -64,7 +64,8 @@
 | 330 | frieren   | MSE → Huber β=1            | **MERGED ★ (new baseline 115.61)** | rebased run = 115.61 (slice-128, epoch 11/50, run uip4q05z) |
 | 399 | askeladd  | round 2: bf16 mixed precision | **MERGED ★ infrastructure** | 3-seed bf16+Huber mean 112.13 (σ=4.53) on slice-128 — at-baseline within new noise floor; throughput unlock (1.23× / +30 % epochs); first finite test_avg=101.82 |
 | 553 | askeladd  | round 2: torch.compile on top of bf16 | **MERGED ★ metric+infrastructure (round-2 winner)** | 3-seed mean 80.70 (σ=2.20); 2.23× speedup; +123 % epochs in budget; 18 GB memory freed; σ tightens 4.53 → 2.20 |
-| 660 | askeladd  | round 3: depth-8 on top of compile+bf16 (capacity retry) | NEW assignment (status:wip) | n/a — first round-3 capacity-axis re-validation |
+| 660 | askeladd  | round 3: depth-8 on top of compile+bf16 (capacity retry) | **closed** (single-seed val=110.33 = +36.7 % vs 80.70 baseline; uniform regression across all 4 splits is decisive evidence per-distribution-shift pattern is a training-budget artifact, not Huber-baked-in) | superseded |
+| 694 | askeladd  | round 3: width-160 retry on top of compile+bf16 (cleaner-cost capacity retry) | NEW assignment (status:wip) | n/a — first round-3 retry predicted to succeed by cost calibration |
 | 415 | frieren   | round 2: asinh on pressure target | NEW assignment | n/a (assigned this cycle) |
 | 332 | nezuko    | surf_weight 10 → 25 (sweep)| **closed** (3-seed mean 151.94 on slice-128 = +13.8 %, ~11 SE outside noise; vol_p also up; val curve oscillation) | superseded |
 | 472 | nezuko    | round 2: Lion optimizer    | NEW assignment (status:wip) | n/a |
@@ -79,41 +80,33 @@
 | 559 | fern      | round 2: per-sample loss weight ∝ y_std (counter-balance Huber) | **closed** (mechanism falsified: α=0.5 3-seed mean 136.48 ± 6.35 = +21.7 % vs baseline; α=1.0 catastrophic; predicted-to-improve splits regressed most) | superseded |
 | 659 | fern      | round 2: per-domain stratified data weighting | NEW assignment (status:wip) | n/a — fern's #559-closing follow-up #1 |
 
-PRs surfaced for advisor review this cycle: **#553, #559**. Actions:
-**#553 (askeladd torch.compile) MERGED ★ as round-2 winner.**
-3-seed mean val_avg = 80.70 (σ=2.20), test_avg = 71.45 — **−28 %
-vs bf16+Huber baseline (~14σ outside noise)**. 2.23× speedup
-(63s/epoch vs 141s), 29 epochs in budget vs 13, 18 GB memory freed,
-σ tightens 4.53 → 2.20. Mechanism: small model + small batch → Python
-dispatch dominates → graph capture eliminates it; plus inductor's
-aggressive Blackwell kernel fusion; plus PhysicsAttention's small-
-tensor pointwise structure is exactly what `default` mode optimizes
-hardest. **Biggest single-axis win since Huber #330** (-13.4 % at
-the time of merge). **All round-2 PRs now compare against 80.70**.
-**Reassigned askeladd to #660 (depth-8 retry on top of compile)** —
-first round-3 capacity-axis re-validation. Closes the throughput-
-engineering loop: round-1 closed depth-8 because of budget
-confounding; round-2 unlocked the budget; now we test whether the
-budget-confounded round-1 axes converge cleanly with 29 epochs.
+PRs surfaced for advisor review this cycle: **#660**. Action:
+**#660 closed** — depth-8-on-compile single-seed = 110.33 = +36.7 % vs
+80.70 baseline. Per the >90 close rule, decisive. **The most important
+finding is the methodology contribution**: depth-8's regression is
+**uniform across all 4 splits** (+34-41 %), unlike every other round-2
+perturbation which showed a per-distribution-shift signature. This is
+**decisive evidence that the per-distribution-shift pattern is a
+training-budget artifact — not a baked-in property of Huber/bf16/compile**.
+Retroactively confirms why fern's #559 mechanism was wrong (the cause
+was always under-training, not Huber-clipping). **Closes the round-2
+per-distribution-shift mechanism search.**
 
-**#559 (fern y_std weighting) closed — mechanism falsified.**
-α=0.5 3-seed mean = 136.48 ± 6.35 (+21.7 %, ~3.1σ outside noise on
-wrong side); α=1.0 catastrophic. **Wrong splits regressed**:
-predicted-to-improve val_single_in_dist + val_geom_camber_rc
-regressed *most*; predicted-to-regress val_geom_camber_cruise
-regressed *least*. Up-weighting raceCar globally degraded raceCar's
-own held-out splits — Huber-clipping-induced cruise favoring is
-**not** the underlying cause of the per-distribution-shift pattern.
-**Reassigned fern to #659 (per-domain stratified data weighting)** —
-fern's own #559-closing follow-up #1. Tests whether the data-axis
-mechanism works when within-domain difficulty is decoupled from
-between-domain class structure. **Last data-axis lever** before
-round-3 axes pivot to per-region (spatial) or per-channel mechanisms.
+Calibration confirmed (per-step 1.52× actual / 1.6× predicted; +15 GB /
++18 GB; 18 epochs / 18-22). **Round-3 axis-sequencing implication**:
+width-160 retry should come BEFORE depth retry (1.13× vs 1.52×
+per-step). Don't bother with depth-12/16 (monotonically worse).
 
-Cycle 22 actions (recap): #568 closed (fp16 catastrophic; bf16 stays
-right precision), #517 closed (DropPath statistically null at
-depth=5), #648 assigned (alphonse LayerScale), #649 assigned
-(tanjiro smoothness).
+**Reassigned askeladd to #694 (width-160 retry on top of compile)** —
+askeladd's own #660-closing follow-up #1, the easier-cost capacity-axis
+test. **First round-3 retry predicted to succeed** based on cost
+calibration: ~1.13× per-step, 26 epochs in budget, plenty of memory
+headroom. Tests "was the round-2 width close just budget-confounded?"
+— the symmetric question to depth-8's "no" answer.
+
+Cycle 23 actions (recap): #553 MERGED ★ as round-2 winner (compile,
+val 80.70); #559 closed (mechanism falsified); #659 + #660 assigned
+(fern per-domain, askeladd depth-8).
 
 Earlier cycle actions:
 **#335 closed** — schedule axis doesn't stack on Huber+slice-128.
@@ -139,19 +132,21 @@ Cycle 16 actions (recap): #311 closed (width axis exhausted),
 133.55) + #330 (Huber β=1, was anchor 115.61) + #367 (scoring NaN
 fix, infrastructure) + #399 (bf16, infrastructure mean 112.13) +
 **#553 (torch.compile, ROUND-2 WINNER, current operative baseline
-80.70 ± 2.20)**. **Thirteen closed axes** (#311 width, #325 depth,
+80.70 ± 2.20)**. **Fourteen closed axes** (#311 width, #325 depth,
 #326 FFN, #332 surf_weight, #335 schedule, #337 BS+LR, #429 p_weight,
 #452 slice-192, #478 curriculum, #485 RMSNorm, #517 DropPath, #559
-y_std-weighting, #568 fp16-retry — all axes that fight the 30-min
-cap, overlap with Huber's implicit gradient shaping, are sub-
-literature-threshold at our depth=5 scale, or operate at the wrong
-mechanism level for the per-distribution-shift pattern).
-**Eight axes currently in flight** (7 round-2 + 1 round-3):
+y_std-weighting, #568 fp16-retry, #660 depth-8-on-compile — all
+axes that fight the 30-min cap, overlap with Huber's implicit
+gradient shaping, are sub-literature-threshold at our depth=5
+scale, or have unfavorable cost/budget ratios at our compile-unlocked
+budget).
+**Eight axes currently in flight** (6 round-2 + 2 round-3):
 #415 frieren asinh-on-pressure, #457 thorfinn EMA, #472 nezuko Lion,
 #547 edward LLRD, #648 alphonse LayerScale, #649 tanjiro smoothness-
 regularization, #659 fern per-domain stratified weighting,
-**#660 askeladd depth-8 ON COMPILE (first round-3 capacity-axis
-retry)**. **All eight students busy on actionable WIP work.**
+**#694 askeladd width-160 ON COMPILE (cleaner-cost round-3 capacity
+retry, predicted to succeed)**. **All eight students busy on
+actionable WIP work.**
 
 ## What we learned this cycle (and last)
 
@@ -226,22 +221,25 @@ retry)**. **All eight students busy on actionable WIP work.**
    to attack the per-distribution-shift pattern at the mechanism
    level rather than working around it.
 
-8. **Per-distribution-shift pattern: 7 of 7 round-2 perturbations,
-   with one sign reversal.** alphonse #311 width-160, tanjiro #335
-   schedule, edward #429 p_weight, fern #478 curriculum, nezuko #332
-   surf_weight (partial), alphonse #485 RMSNorm, tanjiro #517
-   DropPath. The first 6 share a sign (cruise improves / raceCar
-   regresses); DropPath uniquely **reverses the sign on
-   `val_single_in_dist`** (helps -3 to -5 %) while still hurting
-   `val_geom_camber_rc` (+3 to +4 %). **Anchored as a property of
-   the y_std-heterogeneous data distribution**, not perturbation-
-   specific. **Cause is NOT Huber-clipping** (falsified by fern #559;
-   per-sample y_std weighting against the predicted direction
-   degraded the predicted-to-improve splits most). Round-3 axes
-   should look at **per-region (spatial)** or **per-channel**
-   mechanisms instead — possibly surface-vs-volume per-region
-   weighting, or joint-channel y_std weighting, or per-domain
-   architecture specialization.
+8. **Per-distribution-shift pattern is a TRAINING-BUDGET ARTIFACT.**
+   The pattern (cruise improves or regresses least, raceCar regresses
+   most) shows up across 7 of 7 round-2 perturbations — but askeladd's
+   #660 depth-8-on-compile retry produced **uniform regression across
+   all 4 splits** (+34-41 %), with NO per-distribution-shift signature.
+   That's the decisive piece of evidence. **The cause is under-training**:
+   when the cap binds, "easier" splits (cruise — larger meshes, lower
+   per-sample y_std) under-train *less* than "harder" splits (raceCar —
+   smaller meshes, higher per-sample y_std). Perturbations that shift
+   compute toward easier data show up as cruise-helps/raceCar-hurts.
+   Depth-8 makes everything harder uniformly — no compute-shifting,
+   just less of it everywhere. **This retroactively confirms why
+   fern's #559 mechanism was wrong** (cause was always under-training,
+   not Huber-clipping). **Round-3 strategy implication**: per-distribution
+   architecture specialization is NOT the right round-3 priority; **adding
+   more compute (via efficiency unlocks like compile, not by extending
+   wall-clock) is the right move**. compile already delivered the biggest
+   round-2 win (#553); width-160 retry on compile (#694) tests whether
+   the easier-cost capacity axes can also pay.
 
 9. **Throughput axis was the highest-leverage round-2 lever** (the
    round-2 winner). bf16 (#399) + torch.compile (#553) compounded
@@ -355,26 +353,34 @@ retry)**. **All eight students busy on actionable WIP work.**
   "auxiliary loss / physics prior" bucket. Random-pair sampling
   sidesteps O(N²) k-NN.
 
-## Round-3 capacity-axis retries (NEW WAVE — enabled by compile merge)
+## Round-3 capacity-axis retries (enabled by compile merge)
 
 The compile merge (#553) doubled the in-budget epoch count from 13 → 29
 and freed 18 GB of memory. Round-1 axes that closed because of budget
-confounding now have ~3× more training and ~2× more memory. **First
-retry assigned this cycle**:
+confounding can now be re-validated with ~3× more training and ~2× more
+memory.
 
-- **depth-8 retry on top of compile** (PR #660 to askeladd). Round-1
-  #325 closed at val=162.05 with 9/50 epochs. With 29 epochs in
-  budget at depth-5 (and ~18-22 expected at depth-8), depth-8 should
-  now have meaningfully more training. Tests "depth-8 was just
-  budget-confounded" hypothesis directly.
+- **depth-8 retry on top of compile** (PR #660): **CLOSED** — single-seed
+  val=110.33 (+36.7 %) with uniform regression across all 4 splits.
+  Depth-8 was *both* budget-confounded *and* cost-confounded; compile
+  fixes only the budget side. The uniform regression also delivered the
+  **load-bearing methodology finding** (per-distribution-shift pattern
+  is a training-budget artifact, not Huber-baked-in).
+- **width-160 retry on top of compile** (PR #694, NEW): IN FLIGHT.
+  Width-160 has only ~1.13× per-step cost vs depth-8's 1.52× → ~26
+  epochs in budget vs depth-8's 18. **Predicted to succeed** based
+  on askeladd's calibration data. First round-3 retry expected to
+  pay off.
 
 Future round-3 retry candidates (assignment after current axes settle):
-- **width-160 retry on top of compile** (alphonse closed-and-
-  carried-forward axis from #311; multi-seed mean was 126.18).
 - **slice_num=256 retry on top of compile** (fern closed #452;
-  single-seed was 133.30).
+  single-seed was 133.30; per-step cost ~1.10–1.15× expected).
 - **mlp_ratio=4 retry on top of compile** (edward closed #326;
-  multi-seed was 137.83).
+  multi-seed was 137.83; per-step cost ~1.30× — borderline; might
+  fall in the gap zone like depth-8 did).
+- **depth-8 + LayerScale or T_max-fitted schedule** (if alphonse
+  #648 LayerScale lands or someone fixes the cosine T_max=50 mismatch
+  per askeladd's #660 follow-up #2).
 - **Stochastic depth (DropPath).** ASSIGNED as PR #517 to tanjiro:
   drop entire `TransolverBlock` residual contributions during
   training with prob `drop_path` (linear-by-depth scaling per

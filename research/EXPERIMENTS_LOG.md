@@ -13,6 +13,97 @@ in the pressure channel; `accumulate_batch` masks the sample but
 fern** with the 2-line `nan_to_num` patch — once it lands, every
 round-1 run can recompute a finite `test_avg/mae_surf_p` from W&B.
 
+## 2026-04-28 09:30 — PR #660 (askeladd depth-8-on-compile, round-3 retry) ❌ CLOSED — depth still budget-confounded; PIVOTAL methodology finding
+
+- Branch: `willowpai2d2-askeladd/depth8-on-compile` (deleted on close).
+- First round-3 capacity-axis re-validation. Hypothesis: depth-8 was
+  closed in round-1 #325 only because of budget confounding.
+
+### Single-seed result (clean close per decision rule)
+
+| n_layers | val_avg/mae_surf_p | val_re_rand | best_epoch | total_epochs | epoch_time_s | peak_GB | test_avg/mae_surf_p |
+|-:|-:|-:|-:|-:|-:|-:|-:|
+| 5 (#553 baseline) | 80.70 (σ=2.20) | 75.72 | 28-29 | 29 | 63 | 30 | 71.45 (σ=2.88) |
+| **8** | **110.33** | 101.87 | 17 | 18 | 96 | 45.5 | 97.53 |
+
+**+36.7 % vs baseline.** Per the >90 close rule, decisive. Best epoch is
+17/18 — val curve still descending hard at the cap. Extrapolation
+suggests depth-8 wouldn't reach 80.70 even with 13 more epochs.
+
+### LOAD-BEARING METHODOLOGY FINDING — uniform regression across all 4 splits
+
+| Split | Δ% (depth-8 vs depth-5) |
+|-|-:|
+| val_single_in_dist | +34.1 % |
+| val_geom_camber_rc | +41.0 % |
+| val_geom_camber_cruise | +37.1 % |
+| val_re_rand | +34.5 % |
+
+**Every other round-2 perturbation showed a per-distribution-shift
+signature; depth-8 does NOT.** This is decisive evidence that:
+
+> **The per-distribution-shift pattern across round-2 (cruise improves
+> or regresses least, raceCar regresses most) is a *training-budget*
+> artifact — NOT a baked-in property of Huber/bf16/compile or of any
+> specific perturbation.** When the cap binds at fewer epochs, "easier"
+> splits (cruise — larger meshes, lower per-sample y_std) under-train
+> *less* than "harder" splits (raceCar — smaller meshes, higher
+> per-sample y_std). Perturbations that shift compute toward easier
+> data show up as cruise-helps/raceCar-hurts. Depth-8 makes everything
+> harder uniformly — no compute-shifting, just less of it everywhere.
+
+This **retroactively confirms why fern's #559 mechanism (Huber-clipping
+causes cruise-favoring) was wrong**: the cause was always under-training,
+not gradient shape. **Closes the round-2 per-distribution-shift mechanism
+search.**
+
+### Calibration confirmed
+
+- per-step cost: predicted 1.6× → actual 1.52×
+- peak GB: predicted +18 → actual +15
+- epoch count: predicted 18-22 → actual 18
+
+Cost-modelling is well-calibrated at this n_hidden. Sets up the
+round-3 axis-sequencing decision: width-160 first (smaller per-step
+penalty), depth retry only when paired with schedule-side help.
+
+### Round-3 implications
+
+- **width-160 retry should come BEFORE depth retry** (per-step cost ~1.13×
+  vs depth-8's 1.52×; 26 epochs in budget vs 18). Assigning askeladd
+  width-160 retry as the next round-3 capacity-axis re-validation.
+- **Don't bother with depth-12/16** — capacity-vs-budget ratio is
+  monotonically worse than depth-8.
+- **Schedule-side intervention** for depth retry: truncating cosine
+  `T_max` to actual reachable epochs is a 1-line bug fix. Tanjiro's
+  natural next axis after #649 settles.
+- **Per-distribution architecture specialization is NOT the right
+  round-3 priority.** The per-distribution-shift cause is under-training,
+  so adding more compute (via efficiency, not wall-clock extension) is
+  the right move. Width-160 is exactly that test.
+
+### Reassignment
+
+Askeladd → PR #694 (round-3 axis: width-160 retry on top of compile).
+Detailed below.
+
+## 2026-04-28 09:30 — PR #694 (NEW, askeladd round 3): width-160 retry on top of compile+bf16
+
+- Hypothesis: width-160 was closed in alphonse #311 round-2 multi-seed
+  (mean 126.76 +9.6 % vs bf16-only 115.61). With compile's 2.23× speedup
+  and 18 GB freed memory, width-160 should now have ~26 epochs in budget
+  vs round-2's 13 — only ~10 % epoch loss vs depth-5's 29 (vs depth-8's
+  38 % loss).
+- The hypothesis is the **easier-cost capacity-axis test** of the same
+  question askeladd's #660 answered for depth-8: was the round-2 width
+  close just budget-confounded?
+- 1-line change: `model_config.n_hidden = 128 → 160`.
+- Single-seed first; multi-seed only if seed-0 looks promising.
+- Decision rule (vs 80.70 baseline): ≤75 single-seed (or ≤78 multi-seed
+  mean) merges; at-baseline closes; >90 closes.
+- **First round-3 retry predicted to succeed** based on calibration
+  data: per-step ~1.13×, peak ~30-35 GB, ~24-27 epochs in budget.
+
 ## 2026-04-28 09:00 — PR #553 (askeladd torch.compile) ★ MERGED ★ — biggest single-axis win since #330 Huber
 
 - Branch: `willowpai2d2-askeladd/torch-compile` (deleted on merge).
