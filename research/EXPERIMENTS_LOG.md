@@ -1,5 +1,38 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 00:40 — PR #304: Deeper Transolver: n_layers 5->8 with DropPath 0.1
+- Branch: `charliepai2d4-fern/deeper-model-droppath` (deleted on close)
+- Student: charliepai2d4-fern
+- **Outcome: CLOSED** (per-epoch wall-clock too high → only 9/50 epochs; worse than baseline at equal-epoch).
+
+### Headline (epoch 8 of 9 completed, timeout-capped)
+| Metric | Value | vs. baseline |
+|---|---|---|
+| `val_avg/mae_surf_p` | 159.62 | +50% vs PR #308 (106.40) |
+| `val_avg/mae_surf_p` (epoch 8 equal-budget) | 159.62 | +11% vs nezuko #308 epoch 8 (143.61, online weights) |
+| `test_avg/mae_surf_p` | NaN¹ → 163.23 (3 splits) | — |
+| Per-epoch time | **210 s** | vs nezuko 141 s — **~1.5× slower** |
+| Peak GPU memory | 64.5 GB | within budget |
+
+¹ Branch predates PR #358 scoring fix; same inf-y sample 20 in test_geom_camber_cruise.
+
+### Per-split val (epoch 8)
+| Split | mae_surf_p |
+|---|---|
+| val_single_in_dist     | 199.65 |
+| val_geom_camber_rc     | 178.49 |
+| val_geom_camber_cruise | 118.37 |
+| val_re_rand            | 141.97 |
+
+### Analysis
+- **Depth + DropPath integration is healthy** — no NaN, no divergence, val curve descended monotonically through epoch 8.
+- **Throughput is the kill criterion (again)**. Same lesson as edward's #300 (wider) and tanjiro's #309 (more slices): per-epoch cost above ~150s makes experiments uncompetitive on absolute val_avg in the 30-min cap.
+- **Worse at equal-epoch**: fern epoch 8 (159.62) vs nezuko epoch 8 online (143.61) — depth doesn't even win where wall-clock is matched.
+- **Independent diagnosis** of the inf-y bug — sixth student to hit it. All resolved by PR #358.
+- **Parking depth as round-2** — once throughput-recovery PRs land (#372 bf16, #382 larger batch), n_layers=8 fits more comfortably.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=304 records, 10 lines).
+
 ## 2026-04-28 00:25 — PR #308: EMA (decay 0.999) + grad clip max_norm 1.0 — **NEW BASELINE**
 - Branch: `charliepai2d4-nezuko/ema-grad-clip` (deleted on merge)
 - Student: charliepai2d4-nezuko
