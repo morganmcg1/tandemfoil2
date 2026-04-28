@@ -426,14 +426,29 @@ for p in ema_model.parameters():
     p.requires_grad_(False)
 ema_model.eval()
 
+# Keep refs to the underlying nn.Module for EMA parameter iteration so we
+# never accidentally walk through a compile wrapper. (.parameters() on
+# OptimizedModule proxies fine, but using _orig_mod here is bulletproof.)
+_model_base = model
+_ema_base = ema_model
+
+# torch.compile the live model and EMA copy.
+# dynamic=True handles variable mesh sizes per batch (pad_collate produces 74K-242K
+# nodes). reduce-overhead = inductor + CUDAGraph Trees; the latter re-records per
+# unique shape under dynamic mode, so we bump dynamo's cache size to avoid silent
+# eager fallback when many distinct N values are seen.
+torch._dynamo.config.cache_size_limit = 64
+model = torch.compile(model, mode="reduce-overhead", dynamic=True)
+ema_model = torch.compile(ema_model, mode="reduce-overhead", dynamic=True)
+
 
 @torch.no_grad()
 def update_ema() -> None:
-    for ep, mp in zip(ema_model.parameters(), model.parameters()):
+    for ep, mp in zip(_ema_base.parameters(), _model_base.parameters()):
         ep.mul_(ema_decay).add_(mp.detach(), alpha=1.0 - ema_decay)
 
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+optimizer = torch.optim.AdamW(_model_base.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
@@ -476,8 +491,16 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
+        # Time the very first forward to surface the compile cost.
+        _first_fwd = epoch == 0 and n_batches == 0
+        if _first_fwd:
+            torch.cuda.synchronize()
+            _t_fwd0 = time.time()
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             pred = model({"x": x_norm})["preds"]
+        if _first_fwd:
+            torch.cuda.synchronize()
+            print(f"First compile+forward took {time.time() - _t_fwd0:.1f}s")
         pred = pred.float()
         sq_err = (pred - y_norm) ** 2
 
@@ -490,7 +513,7 @@ for epoch in range(MAX_EPOCHS):
         optimizer.zero_grad()
         loss.backward()
         pre_clip_norm = torch.nn.utils.clip_grad_norm_(
-            model.parameters(), max_norm=grad_clip_max_norm
+            _model_base.parameters(), max_norm=grad_clip_max_norm
         ).item()
         optimizer.step()
         update_ema()
@@ -538,7 +561,7 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(ema_model.state_dict(), model_path)
+        torch.save(_ema_base.state_dict(), model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
@@ -570,13 +593,26 @@ for epoch in range(MAX_EPOCHS):
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
 
+# Dump dynamo / inductor counters so we can quantify how many recompilation
+# events the variable mesh sizes caused. unique_graphs is the headline metric;
+# frames.{ok,total} tell us how often dynamo handed control back to inductor.
+try:
+    _dyn_counters = {k: dict(v) for k, v in torch._dynamo.utils.counters.items()}
+    print(f"\nDynamo counters: {_dyn_counters}")
+    append_metrics_jsonl(metrics_jsonl_path, {
+        "event": "compile_counters",
+        "dynamo_counters": _dyn_counters,
+    })
+except Exception as _e:
+    print(f"Could not read dynamo counters: {_e}")
+
 # --- Test evaluation + local summary ---
 if best_metrics:
     print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
 
-    # Checkpoint at `model_path` is the EMA's state_dict; load it into ema_model
-    # for test evaluation.
-    ema_model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    # Checkpoint at `model_path` is the EMA's state_dict (saved from the
+    # uncompiled base, so no _orig_mod prefix); load into the base module.
+    _ema_base.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     ema_model.eval()
 
     test_metrics = None
