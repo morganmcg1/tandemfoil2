@@ -60,7 +60,8 @@ These eight axes were chosen for **orthogonality** so that improvements compound
 |---|---|---|---|
 | nezuko | [#502](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/502) | **AdamW betas + weight_decay sweep** — β1∈{0.85, 0.9}, β2∈{0.99, 0.999, 0.9995}, wd∈{1e-4, 1e-3, 1e-2}; 1D-axis + 2D-corner design | −1 to −5% |
 | tanjiro | [#508](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/508) | **Per-sample inverse-std weighting** | **CLOSED** — mechanism confirmed (cruise +, raceCar −) but magnitude bounded by dataset structure (within-sweep Δ=4.5 MAE < noise floor). Bigger reweighting makes aggregate worse, not better. |
-| tanjiro | [#577](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/577) | **Surface-only auxiliary pressure head** — decouple capacity allocation from loss balancing | −5 to −15% |
+| tanjiro | [#577](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/577) | **Surface-only auxiliary pressure head** | **CLOSED** — within-sweep delta −0.55 MAE inside two-seed control noise. Mechanism check failed: `mae_aux_only ≈ mae_backbone_only` (aux is degenerate, reads same features as backbone's `mlp2`). |
+| tanjiro | [#707](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/707) | **Arc-length surface smoothness regularization** — Dirichlet penalty on (Δp/Δs)² for surface-node pairs sorted by `saf` (signed arc-length) | −3 to −8% |
 | alphonse | [#609](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/609) | **Focal-L1** — per-node residual reweighting on top of L1 surface loss; γ ∈ {0, 0.5, 1.0, 2.0} | −3 to −8% (borderline at noise floor) |
 
 ## In-flight rebase PRs (Round 1, against new baseline)

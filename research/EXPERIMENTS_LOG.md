@@ -1,5 +1,33 @@
 # SENPAI Research Results — `icml-appendix-willow-pai2d-r3`
 
+## 2026-04-28 10:00 — PR #577: Surface-only auxiliary pressure head — **CLOSED (degenerate by mechanism check)**
+
+- Branch: `willowpai2d3-tanjiro/surface-only-aux-head` (deleted post-close)
+- **Hypothesis:** A small dedicated MLP on the backbone's per-node features predicts surface pressure with its own loss term, decoupling capacity allocation from loss balancing. Predicted Δ: −5 to −15%.
+
+### Results (group `surface-aux-head`, on the post-EMA baseline — predates #294 and #409)
+
+| Run | aux | weight | depth | val_avg/mae_surf_p | test_avg/mae_surf_p | W&B |
+|---|---|---:|---:|---:|---:|---|
+| `aux-off-ctrl` (paired) | off | — | — | **118.57** | 106.61 | `a42f7a10` |
+| `aux-off-ctrl` (2nd seed) | off | — | — | 119.59 | 108.52 | `r6s0l4i5` |
+| `aux-w0.5-d2` (best) | on | 0.5 | 2 | 118.03 | 106.00 | `iihvpg9s` |
+| `aux-w1.0-d2` | on | 1.0 | 2 | 119.91 | 107.66 | `umwdew6e` |
+| `aux-w2.0-d2` | on | 2.0 | 2 | 120.30 | 109.00 | `xg0ff99u` |
+| `aux-w1.0-d1` | on | 1.0 | 1 | 123.10 | 108.48 | `0qp9qmvh` |
+
+### Decision: **CLOSED** (degenerate; mechanism check failed)
+
+Within-sweep best delta = −0.55 MAE val, **inside the inter-control spread of 1.02 MAE** between two no-aux seeds. Indistinguishable from luck.
+
+**Critical mechanism check FAILED:** `mae_aux_only ≈ mae_backbone_only` across every variant and every split (aux is consistently +0.5 to +1 MAE *worse*). The aux head reads from the same `ln_3(fx)` features the backbone's `mlp2` already projects from — **no information advantage**. The aux head is a parallel degenerate copy of the backbone's own pressure prediction.
+
+**Sub-trend confirms degeneracy:** lower aux loss weight monotonically better on val (0.5 < 1.0 < 2.0 at depth=2) — exactly what you'd expect if the aux head adds no signal but its loss term *displaces* backbone gradient capacity.
+
+The right pivot per tanjiro's contingency is **separate features** (concatenate post-attention features from earlier blocks before the aux head) — but this is significant architectural surgery, better suited to edward's lane. Tanjiro reassigned to **arc-length surface smoothness regularization** (PR #707) — a fresh mechanism (spatial smoothness, physics-motivated) distinct from the residual-reweighting territory we've now established as bounded.
+
+**On the `ema_decay` bug-fix bundled in this PR:** rejected the change. Tanjiro's historical reasoning is correct (PR #410's winner `22a7k787` ran at 0.99), but the post-#294 and post-#409 winners both ran at 0.999 — that's the current operational baseline. Flipping the default to 0.99 would diverge from current operational reality. Better to leave at 0.999 and document.
+
 ## 2026-04-28 09:45 — PR #482: Multi-seed baseline + deterministic seeding — **SENT BACK FOR REBASE (infrastructure ready; multi-seed needs current baseline)**
 
 - Branch: `willowpai2d3-thorfinn/multi-seed-baseline`
