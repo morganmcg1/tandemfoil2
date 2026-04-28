@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 08:40 UTC
+- **Date:** 2026-04-28 08:55 UTC
 - **Advisor branch:** `icml-appendix-willow-pai2d-r4`
 - **Most recent human-team direction:** none received yet on this advisor branch
 - **Current best:** PR #343 (askeladd H6 bf16+compile × FiLM × EMA) merged. `val_avg/mae_surf_p=80.91`, `test_avg/mae_surf_p=72.73`. See BASELINE.md for full details and recommended config (`--batch_size 4 --amp_dtype bf16 --compile True --film_re True --use_ema True --ema_decay 0.99 --ema_eval_every 2 --epochs 37 --lr 7e-4 --weight_decay 5e-4 --seed 123`).
@@ -33,7 +33,7 @@ The bf16+compile mechanism is the dominant compounding lever. With 2.4× through
 | #348 | tanjiro | H3: Smooth L1 (Huber) on surface pressure | Loss reformulation | -2% to -6% | wip |
 | #468 | fern | H9: surface-arc pressure-gradient penalty | Physics-aware | -2% to -5% | wip |
 | #654 | frieren | H20: random Re-jitter augmentation on log(Re) input | Regularization | -2% to -5% | wip |
-| #576 | nezuko | H16: arcsinh-compressed pressure target | Target transform | -2% to -6% | wip (sent back round 1 — needs rebase onto #442 for compound test; round 1 Run C was -19.6% val / -21.6% test vs PR #404 baseline, **second-largest single-mechanism effect of round 0** after H6 throughput) |
+| #576 | nezuko | H16: arcsinh-compressed pressure target | Target transform | -2% to -6% | wip (sent back round 2 — needs rebase onto #343 for full compound test; round 2 Run D at val_ema=86.12 / test=75.87 is -21.1% / -23.0% on post-#442 path, EMA × arcsinh confirmed clean compound but +6.4% above current post-#343 merged baseline) |
 | #662 | edward | H21: exclude 1-D parameters from weight decay | Optimization | -0.5% to -2% | wip |
 | #611 | thorfinn | H18: wider Transolver (n_hidden=192, n_head=6) | Architecture | -3% to -7% | wip |
 | #650 | askeladd | H19: Lion optimizer | Optimization | -1% to -5% | wip |

@@ -31,6 +31,54 @@
 
 ---
 
+## 2026-04-28 08:49 — PR #576 (round 2): H16 arcsinh × EMA × FiLM — **SENT BACK FOR REBASE-ONTO-#343**
+
+- Branch: `willowpai2d4-nezuko/h16-arcsinh-pressure-target` (rebased onto post-#442, **not yet onto post-#343**)
+- Round 2 single-cell test: Run D = arcsinh scale=500 + EMA decay=0.99 + every-other-epoch eval + FiLM + epochs=25 + seed=123.
+
+| Metric | PR #442 baseline | **Run D** | Δ |
+|--------|----------------:|---------:|---|
+| val_avg/mae_surf_p (raw, best ep 13) | 119.36 (PR #404 path) | 95.95 | matches Run C exactly |
+| **val_avg/mae_surf_p (ema, best)** | 109.19 | **86.12** | **−21.1%** |
+| **test_avg/mae_surf_p** | **98.47** | **75.87** | **−23.0%** |
+
+W&B run: `l35fyphu` (group `h16-arcsinh-on-ema-film`).
+
+### Per-split test for Run D vs PR #442 baseline
+
+| Split | PR #442 baseline | Run D | Δ |
+|-------|-----------------:|------:|--:|
+| `test_single_in_dist` | 111.60 | 95.28 | **−14.6%** |
+| `test_geom_camber_rc` | 112.42 | 86.04 | **−23.5%** |
+| `test_geom_camber_cruise` | 69.59 | 50.37 | **−27.6%** |
+| `test_re_rand` | 100.26 | 71.79 | **−28.4%** |
+| **avg** | **98.47** | **75.87** | **−23.0%** |
+
+### Conclusions (provisional, pre-#343 rebase)
+
+- **EMA × arcsinh compound is mathematically clean.** Run D's val_raw at epoch 13 = 95.9459 matches Run C (no EMA) to 4 decimals. Arcsinh's transformed target loss is bitwise-identical when EMA is layered on. EMA contributes a clean −10.2% on top of arcsinh.
+- **EMA + arcsinh fixes the standalone scale=100 single_in_dist regression.** Run B (scale=100, no EMA) regressed in-dist by +3%; Run D (scale=500, with EMA) improves in-dist by -14.6% cleanly. The gentler scale=500 plus EMA averaging produces a better Pareto improvement on every split.
+- **EMA gap *widens* over training under arcsinh** — 10.4% at epoch 13 vs ~8.5% on the post-#404 path. Mechanism: arcsinh's transformed loss landscape has more high-frequency oscillation near convergence (small differences in transformed-pressure compound through sinh inverse), and EMA averages those oscillations.
+- **Cross-split signature consistent with H16 standalone**: cruise and re_rand strongest, single_in_dist least. Heavy-tail compression releases gradient share for low-magnitude regimes.
+- **Branch is post-#442 / pre-#343.** Run D doesn't include bf16+compile. Run D's val_ema=86.12 is **+6.4% above the current merged baseline (80.91)** because it's missing the 2.4× throughput uplift that pushed the prior baseline from val=109.19 to 80.91.
+
+### Action
+
+Sent back for one focused **Run E — arcsinh scale=500 + bf16+compile + EMA + FiLM on the post-#343 advisor branch** (`--batch_size 4 --amp_dtype bf16 --compile True --film_re True --use_ema True --ema_decay 0.99 --ema_eval_every 2 --arcsinh_p_scale 500.0 --epochs 37 --lr 7e-4 --weight_decay 5e-4 --seed 123`).
+
+Decision rule on resubmit:
+- val_ema < 75 → merge as round-0 winner #5 (clean compound win — arcsinh + bf16+compile additive)
+- val_ema ∈ [75, 80.91] → still a comfortable win; merge
+- val_ema > 80.91 → arcsinh × bf16+compile overlap fully or antagonistic; close
+
+### Useful follow-ups (deferred)
+
+- Fine sweep around scale=200-700 once basic compound is verified.
+- Compound with H1 (per-sample y-std normalization, alphonse #342, on rebase) — orthogonal mechanisms.
+- Multi-seed confirmation at the winning config.
+
+---
+
 ## 2026-04-28 08:33 — PR #602: H17 layer-wise lr decay for Transolver blocks — **CLOSED**
 
 - Branch: `willowpai2d4-edward/h17-layer-wise-lr-decay` (post-#404, pre-#442, pre-#343)
