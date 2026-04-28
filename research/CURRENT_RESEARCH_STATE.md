@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Updated**: 2026-04-28 18:30 UTC
+- **Updated**: 2026-04-28 23:00 UTC
 - **Branch**: `icml-appendix-willow-pai2e-r2`
 - **Tag**: `willow-pai2e-r2`
 - **Most recent human researcher direction**: none; no GitHub Issues open.
@@ -30,9 +30,9 @@
 | stark    | #842 | compound + SwiGLU param-matched h=168 | architecture (activation) | WIP |
 | himmel   | #843 | compound + gradient norm clipping (max_norm sweep 0.5 / 1.0) | optimization (stability) | WIP |
 | charlie  | #844 | compound + mlp_ratio=4 (FFN capacity at nh1) | architecture (MLP capacity) | WIP |
-| thorfinn | NEW | — pending assign — | TBD | IDLE |
-| tanjiro  | NEW | — pending assign — | TBD | IDLE |
-| nezuko   | NEW | — pending assign — | TBD | IDLE |
+| thorfinn | #865 | AdamW weight decay sweep: wd=1e-5 and wd=0 on Huber base | optimization (regularization) | WIP |
+| tanjiro  | #864 | Bugfix: sanitize GT y in evaluate_split (cruise NaN poison fix) | infrastructure | WIP |
+| nezuko   | #866 | EMA model weights for val/test eval (decay=0.999) | optimization (eval smoothing) | WIP |
 
 **Note on PRs #840–#844**: Assigned against old compound anchor (96.80). Compare against new baseline (64.73) when they finish.
 
@@ -79,16 +79,16 @@ Current open questions:
 - slice_num=4 — PR #841, val=98.25, floor at sn=16
 - n_hidden=192 without AMP — throughput-blocked; re-test after #821 lands
 
-## Pending new assignments (thorfinn, tanjiro, nezuko)
+## Pending new assignments (all students active)
 
-Priority hypotheses for next assign (update vs. previous list — baseline is now 64.73):
+All 11 students now have active WIP PRs. Next priority assignments (for when students finish):
 
 1. **Relative MAE + full 50-epoch run (post-AMP)** — once PR #821 merges with lr=2e-3, run edward's config for a full 50 epochs. Most likely to push val below 60.
 2. **ε sweep for relative MAE** — try ε ∈ {1e-3, 1e-2} (current ε=1e-6 may be too tight in normalized space). Low-cost, high-expected-benefit.
-3. **AdamW weight decay tuning** — sweep wd=1e-5 and wd=0 on the Huber+relative-MAE base.
-4. **EMA weights for eval** — exponential moving average of weights at eval. Often 1–3 pt gain, zero architecture change.
-5. **Domain-adaptive Huber δ** — different δ per domain (cruise vs rc vs single vs re_rand). Per-domain residual distributions are structurally different (verified by split metrics).
-6. **n_hidden=192 + relative-MAE** — width scaling after AMP/bf16 lands.
+3. **Domain-adaptive Huber δ** — different δ per domain (cruise vs rc vs single vs re_rand). Per-domain residual distributions are structurally different (verified by split metrics).
+4. **n_hidden=192 + relative-MAE** — width scaling after AMP/bf16 lands.
+5. **Cosine annealing LR schedule** — add CosineAnnealingLR on top of relative-MAE base; may squeeze extra performance in final 10 epochs.
+6. **Relative MAE + surf_weight tuning** — compound the surf_weight sweep (#855) with the relative MAE loss rather than Huber base.
 
 ## Potential longer-horizon directions
 
