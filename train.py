@@ -380,6 +380,7 @@ class Config:
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 10.0
+    p_weight: float = 5.0   # extra weight for pressure channel in surf_loss
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -509,7 +510,9 @@ for epoch in range(MAX_EPOCHS):
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
         vol_loss = (abs_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (abs_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        ch_weights = abs_err.new_tensor([1.0, 1.0, cfg.p_weight])  # [3]
+        weighted_surf_err = abs_err * ch_weights[None, None, :]      # [B, N, 3]
+        surf_loss = (weighted_surf_err * surf_mask.unsqueeze(-1)).sum() / (surf_mask.sum().clamp(min=1) * ch_weights.mean())
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
