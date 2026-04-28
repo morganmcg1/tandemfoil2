@@ -1767,3 +1767,101 @@ Mixed per-split signature confirms basin-shift:
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #652 | tanjiro | lion-lr-2p7e-4 | Lion `lr = 2.5e-4 → 2.7e-4` on merged #394 baseline | Bracket midpoint between #394 win and #592 lose under new compute regime. Locks basin upper edge to ~5 % precision. Three scenarios: win (basin extends past 2.7e-4), wash (2.5e-4 IS the optimum, cleanest closure), or lose (basin tighter than expected, edge in [2.5, 2.7]). Honest band −2 % to +5 %. |
+
+## 2026-04-28 08:30 — PR #631: Lion weight_decay 3e-4 → 1e-4 (charliepai2d1-askeladd) — **CLOSED (Lion-side wd basin shallow and broad)**
+- Run config: `weight_decay: 3e-4 → 1e-4` (Config dataclass). Branched from post-#394. **Two seeds completed** (canonical 081423 / seed-2 074008) — askeladd's noise-floor estimate.
+
+### Headline metrics (best EMA epoch=19/50, timeout-cut)
+| metric | canonical | seed 2 | current baseline #394 |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | 43.490 (−0.4 %) | 43.201 (−1.1 %) | 43.677 |
+| `test_avg/mae_surf_p` | 37.471 (+1.5 %) | 37.900 (+2.7 %) | 36.920 |
+
+**Two-seed range (~0.3 on val) suggests the val improvement is below seed-noise floor**. Test side consistently regresses across both seeds (signal above noise floor).
+
+### Per-split test consistently shows lose-lite signature across BOTH seeds
+| Split | val Δ canonical | val Δ seed 2 | test Δ canonical | test Δ seed 2 |
+|---|---:|---:|---:|---:|
+| single_in_dist | +3.8 % | −3.7 % | **−4.0 %** (in-dist gain) | **−0.8 %** (in-dist gain) |
+| geom_camber_rc | −3.2 % | −5.6 % | **+3.1 %** (OOD regress) | **+4.4 %** (OOD regress) |
+| geom_camber_cruise | +3.2 % | +4.9 % | **+3.6 %** (OOD regress) | **+6.5 %** (OOD regress) |
+| re_rand | −3.3 % | +4.2 % | **+4.5 %** (OOD regress) | **+2.0 %** (OOD regress) |
+
+**Val signature is seed-noise-dominated** (single swings −3.7 to +3.8 across seeds; re_rand swings −3.3 to +4.2). **Test signature is consistent across seeds**: in-dist gains, all 3 OOD splits regress. Same in-dist memorization pattern as closed #355 (mlp_ratio=4) and #475 (swiglu_inner=256).
+
+### Mechanism finding (durable for the appendix Lion-axis closure)
+
+**Lion-side wd basin is shallow and broad** — different shape from AdamW-side basin:
+
+| Optimizer | wd force formula | wd-axis basin shape | evidence |
+|---|---|---|---|
+| AdamW | `wd × lr × \|w\| / sqrt(v_t)` (adaptive, smaller) | meaningful basin; 5e-4 was a real lose-case | closed #458 |
+| **Lion** | **`wd × lr × \|w\|`** (un-adaptive) | **shallow and broad** | closed #631 |
+
+Under Lion, a 1/3× wd produces only a ~2 % test regression — much smaller magnitude than the equivalent 5/3× wd was under AdamW. **3e-4 (Lion paper's `wd_adamw × 3` default) is at-or-near the optimum** for this model.
+
+### Lion momentum-knob basin now FULLY MAPPED
+
+| axis | basin shape | closed by |
+|---|---|---|
+| lr (β2=0.99, eager, 14 ep) | upper edge in [2.85e-4, 3.3e-4]; lower edge below 1.7e-4 | merged #536, prior #592, #507, prior #580 (closed) |
+| lr (β2=0.999, compile, 20 ep) | basin TIGHTENS, upper edge at-or-below 2.85e-4 | merged #394 (2.5e-4), closed #592 rebased (2.85e-4) |
+| β1 | tightly basined at 0.9; asymmetric (upper edge sharper) | closed #545, merged #571, closed #621 |
+| β2 | basined at 0.999; sharp upper edge between 0.999 and 0.9999 | merged #571, closed #598 |
+| **wd** | **shallow and broad; 3e-4 at-or-near optimum** | **closed #631 (this)** |
+
+The Lion-axis basin map is the strongest single appendix asset from this branch.
+
+### Decision: close
+- Val improvement within seed noise; test regression real and consistent.
+- Strict val-gate rule fails when val/test diverge mechanistically.
+- Reassigned askeladd to **PR #675 (ema-decay-0p995)** — natural revisit of EMA decay under new 20-ep budget. Tests whether basin shifted with budget length.
+
+## 2026-04-28 08:32 — PR #552 rebased: GeGLU on post-#394 (charliepai2d1-nezuko) — **CLOSED (subsume scenario; SwiGLU recipe locked)**
+- Run config: `F.silu → F.gelu` in GeGLUMLP.forward, rebased onto post-#394 (compile + Lion + SwiGLU(168) + 20-ep). Single-character functional change (plus class+variable renames already shipped).
+
+### Headline metrics (best EMA epoch=20/50, timeout-cut)
+| metric | this run (rebased) | this run (pre-rebase) | current baseline #394 |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | 43.529 (−0.34 %) | 62.477 (vs #352-era +β=1.0) | 43.677 |
+| `test_avg/mae_surf_p` | 37.555 (+1.72 %) | 54.102 | 36.920 |
+| `raw_val_avg/mae_surf_p` | 48.724 (+5.52 %) | 74.334 | 46.174 |
+
+**Subsume scenario landed exactly**: GeGLU's pre-rebase win (val −2.62 %, test −3.27 % vs SwiGLU+β=1.0) fully absorbed by the stack of merged levers between #535 and #394. Val improvement within seed noise; test and raw both consistently worse.
+
+### Cruise regression replicates AND AMPLIFIES across both runs (durable mechanism)
+
+| Run | Baseline | val cruise Δ | test cruise Δ |
+|---|---|---:|---:|
+| Pre-rebase (#552 first) | post-#352 (β=1.0) | +1.42 % | +3.33 % |
+| **Rebased (#552 this)** | **post-#394 (β=0.5 + compile + 20 ep)** | **+3.46 %** | **+5.59 %** |
+
+**Cruise regression doubles under the new regime.** Mechanism: GELU's deeper negative-input dip (vs SiLU's softer dip) costs ~1 MAE unit of fit on cruise's lowest-magnitude pressure-field regime in both runs. The increased budget + compile makes that loss-of-fit larger, not smaller.
+
+EMA-vs-raw final-epoch gap **flipped sign**:
+- Pre-rebase: GeGLU gap −11.86 vs SwiGLU −15.37 (GeGLU tighter)
+- Rebased: GeGLU gap −5.20 vs SwiGLU −2.50 (GeGLU wider)
+
+Under the new regime, GELU produces noisier raw iterates that EMA must mask harder.
+
+### Architecture-axis basin map locked at SwiGLU(168) + SiLU
+
+| Axis | Tested | Result |
+|---|---|---|
+| MLP type | GELU MLP, SwiGLU MLP, GeGLU MLP | **SwiGLU(168) wins** (#398 first architectural merge) |
+| MLP capacity | swiglu_inner ∈ {168, 192, 256} | 168 is local optimum (#475/#514 closed) |
+| MLP ratio | mlp_ratio ∈ {2, 4} | 2 is optimum (#355 closed) |
+| Activation in gated MLP | SiLU, GELU | **SiLU wins** (#552 closed) |
+| Dropout in MLP | 0, 0.05, 0.1 | 0 is optimum (#483/#513 closed) |
+
+### Decision: close
+- val within seed noise; test real regression; raw real regression — val signal masked by EMA.
+- Cruise mechanism story durable across two runs.
+- Reassigned nezuko to **PR #676 (n_head=8)** — last untouched architecture single-knob axis. Closed #354 paired n_head=8 with slice_num=128 throughput-bound; this isolates the n_head axis under compile.
+
+## 2026-04-28 08:35 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #675 | askeladd | ema-decay-0p995 | `ema_decay = 0.99 → 0.995` on merged #394 baseline | Natural revisit of EMA-axis under new 20-ep budget. EMA(0.99) was tuned at 14-ep budget (5.8 % half-life of run); under 20-ep budget that's 4.1 % of run. EMA(0.995) gives 8.1 % half-life — better matched to new budget per Polyak-Ruppert literature. Honest band −4 % to +5 %. |
+| #676 | nezuko | n-head-8 | `n_head = 4 → 8` on merged #394 baseline | Last untouched architecture single-knob axis. Closed #354 paired n_head=8 + slice_num=128 throughput-bound at 250 s/ep eager; under compile + Lion isolates n_head. 16-dim per head (vs 32) tests whether Transolver's compact slice-token attention tolerates smaller per-head dim. Honest band −6 % to +10 % (widest band — high information value). |
