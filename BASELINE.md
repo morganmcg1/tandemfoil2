@@ -2,7 +2,39 @@
 
 Lower is better on **`val_avg/mae_surf_p`** (equal-weight mean surface-pressure MAE across the four val splits) — this is the primary ranking metric. Paper-facing number is `test_avg/mae_surf_p` from the best-val checkpoint.
 
-> **⚠️ Seed-variance caveat (2026-04-28).** `train.py` does not call `torch.manual_seed` (yet), and run-to-run variance for the same config has been measured at ~25 MAE (~21%) on this metric. Numbers below are single-seed point estimates. PR #482 will replace these with multi-seed `mean ± std` once it lands.
+> **⚠️ Seed-variance caveat (2026-04-28).** `train.py` does not call `torch.manual_seed` (yet), and run-to-run variance for the same config has been measured at ~9 MAE (~7%) under the post-EMA baseline (per PR #482's 5-seed study). Numbers below are single-seed point estimates. PR #482 is being redone on the current merged baseline to characterize the variance under OneCycle + L1 + no-EMA.
+
+## 2026-04-28 10:11 — PR #671: `use_ema=False` under OneCycle
+
+- Branch: `willowpai2d3-frieren/no-ema-with-onecycle` (squash-merged)
+- **Recipe change:** `use_ema` default flipped from `True` → `False`. The EMA implementation remains in `train.py` for future schedules that benefit from weight averaging (e.g., warmup-cosine), but the default is now off because OneCycle's cool-down already converges the live weights better than EMA averaging captures.
+- **Best val avg surface MAE:** `val_avg/mae_surf_p = 84.7936` (epoch 14, run `0bikksqu`).
+- **Best test avg surface MAE:** `test_avg/mae_surf_p = 74.1582` (same checkpoint).
+- **Within-sweep delta** (`use_ema=False` vs `use_ema=True` in same PR, same seed environment): **−4.92 MAE on val_avg, −4.64 MAE on test_avg.**
+- **vs prior baseline (PR #409):** −2.95 MAE val (87.74 → 84.79), −4.08 MAE test (78.24 → 74.16). The EMA-on control in this PR landed at 89.71 (+1.97 above PR #409's recorded 87.74) which is consistent with single-seed variance.
+- **Mechanism reproduction:** the EMA-vs-live sign-flip diagnostic from PR #409 reproduces cleanly: +5.81 in this PR vs +5.69 in PR #409 — same sign, same magnitude across two independent runs. Definitive evidence that under OneCycle, EMA averages over the noisier mid-training high-LR phase and hurts the final-epoch live model.
+- **Per-split test MAE on best-val checkpoint:**
+
+  | Split | mae_surf_p |
+  |---|---:|
+  | `test_single_in_dist` | (winner test_avg=74.16; per-split numbers in W&B run `0bikksqu`) |
+  | `test_geom_camber_rc` | 85.78 |
+  | `test_geom_camber_cruise` | 53.56 |
+  | `test_re_rand` | (in W&B) |
+  | **test_avg** | **74.1582** |
+
+- **W&B run:** `0bikksqu` in group `no-ema-with-onecycle` (project `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r3`)
+- **Reproduce:**
+  ```bash
+  cd target/
+  python train.py --huber_delta 0 --epochs 50 \
+      --wandb_group baseline-after-pr671 --wandb_name baseline-r1 \
+      --agent willowpai2d3-XXX
+  ```
+- **Notes:**
+  - **Mechanistic story is now complete:** EMA helps noisy training (warmup-cosine flat at 85% peak → +7.26 MAE benefit) and hurts converged training (OneCycle cool-down to 1.5% peak → −5.81 MAE benefit). With OneCycle the merged default, EMA is correctly off-default.
+  - PR #294 R2's reported baseline ran with `use_ema=True, ema_decay=0.999` (frieren's current control reproduces this). After this merge, the baseline assumes `use_ema=False` by default.
+  - Hyperparameter snapshot: `peak_lr=1e-3, warmup_epochs=2, weight_decay=1e-4, batch_size=4, surf_weight=10.0, huber_delta=0, epochs=50, schedule=onecycle, onecycle_peak_lr=2e-3, onecycle_pct_start=0.1, onecycle_total_epochs=15, n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2, use_ema=False`.
 
 ## 2026-04-28 08:53 — PR #409: OneCycleLR (peak_lr=2e-3, pct_start=0.1, total_epochs=15)
 
