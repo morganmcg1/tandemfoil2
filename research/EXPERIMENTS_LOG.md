@@ -1,5 +1,69 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 05:05 — PR #467: Huber β sweep — β=0.5 wins, **NEW BASELINE (-8.65% vs #368)**
+- Branch: `charliepai2d4-askeladd/huber-beta-sweep` (deleted on merge)
+- Student: charliepai2d4-askeladd
+- **Outcome: MERGED (squash, commit eb5168f). NEW BASELINE: val_avg=57.50 with β=0.5, -8.65% vs #368.**
+- Bonus: cudagraph_skip_dynamic_graphs=True bundled into the merge as throughput-neutral robustness fix (parallel to alphonse #466's pending revision).
+
+### Headline (3-arm β sweep, EMA-evaluated, paired in same PR)
+| β | best epoch | val_avg | test_avg | Δ val vs ref | Δ test vs ref |
+|---|---|---|---|---|---|
+| **0.5** | 34 | **57.50** | **50.51** | **-8.91%** | **-8.41%** |
+| 1.0 (paired ref) | 33 | 63.13 | 55.16 | (control) | (control) |
+| 2.0 | 33 | 68.53 | 60.44 | +8.55% | +9.57% |
+
+vs current merged baseline #368 (val=62.94, test=54.73): **β=0.5 lands at -8.65% val, -7.71% test**. Strict monotone β order on every val + test split + every output channel.
+
+### Per-split val Δ (β=0.5 − β=1.0 ref)
+| Split | Δ |
+|---|---|
+| val_single_in_dist     | -9.45% |
+| val_geom_camber_rc     | -5.87% |
+| val_geom_camber_cruise | **-12.08%** (largest gain — predicted by sharper-near-zero hypothesis) |
+| val_re_rand            | -9.69% |
+
+### Per-split test Δ
+| Split | Δ |
+|---|---|
+| test_single_in_dist     | -8.43% |
+| test_geom_camber_rc     | -6.24% |
+| test_geom_camber_cruise | -11.89% |
+| test_re_rand            | -8.78% |
+
+### Per-channel mechanism (cruise camber, the biggest β=0.5 winner)
+| Channel | β=0.5 | β=1.0 | β=2.0 | Δ(0.5 vs 1.0) |
+|---|---|---|---|---|
+| mae_surf_Ux | 0.466 | 0.543 | 0.613 | -14.2% |
+| mae_surf_Uy | 0.294 | 0.351 | 0.382 | -16.3% |
+| mae_surf_p  | 38.46 | 43.75 | 50.78 | **-12.1%** |
+
+β=0.5 helps **all three channels** — pressure, Ux, Uy — not just heavy-tailed pressure. The 'L1-like loss might over-emphasize tiny errors' worry didn't materialize.
+
+### Analysis
+- **Mechanism confirmed and stronger than predicted** (predicted -1% to -4%, actual -8.91%). Likely amplification factor: EMA + cosine-tail interactions with β shape compound at the now-33-34-epoch budget.
+- **Cruise gains biggest** (-12.1% val mae_surf_p) — exactly the sharper-near-zero prediction. raceCar camber gains least (-5.87%, fattest pressure tail benefits less from sharpening).
+- **β=2.0 (more L2-like) hurts ALL channels**, including velocity. Confirms the loss-shape effect is genuine, not just tail-dominance.
+- **Throughput-neutral**: 53.7-54.1 s/epoch across all 3 β values vs #289's 54.4 s. cudagraph_skip flag applied throughout (askeladd hit the known compile flakiness on first launch and bundled the fix).
+- **Compounding evidence**: Huber β=0.5 + Fourier + EMA + clip + bf16 + compile = 6 stacked levers, all positive, no observable interference.
+
+### Cumulative round-1 trajectory
+| PR | val_avg | Δ from prior best |
+|---|---|---|
+| #287 | 126.67 | (first baseline) |
+| #308 | 106.40 | -16.2% |
+| #381 |  98.85 |  -7.1% |
+| #401 |  66.89 | -32.3% |
+| #289 |  63.33 |  -5.3% |
+| #368 |  62.94 |  -0.6% |
+| #467 |  **57.50** |  **-8.7%** |
+| **Cumulative** | | **-54.6% from #287, -57.5% from published-baseline-equivalent** |
+
+### Open infrastructure note
+- Merged train.py has β as a CLI flag with default `huber_beta=1.0`. Reproducing the merged baseline requires `--huber_beta 0.5`. Same flag-vs-default issue as alphonse's #287 surf_weight=25 (which became orphaned in subsequent PRs). Asking askeladd to flip the Config default to 0.5 in their next PR (β finer sweep + default flip).
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=467 records, 107 lines from all 3 runs).
+
 ## 2026-04-28 04:50 — PR #477: Conservative widening n_hidden=144 on post-#289 + compile
 - Branch: `charliepai2d4-frieren/wider144-compile` (deleted on close)
 - Student: charliepai2d4-frieren
