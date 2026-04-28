@@ -1,15 +1,53 @@
 # Baseline — icml-appendix-willow-pai2e-r2
 
-Active branch: `icml-appendix-willow-pai2e-r2`. This is a fresh research track — no
-PRs have been merged on this branch yet, so the values below come from the
-`train.py` defaults plus carefully cited historical context. The first round of
-PRs will overwrite these numbers with measured metrics.
+Active branch: `icml-appendix-willow-pai2e-r2`.
 
 ## Current best (this branch)
 
-- **Config**: `train.py` defaults (no PR merged yet)
-- **Val primary metric** `val_avg/mae_surf_p`: TBD (no run completed on this branch)
-- **Test primary metric** `test_avg/mae_surf_p`: TBD (no run completed on this branch)
+- **PR**: #779 — "Round 1 anchor: bare baseline + nl3/sn16/nh1 compound" (merged 2026-04-28)
+- **Config**: `n_layers=3, slice_num=16, n_head=1, n_hidden=128, mlp_ratio=2`
+- **val_avg/mae_surf_p** (best checkpoint, epoch 31): **96.80**
+- **W&B run**: `ez3f10h3` (group `compound-anchor`, project `senpai-charlie-wilson-willow-e-r2`)
+- **Params**: 558,134 | **Peak VRAM**: 21.6 GB | **Epochs in 30 min**: 32
+
+### Per-split test metrics (from best checkpoint)
+
+| Split | test mae_surf_p |
+|-------|----------------|
+| `test_single_in_dist`       | 92.53  |
+| `test_geom_camber_rc`       | 96.38  |
+| `test_geom_camber_cruise`   | **NaN** (scoring bug — see note below) |
+| `test_re_rand`              | 88.29  |
+| **test_avg/mae_surf_p**     | **NaN** (poisoned by cruise NaN) |
+
+**Cruise NaN note**: `data/scoring.py` only skips samples with non-finite *ground truth*; a single inf in the model's pressure prediction for one cruise test sample poisons the whole accumulator. The val cruise split was finite throughout training (val_geom_camber_cruise/mae_surf_p ≈ 78 at epoch 31). This is a scoring bug, not a model issue. A fix PR (adding a prediction-finiteness guard) has been green-lit.
+
+### Reproduce
+
+```bash
+cd target && python train.py --epochs 50 \
+    --wandb_group compound-anchor --wandb_name compound-nl3-sn16-nh1 \
+    --agent willowpai2e2-alphonse
+```
+
+with `model_config` in `train.py` set to:
+```python
+n_layers=3,
+n_head=1,
+slice_num=16,
+n_hidden=128,
+mlp_ratio=2,
+```
+
+---
+
+## 2026-04-28 12:00 — PR #779: Round 1 anchor
+
+- **Surface MAE (val_avg):** 96.80
+- **W&B run:** ez3f10h3
+- **Reproduce:** see above
+
+---
 
 ## Reference context (from `target/README.md` leaderboard)
 
