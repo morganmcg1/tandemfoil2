@@ -255,7 +255,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             x_norm = torch.cat([x_norm, ff], dim=-1)
             pred = model({"x": x_norm})["preds"]
 
-            abs_err = (pred - y_norm).abs()
+            abs_err = F.smooth_l1_loss(pred, y_norm, beta=0.5, reduction="none")
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
@@ -466,7 +466,7 @@ for epoch in range(MAX_EPOCHS):
         ff = fourier_features(x_norm[..., :2], num_freq=8)
         x_norm = torch.cat([x_norm, ff], dim=-1)
         pred = model({"x": x_norm})["preds"]
-        abs_err = (pred - y_norm).abs()
+        abs_err = F.smooth_l1_loss(pred, y_norm, beta=0.5, reduction="none")
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
