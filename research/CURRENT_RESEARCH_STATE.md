@@ -1,38 +1,39 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-28 (round 1 kickoff)
+- **As of:** 2026-04-28 ~21:00 (round 1 closing, round 2 in flight)
 - **Most recent human direction:** none yet for this track
 - **Branch:** `icml-appendix-willow-pai2e-r4`
+- **Current best:** `val_avg/mae_surf_p = 101.93` (PR #752, L1 loss merged)
 
 ## Current research focus
 
-Establish a working baseline on `val_avg/mae_surf_p` and `test_avg/mae_surf_p`
-by exploring the **stock-Transolver knobs that are most likely to help out of
-the box** before committing to architectural changes. The stock config is
-visibly under-tuned along several axes:
+Round 1 has resolved into a clear picture: **L1 loss merged** as the new
+baseline (101.93). Other levers either failed to compound on top of L1
+(closed) or are still pending L1-retest results. The highest-impact
+round-2 ideas from the literature pass have now been launched.
 
-- The Transolver is small (~512K params) while VRAM is ~96 GB — capacity is
-  available.
-- Loss is MSE while the metric is MAE — there is a known loss/metric mismatch.
-- `surf_weight` and per-channel weights have not been swept; surface pressure
-  is the only thing the headline metric measures.
-- Default `lr=5e-4` with no warmup and `batch_size=4` are conservative.
+### Round 1 outcomes (tags + decisions)
 
-Round 1 covers eight orthogonal levers so we can read the gradient of the
-landscape after a single round of merges.
+| PR | Student | Lever | Outcome |
+|---|---|---|---|
+| #752 | askeladd | L1 loss | **merged** (baseline 101.93) |
+| #758 | tanjiro | lr=1e-3 + 10% warmup | **closed** (L1 retest +9.7% worse) |
+| #749 | alphonse | Capacity 256×8 | **closed** (no convergence in 30-min budget; infra reusable) |
+| #755 | frieren | slice_num 128 | **closed** (+33% epoch cost cancels per-epoch gain) |
+| #760 | thorfinn | batch_size 8 | **closed** (during send-back cycle; BS=8 viable but no L1 retest landed) |
+| #754 | fern | Per-channel pressure 3× | wip (L1 retest pending) |
+| #753 | edward | surf_weight 20/30/50 | wip |
+| #757 | nezuko | 5% warmup + cosine | wip |
+| #797 | askeladd | NaN/Inf guard (model + GT) | wip |
 
-## Round 1 hypotheses (one per student)
+### Round 2 in flight (orthogonal, on top of L1)
 
-| Student | Lever | Predicted edge |
-|---------|-------|----------------|
-| alphonse | Capacity scale-up (`n_hidden=256, n_layers=8`) | Headroom from underused VRAM |
-| askeladd | L1 loss in normalized space | Loss/metric alignment |
-| edward | `surf_weight` sweep up (10 → 30) | Direct upweight of headline metric |
-| fern | Per-channel loss weight on `p` (3×) | Pressure is the only ranked channel |
-| frieren | More physics slices (`slice_num=64 → 128`) | Finer slice decomposition |
-| nezuko | LR warmup (5% linear) + cosine | Adam stability early in training |
-| tanjiro | Higher peak LR (1e-3) with 10% warmup | Default 5e-4 is conservative |
-| thorfinn | Larger batch (`batch_size=8`) | Better gradient estimates, VRAM available |
+| PR | Student | Round-2 idea | Predicted impact |
+|---|---|---|---|
+| #816 | alphonse | FiLM conditioning of LayerNorm (#2) | -5 to -12% |
+| #818 | tanjiro | SGDR Cosine Warm Restarts (#9) | -2 to -5% |
+| #819 | frieren | Relative L2 loss (per-sample norm) (#1) | -5 to -15% |
+| #820 | thorfinn | Fourier PE on (x, z) coords (#3) | -4 to -10% |
 
 ## Round 2 hypotheses ranked and ready
 

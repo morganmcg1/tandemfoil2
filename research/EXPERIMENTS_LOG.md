@@ -222,22 +222,100 @@ at smaller scales (n_hidden=192, or n_hidden=256 with n_layers=6).
 independently. PR #797 (askeladd) already expanded in scope to handle both
 the model-output Inf path AND the GT-NaN path.
 
-## Round 1 status snapshot (2026-04-28 ~20:40)
+## 2026-04-28 20:50 — PR #758 (round-2 tag): lr=1e-3 + 10% warmup ON L1 — **CLOSED**
 
-All 8 students have WIP PRs after #749 close + alphonse reassignment.
+- Branch: `willowpai2e4-tanjiro/lr-1e-3-warmup` (deleted)
+- Student: willowpai2e4-tanjiro
+- W&B run: rebased L1 retest (best epoch 13)
+
+**Hypothesis (retest).** Whether `lr=1e-3 + 10% warmup` compounds on top of
+the merged L1 baseline (101.93). Original MSE-era result (151.60) had been
+the best of the round-1 MSE pack.
+
+**Results (L1 retest, best epoch 13/14, 30.7 min wall)**
+
+| Metric | tanjiro lr=1e-3+warmup ON L1 |
+|---|---|
+| `val_avg/mae_surf_p` | 111.83 |
+| Δ vs L1 baseline (101.93) | **+9.7% (worse)** |
+| Best epoch | 13 / 50 |
+
+**Analysis.** Clean run, no divergence; warmup ramped from 1e-6 → 1e-3 over
+epochs 1-5 and stayed near peak through ep 11 then cosine-decayed. The L1
+retest landed at 111.83, ~10% worse than L1-baseline alone. Interpretation:
+once L1 fixed gradient quality on outliers, the higher peak LR over-steers
+the now-better-aligned gradients into a worse minimum. The MSE-era benefit
+of higher LR (151.60 vs ~160 in the MSE pack) was largely compensating for
+poor MSE gradient quality — a benefit that disappears with L1.
+
+**Decision.** Closed. Lever is exhausted on this baseline. Tanjiro
+reassigned to **SGDR (Cosine Warm Restarts)** — round-2 idea #9, builds on
+their schedule expertise but uses a different mechanism (periodic LR resets
+to escape sharp minima within the 50-epoch cap).
+
+## 2026-04-28 20:50 — PR #755: slice_num 64→128 — **CLOSED**
+
+- Branch: `willowpai2e4-frieren/slice-num-128` (deleted)
+- Student: willowpai2e4-frieren
+- W&B run: 11 epochs at slice=128, MSE pre-L1
+
+**Hypothesis.** Doubling slice tokens from 64 → 128 should improve the
+slice-token decomposition for large meshes (cruise ~210K nodes), giving
+finer physics partitioning. Predicted -3 to -8%.
+
+**Results (best epoch 11/11, MSE pre-L1, 30.7 min wall)**
+
+| Metric | frieren slice=128 (MSE) |
+|---|---|
+| `val_avg/mae_surf_p` | 137.79 |
+| `test_avg/mae_surf_p` (with bug-fix) | 124.18 |
+| Δ vs L1 baseline (101.93) | **+35% (worse)** |
+| Per-epoch wall | +33% (174 s vs 131 s for slice=64) |
+| Epochs at timeout | 11 / 50 |
+
+**Per-split wall-clock-anchored comparison** (frieren's table):
+- val_geom_camber_cruise: slice=128 **98.87** vs slice=64 warmup-cosine 99.95 (-1.1%)
+- val_geom_camber_rc: slice=128 155.21 vs slice=64 142.40 (+9.0%)
+- val_single_in_dist: slice=128 181.62 vs slice=64 179.73 (+1.0%)
+
+**Analysis.** Per-epoch quality gain is real but +33% per-epoch wall-clock
+cost (PR's +20% estimate undershot) reduces budget to 11 epochs vs 14 for
+the baseline. At fixed wall-clock the baseline wins. Cruise (largest mesh)
+is the only split where slice=128 looks competitive — supports the
+geometric intuition that finer slicing helps complex/large geometries.
+
+The lever isn't dead in principle — if alphonse's bf16+grad-checkpoint infra
+PR lands and recovers ~30% throughput, slice_num=128 + L1 could become
+viable. Filed for round 3 reconsideration.
+
+**Independent confirmation of cruise-test NaN bug** — third
+confirmation (alphonse, thorfinn, frieren). Frieren added a workaround in
+their branch (filter samples with non-finite y in `evaluate_split`); same
+mechanism as the canonical fix in PR #797 (askeladd) which has expanded
+scope.
+
+**Decision.** Closed. Frieren reassigned to **Relative L2 loss** — round-2
+idea #1, highest predicted impact (-5 to -15%). Addresses high-Re scale
+variation directly: per-sample loss normalization equalizes gradient
+contribution across the 4× spread in y_std within a split.
+
+## Round 1+2 status snapshot (2026-04-28 ~20:55)
 
 | PR | Student | Topic | Status |
 |----|---------|-------|--------|
-| #749 | alphonse | Capacity scale-up (256×8) | **closed** (83% regression, no convergence in budget) |
+| #749 | alphonse | Capacity scale-up (256×8) | **closed** (no convergence in budget) |
 | #752 | askeladd | L1 loss | **merged** (baseline 101.93) |
 | #753 | edward | surf_weight 20/30/50 | wip |
 | #754 | fern | Per-channel pressure 3× | sent back (retest on L1) |
-| #755 | frieren | slice_num 64→128 | wip |
+| #755 | frieren | slice_num 64→128 | **closed** (wall-clock cost cancels per-epoch gain) |
 | #757 | nezuko | 5% warmup + cosine | wip |
-| #758 | tanjiro | lr=1e-3 + 10% warmup | sent back (retest on L1) |
-| #760 | thorfinn | batch_size 4→8 | sent back (retest on L1) |
+| #758 | tanjiro | lr=1e-3 + 10% warmup (L1 retest) | **closed** (+9.7% vs L1 baseline) |
+| #760 | thorfinn | batch_size 4→8 | closed (during send-back cycle) |
 | #797 | askeladd | NaN/Inf guard (scope expanded) | wip |
-| #816 | alphonse | FiLM conditioning of LayerNorm (round-2 #2) | **wip** (new round-2 assignment) |
+| #816 | alphonse | **Round-2 #2:** FiLM conditioning | wip |
+| #818 | tanjiro | **Round-2 #9:** SGDR warm restarts | wip |
+| #819 | frieren | **Round-2 #1:** Relative L2 loss | wip |
+| #820 | thorfinn | **Round-2 #3:** Fourier PE on (x,z) | wip |
 
 ## Round 1 status snapshot (2026-04-28 ~20:15)
 
