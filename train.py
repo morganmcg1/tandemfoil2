@@ -214,6 +214,74 @@ class Transolver(nn.Module):
         return {"preds": fx}
 
 
+class FourierFeatures(nn.Module):
+    """Random-Fourier-feature encoding of 2D coordinates (Tancik et al. 2020).
+
+    Maps (B, N, 2) -> (B, N, output_dim). One ``[num_features, 2]`` Gaussian
+    matrix is registered (non-trainable) per sigma in ``sigmas``; each
+    contributes ``2 * num_features`` sin/cos channels. When ``concat_raw`` is
+    True the raw ``(x, z)`` coords are prepended to the output, giving the
+    backbone the un-encoded position alongside the spectral lift.
+    """
+
+    def __init__(self, sigmas: list[float], num_features: int, concat_raw: bool = False):
+        super().__init__()
+        if not sigmas:
+            raise ValueError("FourierFeatures requires at least one sigma")
+        self.concat_raw = concat_raw
+        self.n_scales = len(sigmas)
+        self.num_features = num_features
+        self.sigmas = list(sigmas)
+        for i, sigma in enumerate(sigmas):
+            B = torch.randn(num_features, 2) * sigma
+            self.register_buffer(f"B_{i}", B)
+
+    @property
+    def output_dim(self) -> int:
+        return (2 if self.concat_raw else 0) + self.n_scales * 2 * self.num_features
+
+    def forward(self, coords: torch.Tensor) -> torch.Tensor:
+        feats = [coords] if self.concat_raw else []
+        for i in range(self.n_scales):
+            B = getattr(self, f"B_{i}")
+            proj = 2.0 * torch.pi * coords @ B.T  # [B, N, num_features]
+            feats.append(torch.sin(proj))
+            feats.append(torch.cos(proj))
+        return torch.cat(feats, dim=-1)
+
+
+class TransolverWithFourier(nn.Module):
+    """Transolver wrapper that optionally lifts input coords (dims 0-1) into a
+    random-Fourier basis before the Transolver preprocess MLP.
+
+    When ``use_fourier=False`` the wrapper is a passthrough — equivalent to
+    instantiating ``Transolver`` directly with ``space_dim=2``.
+    """
+
+    def __init__(
+        self,
+        *,
+        use_fourier: bool,
+        sigmas: list[float],
+        num_features: int,
+        concat_raw: bool,
+        **transolver_kwargs,
+    ):
+        super().__init__()
+        self.use_fourier = use_fourier
+        if use_fourier:
+            self.fourier = FourierFeatures(sigmas, num_features, concat_raw=concat_raw)
+        self.backbone = Transolver(**transolver_kwargs)
+
+    def forward(self, data, **kwargs):
+        x = data["x"]
+        if self.use_fourier:
+            coords = x[..., 0:2]
+            other = x[..., 2:]
+            x = torch.cat([self.fourier(coords), other], dim=-1)
+        return self.backbone({"x": x})
+
+
 # ---------------------------------------------------------------------------
 # EMA of weights
 # ---------------------------------------------------------------------------
@@ -390,6 +458,12 @@ def save_model_artifact(
         "use_ema": cfg.use_ema,
         "ema_decay": cfg.ema_decay,
         "ema_warmup_steps": cfg.ema_warmup_steps,
+        "use_fourier_coords": cfg.use_fourier_coords,
+        "fourier_num_features": cfg.fourier_num_features,
+        "fourier_sigma": cfg.fourier_sigma,
+        "fourier_multi_scale": cfg.fourier_multi_scale,
+        "fourier_sigmas": cfg.fourier_sigmas,
+        "fourier_concat_raw": cfg.fourier_concat_raw,
     }
 
     description = (
@@ -448,6 +522,12 @@ class Config:
     use_ema: bool = True
     ema_decay: float = 0.999
     ema_warmup_steps: int = 100
+    use_fourier_coords: bool = True
+    fourier_num_features: int = 64  # m in [sin(2π B x), cos(2π B x)] -> 2m output dims
+    fourier_sigma: float = 1.0  # stddev of B's Gaussian entries — controls spatial frequency
+    fourier_multi_scale: bool = False  # if True, use multiple sigmas concatenated
+    fourier_sigmas: str = "1.0"  # comma-separated sigmas, used when fourier_multi_scale=True
+    fourier_concat_raw: bool = False  # also concat raw (x, z) alongside Fourier features
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -482,8 +562,18 @@ val_loaders = {
     for name, ds in val_splits.items()
 }
 
+if cfg.use_fourier_coords:
+    if cfg.fourier_multi_scale:
+        sigma_list = [float(s.strip()) for s in cfg.fourier_sigmas.split(",") if s.strip()]
+    else:
+        sigma_list = [cfg.fourier_sigma]
+    coord_dim = (2 if cfg.fourier_concat_raw else 0) + len(sigma_list) * 2 * cfg.fourier_num_features
+else:
+    sigma_list = []
+    coord_dim = 2
+
 model_config = dict(
-    space_dim=2,
+    space_dim=coord_dim,
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
@@ -495,7 +585,19 @@ model_config = dict(
     output_dims=[1, 1, 1],
 )
 
-model = Transolver(**model_config).to(device)
+model = TransolverWithFourier(
+    use_fourier=cfg.use_fourier_coords,
+    sigmas=sigma_list,
+    num_features=cfg.fourier_num_features,
+    concat_raw=cfg.fourier_concat_raw,
+    **model_config,
+).to(device)
+if cfg.use_fourier_coords:
+    print(
+        f"Fourier features enabled: sigmas={sigma_list} "
+        f"num_features={cfg.fourier_num_features} concat_raw={cfg.fourier_concat_raw} "
+        f"-> coord_dim={coord_dim}"
+    )
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
