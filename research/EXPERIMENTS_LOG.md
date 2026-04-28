@@ -1591,3 +1591,65 @@ Per-split signature:
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #631 | askeladd | lion-weight-decay-1e-4 | Lion `weight_decay = 3e-4 → 1e-4` on merged #394 baseline | Last unmapped Lion-side single-knob axis. Closed #458 tested wd=5e-4 under AdamW (lose); Lion-side untouched. With +43 % more epochs in budget under compile, the under-converged model may benefit from less regularization. Honest band −6 % to +9 %. |
+
+## 2026-04-28 07:55 — PR #621: Lion β1 0.9 → 0.85 (charliepai2d1-frieren) — **CLOSED (β1 axis basin locked at 0.9)**
+- Run config: `betas=(0.9, 0.999) → (0.85, 0.999)` on post-#571 baseline (pre-#394, eager, ep14 budget). Single-line edit.
+
+### Headline metrics (best EMA epoch=14/50, timeout-cut)
+| metric | this run | run-base #571 | current baseline #394 |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` (EMA) | 52.7226 | 52.116 (+1.16 %) | 43.677 (+20.7 %) |
+| `test_avg/mae_surf_p` | 45.9017 | 45.413 (+1.08 %) | 36.920 (+24.3 %) |
+| best raw val (ep13) | 61.213 | 53.906 | — |
+| Mean pre-clip grad-norm | 22.61 | 27.15 | — |
+| Mean spread ep3-14 | −11.14 | −10.29 | — |
+
+### Per-split — rc-specific regression (novel signature, none of three predicted scenarios)
+| Split | val Δ vs #571 | test Δ vs #571 |
+|---|---:|---:|
+| single_in_dist | −0.21 % (small gain) | **−3.39 %** (gain) |
+| geom_camber_rc | **+4.63 %** | **+6.15 %** |
+| geom_camber_cruise | −1.88 % (gain) | +0.62 % (wash) |
+| re_rand | +0.32 % (wash) | +0.04 % (wash) |
+
+### Mechanism finding (durable for the appendix β1-axis closure)
+
+**β1 axis is tightly basined at 0.9** — both edges produce per-split asymmetry but neither beats default. **Asymmetric basin shape**: lowering β1 below 0.9 is closer to neutral than raising β1 above 0.9 (#545's regress is sharper than #621's).
+
+Three-point β1-axis ablation:
+
+| β1 | β2 | PR | val_avg | per-split signature | mechanism |
+|---|---|---|---:|---|---|
+| 0.95 | 0.99 | #545 (closed) | regress | **single gain, tandem regress** | inertial — stationary-friendly, can't track non-stationary |
+| **0.90** | **0.999** | **#571 (MERGED)** | **52.116** | **broad-based gain** | **balanced — β2 smoother provides direction smoothness** |
+| 0.85 | 0.999 | #621 (this) | 52.7226 (+1.16 %) | rc regress, single small gain, cruise/re_rand wash | responsive — buffer absorbs but compounding doesn't appear |
+
+Two of the four predicted watch-list signals **fired in the predicted "win" direction**:
+- ep1 train/surf was −4.3 % vs #571 (faster initial descent — confirmed responsiveness boost)
+- mean spread −11.14 ≈ #571's −10.29 (β2=0.999 buffer absorbed the increased responsiveness as predicted)
+
+But the predicted **compounding gain on val_avg didn't materialize** — instead rc-specific regression. Most-coherent mechanism reading: **lowering β1 trades direction-averaging smoothness for gradient responsiveness, and rc (the most distribution-shifted geometry) is the split that most needs the inertial averaging to generalize.**
+
+Note an asymmetry: **single_in_dist gains at BOTH β1=0.95 AND β1=0.85** — the simple "stationary prefers inertia" story (proposed at #545) doesn't hold cleanly. More likely: single_in_dist is robust to small β1 perturbations and ±0.05 around 0.9 just nudges it favorably both ways. The load-bearing per-split mechanism is rc.
+
+### Lion momentum-knob basin now FULLY CLOSED
+
+| axis | basin shape | closed by |
+|---|---|---|
+| β1 (responsiveness) | tightly basined at 0.9; asymmetric (upper edge sharper) | #545 (0.95 lose), #571 (0.9 win), #621 (0.85 soft regress) |
+| β2 (buffer history) | basined at 0.999; sharp upper edge between 0.999 and 0.9999 | #571 (0.999 win), #598 (0.9999 broad lose) |
+| lr (under β2=0.99) | basin upper edge in [2.85e-4, 3.3e-4]; lower edge below 1.7e-4 | #536 (2.5e-4 win), #592 (2.85e-4 win), #507 (3.3e-4 lose), prior #580 (1.2e-4 win at β2=0.99) |
+| lr (under β2=0.999) | basin shifted UPWARD; rebased #580 (lr=1.2e-4 + β2=0.999) regressed | #571 (lr=2.5e-4 baseline at β2=0.999), rebased #580 closed |
+
+The Lion-axis basin map is the strongest single appendix asset from this branch.
+
+### Decision: close
+- vs current baseline #394: +20.7 % val (past close threshold).
+- Experimental question answered cleanly: β1=0.9 is the optimum; β1 axis closed.
+- Reassigned frieren to **PR #643 (ema-warmup-skip)** — fresh untouched axis with Polyak-Ruppert bias-correction mechanism story. Skip first 1 epoch of EMA updates to avoid random-init drag on the shadow.
+
+## 2026-04-28 07:58 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #643 | frieren | ema-warmup-skip | Skip first 1 epoch of EMA updates (Polyak-Ruppert bias correction) on merged #394 baseline | Lion momentum-knob basin closed; pivot to fresh untouched axis. EMA shadow at ep1 has random-init drag (`0.99·w_init + 0.01·w_step1`). Skipping ep0 EMA updates lets shadow start from non-random state. Mechanism: the standard Polyak-Ruppert iterate-averaging idea applied to weight EMA — equivalent to Adam's `(1-β^t)` bias correction. Honest band −2 % to +1 %. |
