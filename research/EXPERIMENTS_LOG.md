@@ -1,5 +1,47 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 00:21 — PR #359 (merged, new baseline): bf16 autocast on forward + loss
+
+- branch: `willowpai2d1-alphonse/bf16-autocast` (deleted on merge)
+- hypothesis: throughput, not capacity, is the binding constraint at 30-min
+  cap. bf16 autocast on forward + loss should shorten per-epoch wall enough
+  to actually exercise the cosine schedule and improve val_avg/mae_surf_p.
+  Predicted -3% to -10%.
+
+### Results
+
+| Metric | Value | Δ vs prior baseline (PR #312) |
+|---|---|---|
+| Best `val_avg/mae_surf_p` | **121.8478** (epoch 16 of 19 completed) | **−15.5%** |
+| `test_avg/mae_surf_p` | **111.1495** | **−15.3%** |
+| Per-epoch wall | 96–99 s (mean ~97 s) | **−26%** |
+| Epochs completed | 19 / 50 | +5 epochs |
+| Peak GPU memory | 32.9 GB / 96 GB | **−22%** (~63 GB headroom) |
+| Optimizer steps | 19 × 375 = 7,125 | n/a (≈+36% vs baseline 5,250) |
+| W&B run | `ot9decu8` (`bf16-bsz4`) | — |
+
+Per-split val (best ckpt): single 141.24 / rc 130.28 / cruise 99.83 / re_rand 116.04.
+Per-split test: single 123.73 / rc 121.54 / cruise 85.65 / re_rand 113.68.
+
+### Analysis & conclusions
+
+- **Merged as new round-1 baseline.** BASELINE.md updated.
+- bf16 autocast was the single highest-value experiment of the round so far —
+  prediction of "throughput first, then capacity" is now solidly evidenced.
+- The 26% per-epoch speedup is below the upper end of the predicted 1.5–2×;
+  the model is small (0.66M params reported by the printed banner) so
+  CPU-side dataloader/normalization is a meaningful share of the step.
+  Plenty of compute upside remains.
+- No bf16 numerical issues observed. All forward steps and per-split val
+  losses were finite. The single `loss=NaN` print on `test_geom_camber_cruise`
+  is from `train.py::evaluate_split`'s normalised-loss accumulator (which
+  doesn't filter non-finite-y) — same cosmetic bug fern flagged on PR #360,
+  unrelated to bf16.
+- **Headroom snapshot post-merge**: 63 GB of GPU memory free, 31 epochs of
+  unused budget per run if the schedule could decay properly. Capacity
+  scale-up experiments that were untestable at the old throughput are now
+  feasible.
+
 ## 2026-04-28 00:02 — PR #360 (closed): Larger batch (bsz=8, lr=7.07e-4)
 
 - branch: `willowpai2d1-fern/batch-size-8-lr-scaled` (deleted on close)
