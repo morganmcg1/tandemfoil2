@@ -1,17 +1,17 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 06:35
+- **Date:** 2026-04-28 06:50
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
 
 ## Current research focus
 
-**Current best:** PR #484 (thorfinn, surface-conditional FiLM + Huber β=0.5 + Fourier + EMA + clip + bf16 + compile + cudagraph_skip), merged commit dc9e0e5. `val_avg/mae_surf_p = 57.37` (EMA-evaluated), `test_avg/mae_surf_p = 48.96`. **-0.23% over PR #467 on val, -3.06% on test_avg.** Paired comparison shows -3.05% val, -2.92% test, **all 8 splits gain**. Cumulative **-54.7% from PR #287's first baseline**, **-57.6% from the published-baseline-equivalent**.
+**Current best:** PR #539 (askeladd, Huber β=0.3 + Config default flip to 0.5 + everything else), merged commit 893ea4c. `val_avg/mae_surf_p = 55.43` (EMA-evaluated), `test_avg/mae_surf_p = 47.98`. **-3.4% vs PR #484 on val, -2.0% on test.** Paired comparison shows -6.2% val, -4.9% test, **all 4 val and all 4 test splits gain**. Cumulative **-56.2% from PR #287's first baseline**, **-59.2% from the published-baseline-equivalent**.
 
-**Compounding evidence accumulating across 8 stacked levers**: FiLM (PR #484) + Huber β=0.5 (PR #467) + Fourier (PR #368) + Huber base (PR #289) + EMA + clip (PR #381) + compile (PR #401) + bf16 (PR #372) — eight orthogonal levers all positive without observable interference. FiLM mechanism: shared trunk → tiny domain-conditional decoder (γ_surf, β_surf) vs (γ_vol, β_vol) at last LayerNorm output before mlp2 → no parallel pathway, no trunk interference. **Volume MAE also improves** on all 4 val splits, replicating the trunk/decoder-separation story.
+**Compounding evidence accumulating across 9 stacked levers** (now with β=0.3 even more aggressive): β=0.3 (PR #539) + FiLM (PR #484) + Huber base (PR #467 → β default 0.5 from #539) + Fourier (PR #368) + Huber-formulation base (PR #289) + EMA + clip (PR #381) + compile (PR #401) + bf16 (PR #372). Strict monotone β trend across 5-point grid {0.3, 0.5, 0.7, 1.0, 2.0}; no interior optimum. Per-channel mechanism: cruise pressure -11.6% — heavy-tailed residuals benefit most from L1-leaning shape.
 
-**Open infrastructure note**: Config defaults still `huber_beta=1.0` and `film=False`. Reproducing the merged baseline requires explicit `--huber_beta 0.5 --film`. PR #539 (askeladd's β finer sweep) flips `huber_beta` default to 0.5; thorfinn's next PR (FiLM at all blocks) may flip `film` default to True.
+**Open infrastructure note**: Config defaults are now `huber_beta=0.5` (flipped by #539, verified via no-flag config.yaml proof) and `film=False` (still). Reproducing the merged best-known requires explicit `--huber_beta 0.3 --film`. Caveat: askeladd's β=0.3 measurement was **without FiLM** (branch was pre-#484); the combined β=0.3+FiLM merged config has not been directly measured, predicted to compound to ~54-55 range.
 
 **Open infrastructure issue:** 2 of 4 launches at the rebased compile + EMA + clip + bf16 stack crash with CUDAGraph private-pool blowup at variable mesh sizes. Alphonse's depth experiment (#435) hit the same OOM at depth=8, requiring `mode="default"` workaround (~10-15% throughput cost). PR #466 (alphonse) bundles the fix: `cudagraph_skip_dynamic_graphs=True` flag + cosine T_max retune to actually-reachable epoch count.
 
@@ -33,7 +33,8 @@
 | alphonse | #549 | warmup-cosine-sweep | Schedule (linear warmup ∈ {2, 3, 5} + cosine to existing endpoint) | -1% to -3% | WIP |
 | askeladd | #289 | huber-loss | Loss formulation (MSE→SmoothL1) | -5% to -10% | **MERGED** 906a2c1 → val_avg=**63.33** (NEW BEST, -5.31%) |
 | askeladd | #467 | huber-beta-sweep | Loss formulation (β ∈ {0.5, 1.0, 2.0} sweep) | β=0.5 predicted -1% to -4% | **MERGED** eb5168f → val_avg=**57.50** (NEW BEST, -8.65% vs #368) |
-| askeladd | #539 | huber-beta-finer | Loss formulation (β ∈ {0.3, 0.5, 0.7} + flip Config default to 0.5) | -1% to -3% | WIP |
+| askeladd | #539 | huber-beta-finer | Loss formulation (β ∈ {0.3, 0.5, 0.7} + flip Config default to 0.5) | -1% to -3% | **MERGED** 893ea4c → val_avg=**55.43** (NEW BEST, β=0.3 wins -3.4% vs #484) |
+| askeladd | #599 | huber-beta-finest | Loss formulation (β ∈ {0.1, 0.2, 0.4} on top of merged β=0.3) | -1% to -3% if optimum is sub-0.3, else within noise | WIP |
 | edward   | #300 | wider-model | Width (192/96) | -5% to -10% | **CLOSED** — under-trained 9/50 |
 | edward   | #358 | fix-scoring-nan-mask | Maintenance | n/a | **MERGED** 010235e |
 | edward   | #368 | fourier-pos-encoding | Input (8-freq Fourier on (x,z)) | -3% to -8% | **MERGED** 430cd62 → val_avg=**62.94** (NEW BEST, -0.62% val / -1.30% test) |
