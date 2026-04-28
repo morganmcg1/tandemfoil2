@@ -165,9 +165,11 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 film=False):
         super().__init__()
         self.last_layer = last_layer
+        self.film = film
         self.ln_1 = nn.LayerNorm(hidden_dim)
         self.attn = PhysicsAttention(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
@@ -182,12 +184,24 @@ class TransolverBlock(nn.Module):
                 nn.Linear(hidden_dim, hidden_dim), nn.GELU(),
                 nn.Linear(hidden_dim, out_dim),
             )
+            if self.film:
+                # gamma init to 1, beta to 0 → FiLM is identity at epoch 1.
+                self.gamma_surf = nn.Parameter(torch.ones(hidden_dim))
+                self.gamma_vol = nn.Parameter(torch.ones(hidden_dim))
+                self.beta_surf = nn.Parameter(torch.zeros(hidden_dim))
+                self.beta_vol = nn.Parameter(torch.zeros(hidden_dim))
 
-    def forward(self, fx):
+    def forward(self, fx, is_surface=None):
         fx = self.attn(self.ln_1(fx)) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
-            return self.mlp2(self.ln_3(fx))
+            h = self.ln_3(fx)
+            if self.film and is_surface is not None:
+                m = is_surface.unsqueeze(-1).to(h.dtype)
+                gamma = m * self.gamma_surf + (1 - m) * self.gamma_vol
+                beta = m * self.beta_surf + (1 - m) * self.beta_vol
+                h = gamma * h + beta
+            return self.mlp2(h)
         return fx
 
 
@@ -196,7 +210,8 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 film: bool = False):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -212,11 +227,13 @@ class Transolver(nn.Module):
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
+        self.film = film
         self.blocks = nn.ModuleList([
             TransolverBlock(
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                film=film and (i == n_layers - 1),
             )
             for i in range(n_layers)
         ])
@@ -234,9 +251,14 @@ class Transolver(nn.Module):
 
     def forward(self, data, **kwargs):
         x = data["x"]
+        is_surface = data.get("is_surface", None)
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        for block in self.blocks:
-            fx = block(fx)
+        last_idx = len(self.blocks) - 1
+        for i, block in enumerate(self.blocks):
+            if i == last_idx and is_surface is not None:
+                fx = block(fx, is_surface=is_surface)
+            else:
+                fx = block(fx)
         return {"preds": fx}
 
 
@@ -280,7 +302,7 @@ def evaluate_split(model, loader, stats, surf_weight, device, huber_beta=1.0) ->
             ff = fourier_features(x_norm[..., :2], n_freqs=N_FREQS)
             x_in = torch.cat([x_norm, ff], dim=-1)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                pred = model({"x": x_in})["preds"]
+                pred = model({"x": x_in, "is_surface": is_surface})["preds"]
             pred = pred.float()
 
             elem_loss = F.smooth_l1_loss(pred, y_norm, reduction="none", beta=huber_beta)
@@ -403,6 +425,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip final test evaluation
+    film: bool = True  # surface-conditional FiLM in last block (PR #484)
 
 
 cfg = sp.parse(Config)
@@ -442,6 +465,7 @@ model_config = dict(
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
+    film=cfg.film,  # surface-conditional FiLM in last block (PR #484)
 )
 
 model = Transolver(**model_config).to(device)
@@ -533,7 +557,7 @@ for epoch in range(MAX_EPOCHS):
         ff = fourier_features(x_norm[..., :2], n_freqs=N_FREQS)
         x_in = torch.cat([x_norm, ff], dim=-1)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            pred = model({"x": x_in})["preds"]
+            pred = model({"x": x_in, "is_surface": is_surface})["preds"]
         if _first_fwd:
             torch.cuda.synchronize()
             print(f"First compile+forward took {time.time() - _t_fwd0:.1f}s")
