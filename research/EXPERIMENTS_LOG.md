@@ -48,6 +48,55 @@ Key implementation note from student: checkpoint saves `ema_model.module.state_d
 
 ---
 
+## 2026-04-28 22:10 — PR #775: Linear LR warmup + gradient norm clipping ↩ SENT BACK (rebase required)
+
+- Branch: `willowpai2e1-nezuko/warmup-grad-clip`
+- Hypothesis: Linear LR warmup (5 epochs) + gradient norm clipping stabilises PhysicsAttention's orthogonal slice projections and learnable temperature parameter in early training, where high-Re samples produce large gradients.
+
+| Variant | warmup_epochs | clip_norm | val_avg/mae_surf_p | test_avg/mae_surf_p | best_epoch | W&B run |
+|---------|:---:|:---:|---:|---:|:---:|---|
+| **warmup5-clip0.5** | 5 | 0.5 | **115.01** | **101.64** | 14 | [xlo5cmpw](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/xlo5cmpw) |
+| warmup5-clip1 | 5 | 1.0 | 118.93 | 107.09 | 13 | [7q09eo6v](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/7q09eo6v) |
+| warmup10-clip1 | 10 | 1.0 | 130.60 | 118.81 | 14 | [1rrzrcqe](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/1rrzrcqe) |
+| noclip-warmup5 | 5 | 0 | 132.75 | 119.50 | 14 | [n63jhoif](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/n63jhoif) |
+
+Per-split test (warmup5-clip0.5): single=121.68, rc=110.76, cruise=74.29, re_rand=99.82
+
+**Analysis and conclusions:**
+
+`warmup5-clip0.5` beats the EMA baseline (119.35) by **3.6% on val and 6.6% on test** — a clear win. The gain is real but the branch was created before EMA (PR #773) merged into advisor, making the PR CONFLICTING in GitHub. The result is also WITHOUT EMA, so we don't know whether EMA+clip stack.
+
+Key empirical finding: gradient norms pre-clip are consistently large throughout the entire run (median ~60, p95 ~268, 100% of steps clipped). Clipping acts as a **continuous gradient regulariser**, not just early-training stabilization. The cruise split benefited most (74 vs 94 test), consistent with high-Re cruise samples driving the largest gradients.
+
+Warmup alone (noclip-warmup5=132.75) contributes little. Longer warmup (warmup10) is actively harmful — 5 warmup epochs eat into the cosine schedule's convergence window. Clipping is the dominant lever; shorter warmup may even be redundant once clip is in place.
+
+**PR sent back for rebase + EMA stack test.** Requested: rebase onto advisor, re-run `warmup5-clip0.5` with `--ema_decay 0.99`, then sweep clip ∈ {0.1, 0.25, 0.5} + warmup_epochs=0 to measure diminishing returns and EMA interaction.
+
+---
+
+## 2026-04-28 22:10 — PR #774: Wider Transolver (hidden=256, slices=128, heads=8) ✗ CLOSED
+
+- Branch: `willowpai2e1-frieren/wider-model`
+- Hypothesis: Increasing model width (128→256), slice count (64→128), and heads (4→8) provides more representational capacity for TandemFoilSet's large irregular meshes.
+
+| Run | n_hidden | slice_num | n_head | BS | Epochs | val_avg | test_avg | W&B |
+|-----|:---:|:---:|:---:|:---:|:---:|---:|---:|---|
+| `wider-256-128` (full) | 256 | 128 | 8 | 2 | 6 | 164.79 | 154.71 | [o16zl2ma](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/o16zl2ma) |
+| `wider-256-64` (width only) | 256 | 64 | 8 | 4 | 7 | 156.84 | 142.88 | [3obqis2j](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/3obqis2j) |
+| **`wider-128-128`** (slim+2x slices) | 128 | 128 | 4 | 4 | 11 | **136.02** | **124.11** | [b307a0lc](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/b307a0lc) |
+
+**Analysis and conclusions:**
+
+All three variants are worse than the EMA baseline (119.35). However, the **slim+2x-slices variant won** by 19.8% on test_avg vs the full proposal, despite having ~4× fewer parameters. Key insight: slice doubling is nearly free in params (+5%) but appears to be a much more compute-efficient capacity dial than hidden width under our 30-min budget. More slices = more "physics tokens" for the irregular mesh decomposition.
+
+Width increase is firmly budget-incompatible: wider models need bs=2 (OOM at bs=4) and only reach 6-7 epochs. The 14-epoch budget favours slim models with high slice count.
+
+**Follow-up assigned:** slice scan ∈ {64, 96, 128, 192} at n_hidden=128, n_head=4 with EMA (PR #862), to characterize the slice optimum cleanly.
+
+**PR closed** — wider-model hypothesis disproved for this budget. The slice direction is being explored separately.
+
+---
+
 ## 2026-04-28 21:56 — PR #777: Log-Re input jitter for cross-regime generalization ✗ CLOSED
 
 - Branch: `willowpai2e1-thorfinn/re-jitter-aug`

@@ -1,56 +1,66 @@
 # SENPAI Research State
 
-- **Updated:** 2026-04-28 21:58 UTC
+- **Updated:** 2026-04-28 22:15 UTC
 - **Track:** `icml-appendix-willow-pai2e-r1` (TandemFoilSet ICML appendix, Willow PAI2E Round 1)
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1`
-- **Most recent direction from human researcher team:** _(none yet — no GitHub issues)_
+- **Most recent direction from human researcher team:** _(none — no open ADVISOR issues)_
 
 ## Current best
 
 **PR #773 (EMA decay=0.99) — MERGED:** `val_avg/mae_surf_p = 119.35`, `test_avg/mae_surf_p = 108.79`  
-EMA is now part of the advisor baseline. All future student runs will use `--ema_decay 0.99` by default.
+EMA is part of the advisor baseline. All future student runs should use `--ema_decay 0.99`.
+
+**Pending win (not yet baseline):** PR #775 (nezuko warmup5-clip0.5) hit val_avg=115.01 / test_avg=101.64 WITHOUT EMA, beating the EMA baseline by 3.6%. Sent back for rebase + EMA stack test before merge.
 
 ## Current research focus
 
-Round 1 results are coming in. Two PRs reviewed this cycle:
-- **PR #773 (fern — EMA):** MERGED. EMA decay=0.99 beats live-model selection by +6% on val_avg across all 4 splits. Geometry OOD splits benefit most. New baseline.
-- **PR #777 (thorfinn — log-Re jitter):** CLOSED. Input augmentation slows convergence; in our 14-epoch budget the regularization benefit never materializes. Control (no-jitter) wins on all splits including the targeted val_re_rand.
+Round 1 results have settled. Key findings:
+- **EMA (decay=0.99)** is confirmed as an independent win (+6% over live model). New baseline.
+- **Gradient clipping (max_norm=0.5)** is confirmed as an independent win (+3.6% over EMA baseline, WITHOUT EMA). Acts as continuous regularizer, not just early stabilization. Dominant over warmup.
+- **Wider model (n_hidden=256)** is budget-incompatible. Only reaches 6-7 epochs before timeout.
+- **Slice doubling (slice_num=128)** on slim model is a promising direction — 19.8% test gain vs wider model in PR #774 sweep, nearly free in params.
+- **Input jitter** on log(Re) uniformly hurts under 14-epoch budget. Closed.
+- **Gradient norm profile**: pre-clip norms median ~60, p95 ~268 throughout training. TandemFoilSet has inherently large gradients; clipping is load-bearing all the way through.
 
-**Budget insight:** Every run so far times out at epoch 13-14 (30-min wall clock). The EMA decay=0.99 is optimal for this budget because it has a fast-enough half-life to integrate useful signal. All future hypotheses should be evaluated with `--ema_decay 0.99` as the default, and schedule/optimizer hypotheses should account for the mismatch between the 50-epoch cosine schedule and the ~14-epoch actual run.
+## Active PRs (WIP)
 
-**Still in flight (WIP):**
-
-1. **alphonse #769** — Huber loss (loss reformulation)
-2. **askeladd #770** — surface-aware slice routing (architecture)
-3. **edward #846** — unmodified baseline reference
-4. **frieren #774** — wider model (n_hidden=256, slice_num=128)
-5. **nezuko #775** — LR warmup + grad clip (optimization)
-6. **tanjiro #776** — deeper model (n_layers=8)
-
-**Newly assigned (this cycle):**
-- **fern** — surface weight scan (surf_weight ∈ {20, 50, 100}) with EMA decay=0.99
-- **thorfinn** — schedule alignment: shorten cosine T_max to match actual budget (~14 epochs) and OneCycleLR comparison
-
-Once the unmodified baseline (PR #846) lands, all Round 1 results will have a valid reference number.
+| PR | Student | Hypothesis | Status |
+|----|---------|------------|--------|
+| #775 | nezuko | warmup+clip — sent back for rebase + EMA stack test | Status:WIP (rebase in progress) |
+| #862 | frieren | Slice scan {64,96,128,192} on slim model + EMA decay=0.99 | Newly assigned |
+| #859 | fern | Surface weight scan {10,20,50,100} + EMA | Status:WIP |
+| #860 | thorfinn | Schedule alignment: cosine T_max=14 vs OneCycleLR + EMA | Status:WIP |
+| #846 | edward | Unmodified baseline run (clean reference) | Status:WIP |
+| #776 | tanjiro | Deeper model n_layers=8 | Status:WIP |
+| #770 | askeladd | Surface-aware slice routing in PhysicsAttention | Status:WIP |
+| #769 | alphonse | Huber loss for outlier-robust pressure regression | Status:WIP |
 
 ## Potential next research directions (Round 2+)
 
-Pending Round 1 outcomes, candidate themes for Round 2:
+**High priority — stack confirmed wins:**
+- **EMA + clipping + warmup stack** (pending PR #775 rebase result). If EMA+clip stack, new baseline ~110-113.
+- **EMA + clipping + slice-192** (pending PR #862). Slice direction may compound with clipping.
+- **EMA + clipping + Huber** (pending PR #769). Huber dampens large-gradient outliers; may interact positively or negatively with clipping.
+- **Clip norm scan** ∈ {0.1, 0.25, 0.5} once clip+EMA baseline confirmed — nezuko's own suggestion, pre-clip p95=268 suggests 0.5 may not be the optimum.
 
-- **Compounding wins.** If Huber+EMA+grad-clip all win independently, stack them. Architecture and optimization wins are usually orthogonal.
-- **Pressure-channel-only training tail.** A second-stage fine-tune that drops the Ux/Uy loss entirely — only the metric-of-record is optimized.
-- **Better surface conditioning.** Cross-attention between surface and volume nodes; surface-pinned skip connections; explicit boundary-layer inductive biases.
-- **Stronger geometry generalization.** Random foil reflection (cruise-style symmetric flow), camber/thickness perturbation augmentation, mesh subsampling for regularization.
-- **Architectural alternatives.** Swap PhysicsAttention for Galerkin attention, or try a hybrid Transolver + GNN message-passing module on surface nodes.
-- **Multi-task curriculum.** Train Ux/Uy first, freeze, fine-tune p — or domain-specific heads (raceCar single vs. tandem vs. cruise).
-- **Loss shape on tails.** If Huber wins at delta=2.0, try log-cosh or asymmetric losses tuned to pressure's positive/negative skew.
-- **Mixed precision + larger effective batch.** AMP + gradient accumulation to free wall-clock for higher epoch counts.
-- **Test-time scoring with TTA.** Mesh perturbation TTA averaged at inference.
+**Medium priority — new directions:**
+- **OneCycleLR vs cosine-T14** (thorfinn PR #860 in flight). Budget mismatch is the most underexplored inefficiency.
+- **AdamW beta2 scan** (0.95, 0.99, 0.999) — with large gradient variance, β₂ controls the effective memory of the second moment. β₂=0.99 may be more robust than default 0.999.
+- **Pressure-channel only loss tail.** Once the model converges on Ux/Uy, drop vol loss entirely and optimize only surface p for the final few epochs.
+- **Cross-attention surface→volume conditioning.** Surface nodes can act as boundary condition anchors; explicit cross-attention adds inductive bias.
+- **Mesh subsampling for throughput.** Random node subsampling in early epochs to see more data per wallclock. Could unlock wider models.
+
+**Longer-term:**
+- Multi-task curriculum (Ux/Uy first, freeze, fine-tune p)
+- Mixed precision + gradient accumulation for larger effective batch
+- Galerkin attention swap for PhysicsAttention
+- Test-time augmentation (mesh perturbation TTA)
 
 ## Standing constraints
 
 - 30 min wall-clock per run (`SENPAI_TIMEOUT_MINUTES`), 50-epoch cap.
 - 96 GB VRAM per GPU, batch_size=4 default; meshes up to 242K nodes.
-- No edits to `data/`. All augmentation/sampling lives in `train.py`.
-- One hypothesis per PR. Compound only after each isolated win is verified.
-- Prefer common-recipe changes that survive across all four splits over hacks that only improve one.
+- No edits to `data/`. All augmentation/sampling in `train.py`.
+- One hypothesis per PR. Compound only after isolated wins verified.
+- All future runs: `--ema_decay 0.99` is the default.
+- NaN guard (commit 49c55ed) is in advisor — all new branches get it for free.
