@@ -1,5 +1,49 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 03:50 — PR #436: Additive surface decoder (preds_vol + is_surface * preds_surf)
+- Branch: `charliepai2d4-thorfinn/additive-surf-head` (deleted on close)
+- Student: charliepai2d4-thorfinn
+- **Outcome: CLOSED** (+3.47% vs paired baseline-ref; trunk-interference identified as deeper failure mode).
+
+### Headline (epoch 32 of 32, EMA-evaluated, both runs in PR)
+| Run | val_avg/mae_surf_p (EMA) | test_avg/mae_surf_p (EMA) |
+|---|---|---|
+| baseline-ref (paired) | 65.16 | 57.20 |
+| additive-surf-head | **67.43** | 58.65 |
+| Δ vs paired | **+3.47%** | +2.54% |
+| vs merged #401 anchor | +0.81% (within noise) | +1.37% |
+
+### Per-split val Δ (additive − baseline-ref)
+| Split | Δ on mae_surf_p |
+|---|---|
+| val_single_in_dist     | +2.32% |
+| val_geom_camber_rc     | **+5.45%** (worst) |
+| val_geom_camber_cruise | +2.22% |
+| val_re_rand            | +3.35% |
+
+### Volume regression (the smoking gun)
+| Split | mae_vol_p Δ |
+|---|---|
+| val_geom_camber_rc | **+6.06%** |
+| test_geom_camber_rc | **+6.01%** |
+- The surf_head literally can't write to volume nodes (mask gates it), but volume metrics regressed → only explainable by trunk-interference.
+
+### Sanity checks (all passed)
+| Check | Predicted | Observed | OK |
+|---|---|---|---|
+| Epoch-1 val_avg parity | within ~1% | +1.72% | ✓ (#379 was +8.3%) |
+| Per-epoch wall-clock | ~57-60 s | 55.5 s steady | ✓ |
+| Param count | ~677 K (+15 K) | 679,514 (+17 K) | ✓ |
+| Dynamo unique graphs | ≤5 | **3** (no recompile) | ✓ |
+
+### Analysis
+- **The substitutive→additive fix worked at the design level**: epoch-1 mismatch dropped from #379's +8.3% to this PR's +1.7%. Confirms the zero-init parallel-head pathway starts at parity with the volume head.
+- **Trunk interference is the deeper bottleneck**: surf_head reads `fx_pre_final` (penultimate-block output); its gradients flow back through that hidden state and through the entire trunk. Two objectives competing for trunk capacity → worse vol on hard splits AND worse surf at this 32-epoch budget.
+- **Adding 17 K params to a parallel head is a poor capacity spend** — same params on the trunk (frieren's #477 wider144) avoid the interference problem entirely.
+- **Architectural lesson for round 2**: any "extra capacity for surface" should modulate inside the trunk (e.g. FiLM scale/shift conditioned on `is_surface`), not branch off as a parallel pathway. Assigned next.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=436 records, 34 lines from both runs).
+
 ## 2026-04-28 03:30 — PR #431: Moderate widening (n_hidden 128→160) on bf16+EMA pre-#401
 - Branch: `charliepai2d4-frieren/wider160-bf16` (deleted on close)
 - Student: charliepai2d4-frieren
