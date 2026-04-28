@@ -27,6 +27,7 @@ from pathlib import Path
 
 import simple_parsing as sp
 import torch
+import torch._inductor.config
 import torch.nn as nn
 import torch.nn.functional as F
 import yaml
@@ -34,6 +35,11 @@ from einops import rearrange
 from timm.layers import trunc_normal_
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
+
+# Disable per-shape CUDAGraph private pool recording for variable-shape inputs.
+# Keeps Inductor compile + kernel fusion; drops CUDAGraph wrapper. Eliminates
+# CUDAGraph private-pool blowup at variable mesh sizes (#289 / #435 OOM mode).
+torch._inductor.config.triton.cudagraph_skip_dynamic_graphs = True
 
 from data import (
     TEST_SPLIT_NAMES,
@@ -368,6 +374,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    cosine_epochs: int = 32  # CosineAnnealing T_max — set to realised epoch count, not MAX_EPOCHS
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
@@ -449,7 +456,7 @@ def update_ema() -> None:
 
 
 optimizer = torch.optim.AdamW(_model_base.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.cosine_epochs)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -528,6 +535,7 @@ for epoch in range(MAX_EPOCHS):
         n_batches += 1
 
     scheduler.step()
+    lr_post_step = optimizer.param_groups[0]["lr"]
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
     grad_norm_mean = grad_norm_sum / max(n_batches, 1)
@@ -570,6 +578,7 @@ for epoch in range(MAX_EPOCHS):
         "epoch": epoch + 1,
         "seconds": dt,
         "peak_memory_gb": peak_gb,
+        "lr_post_step": lr_post_step,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
         "train/grad_norm_mean": grad_norm_mean,
