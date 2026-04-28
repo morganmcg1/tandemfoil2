@@ -375,6 +375,7 @@ class Config:
     debug: bool = False
     skip_test: bool = False  # skip final test evaluation
     amp_bf16: bool = True  # use bfloat16 autocast for model forward; loss accumulator stays in fp32
+    llrd_decay: float = 0.9  # per-layer LR decay; 1.0 = uniform LR
 
 
 cfg = sp.parse(Config)
@@ -420,7 +421,48 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+
+def build_param_groups(model, peak_lr, llrd_decay, weight_decay):
+    """Per-layer LR decay: layer i gets peak_lr * decay^(n_layers - 1 - i).
+
+    Last block (output) gets full peak; preprocess + placeholder are
+    treated as earlier-than-layer-0 (decay^n_layers).
+    """
+    n_layers = len(model.blocks)
+    groups = []
+    for i, block in enumerate(model.blocks):
+        layer_lr = peak_lr * (llrd_decay ** (n_layers - 1 - i))
+        groups.append({
+            "params": list(block.parameters()),
+            "lr": layer_lr,
+            "weight_decay": weight_decay,
+            "name": f"block_{i}",
+        })
+    early_lr = peak_lr * (llrd_decay ** n_layers)
+    groups.append({
+        "params": list(model.preprocess.parameters()),
+        "lr": early_lr,
+        "weight_decay": weight_decay,
+        "name": "preprocess",
+    })
+    groups.append({
+        "params": [model.placeholder],
+        "lr": early_lr,
+        "weight_decay": 0.0,  # skip WD on the placeholder bias-like vector
+        "name": "placeholder",
+    })
+    return groups
+
+
+if cfg.llrd_decay < 1.0:
+    optimizer = torch.optim.AdamW(
+        build_param_groups(model, cfg.lr, cfg.llrd_decay, cfg.weight_decay),
+    )
+    print(f"LLRD enabled (decay={cfg.llrd_decay}); {len(optimizer.param_groups)} param groups:")
+    for g in optimizer.param_groups:
+        print(f"  {g.get('name', '?'):<14s} lr={g['lr']:.4e}  wd={g['weight_decay']:.1e}")
+else:
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 warmup_epochs = 5
 warmup = LinearLR(optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_epochs)
 cosine = CosineAnnealingLR(optimizer, T_max=max(MAX_EPOCHS - warmup_epochs, 1))
@@ -455,6 +497,11 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol = epoch_surf = 0.0
     epoch_grad_norm_sum = 0.0
     n_batches = 0
+
+    epoch_group_lrs = [g["lr"] for g in optimizer.param_groups]
+    print(f"  group[0].lr={epoch_group_lrs[0]:.4e}")
+    if epoch + 1 == 7:
+        print(f"  per-group LRs at epoch 7 (mid-cosine): {[f'{lr:.4e}' for lr in epoch_group_lrs]}")
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
         x = x.to(device, non_blocking=True)
@@ -526,6 +573,7 @@ for epoch in range(MAX_EPOCHS):
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
         "train/grad_norm_avg": avg_grad_norm,
+        "train/group_lrs": epoch_group_lrs,
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
