@@ -1,5 +1,110 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 03:11 — PR #461 (MERGED): L1+FF + matched cosine + lr=7.5e-4
+- Branch: `charliepai2d3-askeladd/l1ff-cos14-lr-7p5e-4`
+- Hypothesis: bump peak LR from `5e-4` to `7.5e-4` on the L1+FF +
+  matched cosine baseline. Now that the cosine actually anneals,
+  `5e-4` should be conservatively low. Predicted −1% to −5%.
+- Config: post-#400 advisor (L1+FF), pre-#447 advisor (no EMA),
+  `--epochs 14 --lr 7.5e-4`. CLI-only diff.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs current baseline at merge (PR #447, 82.97) | vs PR #389 (the assigned-against config, 90.90) |
+|--------|--------:|----------------------------------------------:|-----------------------------------------------:|
+| `val_avg/mae_surf_p`  | **80.28** | **−3.2%** | **−11.7%** ✓ above predicted band |
+| `test_avg/mae_surf_p` | **70.92** | **−3.6%** | **−12.3%** |
+| Per-epoch wallclock | ~131 s | flat | flat |
+| Peak GPU memory | 42.38 GB | flat | flat |
+
+### Per-split val — distributional gain (broad across all splits)
+
+| split | PR #389 baseline | this PR | Δ |
+|-------|-----------------:|--------:|--:|
+| val_single_in_dist     | 105.82 | **89.76** | **−15.18%** |
+| val_geom_camber_rc     | 100.82 |  90.03 | −10.70% |
+| val_geom_camber_cruise |  71.37 |  62.42 | −12.54% |
+| val_re_rand            |   85.60 |  78.92 |  −7.80% |
+
+### Per-split test — broad gain across all 4 splits
+
+| split | PR #389 baseline | this PR | Δ |
+|-------|-----------------:|--------:|--:|
+| test_single_in_dist     | 94.78 | 78.18 | −17.51% |
+| test_geom_camber_rc     | 88.30 | 80.52 |  −8.81% |
+| test_geom_camber_cruise | 59.67 | 53.88 |  −9.70% |
+| test_re_rand            |  80.62 | 71.12 | −11.78% |
+
+### Validation curve
+
+```
+ep  1: 209.87 (best)
+ep  2: 173.97 (best)  ep  8: 101.94 (best)
+ep  3: 164.04 (best)  ep  9:  97.54 (best)
+ep  4: 144.19 (best)  ep 10:  94.40 (best)
+ep  5: 120.02 (best)  ep 11:  87.93 (best)
+ep  6: 147.32         ep 12:  87.75 (best)
+ep  7: 133.41         ep 13:  80.86 (best)
+                       ep 14:  80.28 (best) ← final
+```
+
+Smooth descent through ep1-3 — no NaN, no early instability — confirms
+the "cosine self-warmup from peak" pattern works under matched cosine
+without explicit warmup. Train losses decay monotonically from
+`surf=0.71/vol=1.42` at ep1 to `surf=0.187/vol=0.241` at ep14.
+
+### Decision
+
+**Merged.** Three findings ride together in this number:
+
+1. **L1+FF + matched cosine compose** is substantively additive (was
+   estimated to land below 90.90; landed at 80.28 — much better).
+2. **lr=7.5e-4 doesn't destabilise** on matched cosine + no warmup —
+   the previous lr=1e-3 failure (PR #288) was warmup-driven, not
+   LR-driven.
+3. **Per-split gain is distributional, not concentrated**. Unlike
+   most round-3 levers (which all hit `val_geom_camber_rc` hardest),
+   this run improves *every* split with `val_single_in_dist` (−15.2%)
+   leading slightly. Consistent with "removed an LR bottleneck" —
+   distributional rather than mechanism-specific.
+
+### Caveat — measurement on pre-#447 advisor
+
+PR #461's branch was based on post-#389 advisor (had FF + matched
+cosine via #389) but **before PR #447 merged** (no EMA). So the
+measurement is L1+FF + matched cosine + lr=7.5e-4, *no EMA*. The
+post-merge advisor includes EMA from #447. Running the post-merge
+advisor with `--epochs 14 --lr 7.5e-4` will measure the **L1+FF+EMA
++ matched cosine + lr=7.5e-4 five-lever stack** — should beat 80.28
+since EMA was a clean +9% lever.
+
+### Round-3 proven levers (cumulative, now five stacked)
+
+1. L1 surface loss (PR #280)
+2. 8-freq spatial Fourier features (PR #400)
+3. Matched cosine `--epochs 14` (PR #389, CLI flag)
+4. EMA-of-weights, decay=0.999 (PR #447)
+5. **Peak LR `lr=7.5e-4`** (PR #461, CLI flag)
+
+Levers 1, 2, 4 baked into `train.py`. Levers 3, 5 are CLI flags.
+Recommended reproduce: `python train.py --epochs 14 --lr 7.5e-4`.
+
+### Round-3 narrative (further refined)
+
+We now have three different compose patterns documented:
+
+| compose | pattern | example PR |
+|---------|---------|-----------|
+| overlap | destructive on shared axis | wd × FF (PR #437, rc-camber) |
+| additive | clean orthogonal mechanisms | EMA × FF (PR #447) |
+| distributional | broad across all splits | lr=7.5e-4 × matched cosine (PR #461) |
+
+The regularisation/optimisation/encoding landscape is
+multi-dimensional. Per-split analysis is the load-bearing diagnostic
+for round-5 stacking decisions.
+
+---
+
 ## 2026-04-28 02:50 — PR #447 (MERGED): L1+FF + EMA(decay=0.999) — biggest single-lever win since PR #280
 - Branch: `charliepai2d3-fern/l1ff-ema-d999`
 - Hypothesis: stack EMA-of-weights with budget-aware decay 0.999 onto

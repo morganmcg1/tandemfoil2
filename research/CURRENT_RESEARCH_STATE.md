@@ -15,21 +15,19 @@ help across at least three of the four tracks.
 
 ## Round 3 focus
 
-**Current measured baseline (merged 2026-04-28 02:50):**
-PR #447 (fern) — **L1 + 8-freq spatial Fourier features + EMA-of-
-weights with decay=0.999**. `val_avg/mae_surf_p = 82.97`,
-`test_avg/mae_surf_p = 73.58`. **Largest single-lever win since
-PR #280 (L1 surface loss).** Wins on all 4 val splits and all 4
-test splits. Closes the persistent `val_single_in_dist` bottleneck
-(117.24 → 99.44, −15.2%) — the first round-3 lever to substantially
-move the in-dist regime.
+**Current measured baseline (merged 2026-04-28 03:11):**
+PR #461 (askeladd) — **L1+FF + matched cosine + lr=7.5e-4**.
+`val_avg/mae_surf_p = 80.28`, `test_avg/mae_surf_p = 70.92`. Wins on
+all 4 val and all 4 test splits. **Distributional gain** — broad
+across splits, not concentrated on any single mechanism.
 
-**Caveat**: PR #447 was branched off post-#400 (had FF) but
-pre-#389-merge (didn't have matched cosine), so the measurement is
-L1+FF + EMA + cosine T_max=50 (default schedule). The post-merge
-advisor has all four levers; the **untested** L1+FF+EMA + matched
-cosine four-lever stack is the round-4 priority (fern's next
-assignment).
+**Caveat**: PR #461 was branched off post-#400 advisor (had FF and
+matched cosine) but **before PR #447 merged** (no EMA). So the 80.28
+measurement is L1+FF + matched cosine + lr=7.5e-4, *no EMA*. The
+post-merge advisor includes EMA from #447. Running the new advisor
+with `--epochs 14 --lr 7.5e-4` will measure the **L1+FF+EMA + matched
+cosine + lr=7.5e-4 five-lever stack** — expected to beat 80.28
+substantially (EMA was +9% standalone).
 
 **Round-3 baseline lineage:**
 | Round | best val | best test | lever | Δ vs prior |
@@ -38,17 +36,27 @@ assignment).
 | PR #280 | 102.64 |  97.73 | + L1 surface loss | **−24.1%** |
 | PR #400 |  91.87 |  81.11 | + 8-freq spatial FF | **−10.5% / −17.0%** |
 | PR #389 |  90.90 |  80.84 | + matched cosine (CLI) | **−1.06% / −0.33%** |
-| **PR #447** | **82.97** | **73.58** | **+ EMA(0.999)** | **−8.7% / −9.0%** |
+| PR #447 |  82.97 |  73.58 | + EMA(0.999) | **−8.7% / −9.0%** |
+| **PR #461** | **80.28** | **70.92** | **+ lr=7.5e-4 (CLI, ex-EMA)** | **−3.2% / −3.6%** |
 
-**Round-3 proven levers (cumulative, four stacked)**:
-1. L1 surface loss (PR #280) — loss formulation aligned with metric.
-2. 8-freq spatial Fourier features (PR #400) — spectral bias mitigation.
-3. Matched cosine `--epochs 14` (PR #389) — full LR decay (CLI flag).
-4. **EMA-of-weights, decay=0.999** (PR #447) — late-training trajectory averaging.
+**Round-3 proven levers (cumulative, five stacked)**:
+1. L1 surface loss (PR #280)
+2. 8-freq spatial Fourier features (PR #400)
+3. Matched cosine `--epochs 14` (PR #389, CLI)
+4. EMA-of-weights, decay=0.999 (PR #447)
+5. **Peak LR `lr=7.5e-4`** (PR #461, CLI)
 
-**Round-4 priority**: confirm the four-lever-stack number (L1+FF+EMA +
-matched cosine) and continue compose tests on remaining round-3
-levers (beta2=0.95, grad clipping, log(Re) FF) per-split-aware.
+Recommended reproduce: `python train.py --epochs 14 --lr 7.5e-4`.
+
+**Round-4 priorities**:
+- **Confirm the five-lever-stack number** (L1+FF+EMA + matched cosine
+  + lr=7.5e-4) on the post-merge advisor — expected ≤ 80.28.
+- **Bracket peak LR upward** at lr=1e-3 (askeladd's next assignment).
+  PR #288's lr=1e-3 failure was warmup-driven, not LR-driven; should
+  work under matched cosine without warmup.
+- **Continue per-split-aware compose tests** on remaining round-3
+  levers (beta2=0.95 in flight #446, grad clipping in flight #462,
+  log(Re) FF in flight #432).
 
 **Closed PRs (2026-04-28):**
    - PR #283 — askeladd (wider+deeper): val 166.64 (+62% vs L1 baseline);
@@ -126,16 +134,15 @@ composition even if they don't outright beat 102.64:**
    - PR #448 — tanjiro: L1+FF + L1 volume loss *(loss formulation
      extension — does L1 dominance extend to volume?)* — on post-#400
      advisor.
-   - PR #461 — askeladd: L1+FF + `--epochs 14` + `lr=7.5e-4` —
-     higher peak LR with matched cosine *(schedule × lr)*.
    - PR #462 — edward: L1+FF + `--epochs 14` + grad clipping
      `max_norm=1.0` — three-lever stack *(stability × schedule × FF)*.
    - PR #469 — frieren: L1+FF + `--epochs 14` + `wd=5e-4`
      (interior-point) — tests whether intermediate wd captures
      cruise/in-dist compose without rc-camber regression.
-   - PR (fern, new): L1+FF+EMA + `--epochs 14` (matched cosine) —
-     four-lever-stack confirmation; tests whether matched cosine still
-     helps once EMA is in. Single CLI knob from new baseline.
+   - PR #476 — fern: L1+FF+EMA + `--epochs 14` — four-lever-stack
+     confirmation on post-#447 advisor.
+   - PR (askeladd, new): L1+FF+EMA + `--epochs 14` + `lr=1e-3` —
+     LR bracket upper end (round-3-best config plus LR bump).
 
 ## Convergent OOD-camber narrative — partially refuted by PR #437
 
@@ -260,27 +267,26 @@ Following round 3, plausible next steps depending on which family wins:
   with point-cloud transformer variants, GINO/FNO style spectral mixing in
   irregular meshes, hierarchical clustering of slice tokens.
 
-## Per-track diagnostics on the current baseline (PR #447)
+## Per-track diagnostics on the current baseline (PR #461)
 
 | split | val mae_surf_p | comment |
 |-------|---------------:|---------|
-| `val_geom_camber_cruise` |  61.06 | easiest |
-| `val_re_rand`            |  78.22 | mid |
-| `val_geom_camber_rc`     |  93.14 | unseen front-foil camber, raceCar |
-| `val_single_in_dist`     | **99.44** | hardest — high-Re raceCar singles |
+| `val_geom_camber_cruise` |  62.42 | easiest |
+| `val_re_rand`            |  78.92 | mid |
+| `val_single_in_dist`     |  89.76 | high-Re raceCar singles (was the dominant bottleneck) |
+| `val_geom_camber_rc`     | **90.03** | unseen front-foil camber, now slightly worst |
 
-`val_single_in_dist` is still the worst split but the gap is
-**closing**: it ratio to cruise dropped from 1.71× (post-#400) to
-1.63× (post-#447). EMA was the first lever to substantially attack
-this regime (−15.2% on it).
+The persistent `val_single_in_dist` bottleneck is now **closing fast**:
+117.24 (post-#400) → 99.44 (post-#447) → 89.76 (post-#461). EMA and
+the LR bump both hit it. The new worst split is `val_geom_camber_rc`
+at 90.03 — by a tiny margin (89.76 vs 90.03).
 
-Round-5 candidates for further in-dist gains:
-- **`log(Re)` Fourier features** (PR #432, in flight) — Re-aware
-  spectral encoding.
+Round-5 candidates targeting the now-marginally-worst splits:
+- **`log(Re)` Fourier features** (PR #432, in flight).
 - Log-space pressure prediction (target transform).
-- Re-aware output rescaling (per-sample scalar gain).
-- Per-domain sample reweighting in the WeightedRandomSampler (boost
-  raceCar single).
+- Per-domain sample reweighting (boost raceCar single).
+- LR bracket upward at `lr=1e-3` (askeladd's next assignment) — this
+  PR's data suggests the LR optimum is past 7.5e-4.
 
 ## Constraints (do not override)
 
