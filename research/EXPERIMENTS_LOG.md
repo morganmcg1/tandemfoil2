@@ -1,5 +1,70 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-29 00:05 — PR #888: Stratified volume subsample (BL Gaussian, σ=0.05) — **CLOSED (regression on 3 of 4 splits)**
+
+- Branch: `willowpai2e4-fern/stratified-vol-subsample`
+- Student: willowpai2e4-fern
+- W&B run: [`gcectu4h`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/gcectu4h)
+
+**Hypothesis.** Stratify volume keep-probability by Gaussian
+distance-to-surface (BL nodes ~1.0 keep, far-field 0.10 floor).
+Predicted −1 to −4% via concentrating supervision on the
+boundary-layer nodes that drive surface pressure.
+
+**Results vs current baseline 89.71/88.16 (post-#820 Fourier PE):**
+
+| Metric | Baseline | This run | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | 89.71 | 93.09 | **+3.77%** ✗ |
+| `test_avg` (4-split, finite!) | NaN→88.16 (3-split) | 85.18 / 93.62 (3-split) | **+6.20%** ✗ |
+| Best epoch | 14 | 13 (timeout, +8% epoch cost) | -1 |
+
+**Per-split val:**
+
+| Split | Δ |
+|---|---:|
+| `val_single_in_dist` | **+11.6% ✗** (BL canary FAILED in opposite direction) |
+| `val_geom_camber_rc` | **−9.2% ✓** (only winner; high-Re raceCar) |
+| `val_geom_camber_cruise` | +11.9% ✗ |
+| `val_re_rand` | +4.3% ✗ |
+
+**Diagnostics** (intervention working as designed):
+- BL keep frac (d<0.1): ~0.86 (predicted ~1.0) ✓
+- Far keep frac (d>0.5): ~0.10 (predicted floor 0.10) ✓
+- `effective_surf_frac`: ~0.025 — **10× lower than predicted 0.20-0.25**
+
+**Why effective_surf_frac came in 10× low:** CFD meshes are
+already heavily BL-refined, so most volume nodes are within d<0.1
+of the surface and get high keep_prob anyway. σ=0.05 only really
+culls a small far-field tail. The intervention dropped only ~29%
+of volume nodes, not the predicted ~85%.
+
+**Three takeaways for the appendix:**
+1. **Far-field volume nodes are not just "DropConnect-style
+   regularization."** They provide a mean-field anchor, gradient
+   noise that prevents over-fitting near-surface oscillations,
+   and Re/AoA regime context. Concentrating supervision on BL
+   trades all of that for localized refinement.
+2. **CFD-mesh structure invalidates "uniform subsample"
+   PR-design intuition.** Subsampling fractions can't be reasoned
+   about independent of mesh distribution.
+3. **`val_geom_camber_rc` (−9.2%) is the single-split signal that
+   the BL story holds for ONE regime** (high-Re unseen-camber
+   raceCar tandem, where near-surface pressure dominates the
+   error budget). Doesn't generalize.
+
+**Lever family VOLUME-MASK-SUBSAMPLING exhausted for round 2.**
+Both uniform (#861) and stratified (#888) closed. Future "surface
+focus" experiments should use loss-side levers (surf_weight,
+ch_weights, surface oversampling at data loader level) where the
+merged #754 already established the clean direction.
+
+**fern reassigned PR #920: per-block coordinate skip-connection**
+— Re-inject Fourier-encoded coords at each Transolver block.
+Mechanistically orthogonal to FiLM (#816, global-scalar LN
+modulation) and to one-time Fourier PE (input only). Zero-init for
+safety. Predicted −1 to −3%, +10K params, <2% wall-clock cost.
+
 ## 2026-04-28 23:50 — PR #880: LinearNO ELU+1 linear attention — **CLOSED (clear regression)**
 
 - Branch: `willowpai2e4-tanjiro/linear-attention-elu1`

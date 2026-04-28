@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-28 ~23:55 (Fourier PE K=4 merged at 89.71; 4 PRs in rebase queue; #880 LinearNO closed; tanjiro reassigned #914 SwiGLU MLP; **#873 EMA is the predicted next big winner** at val=88.85/test=78.67 on pre-#820 base, awaiting compound-test on post-#820)
+- **As of:** 2026-04-29 ~00:08 (Fourier PE K=4 merged at 89.71; 4 PRs in rebase queue; #880 closed, #888 closed; tanjiro reassigned #914 SwiGLU MLP, fern reassigned #920 coord-skip; **#873 EMA is the predicted next big winner** at val=88.85/test=78.67 on pre-#820 base, awaiting compound-test on post-#820)
 - **Most recent human direction:** none yet for this track
 - **Branch:** `icml-appendix-willow-pai2e-r4`
 - **Current best:** `val_avg/mae_surf_p = 89.714` (#820) and `3-split test mean = 88.16` (run `w9xbc0wl`)
@@ -39,7 +39,8 @@ on L1-only baseline). The compounding mechanism is well-understood.
 | #820 | thorfinn | Fourier PE on (x, z) coords (#3) | **−9.59%** | **MERGED — val baseline 89.71 (new best)** |
 | #863 | askeladd | Seed determinism PR (infra) — bit-perfect proved (0.0000 drift) | infra: variance ↓ | **rebase + 1 canonical-baseline run on post-#820, then merge** |
 | #819 | frieren | Relative L2 mix α=0.5 (rebase #1 returned val=98.01 / test=88.78 on PRE-#820 base) | -1 to -4% target | **rebase #2 onto post-#820; predicted val ≤88.6 to merge** |
-| #888 | fern | Stratified vol subsample by distance-to-surface — replaces #861 (closed mask-only DropConnect) | -1 to -4% | wip |
+| #888 | fern | Stratified vol subsample by distance-to-surface | -1 to -4% predicted; +3.77% actual | **CLOSED — VOLUME-MASK-SUBSAMPLING lever family exhausted** |
+| #920 | fern | Per-block coordinate skip-connection (Fourier feat re-injection at each block) | -1 to -3% | wip (just assigned) |
 | #872 | nezuko | Domain-ID embedding 3-class (#8) — replaces #757 (closed) | -2 to -6% | wip |
 | #873 | edward | EMA model weights (Polyak decay=0.99) — predicted -1 to -3%, ACTUAL **-10.46% val / -15.06% test** on pre-#820 baseline | -1 to -3% predicted; **4-5× actual** | **rebase to post-#820; predicted compounded val ≈ 80-83 / test ≈ 70-73 if compounds with Fourier PE** |
 | #880 | tanjiro | LinearNO ELU+1 linear attention | -3 to -8% predicted; +6.92% actual | **CLOSED — attention-kernel-substitution lever family exhausted at S=64** |
@@ -97,6 +98,16 @@ on L1-only baseline). The compounding mechanism is well-understood.
   #820 merge (89.71 baseline) — runs against 99.23 are no longer
   competitive. Fern's per-split analysis surfaced the boundary-layer
   density hypothesis → promoted to stratified variant (#888).
+- #888 fern stratified vol subsample (BL Gaussian σ=0.05) → val
+  +3.77%, test +6.20%. 3 of 4 val splits regressed; only camber_rc
+  improved (−9.2%, high-Re raceCar — BL story holds for that one
+  regime). BL-canary failed in opposite direction (single_in_dist
+  +11.6%). **Far-field volume nodes carry real supervision** beyond
+  DropConnect regularization (mean-field anchor, regularization,
+  Re/AoA context). CFD-mesh BL refinement made σ=0.05 milder than
+  predicted (~29% vol drop, not ~85%). **Lever family
+  VOLUME-MASK-SUBSAMPLING exhausted** — future surface-focus
+  experiments should use loss-side levers, not mask-side surgery.
 
 **Note on rebasing after #820 merge:** All in-flight PRs (#816, #819, #861,
 #863, #872, #873, #880) are based on the old 99.23 baseline. They now need
