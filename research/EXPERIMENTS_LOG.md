@@ -379,6 +379,35 @@ Round-1 reviews. Primary ranking metric: `val_avg/mae_surf_p` (lower is better).
 - **The regularizer saturated at 0.1 within the 14-epoch budget.** Stronger DropPath would need a longer epoch budget to amortize the slower mid-training fit phase — the closing gap at epoch 14 suggests it might overtake at longer training.
 - Decision: **CLOSE.** Direction not dead in absolute terms (val_re_rand +4.55% is real), but at the 30-min wall-clock budget DropPath=0.1 is the local optimum.
 
+## 2026-04-28 04:25 — PR #493: Huber loss δ=0.1 (saturation test)
+
+- Branch: `charliepai2d2-fern/huber-delta-01` — branched on the post-fern-merge baseline; metrics committed.
+- Hypothesis: push δ profile further (0.25 → 0.1). δ=0.5→0.25 delivered ~10× more gain than δ=1→0.5 — does the profile keep descending or saturate? Predicted −1% to −5% if profile descending; flat or slight regression if saturated.
+- Result: best `val_avg/mae_surf_p = 72.369` at epoch 14. **−0.06% vs the δ=0.25 reference (72.414); test_avg = 62.891 (−0.30% vs 63.082)**. Both essentially within run-to-run noise.
+- **The δ profile is now exhausted.** Updated profile: δ=2→107.6, δ=1→88.2 (pre-EMA); δ=1→83.2, δ=0.25→72.4, **δ=0.1→72.4 (this PR)**. The δ=1→0.25 step delivered −10.8 absolute (−13.0%); δ=0.25→0.1 step delivers only −0.045. Profile flattened.
+- Per-split val: 3/4 improved modestly (single −1.32%, cruise −1.08%, re_rand −2.96%); **val_geom_camber_rc regressed +4.25%** — the only split going backward. Net val_avg gain washes out.
+- No L1-style instability emerged — the PR's "stays just inside huber territory to avoid gradient discontinuity" hedge was unneeded but harmless. Pure F.l1_loss might give the same number.
+- **Important calibration**: this run *also* validates that the post-DropPath baseline is essentially at the 72.414 conservative target — fern's δ=0.25 rerun on the post-DropPath stack would land within run-to-run variance of the original measurement.
+- Decision: **CLOSE.** δ profile is exhausted; ~0% gain vs current. Move to architecture-side levers per fern's own conclusion.
+
+## 2026-04-28 04:25 — PR #495: Semantics-aware feature noise std 0.01 → 0.02
+
+- Branch: `charliepai2d2-frieren/feature-noise-002` — metrics committed.
+- Hypothesis: doubling the feature noise std on top of the merged baseline (DropPath + δ=0.25). Predicted −0.5% to −2%.
+- Result: best `val_avg/mae_surf_p = 74.8448` at epoch 14. **+3.36% regression vs the 72.414 reference; +5.10% on test (66.301).**
+- **Asymmetry signal**: damage concentrated on **in-distribution / closest-OOD splits** (val_single_in_dist +5.48%, val_geom_camber_rc +5.60%); the harder OOD splits stayed flat (val_geom_camber_cruise +0.71%, val_re_rand −0.16%). The PR #460 std=0.01 win came from improving the OOD splits; doubling the noise didn't compound that — instead it hurt the in-dist fit.
+- Mechanism: with DropPath + huber δ=0.25 already providing capacity-control, the three-regularizer stack (noise + DropPath + δ=0.25) is past the optimum. Adding more noise doesn't help OOD generalization further; the extra regularization hurts in-distribution fit.
+- Decision: **CLOSE.** Don't sweep up. Direction not dead — sweep DOWN (`feature_noise_std ∈ {0.005, 0.015}`) to find the sweet spot under the merged stack. Queued as the round-7 reassignment.
+
+## 2026-04-28 04:25 — PR #494: AdamW weight_decay 1e-4 → 3e-4
+
+- Branch: `charliepai2d2-tanjiro/weight-decay-3e-4` — metrics committed.
+- Hypothesis: tripling weight decay adds orthogonal regularization on top of DropPath + δ=0.25. Predicted −0.5% to −1.5%.
+- Result: best `val_avg/mae_surf_p = 73.771` at epoch 14. **+1.87% regression vs 72.414 reference; +1.35% test.**
+- 7/8 per-split val + test metrics regressed. Only val_re_rand improved (−1.0%) — the Re-randomized split benefits from stronger weight regularization, but the gain is small relative to the cross-split losses (val_geom_camber_rc +5.21%).
+- Mechanism: extra L2 shrinkage attenuates updates in the deeper/wider weight matrices (SwiGLU FFN intermediate=176, attention proj at n_hidden=128). With only 14 effective epochs reachable in the 30-min budget, those matrices are already under-trained; extra L2 pressure pushes them further from their optimum. Curve descended monotonically but slightly more conservatively than the merged baseline.
+- Decision: **CLOSE.** Tripling wd over-regularizes on the merged stack. Direction not dead — student's follow-up #1 (lower wd, e.g. wd=3e-5 or 1e-5) is the orthogonal lever still untested. Queued as the round-7 reassignment.
+
 ## Test-metric NaN follow-up (cross-PR)
 
 All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the student diagnoses:
