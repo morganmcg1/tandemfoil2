@@ -428,7 +428,7 @@ scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOC
 # Budget-aware decay for the 30-min wallclock cap: ~5K optimizer steps
 # means EMA window of ~1K steps (~2.7 epochs) gives meaningful smoothing
 # without random-init drag. See PR #396 for derivation.
-EMA_DECAY = 0.999
+EMA_DECAY = 0.997
 
 ema_state = {k: v.detach().clone() for k, v in model.state_dict().items()
              if v.dtype.is_floating_point}
