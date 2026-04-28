@@ -393,6 +393,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    llrd_decay: float = 1.0  # 1.0 = no LLRD (single param group); typical 0.7-0.9
 
 
 cfg = sp.parse(Config)
@@ -449,7 +450,66 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+def _build_llrd_param_groups(model: nn.Module, base_lr: float, decay: float,
+                              n_layers: int) -> list[dict]:
+    """Build AdamW param groups with per-layer LR decay (LLRD).
+
+    Layer ordering (depth_from_output ascending; LR monotonically decreasing):
+      depth 0:           prediction head (last block's mlp2 + ln_3)
+      depth 1:           block[n_layers-1] (attn / mlp / ln_1 / ln_2)
+      depth k:           block[n_layers-k]
+      depth n_layers:    block[0]
+      depth n_layers+1:  preprocess MLP + placeholder
+    """
+    groups: list[dict] = []
+
+    last_block = model.blocks[n_layers - 1]
+    head_params = list(last_block.mlp2.parameters())
+    if hasattr(last_block, "ln_3"):
+        head_params += list(last_block.ln_3.parameters())
+    groups.append({"params": head_params, "lr": base_lr, "name": "head"})
+
+    for depth in range(1, n_layers + 1):
+        i = n_layers - depth
+        block = model.blocks[i]
+        block_params = (
+            list(block.attn.parameters())
+            + list(block.mlp.parameters())
+            + list(block.ln_1.parameters())
+            + list(block.ln_2.parameters())
+        )
+        groups.append({
+            "params": block_params,
+            "lr": base_lr * (decay ** depth),
+            "name": f"block_{i}",
+        })
+
+    preprocess_params = list(model.preprocess.parameters()) + [model.placeholder]
+    groups.append({
+        "params": preprocess_params,
+        "lr": base_lr * (decay ** (n_layers + 1)),
+        "name": "preprocess",
+    })
+
+    return groups
+
+
+if cfg.llrd_decay == 1.0:
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+else:
+    param_groups = _build_llrd_param_groups(model, cfg.lr, cfg.llrd_decay,
+                                            model_config["n_layers"])
+    optimizer = torch.optim.AdamW(param_groups, lr=cfg.lr, weight_decay=cfg.weight_decay)
+    n_grouped = sum(len(g["params"]) for g in param_groups)
+    n_total = sum(1 for _ in model.parameters())
+    assert n_grouped == n_total, (
+        f"LLRD param groups cover {n_grouped} tensors but model has {n_total}; "
+        f"some parameters are missing or duplicated."
+    )
+    print(f"LLRD enabled (decay={cfg.llrd_decay}). Per-group LRs:")
+    for g in param_groups:
+        print(f"  {g['name']:>12s}: lr = {g['lr']:.2e}  ({len(g['params'])} tensors)")
+
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
 run = wandb.init(
@@ -476,6 +536,7 @@ wandb.define_metric("val/*", step_metric="global_step")
 for _name in VAL_SPLIT_NAMES:
     wandb.define_metric(f"{_name}/*", step_metric="global_step")
 wandb.define_metric("lr", step_metric="global_step")
+wandb.define_metric("lr/*", step_metric="global_step")
 
 model_dir = Path(f"models/model-{run.id}")
 model_dir.mkdir(parents=True, exist_ok=True)
@@ -553,6 +614,8 @@ for epoch in range(MAX_EPOCHS):
         "peak_GB": peak_gb,
         "global_step": global_step,
     }
+    for i, g in enumerate(optimizer.param_groups):
+        log_metrics[f"lr/{g.get('name', f'group_{i}')}"] = g["lr"]
     for split_name, m in split_metrics.items():
         for k, v in m.items():
             log_metrics[f"{split_name}/{k}"] = v
