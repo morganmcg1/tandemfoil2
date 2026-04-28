@@ -168,11 +168,13 @@ class Transolver(nn.Module):
     def __init__(self, space_dim=1, n_layers=5, n_hidden=256, dropout=0.0,
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
+                 use_surf_head=True, surf_head_hidden=128,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
+        self.use_surf_head = use_surf_head
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
 
@@ -194,7 +196,19 @@ class Transolver(nn.Module):
             for i in range(n_layers)
         ])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
+        if self.use_surf_head:
+            self.surf_head = nn.Sequential(
+                nn.LayerNorm(n_hidden),
+                nn.Linear(n_hidden, surf_head_hidden),
+                nn.GELU(),
+                nn.Linear(surf_head_hidden, out_dim),
+            )
         self.apply(self._init_weights)
+        # Zero-init the last Linear of the surface head so it starts as a no-op
+        # (volume head's predictions are used for surface nodes at epoch 1).
+        if self.use_surf_head:
+            nn.init.zeros_(self.surf_head[-1].weight)
+            nn.init.zeros_(self.surf_head[-1].bias)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -207,10 +221,23 @@ class Transolver(nn.Module):
 
     def forward(self, data, **kwargs):
         x = data["x"]
+        is_surface = data.get("is_surface", None)
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        for block in self.blocks:
-            fx = block(fx)
-        return {"preds": fx}
+        if self.use_surf_head:
+            for block in self.blocks[:-1]:
+                fx = block(fx)
+            fx_pre_final = fx
+            preds_vol = self.blocks[-1](fx)
+            if is_surface is not None:
+                preds_surf = self.surf_head(fx_pre_final)
+                preds = torch.where(is_surface.unsqueeze(-1), preds_surf, preds_vol)
+            else:
+                preds = preds_vol
+        else:
+            for block in self.blocks:
+                fx = block(fx)
+            preds = fx
+        return {"preds": preds}
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +265,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            pred = model({"x": x_norm, "is_surface": is_surface})["preds"]
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -358,6 +385,8 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip final test evaluation
+    use_surf_head: bool = True  # surface-aware auxiliary decoder head
+    surf_head_hidden: int = 128
 
 
 cfg = sp.parse(Config)
@@ -395,6 +424,8 @@ model_config = dict(
     n_head=4,
     slice_num=64,
     mlp_ratio=2,
+    use_surf_head=cfg.use_surf_head,
+    surf_head_hidden=cfg.surf_head_hidden,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
@@ -443,7 +474,7 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
+        pred = model({"x": x_norm, "is_surface": is_surface})["preds"]
         sq_err = (pred - y_norm) ** 2
 
         vol_mask = mask & ~is_surface
