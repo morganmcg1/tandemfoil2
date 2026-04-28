@@ -217,7 +217,7 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, cfg, device) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -250,10 +250,28 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
                 torch.where(vol_mask.unsqueeze(-1), sq_err, zero_norm).sum()
                 / vol_mask.sum().clamp(min=1)
             ).item()
-            surf_loss_sum += (
-                torch.where(surf_mask.unsqueeze(-1), abs_err, zero_norm).sum()
-                / surf_mask.sum().clamp(min=1)
-            ).item()
+            if cfg.revin and surf_mask.any():
+                surf_mask_3 = surf_mask.unsqueeze(-1)  # [B, N, 1]
+                surf_count = surf_mask_3.sum(dim=1).clamp(min=1)  # [B, 1]
+                y_surf_sum = torch.where(surf_mask_3, y_norm, zero_norm).sum(dim=1)  # [B, 3]
+                y_surf_mean = y_surf_sum / surf_count
+                y_surf_var = (
+                    torch.where(surf_mask_3, (y_norm - y_surf_mean.unsqueeze(1)) ** 2, zero_norm).sum(dim=1)
+                    / surf_count
+                )
+                y_surf_std = torch.sqrt(y_surf_var.clamp(min=cfg.revin_eps))  # [B, 3]
+                pred_revin = (pred - y_surf_mean.unsqueeze(1)) / y_surf_std.unsqueeze(1)
+                y_revin = (y_norm - y_surf_mean.unsqueeze(1)) / y_surf_std.unsqueeze(1)
+                abs_err_revin = (pred_revin - y_revin).abs()
+                surf_loss_sum += (
+                    torch.where(surf_mask_3, abs_err_revin, zero_norm).sum()
+                    / surf_mask.sum().clamp(min=1)
+                ).item()
+            else:
+                surf_loss_sum += (
+                    torch.where(surf_mask.unsqueeze(-1), abs_err, zero_norm).sum()
+                    / surf_mask.sum().clamp(min=1)
+                ).item()
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
@@ -264,7 +282,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     vol_loss = vol_loss_sum / max(n_batches, 1)
     surf_loss = surf_loss_sum / max(n_batches, 1)
     out = {"vol_loss": vol_loss, "surf_loss": surf_loss,
-           "loss": vol_loss + surf_weight * surf_loss}
+           "loss": vol_loss + cfg.surf_weight * surf_loss}
     out.update(finalize_split(mae_surf, mae_vol, n_surf, n_vol))
     return out
 
@@ -383,6 +401,8 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     surf_huber_delta: float = 1.0  # delta for Huber surface loss (in normalized space)
+    revin: bool = True   # per-sample y normalization in surface loss (RevIN)
+    revin_eps: float = 1e-5
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -500,7 +520,25 @@ if __name__ == "__main__":
             # torch.where, not multiplication: NaN*0 = NaN would poison the loss.
             zero_norm = torch.zeros((), dtype=sq_err.dtype, device=sq_err.device)
             vol_loss = torch.where(vol_mask.unsqueeze(-1), sq_err, zero_norm).sum() / vol_mask.sum().clamp(min=1)
-            surf_loss = torch.where(surf_mask.unsqueeze(-1), abs_err, zero_norm).sum() / surf_mask.sum().clamp(min=1)
+            if cfg.revin and surf_mask.any():
+                # RevIN: per-sample, per-channel surface y stats from target — used as
+                # constants (no_grad) to normalize both pred and y before the L1 loss.
+                surf_mask_3 = surf_mask.unsqueeze(-1)  # [B, N, 1]
+                with torch.no_grad():
+                    surf_count = surf_mask_3.sum(dim=1).clamp(min=1)  # [B, 1]
+                    y_surf_sum = torch.where(surf_mask_3, y_norm, zero_norm).sum(dim=1)  # [B, 3]
+                    y_surf_mean = y_surf_sum / surf_count
+                    y_surf_var = (
+                        torch.where(surf_mask_3, (y_norm - y_surf_mean.unsqueeze(1)) ** 2, zero_norm).sum(dim=1)
+                        / surf_count
+                    )
+                    y_surf_std = torch.sqrt(y_surf_var.clamp(min=cfg.revin_eps))  # [B, 3]
+                pred_revin = (pred - y_surf_mean.unsqueeze(1)) / y_surf_std.unsqueeze(1)
+                y_revin = (y_norm - y_surf_mean.unsqueeze(1)) / y_surf_std.unsqueeze(1)
+                abs_err_revin = (pred_revin - y_revin).abs()
+                surf_loss = torch.where(surf_mask_3, abs_err_revin, zero_norm).sum() / surf_mask.sum().clamp(min=1)
+            else:
+                surf_loss = torch.where(surf_mask.unsqueeze(-1), abs_err, zero_norm).sum() / surf_mask.sum().clamp(min=1)
             loss = vol_loss + cfg.surf_weight * surf_loss
 
             optimizer.zero_grad()
@@ -520,7 +558,7 @@ if __name__ == "__main__":
         # --- Validate ---
         model.eval()
         split_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg, device)
             for name, loader in val_loaders.items()
         }
         val_avg = aggregate_splits(split_metrics)
@@ -588,7 +626,7 @@ if __name__ == "__main__":
                 for name, ds in test_datasets.items()
             }
             test_metrics = {
-                name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+                name: evaluate_split(model, loader, stats, cfg, device)
                 for name, loader in test_loaders.items()
             }
             test_avg = aggregate_splits(test_metrics)
