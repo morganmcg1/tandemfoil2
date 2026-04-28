@@ -158,9 +158,11 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 drop_path: float = 0.0):
         super().__init__()
         self.last_layer = last_layer
+        self.drop_path = drop_path
         self.ln_1 = nn.LayerNorm(hidden_dim)
         self.attn = PhysicsAttention(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
@@ -176,6 +178,9 @@ class TransolverBlock(nn.Module):
             )
 
     def forward(self, fx):
+        if self.training and self.drop_path > 0.0 and not self.last_layer:
+            if torch.rand(1, device=fx.device).item() < self.drop_path:
+                return fx
         fx = self.attn(self.ln_1(fx)) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
@@ -187,6 +192,7 @@ class Transolver(nn.Module):
     def __init__(self, space_dim=1, n_layers=5, n_hidden=256, dropout=0.0,
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
+                 drop_path_max: float = 0.0,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None):
         super().__init__()
@@ -204,11 +210,13 @@ class Transolver(nn.Module):
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
+        drop_rates = torch.linspace(0.0, drop_path_max, n_layers).tolist()
         self.blocks = nn.ModuleList([
             TransolverBlock(
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                drop_path=drop_rates[i],
             )
             for i in range(n_layers)
         ])
@@ -409,6 +417,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    drop_path_max: float = 0.1
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
@@ -451,6 +460,7 @@ model_config = dict(
     n_head=4,
     slice_num=64,
     mlp_ratio=2,
+    drop_path_max=cfg.drop_path_max,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
