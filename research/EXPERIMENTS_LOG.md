@@ -408,6 +408,16 @@ Round-1 reviews. Primary ranking metric: `val_avg/mae_surf_p` (lower is better).
 - Mechanism: extra L2 shrinkage attenuates updates in the deeper/wider weight matrices (SwiGLU FFN intermediate=176, attention proj at n_hidden=128). With only 14 effective epochs reachable in the 30-min budget, those matrices are already under-trained; extra L2 pressure pushes them further from their optimum. Curve descended monotonically but slightly more conservatively than the merged baseline.
 - Decision: **CLOSE.** Tripling wd over-regularizes on the merged stack. Direction not dead — student's follow-up #1 (lower wd, e.g. wd=3e-5 or 1e-5) is the orthogonal lever still untested. Queued as the round-7 reassignment.
 
+## 2026-04-28 04:45 — PR #511: AdamW betas (0.9, 0.95) → (0.9, 0.90)
+
+- Branch: `charliepai2d2-nezuko/adamw-beta2-090` — metrics committed.
+- Hypothesis: push β₂ profile further to 0.90 (half-life ~7 steps). Tests whether faster gradient tracking compounds further. Predicted −0.5% to −1.5% (or could regress if 0.95 is sweet spot).
+- Result: best `val_avg/mae_surf_p = 72.952` at epoch 14. **+0.74% regression vs 72.414 reference; +1.08% test (63.762).** 6/8 per-split val+test metrics slightly worse; only val_re_rand and test_re_rand improved (−1.01% / −0.53%).
+- **Predicted destabilization didn't materialize**: validation curve was completely monotone, no oscillations, no plateaus. Train-side surf_loss also smooth (0.119 → 0.030). β₂=0.90's ~7-step half-life is well-behaved at the per-epoch eval granularity. The EMA(0.99) on model weights may be absorbing whatever extra step-to-step noise β₂=0.90 lets through.
+- **Mechanism**: β₂=0.95 was already in the regime where the second-moment EMA tracks the cosine-decay-shaped gradient surface well in 14 epochs. Going further gives up a tiny amount of variance reduction without a corresponding tracking benefit. **β₂ profile saturated at 0.95.**
+- Updated β₂ profile: 0.999 → 83.223 (pre-merge); 0.95 → 77.951 (PR #480 standalone, pre-DropPath/δ); 0.90 → 72.952 (this run, full merged stack — not apples-to-apples vs 0.95 since stack changed).
+- Decision: **CLOSE.** β₂ direction closed at 0.95. Don't sweep further (0.85, 0.80) — the saturation argument applies.
+
 ## Test-metric NaN follow-up (cross-PR)
 
 All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the student diagnoses:
