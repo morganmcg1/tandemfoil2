@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -236,9 +237,24 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Per-sample skip for non-finite ground truth (matches accumulate_batch
+            # semantics). Sanitize y so downstream sq_err and (mask * err) cannot
+            # produce 0*inf=NaN; mask out the bad samples entirely.
+            y_finite = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)  # [B]
+            if not y_finite.all():
+                n_bad_samples = (~y_finite).sum().item()
+                print(f"[evaluate_split] WARN: {n_bad_samples} sample(s) with non-finite y; excluding from metrics")
+                y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+                mask = mask & y_finite.unsqueeze(-1)
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+
+            n_bad = (~torch.isfinite(pred)).sum().item()
+            if n_bad:
+                print(f"[evaluate_split] WARN: {n_bad} non-finite preds in batch; sanitizing with nan_to_num")
+                pred = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -380,6 +396,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    slice_num: int = 128
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -421,7 +438,7 @@ model_config = dict(
     n_hidden=128,
     n_layers=5,
     n_head=4,
-    slice_num=64,
+    slice_num=cfg.slice_num,
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
@@ -462,6 +479,27 @@ model_dir.mkdir(parents=True, exist_ok=True)
 model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
+
+metrics_dir = Path("metrics")
+metrics_dir.mkdir(parents=True, exist_ok=True)
+metrics_token = _sanitize_artifact_token(cfg.wandb_name or cfg.agent or "tandemfoil")
+metrics_path = metrics_dir / f"{metrics_token}-{run.id}.jsonl"
+
+
+def _log_jsonl(record: dict) -> None:
+    with open(metrics_path, "a") as f:
+        f.write(json.dumps(record, default=float) + "\n")
+
+
+_log_jsonl({
+    "event": "config",
+    "run_id": run.id,
+    "wandb_name": cfg.wandb_name,
+    "agent": cfg.agent,
+    "config": asdict(cfg),
+    "model_config": model_config,
+    "n_params": n_params,
+})
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
@@ -547,6 +585,18 @@ for epoch in range(MAX_EPOCHS):
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+    _log_jsonl({
+        "event": "epoch",
+        "epoch": epoch + 1,
+        "epoch_time_s": dt,
+        "lr": scheduler.get_last_lr()[0],
+        "peak_gb": peak_gb,
+        "train/vol_loss": epoch_vol,
+        "train/surf_loss": epoch_surf,
+        "val/loss": val_loss_mean,
+        **{f"{n}/{k}": v for n, m in split_metrics.items() for k, v in m.items()},
+        **{f"val_{k}": v for k, v in val_avg.items()},
+    })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
@@ -596,6 +646,12 @@ if best_metrics:
             test_log[f"test_{k}"] = v
         wandb.log(test_log)
         wandb.summary.update(test_log)
+        _log_jsonl({
+            "event": "test",
+            "best_epoch": best_metrics["epoch"],
+            "best_val_avg/mae_surf_p": best_avg_surf_p,
+            **test_log,
+        })
 
     save_model_artifact(
         run=run,
