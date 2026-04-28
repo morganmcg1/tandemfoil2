@@ -257,6 +257,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             ff = fourier_features(x_norm[..., :2])
+            ff = ff * is_surface.unsqueeze(-1).float()
             x_norm = torch.cat([x_norm, ff], dim=-1)
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
 
@@ -539,6 +540,7 @@ run = wandb.init(
         "re_median_per_domain": re_median_per_domain,
         "ema_decay": ema_decay,
         "ema_val_interval": EMA_VAL_INTERVAL,
+        "ff_variant": "surface_gated",
     },
     mode=os.environ.get("WANDB_MODE", "online"),
 )
@@ -585,6 +587,7 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         ff = fourier_features(x_norm[..., :2])
+        ff = ff * is_surface.unsqueeze(-1).float()
         x_norm = torch.cat([x_norm, ff], dim=-1)
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
 
