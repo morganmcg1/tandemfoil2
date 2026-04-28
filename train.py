@@ -46,6 +46,50 @@ from data import (
     pad_collate,
 )
 
+
+# ---------------------------------------------------------------------------
+# Curriculum helpers
+# ---------------------------------------------------------------------------
+
+def compute_per_sample_y_std(train_ds, channel: int = 2) -> torch.Tensor:
+    """Per-sample std of the given target channel (default = 2 == pressure).
+
+    Returns a [N] tensor of y_std values, one per training sample. NaNs are
+    filtered before std so a sample with any non-finite ground truth still
+    yields a meaningful per-sample std (matches the spirit of the bug-fix in
+    PR #367 where non-finite gt values are skipped at scoring time).
+    """
+    n = len(train_ds)
+    stds = torch.zeros(n, dtype=torch.float64)
+    for i in range(n):
+        _, y, _is_surface = train_ds[i]
+        v = y[..., channel].double().reshape(-1)
+        v = v[torch.isfinite(v)]
+        stds[i] = v.std(unbiased=False) if v.numel() > 1 else 0.0
+    return stds
+
+
+def curriculum_weights(
+    domain_weights: torch.Tensor,
+    sample_y_std: torch.Tensor,
+    epoch: int,
+    warmup_epochs: int,
+    min_quantile: float = 0.5,
+) -> torch.Tensor:
+    """Curriculum-masked sampler weights for the current epoch.
+
+    At epoch 0, only samples below the ``min_quantile`` of y_std contribute;
+    over ``warmup_epochs`` the threshold ramps linearly to 1.0 (full pool).
+    Past ``warmup_epochs`` all samples contribute at their original
+    domain-balanced weights.
+    """
+    progress = min(epoch / max(warmup_epochs, 1), 1.0)
+    threshold_q = min_quantile + (1.0 - min_quantile) * progress
+    threshold = torch.quantile(sample_y_std, threshold_q)
+    mask = (sample_y_std <= threshold).double()
+    return domain_weights * mask
+
+
 # ---------------------------------------------------------------------------
 # Transolver model
 # ---------------------------------------------------------------------------
@@ -389,6 +433,8 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    curriculum_warmup_epochs: int = 5     # 0 disables curriculum
+    curriculum_min_quantile: float = 0.5  # bottom-quantile of y_std at epoch 0
 
 
 cfg = sp.parse(Config)
@@ -404,13 +450,36 @@ stats = {k: v.to(device) for k, v in stats.items()}
 loader_kwargs = dict(collate_fn=pad_collate, num_workers=4, pin_memory=True,
                      persistent_workers=True, prefetch_factor=2)
 
+curriculum_active = (not cfg.debug) and cfg.curriculum_warmup_epochs > 0
+if curriculum_active:
+    print("Computing per-sample y_std for curriculum...")
+    sample_y_std = compute_per_sample_y_std(train_ds, channel=2)
+    print(f"  range: [{sample_y_std.min().item():.1f}, {sample_y_std.max().item():.1f}], "
+          f"median: {sample_y_std.median().item():.1f}")
+else:
+    sample_y_std = None
+
 if cfg.debug:
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
                               shuffle=True, **loader_kwargs)
+    train_loader_factory = None  # not needed in debug mode
 else:
-    sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_ds), replacement=True)
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
-                              sampler=sampler, **loader_kwargs)
+    domain_weights_tensor = torch.tensor(sample_weights, dtype=torch.float64)
+
+    def make_train_loader(epoch: int) -> DataLoader:
+        if curriculum_active:
+            w = curriculum_weights(
+                domain_weights_tensor, sample_y_std,
+                epoch, cfg.curriculum_warmup_epochs, cfg.curriculum_min_quantile,
+            )
+        else:
+            w = domain_weights_tensor
+        sampler = WeightedRandomSampler(w, num_samples=len(train_ds), replacement=True)
+        return DataLoader(train_ds, batch_size=cfg.batch_size,
+                          sampler=sampler, **loader_kwargs)
+
+    train_loader = make_train_loader(0)
+    train_loader_factory = make_train_loader
 
 val_loaders = {
     name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
@@ -456,6 +525,7 @@ run = wandb.init(
 wandb.define_metric("global_step")
 wandb.define_metric("train/*", step_metric="global_step")
 wandb.define_metric("val/*", step_metric="global_step")
+wandb.define_metric("curriculum/*", step_metric="global_step")
 for _name in VAL_SPLIT_NAMES:
     wandb.define_metric(f"{_name}/*", step_metric="global_step")
 wandb.define_metric("lr", step_metric="global_step")
@@ -475,6 +545,9 @@ for epoch in range(MAX_EPOCHS):
     if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
         print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
         break
+
+    if train_loader_factory is not None:
+        train_loader = train_loader_factory(epoch)
 
     t0 = time.time()
     model.train()
@@ -531,6 +604,15 @@ for epoch in range(MAX_EPOCHS):
         "epoch_time_s": dt,
         "global_step": global_step,
     }
+    if curriculum_active:
+        progress = min(epoch / max(cfg.curriculum_warmup_epochs, 1), 1.0)
+        threshold_q = cfg.curriculum_min_quantile + (1.0 - cfg.curriculum_min_quantile) * progress
+        threshold = torch.quantile(sample_y_std, threshold_q)
+        n_allowed = int((sample_y_std <= threshold).sum())
+        log_metrics["curriculum/threshold_q"] = threshold_q
+        log_metrics["curriculum/threshold_y_std"] = float(threshold)
+        log_metrics["curriculum/n_allowed"] = n_allowed
+        log_metrics["curriculum/frac_allowed"] = n_allowed / max(len(sample_y_std), 1)
     for split_name, m in split_metrics.items():
         for k, v in m.items():
             log_metrics[f"{split_name}/{k}"] = v
