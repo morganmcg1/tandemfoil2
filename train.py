@@ -402,6 +402,7 @@ class Config:
     skip_test: bool = False  # skip end-of-run test evaluation
     loss: str = "mse"  # "mse" or "huber"
     huber_delta: float = 1.0  # delta for Huber loss in normalized target space
+    grad_clip: float = 0.0  # max grad norm; 0.0 disables clipping
 
 
 cfg = sp.parse(Config)
@@ -536,6 +537,8 @@ for epoch in range(MAX_EPOCHS):
 
         optimizer.zero_grad()
         loss.backward()
+        if cfg.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.grad_clip)
         optimizer.step()
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
