@@ -1,5 +1,102 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 09:30 — PR #657 (MERGED ★ ROUND-3 WINNER): layer scale (CaiT-style residual gating, γ_init=1e-4)
+- Branch: `charliepai2d3-fern/l1ff12-ema-cos14-lr-7p5e-4-layerscale-1e-4` (merged via senpai:merge-winner)
+- Hypothesis: per-channel learnable scalar `γ` (init 1e-4) on each residual branch (`γ_attn` and `γ_mlp` per block) lets the network discover per-block, per-channel contribution magnitudes during training. Mechanism untouched in round 3.
+
+### Headline (best-val checkpoint, epoch 13/14 — timeout-bounded)
+
+| Metric | layer scale (this PR) | PR #578 baseline | Δ |
+|--------|---------------------:|-----------------:|--:|
+| `val_avg/mae_surf_p` | **67.29** | 75.78 | **−11.21%** ★ |
+| `test_avg/mae_surf_p` | **58.39** | 66.27 | **−11.89%** ★ |
+| Per-epoch wallclock | ~142 s | ~132 s | +7.6% |
+| Peak GPU memory | 47.50 GB | 42.51 GB | +11.7% |
+
+**Largest single-knob delta of round 3 since PR #280 (L1 surface loss, −24.1%).** ~7× the magnitude of PR #578 (decoupled head LR, the previous biggest single-knob).
+
+### Per-split val (best epoch 13) — uniform improvement
+
+| split | layer scale | PR #578 | Δ% |
+|-------|------------:|--------:|---:|
+| val_single_in_dist | **73.91** | 84.61 | **−12.6%** ★ |
+| val_geom_camber_rc | **79.82** | 85.83 | **−7.0%** ★ |
+| val_geom_camber_cruise | **49.58** | 58.09 | **−14.6%** ★ (recovers PR #578's mild regression) |
+| val_re_rand | **65.84** | 74.58 | **−11.7%** ★ |
+
+### Per-split test (NaN-safe, best-val checkpoint)
+
+| split | layer scale | PR #578 | Δ% |
+|-------|------------:|--------:|---:|
+| test_single_in_dist | 63.55 | 72.57 | −12.4% |
+| test_geom_camber_rc | 70.41 | 75.92 | −7.3% |
+| test_geom_camber_cruise | 41.32 | 49.56 | **−16.6%** |
+| test_re_rand | 58.29 | 67.02 | −13.0% |
+
+### γ diagnostic (per-block, final epoch 13)
+
+| block | mean(γ_attn) | mean(γ_mlp) |
+|------:|-------------:|------------:|
+| 0 | 9.5e-3 | 2.76e-2 |
+| 1 | **1.18e-2 ← highest** | **3.78e-2 ← highest** |
+| 2 | 4.7e-3 ← lowest | 2.89e-2 |
+| 3 | 9.0e-3 | 2.92e-2 |
+| 4 (last) | 5.9e-3 | 2.78e-2 |
+
+Key observations:
+- **γ engaged strongly**: every block grew γ from 1e-4 to 5e-3 to 4e-2 (50× to 380× expansion). The model actively used the residual-gating lever.
+- **MLP dominates attention**: γ_mlp (~3e-2) is ~3× larger than γ_attn (~8e-3). MLP residuals carry most per-block signal.
+- **Block 1 is dominant** in both branches; block 2 deliberately downweights its attention. Real per-block heterogeneity that PR #578 partially captured via per-parameter LR.
+
+### Analysis
+
+**The mechanism is per-channel residual gating** that lets the network discover which blocks contribute meaningfully and at what magnitude. Several compounding effects:
+
+1. **Deep stack benefits**: With raw residuals, every block's contribution is forced to O(1) magnitude relative to the residual stream. Layer scale (γ ≈ 1e-4 init) starts every block near-identity and lets blocks "turn on" their contributions only as their internal weights stabilise.
+2. **Per-block heterogeneity is real**: γ_attn varies 2.5× across blocks. Without layer scale, the model expressed this through internal weight magnitudes — competing with the *transformation* the block performs.
+3. **MLP > attention contribution**: This stack's attention branches are over-parametrised relative to need. Consistent with TandemFoilSet being smooth low-frequency physics where local MLP mixing carries more signal than global attention re-routing.
+4. **Composability with PR #578**: γ parameters live in `backbone_params` (LR=7.5e-4); orthogonal to head's 2× LR. The two mechanisms are mutually compatible.
+
+**The Pareto frontier is broken**: PR #657 lifts ALL 4 splits simultaneously, with the largest gain on `val_geom_camber_cruise` (−14.6%) — the very split that the 6 previously-closed Pareto-trade levers had been "winning". Layer scale resolves the cruise-vs-others tension at the merged-stack level by giving each block a learnable magnitude.
+
+### Decision: MERGED
+
+New advisor baseline: **val 67.29 / test 58.39 (best epoch 13/14, timeout-bounded)**.
+
+**Caveat**: timeout-bounded at epoch 13 (per-epoch wallclock rose ~7.6% to 142s due to layer scale's small added compute). Best-val was still actively descending; full 14-epoch run could improve further. Round-5 should consider raising SENPAI_TIMEOUT_MINUTES or trimming eval frequency.
+
+Filing follow-ups:
+1. **γ_init bracket UP** (1e-3) — assigned to fern as PR #688 (vertical bracket).
+2. **Per-branch asymmetric γ_init** (γ_attn=1e-3, γ_mlp=1e-4) — assigned to tanjiro as PR #690 (horizontal axis testing the γ_attn-lag hypothesis).
+3. **Full 14-epoch evaluation** — round-5 logistics fix.
+4. **γ × head LR joint trial** — round-5 ablation (2×2: γ on/off × head LR 1×/2×).
+5. **Layer scale × DropPath** — DropPath was previously closed as wallclock-binding overhead; layer scale's deterministic per-block gating may rehabilitate stochastic depth as a compose lever.
+
+---
+
+## 2026-04-28 09:24 — PR #663 (CLOSED): SiLU activation (replace GELU)
+- Branch: `charliepai2d3-tanjiro/l1ff12-ema-cos14-lr-7p5e-4-silu` (deleted)
+- Hypothesis: SiLU's wider negative tail helps gradient flow on heavy-tailed surface pressure target.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | SiLU (this PR) | PR #578 baseline | Δ |
+|--------|---------------:|-----------------:|--:|
+| `val_avg/mae_surf_p` | 85.19 | 75.78 | **+12.4% REGRESSION** |
+| `test_avg/mae_surf_p` | 74.76 | 66.27 | +12.8% |
+
+ALL 4 val splits regress (in-dist worst at +21.0%, cruise least at +9.6%). Train losses identical (within 4%) but val/test differ by 12% — generalisation issue, not optimisation. Clean monotone regression at every epoch.
+
+### Analysis
+
+**Mechanistic prior inverted**: SiLU's wider negative tail did NOT help heavy-tailed in-dist; instead in-dist regressed the most. Plausible interpretation per student: PhysicsAttention's slice-routing softmax may prefer GELU's slightly sharper near-zero behaviour for distinguishable slice scores; SiLU's smoother negative tail produces muddier routing.
+
+### Decision: CLOSED
+
+Activation-axis bracket closed. GELU stays as round-3 default.
+
+---
+
 ## 2026-04-28 09:13 — PR #656 (CLOSED): head-only weight decay 5e-4 (5× backbone wd)
 - Branch: `charliepai2d3-thorfinn/l1ff12-ema-cos14-lr-7p5e-4-head-wd-5e-4` (deleted)
 - Hypothesis: keep PR #578's HEAD_LR_MULTIPLIER=2.0 and apply 5× wd on head only to absorb in-dist over-fit observed at 3× head LR (PR #625).

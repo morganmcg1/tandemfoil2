@@ -15,37 +15,47 @@ help across at least three of the four tracks.
 
 ## Round 3 focus
 
-**Current measured baseline (merged 2026-04-28 07:25):**
-PR #578 (thorfinn) — **L1 + 12-freq spatial FF + EMA(0.997) + matched
-cosine + lr=7.5e-4 + decoupled head LR (2× on `mlp2`+`ln_3`)**.
-`val_avg/mae_surf_p = 75.78`, `test_avg/mae_surf_p = 66.27`. Twelfth
-merge of round 3. **Largest single-knob improvement since the
-schedule × EMA fix**.
+**Current measured baseline (merged 2026-04-28 09:30):**
+PR #657 (fern) — **L1 + 12-freq FF + EMA(0.997) + matched cosine +
+lr=7.5e-4 + grad clip max_norm=5.0 + decoupled head LR (2×) + aux
+log-p (weight=0.25) + LAYER SCALE (CaiT-style residual gating,
+γ_init=1e-4)**.
+`val_avg/mae_surf_p = 67.29`, `test_avg/mae_surf_p = 58.39`.
+**Thirteenth merge of round 3 — largest single-knob delta since
+PR #280 (L1 surface loss)**, ~7× the magnitude of PR #578.
 
-**Cumulative round-3 improvement: −43.9% on val, −46.2% on test**
+**Cumulative round-3 improvement: −50.2% on val, −52.6% on test**
 from PR #306 reference.
 
-**Mechanistic insight (refined post-#578 / #625 / #639)**: The PR #578
-gain is **specifically about the output projection** (mlp2 + ln_3
-maps deep features → 3 output channels — a *calibration* boost to a
-LR-starved final stage). It is NOT generic "late-layer adaptation":
-- Vertical bracket (PR #625, 3× narrow head) regressed +3.06%, in-dist
-  worst (+5.84%). 2× is the multiplier optimum.
-- Width bracket (PR #639, 2× extended head incl. mlp + ln_2) regressed
-  +2.30%, in-dist worst (+6.49%). Boosting mlp (a feature transform
-  layer) over-adapts in-dist patterns. Narrow set is the width optimum.
+**The Pareto frontier is broken**: PR #657 lifts ALL 4 splits
+simultaneously, with the largest gain on `val_geom_camber_cruise`
+(−14.6%) — the very split that the 6 previously-closed Pareto-trade
+levers had been "winning". Layer scale resolves the cruise-vs-others
+tension at the merged-stack level by giving each block a learnable
+magnitude.
 
-**Round-3 head-LR axis is fully bracketed at PR #578's joint setting**
-(narrow head, multiplier 2×).
+**Caveat**: PR #657 was timeout-bounded at epoch 13/14 (per-epoch
+wallclock rose ~7.6% to 142s). Best-val was still actively descending;
+full 14-epoch run could improve further. Round-5 should consider
+raising SENPAI_TIMEOUT_MINUTES or trimming eval frequency.
 
-**Per-split Pareto frontier (5 closed levers)**: PR #616 max_norm=10,
-#607 anneal-noise, #617 eta_min=5e-5, #642 slice_num=32, #639 ext-head
-all share the "cruise improves, in-dist + rc-camber regress, re_rand
-neutral" signature. The round-3 stack is **at a per-split frontier**:
-single-knob bracketing trades cruise (low-magnitude, easier-to-fit)
-against the high-magnitude in-dist + rc-camber splits. Round-5 needs
-mechanism-class changes or per-split-aware levers (sample weighting,
-cluster-aware routing, target-space transforms).
+**γ diagnostic (per-block, final epoch 13 — informs round-5)**:
+- γ_attn final: 4.7e-3 to 1.18e-2 (avg ~8e-3) — block 1 highest.
+- γ_mlp final: 2.76e-2 to 3.78e-2 (avg ~3e-2) — also block 1 highest.
+- MLP residuals carry ~3× the magnitude of attention residuals.
+- Real per-block heterogeneity emerges from training; layer scale
+  formalises what PR #578 partially captured via per-parameter LR.
+
+**Mechanistic insight (refined across PR #578 / #625 / #639 / #657)**:
+- PR #578: head LR 2× was a *calibration* boost to the LR-starved
+  output projection (mlp2 + ln_3). Width-bracket (#639) and vertical
+  bracket (#625) both regress on in-dist when widened or strengthened.
+- PR #657: layer scale generalises the per-component magnitude story
+  to the entire residual chain. The output projection's LR-starvation
+  was one symptom of a broader issue: **all 5 blocks have
+  heterogeneous "useful contribution magnitudes"** that raw residuals
+  cannot express. γ-gating decouples *how much* a block contributes
+  from *what* it computes.
 
 **Round-3 baseline lineage:**
 | Round | best val | best test | lever | Δ vs prior |
@@ -61,9 +71,10 @@ cluster-aware routing, target-space transforms).
 | PR #534 |  78.60 |  67.77 | + EMA_DECAY=0.997 | −0.25% / −1.97% |
 | PR #572 |  77.78 |  67.71 | + aux log-p (weight=0.25) | −1.06% / −0.09% |
 | PR #596 |  77.01 |  67.78 | + max_norm=5.0 | −0.99% / +0.10% |
-| **PR #578** | **75.78** | **66.27** | **+ decoupled head LR (2×)** | **−1.60% / −2.23%** |
+| PR #578 |  75.78 |  66.27 | + decoupled head LR (2×) | −1.60% / −2.23% |
+| **PR #657 (current)** | **67.29** | **58.39** | **+ layer scale (γ_init=1e-4) ★** | **−11.21% / −11.89%** |
 
-**Round-3 proven levers (cumulative, eleven stacked)**:
+**Round-3 proven levers (cumulative, twelve stacked)**:
 1. L1 surface loss (PR #280)
 2. 8→12-freq spatial FF (PR #400 → PR #506)
 3. Matched cosine `--epochs 14` (PR #389, CLI)
@@ -73,6 +84,10 @@ cluster-aware routing, target-space transforms).
 7. NUM_FOURIER_FREQS=12 (PR #506) — refinement of lever #2.
 8. EMA_DECAY=0.997 (PR #534) — refinement of lever #4.
 9. Auxiliary log-pressure loss weight=0.25 (PR #572).
+10. max_norm=5.0 (PR #596) — refinement of lever #6.
+11. Decoupled head LR (2× on `mlp2`+`ln_3`) (PR #578).
+12. **Layer scale (γ_init=1e-4)** (PR #657) — per-channel learnable
+    residual gating; largest single-knob delta of round 3 since PR #280.
 10. max_norm=5.0 (PR #596) — refinement of lever #6.
 11. **Decoupled head LR (2× on `mlp2`+`ln_3`)** (PR #578) — head adapts
     faster than backbone.
@@ -184,13 +199,13 @@ Recommended reproduce: `python train.py --epochs 14 --lr 7.5e-4`.
    all parameters uniformly, may rebalance the magnitude-dependent
    optimisation that AdamW exhibits (the round-3 Pareto frontier
    suggests Adam's adaptive scaling amplifies the magnitude imbalance).
-7. **PR #657** — fern: L1+FF12+EMA + **layer scale (CaiT-style
-   residual gating, γ_init=1e-4)** — per-channel learnable scalars on
-   each residual branch. Mechanistically distinct architectural axis
-   untouched in round 3.
-8. **PR #663** — tanjiro: L1+FF12+EMA + **SiLU activation**
-   (replaces GELU throughout backbone + head's mlp2 middle layer).
-   Mechanistically-novel architectural axis untouched in round 3.
+7. **PR #688** — fern: **layer scale γ_init=1e-3** (vertical bracket
+   UP from PR #657's merged 1e-4) — tests if faster γ engagement
+   recovers the timeout-bounded ep14 headroom and improves further.
+8. **PR #690** — tanjiro: **asymmetric γ_init** (γ_attn=1e-3,
+   γ_mlp=1e-4 unchanged) — tests fern's diagnostic finding that
+   γ_attn lagged γ_mlp throughout training; may unlock attention
+   capacity earlier without disturbing MLP balance.
 
 ## Compose pattern map — final round-3 picture
 
