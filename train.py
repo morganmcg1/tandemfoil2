@@ -243,12 +243,14 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
+            # torch.where, not multiplication: NaN*0 = NaN would poison the sum.
+            zero_norm = torch.zeros((), dtype=sq_err.dtype, device=sq_err.device)
             vol_loss_sum += (
-                (sq_err * vol_mask.unsqueeze(-1)).sum()
+                torch.where(vol_mask.unsqueeze(-1), sq_err, zero_norm).sum()
                 / vol_mask.sum().clamp(min=1)
             ).item()
             surf_loss_sum += (
-                (sq_err * surf_mask.unsqueeze(-1)).sum()
+                torch.where(surf_mask.unsqueeze(-1), sq_err, zero_norm).sum()
                 / surf_mask.sum().clamp(min=1)
             ).item()
             n_batches += 1
@@ -388,228 +390,231 @@ class Config:
     skip_test: bool = False  # skip end-of-run test evaluation
 
 
-cfg = sp.parse(Config)
-MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
-MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
+if __name__ == "__main__":
+    cfg = sp.parse(Config)
+    MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
+    MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
 
-train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
-stats = {k: v.to(device) for k, v in stats.items()}
+    train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
+    stats = {k: v.to(device) for k, v in stats.items()}
 
-loader_kwargs = dict(collate_fn=pad_collate, num_workers=4, pin_memory=True,
-                     persistent_workers=True, prefetch_factor=2)
+    loader_kwargs = dict(collate_fn=pad_collate, num_workers=4, pin_memory=True,
+                         persistent_workers=True, prefetch_factor=2)
 
-if cfg.debug:
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
-                              shuffle=True, **loader_kwargs)
-else:
-    sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_ds), replacement=True)
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
-                              sampler=sampler, **loader_kwargs)
+    if cfg.debug:
+        train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
+                                  shuffle=True, **loader_kwargs)
+    else:
+        sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_ds), replacement=True)
+        train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
+                                  sampler=sampler, **loader_kwargs)
 
-val_loaders = {
-    name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
-    for name, ds in val_splits.items()
-}
-
-model_config = dict(
-    space_dim=2,
-    fun_dim=X_DIM - 2,
-    out_dim=3,
-    n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
-    mlp_ratio=2,
-    output_fields=["Ux", "Uy", "p"],
-    output_dims=[1, 1, 1],
-)
-
-model = Transolver(**model_config).to(device)
-n_params = sum(p.numel() for p in model.parameters())
-print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
-
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
-
-run = wandb.init(
-    entity=os.environ.get("WANDB_ENTITY"),
-    project=os.environ.get("WANDB_PROJECT"),
-    group=cfg.wandb_group,
-    name=cfg.wandb_name,
-    tags=[cfg.agent] if cfg.agent else [],
-    config={
-        **asdict(cfg),
-        "model_config": model_config,
-        "n_params": n_params,
-        "train_samples": len(train_ds),
-        "val_samples": {k: len(v) for k, v in val_splits.items()},
-    },
-    mode=os.environ.get("WANDB_MODE", "online"),
-)
-
-wandb.define_metric("global_step")
-wandb.define_metric("train/*", step_metric="global_step")
-wandb.define_metric("val/*", step_metric="global_step")
-for _name in VAL_SPLIT_NAMES:
-    wandb.define_metric(f"{_name}/*", step_metric="global_step")
-wandb.define_metric("lr", step_metric="global_step")
-
-model_dir = Path(f"models/model-{run.id}")
-model_dir.mkdir(parents=True, exist_ok=True)
-model_path = model_dir / "checkpoint.pt"
-with open(model_dir / "config.yaml", "w") as f:
-    yaml.dump(model_config, f)
-
-best_avg_surf_p = float("inf")
-best_metrics: dict = {}
-global_step = 0
-train_start = time.time()
-
-for epoch in range(MAX_EPOCHS):
-    if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
-        print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
-        break
-
-    t0 = time.time()
-    model.train()
-    epoch_vol = epoch_surf = 0.0
-    n_batches = 0
-
-    for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
-        x = x.to(device, non_blocking=True)
-        y = y.to(device, non_blocking=True)
-        is_surface = is_surface.to(device, non_blocking=True)
-        mask = mask.to(device, non_blocking=True)
-
-        x_norm = (x - stats["x_mean"]) / stats["x_std"]
-        y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
-
-        vol_mask = mask & ~is_surface
-        surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        global_step += 1
-        wandb.log({"train/loss": loss.item(), "global_step": global_step})
-
-        epoch_vol += vol_loss.item()
-        epoch_surf += surf_loss.item()
-        n_batches += 1
-
-    scheduler.step()
-    epoch_vol /= max(n_batches, 1)
-    epoch_surf /= max(n_batches, 1)
-
-    # --- Validate ---
-    model.eval()
-    split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
-        for name, loader in val_loaders.items()
+    val_loaders = {
+        name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
+        for name, ds in val_splits.items()
     }
-    val_avg = aggregate_splits(split_metrics)
-    avg_surf_p = val_avg["avg/mae_surf_p"]
-    val_loss_mean = sum(m["loss"] for m in split_metrics.values()) / len(split_metrics)
-    dt = time.time() - t0
 
-    log_metrics = {
-        "train/vol_loss": epoch_vol,
-        "train/surf_loss": epoch_surf,
-        "val/loss": val_loss_mean,
-        "lr": scheduler.get_last_lr()[0],
-        "epoch_time_s": dt,
-        "global_step": global_step,
-    }
-    for split_name, m in split_metrics.items():
-        for k, v in m.items():
-            log_metrics[f"{split_name}/{k}"] = v
-    for k, v in val_avg.items():
-        log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
-    wandb.log(log_metrics)
-
-    tag = ""
-    if avg_surf_p < best_avg_surf_p:
-        best_avg_surf_p = avg_surf_p
-        best_metrics = {
-            "epoch": epoch + 1,
-            "val_avg/mae_surf_p": avg_surf_p,
-            "per_split": split_metrics,
-        }
-        torch.save(model.state_dict(), model_path)
-        tag = " *"
-
-    peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
-    print(
-        f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
-        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
-        f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
+    model_config = dict(
+        space_dim=2,
+        fun_dim=X_DIM - 2,
+        out_dim=3,
+        n_hidden=128,
+        n_layers=5,
+        n_head=4,
+        slice_num=64,
+        mlp_ratio=2,
+        output_fields=["Ux", "Uy", "p"],
+        output_dims=[1, 1, 1],
     )
-    for name in VAL_SPLIT_NAMES:
-        print_split_metrics(name, split_metrics[name])
 
-total_time = (time.time() - train_start) / 60.0
-print(f"\nTraining done in {total_time:.1f} min")
+    model = Transolver(**model_config).to(device)
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-# --- Test evaluation + artifact upload ---
-if best_metrics:
-    print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
-    wandb.summary.update({
-        "best_epoch": best_metrics["epoch"],
-        "best_val_avg/mae_surf_p": best_avg_surf_p,
-        "total_train_minutes": total_time,
-    })
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-    model.eval()
+    run = wandb.init(
+        entity=os.environ.get("WANDB_ENTITY"),
+        project=os.environ.get("WANDB_PROJECT"),
+        group=cfg.wandb_group,
+        name=cfg.wandb_name,
+        tags=[cfg.agent] if cfg.agent else [],
+        config={
+            **asdict(cfg),
+            "model_config": model_config,
+            "n_params": n_params,
+            "train_samples": len(train_ds),
+            "val_samples": {k: len(v) for k, v in val_splits.items()},
+        },
+        mode=os.environ.get("WANDB_MODE", "online"),
+    )
 
-    test_metrics = None
-    test_avg = None
-    if not cfg.skip_test:
-        print("\nEvaluating on held-out test splits...")
-        test_datasets = load_test_data(cfg.splits_dir, debug=cfg.debug)
-        test_loaders = {
-            name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
-            for name, ds in test_datasets.items()
-        }
-        test_metrics = {
+    wandb.define_metric("global_step")
+    wandb.define_metric("train/*", step_metric="global_step")
+    wandb.define_metric("val/*", step_metric="global_step")
+    for _name in VAL_SPLIT_NAMES:
+        wandb.define_metric(f"{_name}/*", step_metric="global_step")
+    wandb.define_metric("lr", step_metric="global_step")
+
+    model_dir = Path(f"models/model-{run.id}")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / "checkpoint.pt"
+    with open(model_dir / "config.yaml", "w") as f:
+        yaml.dump(model_config, f)
+
+    best_avg_surf_p = float("inf")
+    best_metrics: dict = {}
+    global_step = 0
+    train_start = time.time()
+
+    for epoch in range(MAX_EPOCHS):
+        if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
+            print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
+            break
+
+        t0 = time.time()
+        model.train()
+        epoch_vol = epoch_surf = 0.0
+        n_batches = 0
+
+        for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
+            x = x.to(device, non_blocking=True)
+            y = y.to(device, non_blocking=True)
+            is_surface = is_surface.to(device, non_blocking=True)
+            mask = mask.to(device, non_blocking=True)
+
+            x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            y_norm = (y - stats["y_mean"]) / stats["y_std"]
+            pred = model({"x": x_norm})["preds"]
+            sq_err = (pred - y_norm) ** 2
+
+            vol_mask = mask & ~is_surface
+            surf_mask = mask & is_surface
+            # torch.where, not multiplication: NaN*0 = NaN would poison the loss.
+            zero_norm = torch.zeros((), dtype=sq_err.dtype, device=sq_err.device)
+            vol_loss = torch.where(vol_mask.unsqueeze(-1), sq_err, zero_norm).sum() / vol_mask.sum().clamp(min=1)
+            surf_loss = torch.where(surf_mask.unsqueeze(-1), sq_err, zero_norm).sum() / surf_mask.sum().clamp(min=1)
+            loss = vol_loss + cfg.surf_weight * surf_loss
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            global_step += 1
+            wandb.log({"train/loss": loss.item(), "global_step": global_step})
+
+            epoch_vol += vol_loss.item()
+            epoch_surf += surf_loss.item()
+            n_batches += 1
+
+        scheduler.step()
+        epoch_vol /= max(n_batches, 1)
+        epoch_surf /= max(n_batches, 1)
+
+        # --- Validate ---
+        model.eval()
+        split_metrics = {
             name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
-            for name, loader in test_loaders.items()
+            for name, loader in val_loaders.items()
         }
-        test_avg = aggregate_splits(test_metrics)
-        print(f"\n  TEST  avg_surf_p={test_avg['avg/mae_surf_p']:.4f}")
-        for name in TEST_SPLIT_NAMES:
-            print_split_metrics(name, test_metrics[name])
+        val_avg = aggregate_splits(split_metrics)
+        avg_surf_p = val_avg["avg/mae_surf_p"]
+        val_loss_mean = sum(m["loss"] for m in split_metrics.values()) / len(split_metrics)
+        dt = time.time() - t0
 
-        test_log: dict[str, float] = {}
-        for split_name, m in test_metrics.items():
+        log_metrics = {
+            "train/vol_loss": epoch_vol,
+            "train/surf_loss": epoch_surf,
+            "val/loss": val_loss_mean,
+            "lr": scheduler.get_last_lr()[0],
+            "epoch_time_s": dt,
+            "global_step": global_step,
+        }
+        for split_name, m in split_metrics.items():
             for k, v in m.items():
-                test_log[f"test/{split_name}/{k}"] = v
-        for k, v in test_avg.items():
-            test_log[f"test_{k}"] = v
-        wandb.log(test_log)
-        wandb.summary.update(test_log)
+                log_metrics[f"{split_name}/{k}"] = v
+        for k, v in val_avg.items():
+            log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
+        wandb.log(log_metrics)
 
-    save_model_artifact(
-        run=run,
-        model_path=model_path,
-        model_dir=model_dir,
-        cfg=cfg,
-        best_metrics=best_metrics,
-        best_avg_surf_p=best_avg_surf_p,
-        test_metrics=test_metrics,
-        test_avg=test_avg,
-        n_params=n_params,
-        model_config=model_config,
-    )
-else:
-    print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping artifact upload.")
+        tag = ""
+        if avg_surf_p < best_avg_surf_p:
+            best_avg_surf_p = avg_surf_p
+            best_metrics = {
+                "epoch": epoch + 1,
+                "val_avg/mae_surf_p": avg_surf_p,
+                "per_split": split_metrics,
+            }
+            torch.save(model.state_dict(), model_path)
+            tag = " *"
 
-wandb.finish()
+        peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+        print(
+            f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
+            f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
+            f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
+        )
+        for name in VAL_SPLIT_NAMES:
+            print_split_metrics(name, split_metrics[name])
+
+    total_time = (time.time() - train_start) / 60.0
+    print(f"\nTraining done in {total_time:.1f} min")
+
+    # --- Test evaluation + artifact upload ---
+    if best_metrics:
+        print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
+        wandb.summary.update({
+            "best_epoch": best_metrics["epoch"],
+            "best_val_avg/mae_surf_p": best_avg_surf_p,
+            "total_train_minutes": total_time,
+        })
+
+        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+        model.eval()
+
+        test_metrics = None
+        test_avg = None
+        if not cfg.skip_test:
+            print("\nEvaluating on held-out test splits...")
+            test_datasets = load_test_data(cfg.splits_dir, debug=cfg.debug)
+            test_loaders = {
+                name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
+                for name, ds in test_datasets.items()
+            }
+            test_metrics = {
+                name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+                for name, loader in test_loaders.items()
+            }
+            test_avg = aggregate_splits(test_metrics)
+            print(f"\n  TEST  avg_surf_p={test_avg['avg/mae_surf_p']:.4f}")
+            for name in TEST_SPLIT_NAMES:
+                print_split_metrics(name, test_metrics[name])
+
+            test_log: dict[str, float] = {}
+            for split_name, m in test_metrics.items():
+                for k, v in m.items():
+                    test_log[f"test/{split_name}/{k}"] = v
+            for k, v in test_avg.items():
+                test_log[f"test_{k}"] = v
+            wandb.log(test_log)
+            wandb.summary.update(test_log)
+
+        save_model_artifact(
+            run=run,
+            model_path=model_path,
+            model_dir=model_dir,
+            cfg=cfg,
+            best_metrics=best_metrics,
+            best_avg_surf_p=best_avg_surf_p,
+            test_metrics=test_metrics,
+            test_avg=test_avg,
+            n_params=n_params,
+            model_config=model_config,
+        )
+    else:
+        print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping artifact upload.")
+
+    wandb.finish()
