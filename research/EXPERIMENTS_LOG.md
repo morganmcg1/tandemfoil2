@@ -1,5 +1,71 @@
 # SENPAI Research Results — `icml-appendix-willow-pai2d-r3`
 
+## 2026-04-28 01:05 — PR #316: More physics-attention slices, slice_num 64→128 — **CLOSED (negative result)**
+
+- Branch: `willowpai2d3-edward/more-slice-tokens-128` (deleted post-close)
+- **Hypothesis:** 64 slice tokens at ~3.7K nodes/slice is too coarse for sharp leading-edge gradients; doubling to 128 should help. Predicted Δ on `val_avg/mae_surf_p`: −5 to −12%.
+
+### Sweep results (group `slice-num-sweep`, against the OLD baseline lr=5e-4)
+
+| slice_num | epochs done | best ep | val_avg/mae_surf_p | test 3-split mean | W&B run |
+|---:|---:|---:|---:|---:|---|
+| **64 (baseline winner)** | **14** | **13** | **129.90** | **128.71** | `h9gzkjqq` |
+| 96 | 12 | 11 | 135.01 | 135.28 | `l6ed3ins` |
+| 128 | 11 | 10 | 149.98 | 149.40 | `s5uebsen` |
+| 192 | 9 | 9 | 142.20 | 139.00 | `1p66k7d2` |
+
+### Decision: **CLOSED** (confirmed negative result)
+
+Edward added `slice_num=64` to the sweep on their own initiative (good call — the baseline becomes a control rather than just a reference number) and discovered the lever runs in the *opposite* direction at this budget: **slice_num=64 wins** by ~10% over 128. Three-line story behind the negative result:
+
+1. **Compute–accuracy tradeoff at fixed wall-clock.** Slice attention is `O(B·H·N·slice_num + B·H·slice_num²)`; per-epoch time scales clearly with slices (131s → 213s, 1.6× from 64 → 192). At the 30-min cap, 64 gets 14 epochs vs. 192's 9.
+2. **Even at matched epoch 9, slice_num=192 only beats 64 by 1.4** (142.20 vs 143.60) — within single-seed noise. If the hypothesis were strongly true, we'd see a clean gap at every epoch, not just convergence parity at low epochs.
+3. **Aligns with the original Transolver paper's ablation,** which reports peak performance around 32–64 slices on most problems with diminishing/negative returns above.
+
+Closed rather than rerun on the merged baseline because the negative result is well-supported and the mechanism (compute-budget bound + slice-softmax dilution) doesn't change with the LR baseline. Edward reassigned to **Fourier features for spatial coordinates** (PR #420) — architecture lane, well-known operator-learning trick.
+
+## 2026-04-28 01:05 — PR #322: Per-channel surface loss, surf_p_weight ∈ {1, 2, 3, 5} — **SENT BACK FOR REBASE**
+
+- Branch: `willowpai2d3-tanjiro/channel-weighted-loss`
+- **Hypothesis:** Upweighting the pressure channel in the surface loss biases gradients toward the ranking metric. Predicted Δ: −3 to −6%.
+
+### Sweep results (group `channel-weighted-loss`, against OLD baseline)
+
+| surf_p_weight | best epoch | val_avg/mae_surf_p | test 3-split mean | W&B run |
+|---:|---:|---:|---:|---|
+| 1.0 (control) | 12 | 138.87 | 140.32 | `qomfj1kn` |
+| 2.0 | 14 | 139.33 | 138.89 | `t0lgcgus` |
+| **3.0** | 14 | **126.18** | **128.57** | `wkx4lwo5` |
+| 5.0 | 13 | 142.29 | 140.37 | `4la7fez5` |
+
+### Decision: **REQUEST CHANGES (rebase + re-run)**
+
+In-sweep direction is clean — `surf_p_weight=3.0` wins by **−9.13%** over control, **exceeding the predicted −3 to −6% band**. Curve shows a single sharp optimum at 3.0 with non-monotonic behavior on both sides; 5.0 overweighting tanks both surface and volume MAE. Tanjiro's "Ux/Uy tax is real but small relative to pressure gain" framing is exactly the analysis I want.
+
+But the absolute winner at 126.18 is below the new merged baseline of 115.84, so merging would regress val_avg. Sent back for rebase + re-run on top of `peak_lr=1e-3, warmup_epochs=2`. The 1.0 re-run will act as the control for confirming the rebase is clean; the 3.0 re-run tests stacking with the warmup gain.
+
+## 2026-04-28 01:05 — PR #317: Surface-vs-volume balance, surf_weight ∈ {5, 20, 40, 80} — **SENT BACK FOR REBASE**
+
+- Branch: `willowpai2d3-fern/surface-weight-sweep`
+- **Hypothesis:** Sweeping `surf_weight` upward (default 10) directly increases gradient flow toward surface predictions. Predicted Δ: −3 to −8%.
+
+### Sweep results (group `surface-weight-sweep`, against OLD baseline)
+
+| surf_weight | best epoch | val_avg/mae_surf_p | test 3-split mean | W&B run |
+|---:|---:|---:|---:|---|
+| 5 | 8 | 143.93 | 142.63 | `vzvez6w9` |
+| **20** | 13 | **129.41** | **129.99** | `tos0mpbx` |
+| 40 | 14 | 129.93 | 131.37 | `baq7trjw` |
+| 80 | 12 | 144.66 | 142.14 | `cir9lsik` |
+
+### Decision: **REQUEST CHANGES (rebase + re-run)**
+
+In-sweep U-shape is clean: `surf_weight=20` wins by **−10.1%** over the sw=5 control, **exceeding the predicted −3 to −8% band**. Volume MAE table monotonically degrades from sw=5 → sw=80, confirming the model is genuinely reallocating capacity surface ← volume; sw=80 overshoots and degrades both surface and volume.
+
+Fern also independently diagnosed the `test_geom_camber_cruise` NaN bug — pinpointing it to `accumulate_batch`'s `0 * inf = NaN` issue — same root cause frieren and thorfinn arrived at. The fix is now upstream from frieren's cherry-pick (commit `32b5b40`).
+
+But the absolute winner at 129.41 is below the new merged baseline of 115.84, so merging would regress val_avg. Sent back for rebase + re-run on top of `peak_lr=1e-3, warmup_epochs=2`.
+
 ## 2026-04-28 00:55 — PR #319: Deeper Transolver, n_layers 5→8 — **CLOSED (bug fix cherry-picked)**
 
 - Branch: `willowpai2d3-frieren/deeper-n-layers-8` (deleted post-close)

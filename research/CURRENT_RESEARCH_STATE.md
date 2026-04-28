@@ -21,12 +21,12 @@ First Round-1 winner merged: **PR #320** (linear warmup + peak LR 1e-3) drops `v
 |---|---|---|---|---|
 | alphonse | [#294](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/294) | **Loss alignment** — Huber surface loss (sweep δ ∈ {0.5, 1.0, 2.0}) | wip | — |
 | askeladd | [#315](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/315) | **Width** — `n_hidden` 128 → 192 (sweep 160/192/256) | wip | — |
-| edward | [#316](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/316) | **Slice count** — `slice_num` 64 → 128 (sweep 96/128/192) | wip | — |
-| fern | [#317](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/317) | **Surface-vs-volume balance** — `surf_weight` sweep {5, 20, 40, 80} | wip | — |
+| edward | [#316](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/316) | **Slice count** — `slice_num` 64 → 128 (sweep 96/128/192) | **CLOSED** | Negative result: slice_num=64 baseline wins; matches Transolver paper ablation. Compute-budget bound. |
+| fern | [#317](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/317) | **Surface-vs-volume balance** — `surf_weight` sweep {5, 20, 40, 80} | **rebase + re-run** | In-sweep −10.1% (143.93→129.41 at sw=20); abs below new bar; clean U-shape, volume tradeoff visible. |
 | frieren | [#319](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/319) | **Depth** — `n_layers` 5 → 8 (sweep 6/8/10) | **CLOSED** | Compute-confounded at 30-min budget (deeper = fewer epochs); n_layers=6 wins in-sweep at 143.33, below new bar. Bug fix cherry-picked. |
 | nezuko | [#320](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/320) | **LR schedule** — linear warmup + peak LR ∈ {5e-4, 1e-3, 2e-3} | **MERGED** | **−21.5%** (147.55 → 115.84); peak_lr=1e-3 wins |
-| tanjiro | [#322](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/322) | **Channel weighting** — upweight pressure in surface loss (sweep p_w ∈ {1, 2, 3, 5}) | wip | — |
-| thorfinn | [#323](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/323) | **FFN expressivity** — `mlp_ratio` 2 → 4 (sweep 2/4/6) | **rebase + re-run** | In-sweep −4.7% (143.75→136.96, ratio=4 wins, ratio=6 regresses); abs below new bar — sent back to re-run on merged baseline |
+| tanjiro | [#322](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/322) | **Channel weighting** — upweight pressure in surface loss (sweep p_w ∈ {1, 2, 3, 5}) | **rebase + re-run** | In-sweep −9.1% (138.87→126.18 at p_w=3); abs below new bar; clean U-shape with sharp optimum. |
+| thorfinn | [#323](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/323) | **FFN expressivity** — `mlp_ratio` 2 → 4 (sweep 2/4/6) | **rebase + re-run** | In-sweep −4.7% (143.75→136.96, ratio=4 wins, ratio=6 regresses); abs below new bar. |
 
 These eight axes were chosen for **orthogonality** so that improvements compound when winners are merged sequentially: loss function, width, slice count, surface/volume balance, depth, LR schedule, channel weighting, and FFN expressivity touch nearly disjoint parts of the model and training stack.
 
@@ -37,14 +37,25 @@ These eight axes were chosen for **orthogonality** so that improvements compound
 - Hyperparams: `peak_lr=1e-3, warmup_epochs=2, weight_decay=1e-4, batch_size=4, surf_weight=10.0, epochs=50, n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2`.
 - All Round-1 sweep runs hit the 30-min timeout at ~epoch 14 of 50; cosine never fully annealed at this budget.
 
-## Round 2 — training-recipe extensions (2026-04-28)
+## Round 2 — extensions on the merged baseline (2026-04-28)
 
 | Student | PR | Lever | Predicted Δ |
 |---|---|---|---|
 | frieren | [#409](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/409) | **OneCycleLR** — onecycle_peak_lr ∈ {1e-3, 2e-3, 3e-3}, pct_start=0.1 | −2 to −5% |
 | nezuko | [#410](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/410) | **EMA of weights at eval time** — sweep decay ∈ {0.99, 0.999, 0.9995} | −1 to −5% |
+| edward | [#420](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/420) | **Random Fourier features for spatial coords** — sigma sweep {0.5, 1, 2, 5}, m=64 | −3 to −10% |
 
-Both compound on the merged warmup baseline along the training-recipe axis; predicted to be orthogonal to each other and to the in-flight Round-1 architecture/loss experiments.
+Each axis is orthogonal to the others and to the in-flight rebase PRs.
+
+## In-flight rebase PRs (Round 1, against new baseline)
+
+| Student | PR | Lever | In-sweep Δ |
+|---|---|---|---|
+| fern | [#317](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/317) | `surf_weight=20` | −10.1% in-sweep, exceeded predicted band |
+| tanjiro | [#322](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/322) | `surf_p_weight=3.0` | −9.1% in-sweep, exceeded predicted band |
+| thorfinn | [#323](https://github.com/morganmcg1/TandemFoilSet-Balanced/pull/323) | `mlp_ratio=4` | −4.7% in-sweep, in predicted band |
+
+Each must demonstrate the lever still wins on top of `peak_lr=1e-3, warmup_epochs=2`. Predicted-band-exceeders (fern, tanjiro) have the strongest signal that the gain isn't just artifact of being below a strong baseline.
 
 ## Potential next research directions
 
