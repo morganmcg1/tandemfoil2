@@ -388,6 +388,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    cosine_t_max: int | None = None  # if set, overrides T_max for CosineAnnealingLR
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -446,7 +447,8 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+t_max = cfg.cosine_t_max if cfg.cosine_t_max is not None else MAX_EPOCHS
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=t_max, eta_min=0.0)
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -481,6 +483,7 @@ best_avg_surf_p = float("inf")
 best_metrics: dict = {}
 global_step = 0
 train_start = time.time()
+completed_epochs = 0
 
 for epoch in range(MAX_EPOCHS):
     if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
@@ -580,10 +583,13 @@ for epoch in range(MAX_EPOCHS):
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
 
+    completed_epochs = epoch + 1
+
 total_time = (time.time() - train_start) / 60.0
 peak_gb_full = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
 print(f"\nTraining done in {total_time:.1f} min, peak VRAM {peak_gb_full:.1f} GB")
 wandb.summary["peak_vram_gb"] = peak_gb_full
+wandb.summary["realised_epochs"] = completed_epochs
 
 # --- Test evaluation + artifact upload ---
 if best_metrics:
