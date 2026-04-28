@@ -2,6 +2,31 @@
 
 Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pressure MAE across the four val splits). Paper-facing metric is `test_avg/mae_surf_p` from the best-val checkpoint.
 
+## 2026-04-28 10:54 — PR #709: Per-channel Huber δ (δ_p=0.05, δ_Ux=δ_Uy=0.10)
+
+- **Best `val_avg/mae_surf_p`** (this PR's standalone measurement, on PR #630 baseline): **58.887** (epoch 18, **−1.70% vs 59.907**)
+- **`test_avg/mae_surf_p`** (paper-facing, all 4 splits finite): **51.162** (vs 52.656 PR #630, **−2.84%**)
+- **Per-split val MAE for `p`** (best epoch 18, compile=True+TF32):
+  - val_single_in_dist: 68.154 (−2.31%)
+  - val_geom_camber_rc: 71.745 (−2.12%)
+  - val_geom_camber_cruise: 39.641 (+0.59%, cruise gain LOST vs global δ=0.05 in PR #674)
+  - val_re_rand: 56.008 (−2.01%)
+- **Per-split test MAE for `p`** (best ckpt):
+  - test_single_in_dist: 61.158 (−2.85%)
+  - test_geom_camber_rc: 63.554 (−4.07%)
+  - test_geom_camber_cruise: 32.191 (−0.34%)
+  - test_re_rand: 47.743 (−2.81%)
+- **Recipe**: **per-channel huber δ (δ_p=0.05, δ_Ux=δ_Uy=0.10)** (was global δ=0.10) + bias-corrected EMA(0.995, warmup=50) + SwiGLU + DropPath(0.1) + AdamW betas (0.9, 0.95) + per-parameter-group wd: attn=1e-4, mlp=1e-5, other=3e-5 + per-block PhysicsAttention temperature init [1.5, 1.875, 2.25, 2.625, 3.0] + cosine 3-ep warmup (start_factor=0.3) + T_max=11 + eta_min=5e-5 + decaying noise std + surface-only noise injection + NaN-safe + clip_grad_norm_(max_norm=10.0) + compile=True + lr=6e-4 + TF32 matmul.
+- **Mechanism CONFIRMED**: per-channel δ_p=0.05 reproduces the global δ=0.05 effect on p residual distribution (35.81% lin at thr=0.05, vs PR #674's 36.54% — near-identical). Bonus: Ux/Uy lin fractions DROPPED vs PR #674's global δ=0.05 (52.55%→49.04%, 49.33%→47.28%) because they now train under δ=0.10's wider quadratic regime, tightening their residuals.
+- **Cruise tradeoff**: PR #674's −5.14% cruise gain at global δ=0.05 came partly from Ux/Uy δ=0.05 interaction. Per-channel scheme captures p-tail + Ux/Uy quadratic benefits but loses joint-channel cruise tail handling. Cruise val regressed slightly (+0.59%); cruise test essentially flat (−0.34%).
+- **Compound expectation**: this run was on pre-#698 stack. Per-channel δ is mechanically orthogonal to eta_min — should compound below 58.887 on combined stack.
+- **Metric summary**: `models/model-huber-per-channel-delta-20260428-100432/metrics.jsonl`
+- **Reproduce**:
+  ```bash
+  cd target
+  python train.py --epochs 50 --experiment_name huber-per-channel-delta --agent <name> --compile=True
+  ```
+
 ## 2026-04-28 10:42 — PR #698: Cosine eta_min 2e-5 → 5e-5 (calibrate sweet spot)
 
 - **Best `val_avg/mae_surf_p`** (this PR's standalone measurement, on PR #630 baseline): **58.742** (epoch 17, **−1.94% vs 59.907**)
