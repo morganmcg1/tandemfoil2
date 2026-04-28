@@ -118,7 +118,7 @@ class PhysicsAttention(nn.Module):
             .contiguous()
         )
         slice_weights = self.softmax(self.in_project_slice(x_mid) / self.temperature)
-        slice_norm = slice_weights.sum(2)
+        slice_norm = slice_weights.sum(2).clamp(min=1e-3)
         slice_token = torch.einsum("bhnc,bhng->bhgc", fx_mid, slice_weights)
         slice_token = slice_token / ((slice_norm + 1e-5)[:, :, :, None].repeat(1, 1, 1, self.dim_head))
 
@@ -432,7 +432,7 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=15)
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
