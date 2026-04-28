@@ -1,19 +1,23 @@
 # SENPAI Research State
 
-- 2026-04-28 00:50 — round 1 in progress on `icml-appendix-willow-pai2d-r2`
+- 2026-04-28 01:00 — round 1 in progress on `icml-appendix-willow-pai2d-r2`
 - **Baseline anchored:** PR #328 (slice_num=128) merged. Current best
   `val_avg/mae_surf_p = 133.55` (W&B run `s1p2qs7l`, best epoch 11/50).
   Default config now: `n_hidden=128 n_layers=5 n_head=4 slice_num=128
   mlp_ratio=2 lr=5e-4 weight_decay=1e-4 batch_size=4 surf_weight=10.0
   epochs=50`.
-- **Pending merge candidates** (both inside-noise → need on-baseline
-  confirmation; both pre-#328, sent back for rebase):
+- **Pending merge candidates** (all need on-baseline confirmation;
+  all pre-#328, sent back for rebase):
   - **PR #330** (frieren, Huber β=1): `val_avg/mae_surf_p = 109.47`
     on slice_num=64. 18 % over baseline — outside ±10 % noise band,
     very likely a real signal.
   - **PR #311** (alphonse, width-160): `val_avg/mae_surf_p = 126.18`
     on slice_num=64. 5.5 % over baseline — inside ±10 % noise floor,
     needs on-baseline + multi-seed to disambiguate.
+  - **PR #332** (nezuko, surf_weight=25): `val_avg/mae_surf_p = 133.19`
+    on slice_num=64. 0.27 % over baseline — far inside noise floor,
+    but sweep curve + val_vol_p both support the interior optimum
+    qualitatively. Needs on-baseline + multi-seed.
 - **Noise floor: ±10 % at single seed.** Thorfinn (PR #337) ran the same
   config twice (kon60q79=153.19, nphltrz9=139.39) — a ~10 % spread
   purely from random seed / data-order randomness. **This is a
@@ -38,31 +42,23 @@
 | 326 | edward    | mlp_ratio 2 → 4            | sent back → mlp_ratio=3 | 137.83 (epoch 11/13) |
 | 328 | fern      | slice_num 64 → 128         | **MERGED ★**   | **133.55 (new baseline)**|
 | 330 | frieren   | MSE → Huber β=1            | sent back → rebase + re-run | **109.47** (epoch 14/50, on slice_num=64; merge-candidate after rebase) |
-| 332 | nezuko    | surf_weight 10 → 25 (sweep)| wip            | 137.42 surf-15 (sweep ongoing) |
+| 332 | nezuko    | surf_weight 10 → 25 (sweep)| sent back → rebase + on-baseline + multi-seed | sweep done: surf-15=137.42, **surf-25=133.19**, surf-40=142.59 (clean interior optimum at 25; absolute level inside ±10 % noise of baseline) |
 | 335 | tanjiro   | warmup + cos, peak 1e-3    | sent back → cosine_t_max sweep | 154.57 (epoch 13/14) |
 | 337 | thorfinn  | BS 4→8, lr 7e-4            | sent back → rebase + BS=16/lr=1e-3 (+ multi-seed if budget) | 139.39 / 153.19 (2-seed mean 146.29; ~9.5 % worse than baseline on mean) |
 | 367 | fern      | bug fix: cruise-NaN scoring| **wip (new)**  | n/a (bug fix, not experiment) |
 
-PRs surfaced for advisor review this cycle: **#311 (iter 2)**. Action:
-**#311 sent back** for rebase + on-baseline re-run. Width-160 result
-(126.18) dominates the prior width-192 attempt (134.13) on every axis
-at the cap and is the cleanest single result on this PR. But it sits
-inside the ±10 % single-seed noise floor relative to the merged
-baseline 133.55, and the branch is pre-#328 (would silently revert
-slice_num=128 → 64). Asked for: rebase, then re-run width-160 on top
-of slice-128. Decision rule made explicit: ≤120 single-seed merges
-directly; 120–130 needs multi-seed; >130 means width-160 doesn't
-stack and we close. Optional `SENPAI_SEED` env var added for
-multi-seed support.
-
-Bonus signal: alphonse's AMP-fp16 attempt diverged at epoch 3 from
-fp16+surface-weighted-MSE overflow. Student-proposed fixes (scoped
-fp16 / bf16) carried forward as a round-2 candidate axis.
+PRs surfaced for advisor review this cycle: **#332**. Action:
+**#332 sent back** — surf_weight sweep is qualitatively excellent
+(clean interior optimum at 25 with val_vol_p as independent
+secondary signal) but quantitatively inside-noise (0.27 % over
+merged baseline). Branch pre-#328 (rebase needed). Asked for:
+rebase + re-run surf_weight=25 on slice-128 + optional 2 more
+seeds. Same decision rule as alphonse #311.
 
 Earlier cycle actions (recap): #328 merged (round-1 winner, new
-baseline at 133.55); #326 + #335 + #330 + #337 sent back with
+baseline 133.55); #326 + #335 + #330 + #337 + #311 sent back with
 specific follow-up instructions; #367 NEW bug-fix PR assigned to
-fern for cruise-NaN scoring.
+fern for cruise-NaN scoring (in flight).
 
 ## What we learned this cycle (and last)
 

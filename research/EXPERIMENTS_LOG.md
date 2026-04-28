@@ -13,7 +13,68 @@ in the pressure channel; `accumulate_batch` masks the sample but
 fern** with the 2-line `nan_to_num` patch — once it lands, every
 round-1 run can recompute a finite `test_avg/mae_surf_p` from W&B.
 
-## 2026-04-28 00:50 — PR #311 (iter 2): width-160 follow-up + AMP-fp16 attempt
+## 2026-04-28 01:00 — PR #332: Round 1 axis: surface-vs-volume weight — surf_weight 10 → 25 (sweep)
+
+- Branch: `willowpai2d2-nezuko/surf-weight-25` (pre-#328; same
+  rebase need as the rest of the cohort).
+- Hypothesis: 5–10 % reduction in `val_avg/mae_surf_p` with a small
+  trade against vol fidelity, since the metric only counts surface
+  pressure but the loss weights all 3 channels.
+- Three runs, single seed each, same `--wandb_group "willow-r2-nezuko-surf-sweep"`.
+
+### Sweep results (best checkpoint, ~14 epochs / 50 — wall-clock cut)
+
+| surf_weight | val_avg/mae_surf_p | val_avg/mae_vol_p | best_epoch | run id |
+|-:|-:|-:|-:|-|
+| 15.0 | 137.42 | 144.60 | 13 | `rbj9qple` |
+| **25.0** | **133.19 ★** | 142.51 | 13 | `ew04amt0` |
+| 40.0 | 142.59 | 180.42 | 12 | `wfo3ptci` |
+
+Curve shape: clear interior optimum at 25, with vol_p stable from
+15 → 25 (144.6 → 142.5) but collapsing past 40 (180.4) — the
+optimizer starts sacrificing volume fidelity faster than it improves
+surface fidelity. Two independent pieces of evidence (val_surf_p
+local minimum + val_vol_p stability boundary) point at the same
+operating point.
+
+### Per-split surface-pressure MAE (best epoch)
+
+| surf_weight | val_single_in_dist | val_geom_camber_rc | val_geom_camber_cruise | val_re_rand |
+|-:|-:|-:|-:|-:|
+| 15.0 | 166.03 | 151.57 | 101.23 | 130.86 |
+| **25.0** | 160.78 | 147.47 | 105.65 | 118.85 |
+| 40.0 | 176.57 | 144.87 | 113.84 | 135.09 |
+
+`test_geom_camber_cruise/mae_surf_p = NaN` on all three runs (known
+#367 bug); 3-split partial test means: 139.42 / 131.22 / 141.28
+respectively.
+
+### Conclusion
+
+**Send back for rebase + on-baseline re-run.** `surf_weight=25` is
+qualitatively the right operating point — sweep curve and val_vol_p
+secondary signal both confirm the interior optimum. **But:**
+133.19 vs the merged 133.55 baseline is only **0.27 %** under, far
+inside the ±10 % single-seed noise floor. Cannot merge an
+inside-noise number, and the branch would silently revert
+slice_num=128 → 64 anyway. Sent back with rebase + re-run on
+slice-128 + optional 2 more seeds for noise estimate.
+
+Decision rule made explicit:
+- ≤120 single-seed (or ≤126 multi-seed mean): merge.
+- 120–130: multi-seed required.
+- > 130: surf_weight axis doesn't stack with slice-128; close.
+  Even if we close, `surf_weight=25` remains a useful default knob
+  for round-2 stack candidates given the qualitative confirmation.
+
+### Bonus: cruise NaN root-cause confirmed independently again
+
+Nezuko verified `000020.pt`'s `y[:,2]` has `inf` (vs edward's "761
+NaN" — different IEEE pathologies of the same poisoned sample). Both
+diagnoses point at the same root cause; both are fixed by the
+`nan_to_num` patch in PR #367.
+
+
 
 - Branch: `willowpai2d2-alphonse/width-192` (still pre-#328; same
   rebase need as frieren #330 + thorfinn #337).
@@ -386,7 +447,9 @@ acknowledged but kept out of scope — tanjiro is iterating on
 | willow-r2-alphonse-width-160 | **126.18** | 11 | sent back (rebase + on-baseline) |
 | willow-r2-fern-slice-128 | **133.55 ★** | 11 | merged (PR #328) |
 | willow-r2-alphonse-width-192 | 134.13 | 10 | superseded by width-160 |
-| willow-r2-nezuko-surf-15 | 137.42 | 13 | wip (sweep ongoing) |
+| willow-r2-nezuko-surf-15 | 137.42 | 13 | sweep complete |
+| **willow-r2-nezuko-surf-25** | **133.19** | 13 | sent back (rebase + on-baseline) |
+| willow-r2-nezuko-surf-40 | 142.59 | 12 | sweep complete (past optimum) |
 | willow-r2-edward-mlp-ratio-4 | 137.83 | 11 | sent back |
 | willow-r2-thorfinn-bs8-lr7e-4 | 139.39 / 153.19 (2 seeds) | 14 / 13 | sent back (rebase + BS=16) |
 | willow-r2-askeladd-depth-8 | 150.06 | 9 | wip |
