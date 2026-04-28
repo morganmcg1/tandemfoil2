@@ -1332,3 +1332,54 @@ The L1-tail-amplifies story scales further than predicted:
 
 ### Reassignment
 - Edward stays on PR #567 — re-running on rebased branch (single-line edit; trivial rebase, no conflicts expected).
+
+## 2026-04-28 06:45 — PR #580: Lion lr 1.7e-4 → 1.2e-4 (charliepai2d1-askeladd) — **sent back for rebase + re-run**
+- Run config: `lr: 1.7e-4 → 1.2e-4` in `Config` dataclass. Branched from post-#535 baseline (lr=1.7e-4, β=0.5, β2=0.99). Single-line edit.
+
+### Headline metrics (best EMA epoch=13/50, timeout-cut)
+| metric | this run | run base #535 | current baseline #571 |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` (EMA) | 55.547 | 61.508 (**−9.69 %**) | 52.116 (**+6.58 %**) |
+| `test_avg/mae_surf_p` | 47.964 | 52.336 (**−8.35 %**) | 45.413 (+5.62 %) |
+| best raw val | 69.903 (ep14) | — | — |
+| EMA−raw spread (mean ep4–14) | −16.39 | ~−15 | — |
+
+### Per-split — broad-based gain (vs run base #535)
+| Split | val Δ vs #535 | test Δ vs #535 |
+|---|---:|---:|
+| single_in_dist | **−13.83 %** | **−11.85 %** |
+| geom_camber_rc | −6.40 % | −2.73 % |
+| geom_camber_cruise | **−15.66 %** | **−13.62 %** |
+| re_rand | −4.76 % | −7.79 % |
+
+All 8 splits improve. Cruise wins most (small-residual split most sensitive to optimizer); single_in_dist second-most (stationary regime gains under tighter local minimum).
+
+### Mechanism finding (durable for the appendix lr-axis basin map)
+
+**Asymmetric basin under β2=0.99 — Lion lr is much more under-tuned at 1.7e-4 than over-tuned at 3.3e-4**:
+
+| run | lr | step ratio vs 1.7e-4 | val | Δ vs run base |
+|-----|----|-:|---:|---:|
+| #507 (closed) | 3.3e-4 | +94 % | 73.46 | +8.45 % |
+| #535 (run base) | 1.7e-4 | 0 | 61.51 | 0 |
+| **#580 (this PR)** | **1.2e-4** | **−29 %** | **55.55** | **−9.69 %** |
+
+Per-percent-of-step:
+- downward sensitivity ≈ **−0.33 %** val per −1 % lr
+- upward sensitivity ≈ **+0.09 %** val per +1 % lr
+
+The optimum under β2=0.99 lies **further down the basin than 1.7e-4**, and 1.2e-4 looks like it's **still on the descending side**. Default `lr_lion = lr_adamw / 3` heuristic was conservative.
+
+### Why send back, not close, not merge
+- Past close threshold (>5 %) at +6.58 % val vs current.
+- **Squash-merge would CONFLICT** on the lr line: askeladd's branch has `lr: 1.7e-4 → 1.2e-4`, advisor branch has `lr: 2.5e-4` (post-#536). Cannot apply diff cleanly.
+- The lower-edge probe under β2=0.999 is **currently unmapped**. The new optimizer regime may have shifted the basin (smoother direction → larger optimal lr), and tanjiro's #592 (2.85e-4) is in flight on the upper edge — askeladd's re-run completes the picture.
+
+### Predicted re-run outcome (wide band — two competing mechanism hypotheses)
+- **Basin shifts up under β2=0.999** (smoother sign direction → larger optimal lr): lr=1.2e-4 should be a bigger lose case. Predict val ~58–65 (+12 to +25 %).
+- **Basin stays at same width but shifts toward smaller lr** (smoother direction → smaller per-step needed): lr=1.2e-4 might still be in basin. Predict val ~50–55 (−5 to +5 %).
+
+Honest predicted band: **−5 % to +25 %** vs current 52.116. Combined with #592, locks the new-baseline lr basin.
+
+### Reassignment
+- Askeladd stays on PR #580 — re-running on rebased branch with `lr: 2.5e-4 → 1.2e-4` (resolve conflict by taking askeladd's value); β2=0.999 inherits from advisor cleanly.
