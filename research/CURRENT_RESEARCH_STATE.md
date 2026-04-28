@@ -1,6 +1,6 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 07:35
+- **Date:** 2026-04-28 07:55
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
@@ -62,7 +62,8 @@
 | thorfinn | #379 | surface-aware-decoder | Architecture (substitutive surface MLP head) | -3% to -7% | **CLOSED** — within noise vs own baseline-ref; substitutive design wastes vol head signal |
 | thorfinn | #436 | additive-surf-head | Architecture (additive surface head) | -2% to -7% | **CLOSED** — +3.47% (trunk interference is deeper bottleneck) |
 | thorfinn | #484 | surface-film | Architecture (surface-conditional FiLM in last block) | -1% to -4% | **MERGED** dc9e0e5 → val_avg=**57.37** (NEW BEST, -0.23% val / -3.06% test); paired -3.05%/-2.92% all 8 splits gain |
-| thorfinn | #594 | film-all-blocks | Architecture (FiLM at all 5 block boundaries, mid-network specialization) | -1% to -3% | WIP |
+| thorfinn | #594 | film-all-blocks | Architecture (FiLM at all 5 block boundaries) | -1% to -3% | **CLOSED** — wall-clock +2.12% (matched-epoch -1.92% but +5.7% throughput cost eats gain); OOD splits regress |
+| thorfinn | #633 | domain-film | Architecture (3-way domain FiLM at last-block decoder) | -1% to -3% | WIP |
 
 ## Lessons from round 1 so far
 
