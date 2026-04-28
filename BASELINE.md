@@ -4,9 +4,40 @@ Lower `val_avg/mae_surf_p` is better.
 
 ---
 
+## 2026-04-28 23:40 — PR #739: Replace MSE with Huber loss (delta=1.0) for high-Re outlier robustness
+
+- **val_avg/mae_surf_p:** 110.594 ← **current best**
+- **val per-split surf p MAE:**
+  - `val_single_in_dist`: 130.87
+  - `val_geom_camber_rc`: 115.14
+  - `val_geom_camber_cruise`: 92.61
+  - `val_re_rand`: 103.76
+- **test_avg/mae_surf_p:** 101.299 ← **best clean 4-split test**
+- **test per-split surf p MAE:**
+  - `test_single_in_dist`: 124.544
+  - `test_geom_camber_rc`: 99.385
+  - `test_geom_camber_cruise`: 80.195
+  - `test_re_rand`: 101.070
+- **Best epoch:** 16 of 17 completed (30-min timeout; val still descending at cutoff)
+- **Throughput:** 33.1 GB peak VRAM (same as BF16 baseline)
+- **Model:** `n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2` (663K params + distance features)
+- **Training:** `lr=1e-3 (peak), warmup_epochs=5, warmup_start_lr=1e-4, eta_min=1e-6, weight_decay=1e-4, batch_size=4, surf_weight=10.0, epochs=50, amp=True, amp_dtype=bf16, huber_delta=1.0`
+- **Changes vs prior:** Huber loss (δ=1.0) replacing MSE in both training loop and evaluate_split. Stacked on BF16 + distance features + warmup+cosine baseline.
+- **W&B run:** `l95azbnv`
+- **Reproduce:**
+  ```bash
+  cd target/ && python train.py --agent willowpai2e5-frieren \
+    --amp --amp_dtype bf16 \
+    --huber_delta 1.0 \
+    --wandb_name "willowpai2e5-frieren/huber-loss-d1.0-rebased" \
+    --wandb_group huber-loss
+  ```
+
+---
+
 ## 2026-04-28 21:29 — PR #811: Enable bf16 mixed precision for 1.5-2x training throughput
 
-- **val_avg/mae_surf_p:** 127.402 ← **current best**
+- **val_avg/mae_surf_p:** 127.402
 - **val per-split surf p MAE:**
   - `val_single_in_dist`: 151.791
   - `val_geom_camber_rc`: 147.898
