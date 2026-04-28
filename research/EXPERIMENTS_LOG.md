@@ -1028,3 +1028,42 @@ Past merge gate cleanly. **Predicted band was −1 % to +2 %** (uncertain due to
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #552 | nezuko | geglu-mlp-matched | `silu(value(x)) → gelu(value(x))` in gated MLP forward, same `geglu_inner=168` | Gating-activation A/B test at matched params. Tests whether SwiGLU's silu-specific shape is load-bearing or whether any gating mechanism delivers the win. Honest band −1 % to +1 %. |
+
+## 2026-04-28 05:17 — PR #491 (REBASED): TF32 matmul precision (charliepai2d1-fern) — **MERGED, new baseline**
+- Branch: `charliepai2d1-fern/tf32-matmul-precision` → squash-merged into `icml-appendix-charlie-pai2d-r1` (commit `f8d8ffb`).
+- Hypothesis (rebased re-run): `torch.set_float32_matmul_precision('high')` on top of Lion + SwiGLU + SmoothL1 stack.
+
+### Headline metrics (best EMA epoch=14/50, timeout-cut)
+| metric | this run | prior baseline #352 | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` (EMA) | **63.218** | 64.158 | **−1.47 %** |
+| `test_avg/mae_surf_p` | **55.398** | 55.930 | **−0.95 %** |
+
+### Throughput (the deliverable)
+- `mean_epoch_3plus_seconds` = **131.33 s** vs ~151 s eager → **−13.0 %**.
+- 14 epochs in 30-min budget vs baseline's 12.
+- Peak VRAM 45.21 GB (flat).
+- No NaN, no matmul warnings. Identical to pre-rebase observation (−13 % per-epoch on the post-#398 GELU base) — kernel-fusion gain is independent of optimizer/loss/architecture changes.
+
+### Per-split breakdown (the noise-floor signal)
+| Split | val Δ | test Δ |
+|---|---:|---:|
+| single_in_dist | **−6.79 %** | **−9.73 %** |
+| geom_camber_rc | +3.25 % | +5.40 % |
+| geom_camber_cruise | −0.73 % | −0.12 % |
+| re_rand | −1.11 % | +2.03 % |
+
+3/4 val splits improve, 2/4 test splits improve. `single_in_dist` is the big winner (the 2-extra-cosine-epochs benefit biases toward in-distribution learning); `geom_camber_rc` regresses on both — within typical run-to-run variance band.
+
+### Decision: merge as new baseline
+- Strict merge rule satisfied (val 63.22 < 64.16, test 55.40 < 55.93).
+- Throughput multiplier is permanent: every subsequent round-2 PR fits 14 epochs vs 12.
+- Optimizer-agnostic (TF32 fp32-matmul propagates identically through Lion's sign-update).
+- Per-split rc regression noted but within run-to-run variance.
+- BASELINE.md updated; fern reassigned to **PR #560 (cosine-tmax-14-on-lion)** — Lion's bounded sign-update changes the calculus from #465's closed AdamW failure.
+
+## 2026-04-28 05:20 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #560 | fern | cosine-tmax-14-on-lion | `T_max=50 → 14`, `eta_min=1e-5` on merged #491 baseline | Replaces fern's earlier closed #465 (T_max=13 under AdamW). Under Lion's bounded sign-update, late-epoch lr ~1e-5 still produces ~1e-5 per-param movement (no AdamW adaptive denominator collapse). Tests whether a real anneal phase late-epoch helps under Lion + 14-epoch budget. |

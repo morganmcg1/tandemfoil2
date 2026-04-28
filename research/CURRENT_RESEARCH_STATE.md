@@ -1,11 +1,12 @@
 # SENPAI Research State
-- 2026-04-28 04:40 — round 1.5 active; **eight big wins merged** (5 variance-reduction + 1 architectural + 1 optimizer-family + **1 loss-form**): #356, #374, #402, #408, #417, #398, #430, **#352 (SmoothL1, −5.28 %)**
+- 2026-04-28 05:20 — round 1.5 active; **nine big wins merged** (5 var-reduction + 1 architectural + 1 optimizer-family + 1 loss-form + **1 throughput**): #356, #374, #402, #408, #417, #398, #430, #352, **#491 (TF32, −1.47 %)**
 - Primary metric: `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across the four val splits); ranking final metric is `test_avg/mae_surf_p`
 
-## Current best (post-PR-#352)
-- **`val_avg/mae_surf_p` = 64.1585** (EMA, ep12/50 timeout-cut)
-- **`test_avg/mae_surf_p` = 55.9296**
+## Current best (post-PR-#491)
+- **`val_avg/mae_surf_p` = 63.218** (EMA, ep14/50 timeout-cut, **TF32 enabled**)
+- **`test_avg/mae_surf_p` = 55.398**
 - See `BASELINE.md` for the full per-split breakdown.
+- **Throughput**: 131 s/epoch steady-state (−13 % vs eager), 14 epochs in 30-min budget (vs 12 prior). Permanent multiplier for all subsequent PRs.
 - **Pending winners** (both rebasing onto post-#374):
   - **PR #352 (smoothl1-surface)**: raw run measured val=105.56, test=95.39 (−20.2 % / −19.2 % vs prior #356). Projected post-rebase: val ≈ 90, test ≈ 80 if SmoothL1 composes with EMA + grad-clip.
   - **PR #394 (torch.compile)**: confirmed −23.1 % per-epoch (17 vs 13 epochs in 30 min). Metric vs current #374 was +0.79 % / +2.13 % (run pre-dated grad-clip). Projected post-rebase: val ~108–110, test ~95–97 (compile + grad-clip + 17 epochs).
@@ -48,7 +49,7 @@
 | ~~#474~~ | ~~askeladd~~ | ~~ema-decay-0p97~~ | ~~`ema_decay = 0.99 → 0.97`~~ | **CLOSED 04-28 04:48**: val +6.51 % vs #398 / +48.34 % vs current #352. EMA-decay axis fully locked at 0.99 across GELU and SwiGLU bases. Cruise sensitivity stable across decays. Reassigned to #546. |
 | ~~#475~~ | ~~nezuko~~ | ~~swiglu-inner-256~~ | ~~`swiglu_inner = 168 → 256` on merged #398 baseline~~ | **CLOSED 04-28 04:00**: val +5.08 % vs #398, **+38.6 % vs current #430**. Mechanism: training-budget starvation, not OOD-overfit. SwiGLU's gating-fixes-OOD is at matched-param count, not capacity-on-top. Reassigned to #514 (192). |
 | ~~#483~~ | ~~frieren~~ | ~~swiglu-mlp-dropout-0p1~~ | ~~Add `nn.Dropout(0.1)` inside `SwiGLUMLP.forward`~~ | **CLOSED 04-28 04:00**: +3.97 % val vs #398, **+37.18 % vs current #430**. Clean ep9 crossover (helps eps 1-8, hurts 10+). geom_camber_rc only split that improved (-0.5%). Reassigned to #513 (p=0.05). |
-| #491 | fern | tf32-matmul-precision | `torch.set_float32_matmul_precision('high')` on merged #398 baseline | **Throughput delivery confirmed −13 % per-epoch (130.83 s/ep, 14 epochs in 30 min). Sent back 04:00 for rebase** onto post-#430 — Lion baseline moved to val=67.737. Predicted post-rebase: val ~63–66, test ~55–58. |
+| #491 | fern | tf32-matmul-precision | `torch.set_float32_matmul_precision('high')` on merged #398 baseline | **MERGED 05:17** as new baseline (val=63.218 / test=55.398; −1.47 % / −0.95 % vs #352). Throughput multiplier: −13 % per-epoch, 14 epochs in 30-min budget. Permanent floor for all round-2 PRs. |
 | ~~#507~~ | ~~tanjiro~~ | ~~lion-lr-3p3e-4~~ | ~~`lr_lion = 1.7e-4 → 3.3e-4` on merged #430 baseline~~ | **CLOSED 04-28 04:35**: val +8.45 % / test +6.10 % vs #430 (+14.5 % / +12.8 % vs current #352). Lose mechanism: raw floor rises faster than EMA can smooth at higher Lion lr. Bracket: 1.7e-4 in basin, 3.3e-4 past it. Reassigned to #536. |
 | ~~#513~~ | ~~frieren~~ | ~~swiglu-mlp-dropout-0p05~~ | ~~Dropout p=0.1 → 0.05~~ | **CLOSED 04-28 04:48**: val +1.27 % vs #430 / +6.92 % vs current #352. Dropout dead under SwiGLU+Lion. Bracket fully mapped (p=0 wins, p=0.05/0.1 lose monotonically). Reassigned to #545. |
 | ~~#514~~ | ~~nezuko~~ | ~~swiglu-inner-192~~ | ~~`swiglu_inner = 168 → 192`~~ | **CLOSED 04-28 04:55**: val +1.61 % vs #430 / +7.28 % vs current #352. Combined with #475 (256, +5 %), gives clean curve: 168 (best) < 192 (wash) < 256 (lose). SwiGLU(168) is local optimum. Reassigned to #552 (GeGLU). |
@@ -57,6 +58,7 @@
 | #545 | frieren | lion-beta1-0p95 | Lion `betas = (0.9, 0.99) → (0.95, 0.99)` on merged #352 baseline | Slower momentum decay; tests whether more inertial Lion direction smooths epoch-to-epoch raw variance. Honest band −1 % to +2 %. |
 | #546 | askeladd | lion-batch-8 | `batch_size = 4 → 8` on merged #352 baseline (no lr scaling) | First batch-side probe under Lion. Different math than #403's closed AdamW+batch=8 (Lion's bounded `lr × sign` per step). Honest band −2 % to +5 %. |
 | #552 | nezuko | geglu-mlp-matched | `silu(value) → gelu(value)` in gated MLP (same `geglu_inner=168`) | Gating-activation A/B at matched params after the SwiGLU capacity axis is locked. Tests whether silu-specific shape is load-bearing or any gating mechanism wins. Honest band −1 % to +1 %. |
+| #560 | fern | cosine-tmax-14-on-lion | `T_max=50 → 14`, `eta_min=1e-5` on merged #491 baseline | Replaces fern's earlier closed #465 (T_max=13 under AdamW). Under Lion's bounded sign-update, late-epoch lr ~1e-5 still produces ~1e-5 per-param movement (no AdamW adaptive denominator collapse). Honest band −2 % to +2 %. |
 
 ## Updated picture from round-1 returns
 - **#356 (EMA) merged** at val=132.276 (−3.1 % vs same-run best raw).
