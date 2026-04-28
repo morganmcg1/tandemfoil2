@@ -17,6 +17,8 @@ Usage:
 
 from __future__ import annotations
 
+import json
+import math
 import os
 import subprocess
 import time
@@ -419,6 +421,52 @@ print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
 
+# --- Per-Re weighted sampling (sqrt(Re / Re_median[domain])) ---
+# Multiply existing per-domain weights by sqrt(Re / Re_median[domain]) so high-Re
+# samples (which drive the mae_surf_p tail) receive more training emphasis.
+# Per-domain mass stays balanced; within-domain emphasis shifts toward high-Re.
+re_sampling_variant = "none_debug"
+re_weight_diagnostics: dict[str, list[float]] | None = None
+re_median_per_domain: dict[str, float] | None = None
+if not cfg.debug:
+    train_re_list = []
+    for f in train_ds.files:
+        s = torch.load(f, weights_only=True)
+        # x[:, 13] is log(Re); constant per sample within a CFD case.
+        train_re_list.append(math.exp(s["x"][0, 13].item()))
+    train_re = torch.tensor(train_re_list, dtype=torch.float64)
+
+    with open(Path(cfg.splits_dir) / "meta.json") as f:
+        meta_extra = json.load(f)
+    domain_groups: dict[str, list[int]] = meta_extra["domain_groups"]
+    idx_to_group = {i: g for g, idxs in domain_groups.items() for i in idxs}
+
+    re_median_per_domain = {
+        g: train_re[torch.tensor(idxs, dtype=torch.long)].median().item()
+        for g, idxs in domain_groups.items()
+    }
+
+    re_weight_per_sample = torch.tensor(
+        [
+            math.sqrt(train_re[i].item() / re_median_per_domain[idx_to_group[i]])
+            for i in range(len(train_ds))
+        ],
+        dtype=torch.float64,
+    )
+    sample_weights = sample_weights * re_weight_per_sample
+    re_sampling_variant = "sqrt_re_per_domain_median"
+
+    re_weight_diagnostics = {}
+    print(f"Per-domain Re medians: {re_median_per_domain}")
+    print("Re-weighted training distribution preview:")
+    qs = torch.tensor([0.1, 0.5, 0.9], dtype=torch.float64)
+    for g, idxs in domain_groups.items():
+        g_weights = sample_weights[torch.tensor(idxs, dtype=torch.long)]
+        g_weights_norm = g_weights / g_weights.sum()
+        q = g_weights_norm.quantile(qs).tolist()
+        re_weight_diagnostics[g] = q
+        print(f"  {g}: weight p10/p50/p90 = {q}")
+
 loader_kwargs = dict(collate_fn=pad_collate, num_workers=4, pin_memory=True,
                      persistent_workers=True, prefetch_factor=2)
 
@@ -475,6 +523,9 @@ run = wandb.init(
         "fourier_dims": 4 * FOURIER_K,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
+        "re_sampling_variant": re_sampling_variant,
+        "re_weight_p10_p50_p90_per_domain": re_weight_diagnostics,
+        "re_median_per_domain": re_median_per_domain,
     },
     mode=os.environ.get("WANDB_MODE", "online"),
 )
