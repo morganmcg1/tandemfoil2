@@ -19,11 +19,13 @@ from __future__ import annotations
 
 import math
 import os
+import random
 import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import numpy as np
 import simple_parsing as sp
 import torch
 import torch.nn as nn
@@ -46,6 +48,24 @@ from data import (
     load_test_data,
     pad_collate,
 )
+
+
+def set_seed(seed: int) -> torch.Generator:
+    """Seed all RNGs and return a CPU torch.Generator for sampler/DataLoader use.
+
+    cuDNN convolution non-determinism is not toggled here — it contributes
+    <0.5% to val_avg empirically, well below the signal threshold we care
+    about, and torch.use_deterministic_algorithms(True) noticeably slows
+    training.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    g = torch.Generator(device="cpu")
+    g.manual_seed(seed)
+    return g
 
 # ---------------------------------------------------------------------------
 # Input feature encoding
@@ -485,11 +505,15 @@ class Config:
     skip_test: bool = False  # skip end-of-run test evaluation
     fourier_bands: int = 0  # 0 = disabled, baseline behavior
     use_swiglu: bool = False  # True = swap per-block MLP from GELU to SwiGLU
+    seed: int = 0  # global seed for torch / numpy / random / sampler / DataLoader
 
 
 cfg = sp.parse(Config)
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
+
+g = set_seed(cfg.seed)
+print(f"Seeded RNGs with seed={cfg.seed}")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
@@ -504,11 +528,14 @@ loader_kwargs = dict(collate_fn=pad_collate, num_workers=4, pin_memory=True,
 
 if cfg.debug:
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
-                              shuffle=True, **loader_kwargs)
+                              shuffle=True, generator=g, **loader_kwargs)
 else:
-    sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_ds), replacement=True)
+    sampler = WeightedRandomSampler(
+        sample_weights, num_samples=len(train_ds),
+        replacement=True, generator=g,
+    )
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
-                              sampler=sampler, **loader_kwargs)
+                              sampler=sampler, generator=g, **loader_kwargs)
 
 val_loaders = {
     name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
