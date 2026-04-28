@@ -166,10 +166,18 @@ class PhysicsAttention(nn.Module):
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
                  mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
-                 film=False):
+                 film=False, has_input_film=False):
         super().__init__()
         self.last_layer = last_layer
         self.film = film
+        self.has_input_film = has_input_film
+        if self.has_input_film:
+            # Input-FiLM at the block boundary on the residual stream.
+            # Identity init: γ=1, β=0 → equivalent to baseline at step 0.
+            self.gamma_in_surf = nn.Parameter(torch.ones(hidden_dim))
+            self.gamma_in_vol = nn.Parameter(torch.ones(hidden_dim))
+            self.beta_in_surf = nn.Parameter(torch.zeros(hidden_dim))
+            self.beta_in_vol = nn.Parameter(torch.zeros(hidden_dim))
         self.ln_1 = nn.LayerNorm(hidden_dim)
         self.attn = PhysicsAttention(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
@@ -192,6 +200,11 @@ class TransolverBlock(nn.Module):
                 self.beta_vol = nn.Parameter(torch.zeros(hidden_dim))
 
     def forward(self, fx, is_surface=None):
+        if self.has_input_film and is_surface is not None:
+            m = is_surface.unsqueeze(-1).to(fx.dtype)
+            gamma = m * self.gamma_in_surf + (1 - m) * self.gamma_in_vol
+            beta = m * self.beta_in_surf + (1 - m) * self.beta_in_vol
+            fx = gamma * fx + beta
         fx = self.attn(self.ln_1(fx)) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
@@ -211,7 +224,7 @@ class Transolver(nn.Module):
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None,
-                 film: bool = False):
+                 film: bool = False, film_all_blocks: bool = False):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -228,12 +241,18 @@ class Transolver(nn.Module):
         self.n_hidden = n_hidden
         self.space_dim = space_dim
         self.film = film
+        self.film_all_blocks = film_all_blocks
+        # film_all_blocks adds an input-FiLM affine at the residual-stream
+        # entry of every TransolverBlock (5×4×n_hidden params), in addition to
+        # the existing decoder-FiLM in the last block. Identity init at every
+        # site so this stays equivalent to the merged baseline at step 0.
         self.blocks = nn.ModuleList([
             TransolverBlock(
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
                 film=film and (i == n_layers - 1),
+                has_input_film=film and film_all_blocks,
             )
             for i in range(n_layers)
         ])
@@ -253,12 +272,8 @@ class Transolver(nn.Module):
         x = data["x"]
         is_surface = data.get("is_surface", None)
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        last_idx = len(self.blocks) - 1
-        for i, block in enumerate(self.blocks):
-            if i == last_idx and is_surface is not None:
-                fx = block(fx, is_surface=is_surface)
-            else:
-                fx = block(fx)
+        for block in self.blocks:
+            fx = block(fx, is_surface=is_surface)
         return {"preds": fx}
 
 
@@ -426,6 +441,7 @@ class Config:
     debug: bool = False
     skip_test: bool = False  # skip final test evaluation
     film: bool = True  # surface-conditional FiLM in last block (PR #484)
+    film_all_blocks: bool = False  # add input-FiLM at every TransolverBlock boundary (PR #594)
 
 
 cfg = sp.parse(Config)
@@ -466,6 +482,7 @@ model_config = dict(
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
     film=cfg.film,  # surface-conditional FiLM in last block (PR #484)
+    film_all_blocks=cfg.film_all_blocks,  # input-FiLM at every block (PR #594)
 )
 
 model = Transolver(**model_config).to(device)
