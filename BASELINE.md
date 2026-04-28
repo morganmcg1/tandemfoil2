@@ -4,49 +4,65 @@ Canonical reference for `icml-appendix-willow-pai2d-r1`. Lower
 `val_avg/mae_surf_p` is better; round ranking is by best validation
 checkpoint, with `test_avg/mae_surf_p` reported as the paper-facing number.
 
-## Current best (PR #327, tanjiro, 2026-04-28)
+## Current best (PR #416, alphonse, 2026-04-28)
 
-K=8 sinusoidal Fourier features for normalized `(x, z)` concatenated
-to the per-node feature vector. Stacks on top of the bf16 baseline.
+`torch.compile(model, dynamic=True)` stacked on top of bf16 + FF K=8.
+Single one-time recompile at train→eval flip; no shape recompiles across
+the 74K-242K node range; FF concat does not trip dynamic-shape
+specialization. 2.0× per-epoch speedup unlocks 37/50 epochs in the 30-min
+cap, letting cosine actually decay.
 
-- **`val_avg/mae_surf_p` = 106.9223** at epoch 19 (of 19 completed)
-- **`test_avg/mae_surf_p` = 96.8186** (best val checkpoint)
-- W&B run: [`nbyicdne` / `ff-K8-bf16`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r1/runs/nbyicdne)
-- Per-epoch wall: 97–100 s (essentially unchanged from bf16; FF is cheap)
-- Peak GPU memory: 33.3 GB / 96 GB
-- Wall: 30-min `SENPAI_TIMEOUT_MINUTES` binding at 19/50 epochs.
+- **`val_avg/mae_surf_p` = 80.8506** at epoch 37 (of 37 completed)
+- **`test_avg/mae_surf_p` = 73.4107** (best val checkpoint)
+- W&B run: [`ewq3guz2` / `compile-bf16-ff-bsz4`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r1/runs/ewq3guz2)
+- Per-epoch wall: ~49 s steady state (cold compile 27.85 s + 84 s for epoch 1)
+- Peak GPU memory: 24.1 GB / 96 GB (~70 GB headroom)
+- Wall: 30-min `SENPAI_TIMEOUT_MINUTES` binding at 37/50 epochs (was 19/50 pre-compile).
 
 ### Per-split surface MAE (val, best checkpoint)
 
 | Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
 |---|---|---|---|
-| val_single_in_dist | 117.2176 | 1.4740 | 0.7534 |
-| val_geom_camber_rc | 125.9391 | 2.3627 | 0.9713 |
-| val_geom_camber_cruise | 80.2640 | 1.2281 | 0.6079 |
-| val_re_rand | 104.2685 | 1.7971 | 0.8143 |
-| **val_avg** | **106.9223** | 1.7155 | 0.7867 |
+| val_single_in_dist | 84.2016 | 1.1797 | 0.5843 |
+| val_geom_camber_rc | 93.3940 | 1.7614 | 0.7951 |
+| val_geom_camber_cruise | 65.9494 | 0.8740 | 0.4909 |
+| val_re_rand | 79.8573 | 1.3063 | 0.6400 |
+| **val_avg** | **80.8506** | 1.2804 | 0.6276 |
 
 ### Per-split surface MAE (test, best val checkpoint)
 
 | Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
 |---|---|---|---|
-| test_single_in_dist | 103.7333 | 1.4222 | 0.7224 |
-| test_geom_camber_rc | 116.3529 | 2.2950 | 0.9094 |
-| test_geom_camber_cruise | 70.3920 | 1.2256 | 0.5590 |
-| test_re_rand | 96.7963 | 1.6182 | 0.7705 |
-| **test_avg** | **96.8186** | 1.6403 | 0.7403 |
+| test_single_in_dist | 76.5973 | 1.1318 | 0.5759 |
+| test_geom_camber_rc | 83.4492 | 1.7213 | 0.7486 |
+| test_geom_camber_cruise | 56.7227 | 0.8223 | 0.4433 |
+| test_re_rand | 76.8738 | 1.2020 | 0.6088 |
+| **test_avg** | **73.4107** | 1.2193 | 0.5942 |
 
-## Default config (matches PR #327)
+### Updated per-split rc-camber understanding
+
+The OOD `geom_camber_rc` split — which FF on its own only relieved by
+−3.3% — gets to −25.8% with compile + FF. So the rc-camber gap on the FF
+baseline was *schedule-truncation-bound*, not a fundamental representation
+bottleneck. **Camber-aware feature embedding is no longer queued** as the
+rc-camber-targeted experiment for round 2; throughput unlock alone closed
+the gap. Capacity scale-up may now matter more than camber feature work.
+
+## Default config (matches PR #416)
 
 - `lr=5e-4`, `weight_decay=1e-4`, `batch_size=4`, `surf_weight=10.0`, `epochs=50`
 - AdamW + CosineAnnealingLR(T_max=epochs), no warmup
 - Loss: per-channel-equal MSE in normalized space, with surface vs. volume
   split via `surf_weight`. **Forward + loss inside `torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)`.**
-- **Fourier features (K=8) for normalized (x, z), computed in fp32 outside
-  the autocast scope** and concatenated to the per-node feature vector
-  before the encoder MLP. Per-node feature dim grows 24 → 56.
+- **Fourier features (K=8)** for normalized (x, z), computed in fp32
+  outside the autocast scope, concatenated to the per-node feature vector.
+  Per-node feature dim: 24 → 56.
+- **`torch.compile(model, dynamic=True)`** wrapper applied right after
+  `model.to(device)` (gated on `not cfg.debug`). Save/load via
+  `getattr(model, "_orig_mod", model).state_dict()` so the W&B model
+  artifact is portable into a non-compiled module.
 - Model: Transolver (`n_hidden=128`, `n_layers=5`, `n_head=4`, `slice_num=64`,
-  `mlp_ratio=2`, `space_dim=2`, **`fun_dim=22 + 4*8 = 54`**, `out_dim=3`).
+  `mlp_ratio=2`, `space_dim=2`, `fun_dim=22 + 4*8 = 54`, `out_dim=3`).
 
 ## Reproduce
 
@@ -55,28 +71,32 @@ cd target && python train.py \
   --epochs 50 --batch_size 4 --lr 5e-4 \
   --surf_weight 10.0 --weight_decay 1e-4 \
   --agent baseline \
-  --wandb_group baseline-bf16-ff8 \
-  --wandb_name baseline-bf16-ff8
+  --wandb_group baseline-compile-ff-bf16 \
+  --wandb_name baseline-compile-ff-bf16
 ```
 
 ## Notes
 
 - Primary ranking metric: `val_avg/mae_surf_p`. Lower is better.
-- Test-time number reported alongside: `test_avg/mae_surf_p`.
-- 30-min wall-clock cap (`SENPAI_TIMEOUT_MINUTES=30`) **still binding** at
-  19/50 epochs. Cosine T_max alignment may release additional headroom from
-  the schedule tail (currently being tested in PR #407).
-- `data/scoring.py` patched in commit `b78f404` to filter non-finite-y samples.
+- 30-min wall-clock cap is **still binding** at 37/50 epochs. Cosine T_max
+  alignment is the obvious next throughput-side lever (currently in flight
+  as fern's PR #407, but with `--epochs 20` matched to the *pre-compile*
+  19-epoch achievable budget — likely needs adjustment to match the new
+  37-epoch achievable budget).
+- VRAM headroom is now ~70 GB. Capacity scale-up (PR #393 territory)
+  becomes feasible again.
+- `data/scoring.py` patched (`b78f404`).
 - Cosmetic: `train.py::evaluate_split`'s normalised-loss accumulator still
   prints NaN for `test_geom_camber_cruise` — does not affect MAE rankings.
-- Per-split asymmetry: cruise + single-in-dist see ~17–20% wins from FF;
-  rc-camber held-out sees only −3.3%. OOD geometry is bottlenecked more by
-  camber→pressure mapping than spatial-frequency representation — a hint for
-  future targeted experiments.
 
 ## Prior baselines (superseded)
 
-- **PR #312** (alphonse, original baseline): val_avg=144.21, test_avg=131.18.
-  Default Transolver, no bf16, no FF.
-- **PR #359** (alphonse, bf16): val_avg=121.85, test_avg=111.15. Same model
-  + bf16 autocast on forward+loss. Superseded by PR #327 on 2026-04-28.
+- **PR #312** (alphonse, original): val_avg=144.21, test_avg=131.18.
+  Default Transolver, no bf16/FF/compile.
+- **PR #359** (alphonse, bf16): val_avg=121.85, test_avg=111.15. bf16
+  autocast on forward + loss. Superseded by PR #327 on 2026-04-28.
+- **PR #327** (tanjiro, FF K=8): val_avg=106.92, test_avg=96.82. Sinusoidal
+  Fourier features for (x, z), K=8. Superseded by PR #416 on 2026-04-28.
+
+Cumulative improvement: **−44.0% on val_avg** (144.21 → 80.85), **−44.0%
+on test_avg** (131.18 → 73.41) since the original PR #312 reference.
