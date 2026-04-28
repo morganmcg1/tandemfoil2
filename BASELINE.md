@@ -32,27 +32,32 @@ The paper-facing rank is `test_avg/mae_surf_p`, computed once at the end of trai
 
 ## Best result
 
-**PR #296 — `lr-warmup-1e3-budget` (fern), merged 2026-04-28**
+**PR #365 — `fourier-features-on-l1-warmup` (thorfinn), merged 2026-04-28**
 
-- `val_avg/mae_surf_p` = **94.5397** (best epoch 12/14)
-- `test_avg/mae_surf_p` = **NaN** (4-split) / **91.853** (mean of 3 clean splits — same pre-existing `test_geom_camber_cruise` GT-NaN as before)
-- Per-split val: `val_single_in_dist=114.30`, `val_geom_camber_rc=105.46`, `val_geom_camber_cruise=70.45`, `val_re_rand=87.96`
-- Per-split test (3 clean): `test_single_in_dist=102.60`, `test_geom_camber_rc=93.17`, `test_re_rand=79.79`
-- Stacks on top of L1 from PR #293. **−7.2% val / −10.5% test** vs the L1-only baseline.
-- Change: linear warmup over 5 epochs (1e-5 → 1e-3) → cosine decay over 9 epochs (1e-3 → 0), with `--epochs 14` budget-matched to the 30-min wall cap. Peak `lr=1e-3`. Best epoch landed mid-decay at LR ≈ 2.5e-4.
+- `val_avg/mae_surf_p` = **87.8551** (best epoch 12/14)
+- `test_avg/mae_surf_p` = **NaN** (4-split) / **84.222** (mean of 3 clean splits — same pre-existing `test_geom_camber_cruise` GT-NaN)
+- Per-split val: `val_single_in_dist=104.53`, `val_geom_camber_rc=104.44`, `val_geom_camber_cruise=62.81`, `val_re_rand=79.64`
+- Per-split test (3 clean): `test_single_in_dist=91.09`, `test_geom_camber_rc=88.28`, `test_re_rand=73.29`
+- Stacks on top of L1 (PR #293) and warmup+cosine (PR #296). **−7.1% val / −8.3% test** vs the L1+warmup baseline.
+- Change: 8-band sinusoidal Fourier features (`sin/cos at frequencies π·{1, 2, 4, …, 128}`) on the **normalized** position channels (`x_norm[..., :2]`), concatenated to `x_norm` before the model. `model_config['fun_dim']` bumps from 22 → 54. Cost is essentially free: median per-epoch wall unchanged (132 s), peak GPU ~+0.6%, +1.5K params.
 
-Full reference config now: `n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2`, `lr=1e-3` (peak, with linear warmup), `weight_decay=1e-4`, `batch_size=4`, `surf_weight=10.0`, **L1** loss in normalized space, **SequentialLR(LinearLR warmup × 5 ep, CosineAnnealingLR T_max=epochs−5)**, `--epochs 14` (matched to budget).
+Full reference config now: `n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2`, `fun_dim=54` (was 22 before Fourier), `lr=1e-3` (peak, linear warmup), `weight_decay=1e-4`, `batch_size=4`, `surf_weight=10.0`, **L1** loss in normalized space, **SequentialLR(LinearLR warmup × 5 ep, CosineAnnealingLR T_max=epochs−5)**, `--epochs 14`, **8-band Fourier features on normalized (x, z)**.
 
 Reproduce:
 ```bash
 cd target/ && python train.py \
-  --agent charliepai2d5-fern \
-  --experiment_name lr-warmup-1e3-budget \
-  --lr 1e-3 \
+  --agent charliepai2d5-thorfinn \
+  --experiment_name fourier-features-on-l1-warmup \
   --epochs 14
 ```
 
 ### Previous best
+
+**PR #296 — `lr-warmup-1e3-budget` (fern), merged 2026-04-28**
+
+- `val_avg/mae_surf_p` = 94.5397 (best epoch 12/14)
+- `test_avg/mae_surf_p` (3-split mean) = 91.853
+- Change: linear warmup over 5 epochs (1e-5 → 1e-3) → cosine decay over 9 epochs (1e-3 → 0), with `--epochs 14` budget-matched.
 
 **PR #293 — `l1-loss` (edward), merged 2026-04-27**
 

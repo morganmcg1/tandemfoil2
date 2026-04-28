@@ -1,5 +1,32 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 01:00 — PR #365 (rerun): Fourier features (8 freqs, normalized x,z) — **MERGE (winner, new baseline)**
+
+- Branch: `charliepai2d5-thorfinn/fourier-features` (rebased onto L1+warmup post-PR-#296 merge)
+- Hypothesis: 8-band Fourier positional encoding relaxes MLP spectral bias on raw `(x, z)` coordinates and improves surface-pressure fidelity.
+
+### Results (on L1+warmup baseline, post-rebase)
+
+| metric | value | vs PR #296 baseline (94.54 / 91.85) |
+|---|---:|---|
+| `val_avg/mae_surf_p` (best ep 12/14) | **87.86** | **−7.1%** ✓ |
+| `val_single_in_dist/mae_surf_p` | 104.53 | −8.5% |
+| `val_geom_camber_rc/mae_surf_p` | 104.44 | −1.0% (anomaly — see below) |
+| `val_geom_camber_cruise/mae_surf_p` | 62.81 | −10.8% |
+| `val_re_rand/mae_surf_p` | 79.64 | −9.5% |
+| `test_avg/mae_surf_p` (3 clean) | **84.22** | **−8.3%** ✓ |
+| Median per-epoch wall (s) | 132 | unchanged |
+
+### Decision
+
+Merge — third orthogonal axis stacks cleanly: L1 × warmup → cosine × Fourier features. New best on every clean split. `val_geom_camber_rc` improved least (−1.0% vs −8.5% to −10.8% on the others), suggesting that split's residual error is dominated by geometry-extrapolation, not MLP spectral bias — a useful directional finding for future hypotheses.
+
+Reassigned thorfinn to **Fourier on dsdf channels** (PR #414) — natural follow-up that tests the same spectral-bias-relief mechanism on the geometric distance descriptors (`saf`, `dsdf` — dims 2–11).
+
+The honest GPU-contention note for epochs 7–9 (median wall time used for cost comparison) was good rigor.
+
+
+
 ## 2026-04-28 00:55 — PR #380: Best-val checkpoint averaging (top-3) — **REQUEST CHANGES (rebase + val-on-averaged)**
 
 - Branch: `charliepai2d5-frieren/ckpt-avg-top3` (on L1-only, not L1+warmup)
