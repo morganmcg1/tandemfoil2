@@ -159,7 +159,8 @@ class PhysicsAttention(nn.Module):
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
                  mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
-                 drop_path: float = 0.0):
+                 drop_path: float = 0.0,
+                 layerscale_init: float = 1e-2):
         super().__init__()
         self.last_layer = last_layer
         self.drop_path = drop_path
@@ -170,6 +171,8 @@ class TransolverBlock(nn.Module):
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
         self.mlp = SwiGLU_MLP(hidden_dim, hidden_dim, hidden_dim, mlp_ratio=mlp_ratio)
+        self.gamma_attn = nn.Parameter(layerscale_init * torch.ones(hidden_dim))
+        self.gamma_mlp = nn.Parameter(layerscale_init * torch.ones(hidden_dim))
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
@@ -181,8 +184,8 @@ class TransolverBlock(nn.Module):
         if self.training and self.drop_path > 0.0 and not self.last_layer:
             if torch.rand(1, device=fx.device).item() < self.drop_path:
                 return fx
-        fx = self.attn(self.ln_1(fx)) + fx
-        fx = self.mlp(self.ln_2(fx)) + fx
+        fx = self.gamma_attn * self.attn(self.ln_1(fx)) + fx
+        fx = self.gamma_mlp * self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
         return fx
@@ -558,6 +561,13 @@ for epoch in range(MAX_EPOCHS):
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+    gamma_trajectory = {
+        f"block_{i}": {
+            "gamma_attn_mean_abs": block.gamma_attn.detach().abs().mean().item(),
+            "gamma_mlp_mean_abs": block.gamma_mlp.detach().abs().mean().item(),
+        }
+        for i, block in enumerate(model.blocks)
+    }
     append_metrics_jsonl(metrics_jsonl_path, {
         "event": "epoch",
         "epoch": epoch + 1,
@@ -568,6 +578,7 @@ for epoch in range(MAX_EPOCHS):
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
+        "layerscale": gamma_trajectory,
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
