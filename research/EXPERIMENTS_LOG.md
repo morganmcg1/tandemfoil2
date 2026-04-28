@@ -1,5 +1,41 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 02:50 — PR #422: Per-channel pressure downweight (w_p = 0.5)
+- Branch: `charliepai2d4-fern/pchannel-p-w05` (deleted on close)
+- Student: charliepai2d4-fern
+- **Outcome: CLOSED** (same-epoch val_avg delta within noise; absolute 85.08 is +27% above current baseline #401's 66.89).
+
+### Headline (epoch 18, no compile — branch predates #401)
+| Metric | This run | PR #381 baseline | Δ |
+|---|---|---|---|
+| `val_avg/mae_surf_p` (EMA, best) | 85.08 | 98.85 (epoch 13) | -13.9% (mostly from 5 extra epochs due to less node contention) |
+| `val_avg/mae_surf_p` (epoch 13, same-epoch) | 97.02 | 98.85 | **-1.85%** (within ~5pp noise floor) |
+| `test_avg/mae_surf_p` (EMA) | 75.27 | 87.81 | -14.3% |
+
+### Same-epoch (13) per-channel (the load-bearing finding)
+| Channel | #381 epoch 13 | w_p=0.5 epoch 13 | Δ |
+|---|---|---|---|
+| mae_surf_p | 98.85 | 97.02 | -1.85% (within noise) |
+| mae_surf_Ux (4-split mean) | 1.465 | 1.316 | **-10.2%** |
+| mae_surf_Uy (4-split mean) | 0.702 | 0.646 | **-7.9%** |
+| mae_vol_Ux | 4.298 | 3.990 | -7.2% |
+| mae_vol_Uy | 1.872 | 1.740 | -7.0% |
+| mae_vol_p | 99.38 | 101.68 | +2.3% (modest regression on vol pressure) |
+
+### Analysis
+- **Mechanism supported**: velocity channels gain -7 to -10% at same-epoch — directly from freed gradient mass under reduced pressure weighting. Mirror image of thorfinn's #310 (3× pressure → starves velocity → pressure hurt).
+- **Pressure gain is borderline-noise** (-1.85% on val_avg). The "physics coupling" idea would predict pressure improves over time as velocity learns better; the run was timeout-capped at epoch 18 (still descending) so it's plausible that more epochs would show pressure gains.
+- **Wall-clock confound**: per-epoch was 104 s vs 142 s baseline. Fern explicitly attributed this to lower node contention; the actual code change is one element-wise multiply, ≈0 cost.
+- **All 4 splits improved at the surface across all 3 channels** in the best-ckpt comparison. Generalization on held-out cambers wasn't damaged.
+
+### Why close (not send back)
+- Same-epoch val_avg is within ~5pp variance floor → not a clear winner on the primary metric.
+- Absolute 85.08 doesn't beat current baseline #401 (66.89, has compile).
+- Even if rebased onto #401, the small same-epoch effect predicts only ~65.7 (≈3% off 66.89, within noise).
+- Mechanism finding is captured for future work. **Fern's own follow-up #2** (ramp w_p 0.5 → 1.0 over training) is the cleaner test that decouples early/late training regimes — assigned next.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=422 records, 19 lines).
+
 ## 2026-04-28 02:35 — PR #421: EMA(0.995) + NO clip (attribution ablation)
 - Branch: `charliepai2d4-nezuko/ema995-noclip` (deleted on close)
 - Student: charliepai2d4-nezuko
