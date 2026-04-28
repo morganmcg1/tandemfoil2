@@ -1,5 +1,107 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 08:11 — PR #529 v2 (closed): aux p head + L1 rebased on L1+per-Re+EMA stack
+
+- branch: `willowpai2d1-alphonse/surface-only-aux-p-head` (deleted on close)
+- hypothesis: aux head + inference blend stacks at moderate efficiency on
+  current stack. Predicted post-rebase val_avg in 51-53.
+
+### Results
+
+| Metric | Value | vs PR #531 (original threshold) | vs PR #324 v4 (current baseline) |
+|---|---|---|---|
+| Best `val_avg/mae_surf_p` | **53.83** (epoch 34 of 35) | **−0.50%** (passes original threshold) | **+3.30%** (regression vs current) |
+| `test_avg/mae_surf_p` | 45.94 | −1.00% | +2.08% |
+| Per-split val | uniform +2.35% to +4.47% regressions vs current baseline | | |
+| W&B run | `fozlsh2j` | | |
+
+### Mechanism diagnosis (saturation)
+
+Two interactions explain the regression vs current baseline:
+
+1. **EMA absorbs the inference-blend mechanism.** The aux head's prior
+   Huber win had two components: aux loss term ~1.9% (training-time signal),
+   inference blend ~3.3% (calibration averaging). Both are variance-reduction
+   mechanisms. EMA averages along the optimization trajectory; aux blend
+   averages two heads at one timepoint. **When EMA is in, the main head's
+   EMA prediction is already the variance-reduced estimator** — averaging
+   with the aux head's EMA prediction adds correlated signal with shrinking
+   gain.
+
+2. **Per-Re + L1 absorbs the training-time aux signal.** On Huber, the aux
+   head's extra L1-regime signal helped chip away at the high-Re tail
+   where Huber's quadratic regime under-emphasized. With pure L1 (constant
+   gradient) + per-Re sqrt sampling (tail samples up-weighted), this
+   corrective signal is already in the main loss. The aux loss term is
+   now mostly redundant.
+
+### Cross-PR saturation pattern (round-3 lesson)
+
+This PR + thorfinn PR #570 v2 (sw=8 closed simultaneously) reveal the
+same pattern at this baseline level:
+
+- **sw=8 absorbs into per-Re sampling** (both bias toward high-residual
+  surface samples; effects saturate).
+- **Aux head absorbs into EMA + per-Re + L1** (aux blend absorbed by EMA;
+  aux loss absorbed by per-Re sampling + pure L1).
+
+**The current stack has reached a stack-saturation regime where many
+"orthogonal" interventions actually overlap.** Future stacked PRs should
+diagnose mechanism overlap before assuming orthogonality from
+isolated-baseline wins.
+
+### Analysis & conclusions
+
+- **Closed.** Per CLAUDE.md merge rule (val_avg < current baseline),
+  53.83 > 52.12 doesn't qualify, even though strict PR-text threshold
+  (54.09 from PR #531) was met.
+- aux_weight sweep + ablation followups have negative expected value
+  given uniform per-split regression signature.
+- Reassigned alphonse to AdamW beta1=0.95 probe (#645) — different
+  axis (optimizer hyperparameter), low-risk lock-it-down experiment.
+
+## 2026-04-28 08:11 — PR #570 v2 (closed): surf_weight=8 rebased on L1+per-Re+EMA stack
+
+- branch: `willowpai2d1-thorfinn/sw8-probe-on-pure-l1` (deleted on close)
+- hypothesis: sw=8 effect transfers from PR #504 baseline (-4.43%) to
+  current stack at 70-90% efficiency. Predicted post-rebase val_avg in 49-51.
+
+### Results
+
+| Metric | Value | vs PR #324 v4 baseline |
+|---|---|---|
+| Best `val_avg/mae_surf_p` | **52.18** (epoch 36) | **+0.12%** (essentially flat) |
+| `test_avg/mae_surf_p` | 44.82 | −0.40% |
+| Surface Ux/Uy: 6 of 8 val components regress | | mechanism prediction violated |
+| raw_val (non-EMA) | 56.78 | +5.5% (much worse without EMA) |
+| W&B run | `p1t9fd6z` | |
+
+### Mechanism diagnosis (saturation)
+
+**Per-Re sqrt sampling and surf_weight are NOT orthogonal under pure L1.**
+Both bias the gradient toward high-residual surface samples — per-Re by
+sample-frequency weighting, surf_weight by loss-coefficient. Under L1's
+constant-magnitude gradient, the coupled effect saturates. **The sw=8
+win on PR #504 was real, but absorbed by per-Re sampling.**
+
+EMA does heavy lifting on val stabilization here: raw val (non-EMA) is
++5.5% worse, EMA pulls them within +0.12%. EMA-mediated metric stability
+shouldn't be confused with mechanism transfer.
+
+### Useful round-3 finding
+
+**sw=8 directional finding holds on isolated baselines but doesn't
+compose past per-Re sampling.** Future sw probes should either:
+1. Co-design with per-Re sampling (joint sweep over sw × Re-weight exponent)
+2. Only probe sw before per-Re sampling enters the stack
+
+### Analysis & conclusions
+
+- **Closed.** Per decision rule "Ux/Uy don't improve uniformly → close."
+  sw=10 is locally optimal under the current stack.
+- Reassigned thorfinn to NACA camber bin embedding (#644) — directly
+  attacks the persistent rc-camber bottleneck with an architectural change.
+
 ## 2026-04-28 07:39 — PR #584 (closed): L1 T_max=70 probe — extends T_max=50 finding from above
 
 - branch: `willowpai2d1-edward/l1-tmax70-probe` (deleted on close)
