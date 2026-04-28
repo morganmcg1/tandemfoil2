@@ -17,10 +17,12 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 
 import simple_parsing as sp
@@ -31,8 +33,12 @@ import wandb
 import yaml
 from einops import rearrange
 from timm.layers import trunc_normal_
+from torch.amp import autocast
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
+
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 from data import (
     TEST_SPLIT_NAMES,
@@ -377,7 +383,7 @@ DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 class Config:
     lr: float = 5e-4
     weight_decay: float = 1e-4
-    batch_size: int = 4
+    batch_size: int = 8
     surf_weight: float = 10.0
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
@@ -463,6 +469,33 @@ model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
 
+metrics_dir = Path("metrics")
+metrics_dir.mkdir(parents=True, exist_ok=True)
+run_tag = cfg.wandb_name or cfg.agent or run.id
+metrics_path = metrics_dir / f"{_sanitize_artifact_token(run_tag)}-{run.id}.jsonl"
+metrics_file = open(metrics_path, "a")
+
+
+def _jsonl(record: dict) -> None:
+    metrics_file.write(json.dumps(record, default=float) + "\n")
+    metrics_file.flush()
+
+
+_jsonl({
+    "event": "run_start",
+    "ts": datetime.utcnow().isoformat() + "Z",
+    "run_id": run.id,
+    "wandb_name": cfg.wandb_name,
+    "agent": cfg.agent,
+    "git_commit": _git_commit_short(),
+    "config": {**asdict(cfg), "max_epochs": MAX_EPOCHS, "max_timeout_min": MAX_TIMEOUT_MIN},
+    "model_config": model_config,
+    "n_params": n_params,
+    "train_samples": len(train_ds),
+    "val_samples": {k: len(v) for k, v in val_splits.items()},
+})
+print(f"Metrics JSONL: {metrics_path}")
+
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
 global_step = 0
@@ -486,14 +519,15 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+        with autocast(device_type="cuda", dtype=torch.bfloat16):
+            pred = model({"x": x_norm})["preds"]
+            sq_err = (pred - y_norm) ** 2
 
-        vol_mask = mask & ~is_surface
-        surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+            vol_mask = mask & ~is_surface
+            surf_mask = mask & is_surface
+            vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+            surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
         loss.backward()
@@ -536,7 +570,8 @@ for epoch in range(MAX_EPOCHS):
     wandb.log(log_metrics)
 
     tag = ""
-    if avg_surf_p < best_avg_surf_p:
+    is_best = avg_surf_p < best_avg_surf_p
+    if is_best:
         best_avg_surf_p = avg_surf_p
         best_metrics = {
             "epoch": epoch + 1,
@@ -555,8 +590,32 @@ for epoch in range(MAX_EPOCHS):
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
 
+    _jsonl({
+        "event": "epoch",
+        "epoch": epoch + 1,
+        "ts": datetime.utcnow().isoformat() + "Z",
+        "epoch_time_s": dt,
+        "lr": scheduler.get_last_lr()[0],
+        "peak_gb": peak_gb,
+        "global_step": global_step,
+        "train/vol_loss": epoch_vol,
+        "train/surf_loss": epoch_surf,
+        "val_loss_mean": val_loss_mean,
+        "val_avg/mae_surf_p": avg_surf_p,
+        "val_avg": val_avg,
+        "per_split": {k: dict(v) for k, v in split_metrics.items()},
+        "is_best": is_best,
+    })
+
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
+_jsonl({
+    "event": "train_done",
+    "ts": datetime.utcnow().isoformat() + "Z",
+    "total_train_minutes": total_time,
+    "best_avg_surf_p": best_avg_surf_p if best_metrics else None,
+    "best_epoch": best_metrics.get("epoch") if best_metrics else None,
+})
 
 # --- Test evaluation + artifact upload ---
 if best_metrics:
@@ -597,6 +656,13 @@ if best_metrics:
         wandb.log(test_log)
         wandb.summary.update(test_log)
 
+        _jsonl({
+            "event": "test",
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "test_avg": test_avg,
+            "per_split": {k: dict(v) for k, v in test_metrics.items()},
+        })
+
     save_model_artifact(
         run=run,
         model_path=model_path,
@@ -611,5 +677,9 @@ if best_metrics:
     )
 else:
     print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping artifact upload.")
+
+_jsonl({"event": "run_end", "ts": datetime.utcnow().isoformat() + "Z"})
+metrics_file.close()
+print(f"Metrics JSONL written: {metrics_path}")
 
 wandb.finish()
