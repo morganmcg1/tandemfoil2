@@ -1,5 +1,33 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 06:35 — PR #573: Per-domain training weight rebalance (33/33/33 → 25/37.5/37.5) — **CLOSE (composition mismatch axis exhausted)**
+
+- Branch: `charliepai2d5-edward/domain-weight-rebalance` (closed)
+
+### Results
+
+| metric | value | vs current baseline (73.91 / 70.37) |
+|---|---:|---|
+| `val_avg/mae_surf_p` (best ep 14/14) | 76.59 | **+3.62%** (worse) |
+| `val_single_in_dist/mae_surf_p` | 94.86 | **+16.16%** (regressed sharply) |
+| `val_geom_camber_rc/mae_surf_p` | 87.51 | −0.50% (small gain) |
+| `val_geom_camber_cruise/mae_surf_p` | 53.45 | −1.87% (small gain) |
+| `val_re_rand/mae_surf_p` | 70.52 | −1.44% (small gain) |
+| `test_avg/mae_surf_p` (3 clean) | 75.03 | +6.62% |
+| Train-vs-val gap | 12.6% | narrowed from baseline 14.0% |
+
+### Decision
+
+Close. Hits close criterion. **Mechanism worked exactly as predicted but trade-off is unfavorable.** Per-split signs all matched the prediction (single regressed, all three tandem improved), and the train-val gap narrowed (14.0% → 12.6%) — confirming composition matching aligns the loss landscapes. But the **magnitude** is asymmetric: cutting racecar_single from 33% → 25% (−24% relative training time) cost +16.2% on its val split, while gaining +14% sampling on tandem only paid back ~1% on each tandem split.
+
+Student's interpretation: **the model learns racecar_single quickly on the budget; cutting that data hurts disproportionately**. The 33/33/33 sampler isn't the bottleneck, and may already be biased *toward* tandem relative to a pure-yield-per-sample optimum.
+
+This is a clean negative result with a clear mechanistic explanation. Composition mismatch axis is now saturated.
+
+Reassigned edward to **layer-wise LR decay (LLRD, decay=0.9)** (PR #603) — different LR for different layer depths in AdamW. Standard modern transformer trick (more common in fine-tuning, untested for from-scratch on this stack). Single-axis change orthogonal to all explored axes.
+
+
+
 ## 2026-04-28 06:25 — PR #550: Capacity bump n_layers 5 → 6 (pre-bf16 baseline) — **REQUEST CHANGES (rebase to bf16 + critical diagnostic)**
 
 - Branch: `charliepai2d5-fern/n-layers-6` (status:wip rebasing)
