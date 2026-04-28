@@ -244,13 +244,15 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
                 sq_err = (pred - y_norm) ** 2
                 vol_mask = mask & ~is_surface
                 surf_mask = mask & is_surface
+                ch_w = torch.tensor([1.0, 1.0, 5.0], device=sq_err.device)  # Ux, Uy, p
+                sq_err_w = sq_err * ch_w
                 vol_loss_sum += (
-                    (sq_err * vol_mask.unsqueeze(-1)).sum()
-                    / vol_mask.sum().clamp(min=1)
+                    (sq_err_w * vol_mask.unsqueeze(-1)).sum()
+                    / vol_mask.sum().clamp(min=1) / 3.0
                 ).item()
                 surf_loss_sum += (
-                    (sq_err * surf_mask.unsqueeze(-1)).sum()
-                    / surf_mask.sum().clamp(min=1)
+                    (sq_err_w * surf_mask.unsqueeze(-1)).sum()
+                    / surf_mask.sum().clamp(min=1) / 3.0
                 ).item()
             n_batches += 1
 
@@ -447,6 +449,7 @@ run = wandb.init(
         "n_params": n_params,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
+        "channel_weights": [1.0, 1.0, 5.0],
     },
     mode=os.environ.get("WANDB_MODE", "online"),
 )
@@ -494,8 +497,10 @@ for epoch in range(MAX_EPOCHS):
 
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
-            vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-            surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            ch_w = torch.tensor([1.0, 1.0, 5.0], device=sq_err.device)  # Ux, Uy, p
+            sq_err_w = sq_err * ch_w
+            vol_loss = (sq_err_w * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1) / 3.0
+            surf_loss = (sq_err_w * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1) / 3.0
             loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
