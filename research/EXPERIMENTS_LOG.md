@@ -31,6 +31,38 @@
 
 ---
 
+## 2026-04-28 08:33 — PR #602: H17 layer-wise lr decay for Transolver blocks — **CLOSED**
+
+- Branch: `willowpai2d4-edward/h17-layer-wise-lr-decay` (post-#404, pre-#442, pre-#343)
+- 3-cell matrix in W&B group `h17-lldr` (all `--epochs 25 --lr 7e-4 --weight_decay 5e-4`):
+
+| Run | lldr_decay | seed | val_avg/mae_surf_p (best @ ep 13) | test_avg/mae_surf_p | W&B |
+|-----|-----------:|-----:|------------------------------------:|----------------------:|-----|
+| A — sanity | 1.0 | 123 | **119.36** (matches PR #404 baseline to 4 decimals) | 107.54 | `8ya4silj` |
+| B — canonical | 0.75 | 123 | 120.11 | 109.54 | `9z8foo2r` |
+| C — variance | 0.75 | 124 | 119.19 | 108.22 | `u9cxs4ry` |
+
+Mean(B, C) − A: **+0.24% val / +1.25% test** — squarely in the "close cleanly" band.
+
+### Conclusions
+
+- **Clean negative result.** Effect is in the [−2%, +2%] band per the decision rule.
+- **B-C seed-pair spread is TIGHT** (0.77% val / 1.21% test), well below the established 6% noise floor. So this isn't a noise-drowned signal — it's a genuine mild regression. The 3-cell pair-with-control protocol detects sub-2% effects when within-config variance is tight.
+- **Three reasons LLDR doesn't help here** (per edward's analysis): (1) budget mismatch — standard LLDR regime is fine-tuning pre-trained transformers; here we train from scratch in 14 epochs so early blocks aren't well-developed; (2) cosine schedule already provides slow-down so LLDR stacks redundantly; (3) 5 blocks is shallow, decay^L compounds less.
+- **Cross-split signature didn't materialize as predicted.** Single_in_dist mean was +0.4% (Run B alone -2.4% but Run C reversed +3.2%); cruise regressed most (+2.7%) — consistent with the prediction's failure-mode flag (early-layer under-training reduces plasticity for unseen geometries).
+- **Run A is the SIXTH clean seed-controlled baseline reproduction** on this branch.
+
+### Useful follow-ups (deferred)
+
+- LLDR ≈ 0.85 *if* a future hypothesis pre-trains the lower blocks (e.g. self-supervised reconstruction phase). As a standalone optimizer change in current pipeline it's a dead end.
+- **Edward's optimizer-bucket flag from his close-out:** AdamW currently applies the same wd to LayerNorm gains/biases and Linear biases. Standard practice (BeiT, ViT, original Adam) excludes 1-D parameters from weight decay. This is independent of LLDR and worth a separate hypothesis. **Now in flight as PR #662 (H21).**
+
+### Action
+
+Closed; reassigning edward to **H21 (his own optimizer-bucket follow-up)**: exclude 1-D parameters (LayerNorm gains/biases, Linear biases) from weight decay. Standard practice in modern transformer training, well-motivated, clean to implement, independent from LLDR.
+
+---
+
 ## 2026-04-28 08:14 — PR #561: H15 test-time z-mirror augmentation (TTA) — **CLOSED**
 
 - Branch: `willowpai2d4-frieren/h15-tta-zmirror` (post-#404, pre-#442, pre-#343)
