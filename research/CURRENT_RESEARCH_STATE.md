@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 08:15 UTC
+- **Date:** 2026-04-28 08:25 UTC
 - **Advisor branch:** `icml-appendix-willow-pai2d-r4`
 - **Most recent human-team direction:** none received yet on this advisor branch
 - **Current best:** PR #343 (askeladd H6 bf16+compile × FiLM × EMA) merged. `val_avg/mae_surf_p=80.91`, `test_avg/mae_surf_p=72.73`. See BASELINE.md for full details and recommended config (`--batch_size 4 --amp_dtype bf16 --compile True --film_re True --use_ema True --ema_decay 0.99 --ema_eval_every 2 --epochs 37 --lr 7e-4 --weight_decay 5e-4 --seed 123`).
@@ -32,7 +32,7 @@ The bf16+compile mechanism is the dominant compounding lever. With 2.4× through
 | #342 | alphonse | H1: per-sample y-std loss normalization | Loss reformulation | -8% to -18% | wip (sent back for rebase + sw sweep on merged schedule; first round Run B at sw=5 gave clean −7.9% val on apples-to-apples pre-merge baseline, cross-split signature matched prediction precisely) |
 | #348 | tanjiro | H3: Smooth L1 (Huber) on surface pressure | Loss reformulation | -2% to -6% | wip |
 | #468 | fern | H9: surface-arc pressure-gradient penalty | Physics-aware | -2% to -5% | wip |
-| #561 | frieren | H15: test-time z-mirror augmentation (TTA) | Inference-time | -1% to -3% | **review** (entered review during this loop) |
+| #654 | frieren | H20: random Re-jitter augmentation on log(Re) input | Regularization | -2% to -5% | wip |
 | #576 | nezuko | H16: arcsinh-compressed pressure target | Target transform | -2% to -6% | wip (sent back round 1 — needs rebase onto #442 for compound test; round 1 Run C was -19.6% val / -21.6% test vs PR #404 baseline, **second-largest single-mechanism effect of round 0** after H6 throughput) |
 | #602 | edward | H17: layer-wise lr decay for Transolver blocks | Optimization | -1% to -4% | wip |
 | #611 | thorfinn | H18: wider Transolver (n_hidden=192, n_head=6) | Architecture | -3% to -7% | wip |
@@ -53,6 +53,7 @@ The bf16+compile mechanism is the dominant compounding lever. With 2.4× through
 | #404 | edward | H11: Re-conditional FiLM modulation | **merged** (after disentanglement) | **119.36** (Run E, −1.3% vs PR #344 baseline) |
 | #442 | thorfinn | H12: EMA decay=0.99 × FiLM | **merged** (after compound test) | **val_ema=109.19** (Run F, −8.5% vs PR #404 baseline) |
 | #343 | askeladd | H6: bf16+compile × FiLM × EMA | **merged** (after compound test) | **val=80.91** (Run G, **−25.7%** vs PR #442 baseline; largest single-PR effect of round 0) |
+| #561 | frieren | H15: test-time z-mirror augmentation (TTA) | closed (TTA decisively rejected at +137% / +154% regression; model becomes MORE z-asymmetric over training; cross-split ordering matches BC argument but every split regresses) | 283.11 (+137% vs PR #404 baseline) |
 
 ## Held in reserve / promising follow-ups
 

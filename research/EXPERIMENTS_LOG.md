@@ -31,6 +31,47 @@
 
 ---
 
+## 2026-04-28 08:14 — PR #561: H15 test-time z-mirror augmentation (TTA) — **CLOSED**
+
+- Branch: `willowpai2d4-frieren/h15-tta-zmirror` (post-#404, pre-#442, pre-#343)
+- 3-cell test in W&B group `h15-tta-zmirror`:
+
+| Run | TTA | seed | val_avg/mae_surf_p | test_avg/mae_surf_p | W&B |
+|-----|-----|-----:|---------------------:|----------------------:|-----|
+| A — sanity | off | 123 | **119.36** (matches PR #404 baseline to 4 decimals) | **107.54** | `15jioruu` |
+| B — TTA | on | 123 | 283.11 (+137%) | 272.97 (+154%) | `kj7730lh` |
+| C — TTA | on | 124 | 293.40 | 278.46 | `2f1eiyso` |
+
+### Per-split test for Run B and C
+
+| Split | A (off) | B (on, seed 123) | C (on, seed 124) |
+|-------|--------:|------------------:|------------------:|
+| `test_single_in_dist` | 120.69 | 300.76 (+149%) | 327.50 (+171%) |
+| `test_geom_camber_rc` | 120.45 | 384.64 (+219%) | 411.81 (+242%) |
+| `test_geom_camber_cruise` | 80.70 | 161.51 (+100%) | 134.35 (+66%) |
+| `test_re_rand` | 108.32 | 244.97 (+126%) | 240.17 (+122%) |
+
+### Conclusions
+
+- **TTA decisively rejected.** All four splits regress, both seeds agree to within 6%.
+- **The model becomes MORE z-asymmetric as it trains.** Run B's val gets *worse* over training (epoch 11 = 283 best, epochs 12-13 = 301 → 325) while Run A's val keeps improving. Same code paths, identical train losses — the difference is purely the val-time TTA overlay. The natural training data has BC asymmetries (slip-wall ground at z=0 for raceCar, freestream for cruise) that reward learning non-symmetric mappings; TTA averaging amplifies this drift instead of denoising it.
+- **Cross-split ordering matches the H7 BC argument** even though every split regresses: cruise is least bad (+66-100%) and rc is worst (+219-242%). The direction of the BC story is informative — cruise *does* have physical z-symmetry available — but the trained model has not internalized enough of it on any subset for averaging to be net-positive.
+- **Sign-convention diagnosis correct.** Frieren's three-part argument (consistent across both seeds, non-uniform regression magnitudes by split, all three channels including mirror-invariant ones degrade together) rules out a sign error as the explanation. The issue is genuine z-asymmetry in the trained model, not a TTA implementation bug.
+- **Run A redo reproduces PR #404 baseline to 4 decimals** — fifth clean seed-controlled reproduction on this branch (PR #442 Run F, PR #523 Run A, PR #576 Run A, PR #343 Run G, and now PR #561 Run A).
+
+### Useful follow-ups (deferred)
+
+- Single-run sign-convention diagnostic — `tta_zmirror_output` returning the prediction without flipping pred[..., 1:2]; would be definitively decisive.
+- No-train zero-cost diagnostic on the Run A checkpoint to quantify model z-asymmetry directly per channel and split.
+- Selective / weighted TTA — `p`-only on cruise-only with α ∈ {0.7, 0.8, 0.9} mixing.
+- Train-time cruise-only z-mirror augmentation — retest of H7 hypothesis on the freestream-BC-only subset.
+
+### Action
+
+Closed; reassigning frieren to H20 (random Re-jitter augmentation on log(Re) input) — fresh regularization-bucket hypothesis directly targeting `test_re_rand`. Plays to her cross-split signature analysis strength. Single-cell test with paired-seed protocol.
+
+---
+
 ## 2026-04-28 08:07 — PR #343 (round 3): H6 bf16+compile × FiLM × EMA — **MERGED** (Round 0 winner #4)
 
 - Branch: `willowpai2d4-askeladd/h6-bf16-compile-batch` (rebased onto post-#442 advisor branch)
