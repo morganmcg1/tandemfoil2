@@ -348,7 +348,7 @@ DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 
 @dataclass
 class Config:
-    lr: float = 5e-4
+    lr: float = 1e-3
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 10.0
@@ -404,7 +404,16 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+warmup_epochs = 5
+warmup = torch.optim.lr_scheduler.LinearLR(
+    optimizer, start_factor=1e-3, end_factor=1.0, total_iters=warmup_epochs
+)
+cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer, T_max=max(MAX_EPOCHS - warmup_epochs, 1), eta_min=1e-5
+)
+scheduler = torch.optim.lr_scheduler.SequentialLR(
+    optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs]
+)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -460,6 +469,7 @@ for epoch in range(MAX_EPOCHS):
         epoch_surf += surf_loss.item()
         n_batches += 1
 
+    epoch_lr = optimizer.param_groups[0]["lr"]
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
@@ -491,6 +501,7 @@ for epoch in range(MAX_EPOCHS):
         "epoch": epoch + 1,
         "seconds": dt,
         "peak_memory_gb": peak_gb,
+        "lr": epoch_lr,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
         "val_avg/mae_surf_p": avg_surf_p,
