@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r5
 
-- **Last updated:** 2026-04-28 21:55
+- **Last updated:** 2026-04-28 22:30
 - **Advisor branch:** `icml-appendix-willow-pai2e-r5`
 - **Track tag:** `willow-pai2e-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r5`
@@ -39,7 +39,8 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 | fern | #737 | **Merged** | val_avg=127.87 ← best; warmup+cosine |
 | fern | #809 | WIP | Schedule sized to budget (epochs=14, warmup=2) |
 | frieren | #739 | WIP | Huber loss |
-| nezuko | #742 | WIP | Dropout regularization |
+| nezuko | #742 | Closed | dropout=0.1 regresses 12.4% — undertrained model has no overfitting to regularize. OOD-hits-hardest signature. |
+| nezuko | #878 | WIP | DropPath/stochastic depth on residual branches (drop_path_max=0.1, linear scaling) |
 | tanjiro | #745 | WIP (rebase) | Heads on old code: Opt1=130.82 / Opt2=134.46. Sent back for Option 3 capacity-matched on rebased baseline. |
 | thorfinn | #763 | **Merged** | val_avg=141.42; features + NaN-safe eval |
 | thorfinn | #810 | WIP | EMA model checkpoint |
@@ -53,7 +54,7 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 - `test_geom_camber_cruise` NaN on under-trained large models; scoring.py NaN-pred gap confirmed (data/ read-only). NaN-safe workaround in train.py merged (#763).
 - Three compounding baseline wins: distance features (#763) + warmup+cosine (#737) + BF16 (#811).
 
-**Awaiting:** nezuko #742, frieren #739 (Wave-1 tail; pre-merge code) + alphonse #796, fern #809, thorfinn #810 (Wave-2) + tanjiro #745 (Option 3 rebase) + askeladd #848 (batch-size) + edward #850 (lower-surf-weight sweep).
+**Awaiting:** frieren #739 (Wave-1 tail; pre-merge code) + alphonse #796, fern #809, thorfinn #810 (Wave-2) + tanjiro #745 (Option 3 rebase) + askeladd #848 (batch-size) + edward #850 (lower-surf-weight sweep) + nezuko #878 (DropPath).
 
 ## Current research themes
 

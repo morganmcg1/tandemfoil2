@@ -220,3 +220,38 @@ All three runs hit 30-min timeout; peak VRAM 42.1 GB.
 - **The current `surf_weight=10` may already be past the optimum.** Surface nodes are ~1% of total but get 10× weight per node, ≈10% effective contribution to the gradient. Pushing further hits diminishing/negative returns.
 - **Edward reassigned** to lower-surf-weight sweep ({3, 5, 7}) on the merged baseline — direct test of the counter-hypothesis the student's analysis raises.
 - **Bug observation:** Student also flagged the `test_geom_camber_cruise` NaN issue. Already fixed in merged baseline (#763 NaN-safe eval).
+
+---
+
+## 2026-04-28 22:26 — PR #742: Add dropout=0.1 to MLP sublayers to reduce OOD overfitting — closed
+
+- **Branch:** `willowpai2e5-nezuko/dropout-regularization` (closed)
+- **W&B runs:** `55aolphx` (no dropout control), `g81o4brf` (dropout=0.1) — group `dropout-regularization`
+- **Hypothesis:** Dropout=0.1 in MLP sublayers reduces overfitting to training geometry/Re combinations and improves OOD generalization on `val_geom_camber_rc/cruise` and `val_re_rand`.
+
+### Results (against PRE-merge code; no BF16, no warmup)
+
+| mlp_dropout | val_avg/mae_surf_p ↓ | best epoch | Δ |
+|-------------|----------------------|------------|------|
+| **0.0 (control)** | **123.37** | 14 (= last) | — |
+| 0.1 | 138.68 | 14 (= last) | +12.4% (worse) |
+
+Per-split val/mae_surf_p:
+
+| Split | dropout=0.0 | dropout=0.1 | Δ |
+|-------|-------------|-------------|------|
+| `val_single_in_dist` | 148.11 | 162.06 | +9.4% |
+| `val_geom_camber_rc` | 123.92 | 149.62 | **+20.7%** |
+| `val_geom_camber_cruise` | 99.57 | 113.49 | +14.0% |
+| `val_re_rand` | 121.89 | 129.54 | +6.3% |
+
+Both runs hit 30-min timeout at epoch 14/50; peak VRAM 42-43 GB (no BF16 in this run).
+
+### Commentary & Conclusions
+
+- **Decision: Closed (clean negative result with excellent root-cause analysis).**
+- **Critical mechanistic insight from the student:** "Both runs stopped at epoch 14/50 and best_epoch=14=last trained epoch in both cases. That's a clear signal of an *under*-trained model — there is no overfitting to regularize. Dropout's only effect is to inject noise that slows convergence."
+- **OOD-hits-hardest signature confirms under-training, not overfitting.** If dropout were correctly closing a generalization gap, ID would suffer most and OOD least; we see the opposite (rc +20.7% > id +9.4%). This is the fingerprint of "fewer effective gradient updates per parameter."
+- **Implementation verified:** dropout in standard transformer-FFN location (between GELU and linear), model.eval() correctly called for val and test, attention dropout untouched. Negative result is not from a bug.
+- **Implication for regularization more broadly:** Until the model demonstrates overfitting (best_epoch < final_epoch by a wide margin), traditional regularizers (dropout, weight decay) have no benefit to provide. Schedule fix (#809) or batch-size scaling (#848) may unlock convergence first; only then does regularization become testable.
+- **Nezuko reassigned** to DropPath/stochastic depth — student's suggestion #3, different mechanism (drops entire residual branches, model-averaging interpretation, compute-efficient).
