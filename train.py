@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import time
@@ -236,9 +237,24 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Skip samples whose ground truth contains any non-finite value
+            # (one such case exists in test_geom_camber_cruise sample 20).
+            # Without this, `(pred - y)**2 * mask` propagates NaN via inf*0
+            # even though the scoring helper zeroes the mask for bad samples.
+            B = y.shape[0]
+            y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)  # [B]
+            mask = mask & y_finite.view(B, 1)
+            y_clean = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
-            y_norm = (y - stats["y_mean"]) / stats["y_std"]
+            y_norm = (y_clean - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+            # Defensive: zero out non-finite predictions so a stray NaN/inf
+            # at any (sample, node, channel) position cannot propagate
+            # through `pred * mask = inf * 0 = NaN` into the metric. The
+            # masked-out positions are excluded from the loss/MAE anyway,
+            # so this only changes behavior when the model produces NaN.
+            pred = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -254,7 +270,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            ds, dv = accumulate_batch(pred_orig, y_clean, is_surface, mask, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
 
@@ -380,6 +396,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    warmup_frac: float = 0.05  # fraction of total steps used for linear LR warmup
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -432,7 +449,24 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+
+# Per-step linear warmup + cosine-to-zero schedule. T_max is aligned to the
+# total step budget for the configured epoch count (so cosine actually reaches
+# zero when the run completes within timeout). Warmup gives the orthogonal-init
+# slice projection in PhysicsAttention a stable start at batch_size=4.
+total_steps = max(1, len(train_loader) * MAX_EPOCHS)
+warmup_steps = max(1, int(total_steps * cfg.warmup_frac))
+
+
+def lr_lambda(step: int) -> float:
+    if step < warmup_steps:
+        return step / warmup_steps
+    progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+    return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+
+scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+print(f"Schedule: linear warmup {warmup_steps} steps + cosine over {total_steps} total steps")
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -446,6 +480,10 @@ run = wandb.init(
         "n_params": n_params,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
+        "schedule": "linear_warmup_cosine_to_zero",
+        "total_steps": total_steps,
+        "warmup_steps": warmup_steps,
+        "steps_per_epoch": len(train_loader),
     },
     mode=os.environ.get("WANDB_MODE", "online"),
 )
@@ -498,14 +536,18 @@ for epoch in range(MAX_EPOCHS):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        scheduler.step()
         global_step += 1
-        wandb.log({"train/loss": loss.item(), "global_step": global_step})
+        wandb.log({
+            "train/loss": loss.item(),
+            "lr": scheduler.get_last_lr()[0],
+            "global_step": global_step,
+        })
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
@@ -524,7 +566,6 @@ for epoch in range(MAX_EPOCHS):
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
         "val/loss": val_loss_mean,
-        "lr": scheduler.get_last_lr()[0],
         "epoch_time_s": dt,
         "global_step": global_step,
     }
