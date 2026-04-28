@@ -1,5 +1,34 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 04:40 — PR #364 (rerun #2): Huber smooth_l1 β=0.5 on full stack — **CLOSE (loss-refinement axis exhausted)**
+
+- Branch: `charliepai2d5-edward/huber-loss` (closed)
+
+### Results
+
+| metric | value | vs current baseline (73.91 / 70.37) |
+|---|---:|---|
+| `val_avg/mae_surf_p` (best ep 14/14) | 78.20 | **+5.81%** (worse) |
+| `val_single_in_dist/mae_surf_p` | 86.33 | +5.72% |
+| `val_geom_camber_rc/mae_surf_p` | 89.64 | +1.92% |
+| `val_geom_camber_cruise/mae_surf_p` | 60.51 | **+11.09%** |
+| `val_re_rand/mae_surf_p` | 76.33 | +6.69% |
+| `test_avg/mae_surf_p` (3 clean) | 74.52 | +5.90% |
+
+**Every clean split regresses** — both val and test, in-dist and OOD.
+
+### Decision
+
+Close. Hits close criterion (val ≥ 76.5). Student's analysis: the gain pattern from β=1.0 didn't survive the rebase. With grad_clip_norm=0.5 already halving per-step update magnitude in the always-clipped regime AND surf_weight=30 tripling the surface gradient signal, the late-training gradient landscape is *already* aggressively smoothed. Huber's quadratic-near-zero behavior just dampens the late-training fine-tuning that L1's constant `sign(err)` updates were getting.
+
+Advisor pre-flagged exactly this branch in the send-back: "If you instead see continued regression on cruise/re_rand at beta=0.5: the issue isn't beta calibration — likely something deeper like per-split residual scale heterogeneity." That's the branch we're in.
+
+**Loss-function refinement on the full stack is now well-explored** — L1 won big, Huber-β=1.0 marginal on partial stack, Huber-β=0.5 lost on full stack. Combined with three saturated regularization-style hypotheses (wd #385, EMA #303, attn-dropout #471), the diminishing-returns regime is firmly characterized.
+
+Reassigned edward to **SiLU activation replacing GELU** in MLP blocks (PR #538) — single-line model_config change, untested architecture axis, well-established modern transformer alternative.
+
+
+
 ## 2026-04-28 04:30 — PR #498: Larger physical batch size (4 → 8) — **CLOSE (under-trained at fixed budget)**
 
 - Branch: `charliepai2d5-thorfinn/batch-size-8` (closed)
