@@ -20,7 +20,7 @@
 |---|---|---|---|
 | #321 | frieren | Optimization & schedule | warmup + cosine peak=7e-4 (sent back from peak=1e-3; will need rebase onto new T_max=37 baseline) |
 | #324 | nezuko | Stability / regularization | EMA-only **decay=0.999** — rebase onto Huber baseline, +sw=15 single run |
-| #443 | tanjiro | Spatial features | Gaussian RFF K=16 σ=10 (was for compile+FF; rebase onto Huber+T_max=37 needed) |
+| **#564** | **tanjiro** | **Spatial features (on pure L1)** | **FF on saf (dims 2-3) parallel to FF on (x, z) — followup #4 from PR #327** |
 | **#541** | **edward** | **Schedule (with L1)** | **T_max sweep: --epochs 37 vs 50 with pure L1 (settles schedule alignment for L1)** |
 | **#544** | **thorfinn** | **Loss / metric alignment** | **surf_weight=15 on pure-L1 baseline** (clean re-test of round-1 directional finding on new baseline) |
 | #522 | askeladd | Optimization tuning | lr=3e-4 on Huber+compile+FF (sharp-edge hypothesis) |
@@ -75,7 +75,7 @@
    (askeladd #522), warmup variation (frieren #321)
 2. **Stability / regularization** — EMA(0.999) (nezuko #324), grad-clip
    alone queued for if EMA wins
-3. **Spatial features** — Gaussian RFF (tanjiro #443)
+3. **Spatial features** — FF on saf (tanjiro #564, deterministic K=8 on signed arc-length parallel to existing FF on x,z)
 4. **Throughput re-investigation** — bsz=8 post-compile (thorfinn #509)
 5. **Architecture** — surface-only aux p head (alphonse #529)
 6. **Sampling quality** — per-Re weighted sampling (fern #531)

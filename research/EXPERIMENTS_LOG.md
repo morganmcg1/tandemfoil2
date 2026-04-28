@@ -1,5 +1,56 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 05:11 — PR #443 (closed): Gaussian RFF (K=16, σ=10) replacing deterministic FF
+
+- branch: `willowpai2d1-tanjiro/gaussian-random-fourier` (deleted on close)
+- hypothesis: Gaussian RFF outperforms deterministic 2^k π ladder on
+  CFD/coordinate-MLP tasks (Tancik et al. 2020). Predicted -2 to -5%.
+
+### Results (vs PR #407 Huber+T_max=37 baseline)
+
+| Metric | Value | vs PR #407 (rebase target) | vs PR #504 (pure L1, current) |
+|---|---|---|---|
+| Best `val_avg/mae_surf_p` | **71.19** (epoch 36 of 36) | **+2.07%** (regression) | +24.3% (much worse) |
+| `test_avg/mae_surf_p` | 62.36 | +3.11% | +21.0% |
+| Per-epoch wall | ~49 s | same | same |
+| Peak GPU memory | 24.1 GB | same | same |
+| W&B run | `xk8r2y6c` | | |
+
+### Per-split val deltas vs PR #407 baseline
+
+| Split | Δ |
+|---|---|
+| val_single_in_dist | **+7.49%** (worse — in-dist regression) |
+| val_geom_camber_rc | −2.97% (slightly better — OOD geometry) |
+| val_geom_camber_cruise | +1.69% |
+| val_re_rand | +2.71% |
+
+### Analysis & conclusions
+
+- **Closed.** Mechanism analysis is the keeper:
+  - Foils in chord-frame coordinates are strongly axis-aligned →
+    deterministic 2^k π ladder catches dominant pressure-field
+    frequency directions.
+  - Isotropic Gaussian RFF spreads frequency budget across off-axis
+    directions the network can't usefully exploit on this geometry.
+  - σ=10 puts too much energy at frequencies the network can't usefully
+    use, hurting in-dist fit while marginally helping OOD generalization
+    — the wrong tradeoff for our equal-weight metric.
+- **Train-loss curve is *slower* per epoch with Gaussian RFF** (epoch 1
+  train surf 0.30 vs 0.25 for deterministic at same point). Tancik's
+  faster-convergence claim doesn't generalize to this CFD-on-foil
+  setting.
+- Rebase to pure L1 baseline wouldn't change qualitative finding —
+  saved 30-min run by closing instead.
+- **Followups #1 (σ sweep), #2 (K=8 Gaussian)**: skipped — same
+  axis-alignment argument predicts these would also lose.
+- **Followup #3 (lower σ for smooth-target tasks)**: also skipped — the
+  argument predicts smaller loss but still loss vs deterministic.
+- **Followup #4 (FF on saf)**: assigned as next experiment (PR #564) —
+  saf is a coordinate-like feature aligned with foil-surface position;
+  the deterministic-ladder argument applies even more directly than for
+  (x, z).
+
 ## 2026-04-28 04:50 — PR #531 round-1 (sent back): Per-Re weighted sampling on Huber+T_max=37
 
 - branch: `willowpai2d1-fern/per-re-weighted-sampling` (in flight as draft after send-back)
