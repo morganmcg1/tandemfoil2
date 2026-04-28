@@ -408,6 +408,34 @@ print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
+# --- EMA of weights ----------------------------------------------------
+EMA_DECAY = 0.9999
+
+ema_state = {k: v.detach().clone() for k, v in model.state_dict().items()
+             if v.dtype.is_floating_point}
+
+def ema_update():
+    """Update the EMA shadow weights from the live model weights."""
+    msd = model.state_dict()
+    with torch.no_grad():
+        for k, ema_v in ema_state.items():
+            ema_v.mul_(EMA_DECAY).add_(msd[k].detach(), alpha=1.0 - EMA_DECAY)
+
+def with_ema_weights(fn):
+    """Run ``fn()`` with the model's float params swapped to the EMA
+    shadow, restoring the live weights afterwards."""
+    msd = model.state_dict()
+    saved = {k: msd[k].detach().clone() for k in ema_state}
+    with torch.no_grad():
+        for k, ema_v in ema_state.items():
+            msd[k].copy_(ema_v)
+    try:
+        return fn()
+    finally:
+        with torch.no_grad():
+            for k, v in saved.items():
+                msd[k].copy_(v)
+
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
 model_dir = Path("models") / f"model-{_sanitize_path_token(experiment_label)}-{experiment_stamp}"
@@ -459,6 +487,7 @@ for epoch in range(MAX_EPOCHS):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        ema_update()
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
@@ -468,12 +497,12 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
-    # --- Validate ---
+    # --- Validate (under EMA weights) ---
     model.eval()
-    split_metrics = {
+    split_metrics = with_ema_weights(lambda: {
         name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
         for name, loader in val_loaders.items()
-    }
+    })
     val_avg = aggregate_splits(split_metrics)
     avg_surf_p = val_avg["avg/mae_surf_p"]
     dt = time.time() - t0
@@ -486,7 +515,11 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        # Save EMA weights, not live weights, to the checkpoint.
+        saved_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        for k, ema_v in ema_state.items():
+            saved_state[k] = ema_v.detach().clone()
+        torch.save(saved_state, model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
