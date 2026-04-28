@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r5
 
-- **Last updated:** 2026-04-28 20:50
+- **Last updated:** 2026-04-28 21:35
 - **Advisor branch:** `icml-appendix-willow-pai2e-r5`
 - **Track tag:** `willow-pai2e-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r5`
@@ -32,7 +32,8 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 | alphonse | #732 | Closed | val_avg=154.95 ref; NaN test; 6/50 epochs |
 | alphonse | #796 | WIP | FiLM-Re conditioning |
 | askeladd | #733 | Closed | val_avg=151.50; +18.5% regression; throughput cost decisive |
-| askeladd | #811 | WIP | Mixed-precision BF16 — platform throughput improvement |
+| askeladd | #811 | **Merged** | val_avg=127.402 ← best; test_avg=116.211 (clean); 1.20× speedup; 33 GB VRAM (63 GB free) |
+| askeladd | #848 | WIP | Larger batch size (batch_size=8→12) using 63 GB VRAM headroom |
 | edward | #734 | WIP | Higher surf_weight (10→50) |
 | fern | #737 | **Merged** | val_avg=127.87 ← best; warmup+cosine |
 | fern | #809 | WIP | Schedule sized to budget (epochs=14, warmup=2) |
@@ -42,23 +43,24 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 | thorfinn | #763 | **Merged** | val_avg=141.42; features + NaN-safe eval |
 | thorfinn | #810 | WIP | EMA model checkpoint |
 
-**Current best val_avg/mae_surf_p:** 127.872 (fern #737, run 5b22tecz) — merged baseline.
-**test_avg/mae_surf_p:** 126.5598 (thorfinn #763, run 072wo9xb) — most recent clean test number.
+**Current best val_avg/mae_surf_p:** 127.402 (askeladd #811, run newqt8dd) — merged baseline.
+**test_avg/mae_surf_p:** 116.211 (askeladd #811, run newqt8dd) — clean 4-split, current best paper-facing metric.
 
 **Key learnings from Wave-1 so far:**
-- Throughput is binding: 0.93M-param baseline does ~20 epochs/30min; 3.01M-param does ~6 epochs. BF16/grad-checkpointing needed before scaling.
-- Trajectory suggests capacity is NOT the bottleneck at first contact — need to establish baseline first.
-- `test_geom_camber_cruise` NaN on under-trained large models; scoring.py NaN-pred gap confirmed (data/ read-only).
+- BF16 merged (#811): 1.20× per-epoch speedup, 17 epochs in 30 min (was 14), 33 GB VRAM. Now the dominant non-matmul cost is the `add_derived_features` Python loop.
+- 63 GB VRAM headroom unlocked — batch_size scaling is the highest-leverage next throughput lever.
+- `test_geom_camber_cruise` NaN on under-trained large models; scoring.py NaN-pred gap confirmed (data/ read-only). NaN-safe workaround in train.py merged (#763).
+- Three compounding baseline wins: distance features (#763) + warmup+cosine (#737) + BF16 (#811).
 
-**Awaiting:** edward, nezuko, frieren (Wave-1 tail; pre-merge code) + alphonse #796, fern #809, thorfinn #810, askeladd #811 (Wave-2; on rebased baseline) + tanjiro #745 re-iteration on Option 3.
+**Awaiting:** edward #734, nezuko #742, frieren #739 (Wave-1 tail; pre-merge code) + alphonse #796, fern #809, thorfinn #810 (Wave-2) + tanjiro #745 (Option 3 rebase) + askeladd NEW (batch_size scaling).
 
 ## Current research themes
 
-1. **Merged baseline now has two stacked wins:** physics distance features (#763) + warmup+cosine LR (#737). val_avg=127.87. Next generation of runs starts from here.
-2. **Schedule sizing is a major lever.** T_max=50 with a 30-min (~14 epoch) wall-clock budget means the LR barely decays. PR #809 tests the obvious fix (epochs=14, warmup=2). Expect notable improvement.
-3. **Critical dataset bug resolved.** `test_geom_camber_cruise` sample 20 has 761 NaN y[:, 2] entries. NaN-safe `evaluate_split` workaround merged in #763. All future runs from the new baseline will report finite test_avg.
-4. **3 Wave-1 PRs still in-flight against pre-merge code** (#734 #739 #742). When they submit, evaluate whether their isolated intervention beats 127.87 after rebase. PR #745 (tanjiro heads) just submitted at val_avg=130.82 against old code; sent back for capacity-matched Option 3 on rebased baseline. PR #733 closed (regression).
-5. **EMA (#810) and FiLM-Re (#796)** are the two highest-priority Wave-2 explorations: variance reduction and Re-regime conditioning respectively.
+1. **Three compounding baseline wins:** distance features (#763) + warmup+cosine (#737) + BF16 (#811). val_avg=127.402, test_avg=116.211 (clean 4-split). This is the platform to build on.
+2. **BF16 platform improvement merged.** All future runs inherit 1.20× per-epoch speedup and 63 GB VRAM headroom. Non-matmul cost (`add_derived_features` Python loop) is the new bottleneck.
+3. **Batch size scaling is the highest-leverage next throughput lever.** With 33 GB VRAM at batch_size=4, doubling to 8 or tripling to 12 should fit comfortably. Larger batches → smoother gradients + more nodes/step. Askeladd assigned to this.
+4. **3 Wave-1 PRs still in-flight against pre-merge code** (#734 #739 #742). When they submit, evaluate whether their isolated intervention beats 127.40 after rebase.
+5. **EMA (#810) and FiLM-Re (#796)** are in-flight Wave-2 explorations; schedule-sized (#809) will test the LR-budget hypothesis.
 
 ## Potential next research directions (Wave 2+ candidates)
 
@@ -90,11 +92,7 @@ Full bank in `research/RESEARCH_IDEAS_2026-04-28_19:30.md`.
 
 ## Open questions
 
-- We have no measured baseline yet — Wave 1 is the first complete run.
-  Whichever single-config training run lands fastest gives us a value to
-  pin in `BASELINE.md`.
-- Whether the four val tracks rank the same intervention identically (likely
-  not — that disagreement will shape Wave 2 priorities).
-- Whether 30-min/50-epoch budget is binding for the larger-capacity arm
-  (alphonse). If it is, the `--epochs` budget knob isn't movable, but
-  throughput optimizations (mixed precision, checkpointing) might be.
+- Whether batch_size scaling delivers a big additional speedup, or if the Python feature-loop + padding cost eat the savings.
+- Whether the four val tracks rank interventions consistently (early data suggests cruise/Re-rand improve faster than single_in_dist and rc — may reflect domain difficulty ordering).
+- Whether capacity scaling (larger n_hidden/n_layers) becomes viable once BF16 + batch_size unlock sufficient throughput.
+- val_avg at epoch 17 was only -0.47 vs baseline epoch 14. The LR schedule sizing (#809 test) may unlock more by matching T_max to actual budget.

@@ -145,3 +145,43 @@ Best epoch = 12 of 50 (30-min timeout at epoch 14). Both runs hit timeout.
 - **Critical follow-up: Option 3 (capacity-matched split).** Student proposed `Linear(hidden,hidden)→GELU` shared first layer, then forked `Linear(hidden,2)` and `Linear(hidden,1)`. This isolates specialization from capacity. **Sent back to test this on the rebased baseline.**
 - **NaN bug.** Student found and patched the same `nan*0=nan` propagation bug thorfinn diagnosed in #763 (data/scoring.py masking via multiplication poisons the running sum when ground truth has NaN). Their patch was in train.py:evaluate_split, same approach as #763 (already merged). Duplicate work but confirms the fix is correct. Student also patched the W&B run summaries via wandb.Api() to retrofit clean test numbers.
 - **Decision: Sent back.** Rebase onto current baseline, run Option 3 only. If <127.872, merge.
+
+---
+
+## 2026-04-28 21:29 — PR #811: Enable bf16 mixed precision for 1.5-2x training throughput
+
+- **Branch:** `willowpai2e5-askeladd/mixed-precision-bf16` (merged)
+- **W&B run:** `newqt8dd` — group `mixed-precision-bf16`
+- **Hypothesis:** BF16 autocast on forward+loss yields 1.5-2× per-epoch speedup → more epochs in the 30-min budget → directly improves val_avg/mae_surf_p. BF16 preferred over FP16 for this dataset's ±29K pressure range (bf16 has the same 8-bit exponent as fp32, no overflow).
+
+### Results
+
+| Metric | Baseline (fp32, #737) | bf16 (#811) | Δ |
+|---|---|---|---|
+| Wall-clock / epoch | 131.96 s | **110.02 s** | 1.20× speedup |
+| Epochs in 30 min | 14 | **17** | +3 (+21%) |
+| Peak VRAM | — | **33.1 GB** | 63 GB headroom on 96 GB |
+| **val_avg/mae_surf_p** | 127.872 | **127.402** | **−0.47** |
+| **test_avg/mae_surf_p** | NaN (pre-fix) | **116.211** | first clean 4-split test |
+| NaN/Inf events | — | **0** | numerically stable |
+
+Per-split:
+
+| Split | val/mae_surf_p | test/mae_surf_p |
+|-------|----------------|-----------------|
+| `val_single_in_dist`     | 151.791 | 141.142 |
+| `val_geom_camber_rc`     | 147.898 | 134.121 |
+| `val_geom_camber_cruise` | **93.729** | **79.094** |
+| `val_re_rand`            | **116.189** | 110.488 |
+| **avg**                  | **127.402** | **116.211** |
+
+Best epoch = 17 of 50. Gradient norm mean=69.6, max=1224.9 — isolated spike, no explosion pattern.
+
+### Commentary & Conclusions
+
+- **Decision: Merged.** val_avg=127.402 beats 127.872 baseline; test_avg=116.211 is a clean 4-split number, 10 points better than the last clean test (#763, 126.56). This is a platform improvement: all subsequent experiments inherit the BF16 speedup and VRAM headroom.
+- **Speedup was 1.20× not 1.5-2×.** Gap explained: (1) model is small (663K params), matmul share of total step time is bounded; (2) `add_derived_features` runs a Python for-loop with `.item()` GPU→CPU sync — pure non-matmul cost untouched by autocast; (3) LayerNorm kept in fp32 by PyTorch autocast default. These three factors cap the matmul-side gain.
+- **Key structural finding: 33.1 GB VRAM with batch_size=4.** 63 GB headroom unlocked for batch scaling. Batch_size=8–16 now plausible without OOM risk. This is the highest-leverage immediate follow-up.
+- **bf16 numerically clean.** Zero NaN/Inf events across 17 epochs / 6,381 steps. bf16's 8-bit exponent handles ±29K pressure range without issue; no GradScaler, no fp32 loss-cast needed.
+- **Next bottleneck: `add_derived_features` Python loop.** With matmul now faster, the non-matmul Python distance loop with `.item()` sync is the new dominant cost. Vectorizing it should push speedup closer to 1.5-2×.
+- **Askeladd reassigned** to batch_size scaling (leveraging the 63 GB headroom directly).

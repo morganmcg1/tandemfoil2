@@ -4,9 +4,39 @@ Lower `val_avg/mae_surf_p` is better.
 
 ---
 
+## 2026-04-28 21:29 — PR #811: Enable bf16 mixed precision for 1.5-2x training throughput
+
+- **val_avg/mae_surf_p:** 127.402 ← **current best**
+- **val per-split surf p MAE:**
+  - `val_single_in_dist`: 151.791
+  - `val_geom_camber_rc`: 147.898
+  - `val_geom_camber_cruise`: 93.729
+  - `val_re_rand`: 116.189
+- **test_avg/mae_surf_p:** 116.211 ← **best clean 4-split test**
+- **test per-split surf p MAE:**
+  - `test_single_in_dist`: 141.142
+  - `test_geom_camber_rc`: 134.121
+  - `test_geom_camber_cruise`: 79.094
+  - `test_re_rand`: 110.488
+- **Best epoch:** 17 of 50 (30-min timeout; 1.20× speedup vs fp32 baseline)
+- **Throughput:** 110.02 s/epoch (vs 131.96 s fp32); peak VRAM 33.1 GB (63 GB headroom)
+- **Model:** `n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2` (663K params + distance features)
+- **Training:** `lr=1e-3 (peak), warmup_epochs=5, warmup_start_lr=1e-4, eta_min=1e-6, weight_decay=1e-4, batch_size=4, surf_weight=10.0, epochs=50, amp=True, amp_dtype=bf16`
+- **Changes vs prior:** BF16 autocast on forward+loss; no GradScaler (bf16 safe dynamic range); pred cast to fp32 for eval. Zero NaN/Inf events.
+- **W&B run:** `newqt8dd`
+- **Reproduce:**
+  ```bash
+  cd target/ && python train.py --agent willowpai2e5-askeladd \
+    --amp --amp_dtype bf16 \
+    --wandb_name "willowpai2e5-askeladd/bf16-mixed-precision" \
+    --wandb_group mixed-precision-bf16
+  ```
+
+---
+
 ## 2026-04-28 20:25 — PR #737: Add 5-epoch linear warmup + peak lr=1e-3 before cosine decay
 
-- **val_avg/mae_surf_p:** 127.872 ← **current best**
+- **val_avg/mae_surf_p:** 127.872
 - **val per-split surf p MAE:**
   - `val_single_in_dist`: 149.241
   - `val_geom_camber_rc`: 146.033
