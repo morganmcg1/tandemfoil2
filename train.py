@@ -383,6 +383,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    cosine_t_max: int = 15
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -440,7 +441,7 @@ warmup = torch.optim.lr_scheduler.LinearLR(
     optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs,
 )
 cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-    optimizer, T_max=max(MAX_EPOCHS - warmup_epochs, 1),
+    optimizer, T_max=max(cfg.cosine_t_max - warmup_epochs, 1),
 )
 scheduler = torch.optim.lr_scheduler.SequentialLR(
     optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs],
