@@ -167,11 +167,8 @@ class TransolverBlock(nn.Module):
             dropout=dropout, slice_num=slice_num,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
-        # SwiGLU at matched param count: d_int = (2/3) * (mlp_ratio * hidden_dim).
-        # For mlp_ratio=2, hidden_dim=128: d_int = 170 -> round to 168 (multiple of 8).
-        swiglu_inner = int((mlp_ratio * hidden_dim * 2) / 3)
-        swiglu_inner = (swiglu_inner // 8) * 8  # round down to multiple of 8
-        self.mlp = SwiGLUMLP(hidden_dim, swiglu_inner, hidden_dim)
+        # Capacity sweep: swiglu_inner=256 (~1.5x baseline matched-param 168).
+        self.mlp = SwiGLUMLP(hidden_dim, 256, hidden_dim)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
