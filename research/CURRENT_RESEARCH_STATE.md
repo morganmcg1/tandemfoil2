@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 00:30
+- **Date:** 2026-04-28 00:35
 - **Advisor branch:** `icml-appendix-willow-pai2d-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r5`
 - **Most recent human research direction:** none received yet
@@ -25,7 +25,7 @@ Round 1 in progress. Strategy:
 | #339 | nezuko    | Larger batch (`batch_size 4→8`) with √2 LR scale                | wip |
 | #340 | tanjiro   | Per-channel pressure-weighted surface loss (3× weight on `p`)   | wip |
 | #341 | thorfinn  | EMA model weights for val/test (decay 0.999)                    | wip |
-| #375 | edward    | Bugfix: nan_to_num in `data/scoring.py`                         | wip (new) |
+| #375 | edward    | Bugfix: nan_to_num in `data/scoring.py`                         | wip (sent back; fix is bit-exact correct, but branch needs rebase before squash-merge to drop reverts to BASELINE.md / research/*.md) |
 | #376 | fern      | Wider MLP (`mlp_ratio 2→4`)                                     | wip (new) |
 
 ## Closed / merged

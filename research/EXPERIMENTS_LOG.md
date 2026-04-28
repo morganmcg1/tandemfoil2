@@ -2,6 +2,15 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 00:35 — PR #375: nan_to_num fix in data/scoring.py — **SENT BACK (intent to merge)**
+- Branch: `willowpai2d5-edward/scoring-nan-fix` (sits on pre-#336 commit; rebase needed)
+- One-line `torch.nan_to_num(err, nan=0.0, posinf=0.0, neginf=0.0)` after `err = (pred - y).abs()` in `accumulate_batch`.
+- **Verification:** bit-exact `rel_diff = 0` parity with the pre-fix path on the three previously-finite test splits, evaluated against the saved `model-deeper_l8-sfyn75sq:best` artifact. Cruise split goes from `NaN` → `99.89` (per-sample-skip semantics; smaller than the post-hoc form's ~117.30 from PR #334's monkey-patch — divergence intentional and correctly flagged by the student).
+- **Post-fix `test_avg/mae_surf_p` for `deeper_l8` artifact:** 141.52.
+- 5-epoch end-to-end smoketest on current advisor branch (slice_num=128) confirms full pipeline finite (cruise = 105.69 fresh, but at only 5 epochs not comparable to baselines).
+- Cannot squash-merge as-is: branch's diff ALSO reverts `BASELINE.md`, `research/CURRENT_RESEARCH_STATE.md`, `research/EXPERIMENTS_LOG.md` to pre-#336 state. Sent back asking for rebase + force-with-lease push.
+- Edward also flagged a same-shape NaN-leak in `train.py`'s `evaluate_split` for the normalized-space loss (auxiliary monitoring, not paper metric); correctly kept out of scope. Follow-up `train.py` PR to be filed after this lands.
+
 ## 2026-04-28 00:30 — PR #338: LR warmup + peak 1e-3 cosine — **SENT BACK (intent to merge)**
 - Branch: `willowpai2d5-frieren/lr-warmup-cosine` (sits on pre-#336 commit, slice_num=64)
 - Two-config sweep (`lr=5e-4` control vs `lr=1e-3` main), both with 2-epoch linear warmup + cosine T_max=48
