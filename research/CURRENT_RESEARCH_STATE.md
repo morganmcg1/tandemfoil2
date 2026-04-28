@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- 2026-04-28 00:10 — round 1 in progress on `icml-appendix-willow-pai2d-r2`
+- 2026-04-28 00:25 — round 1 in progress on `icml-appendix-willow-pai2d-r2`
 - **Baseline anchored:** PR #328 (slice_num=128) merged. Current best
   `val_avg/mae_surf_p = 133.55` (W&B run `s1p2qs7l`, best epoch 11/50).
   Default config now: `n_hidden=128 n_layers=5 n_head=4 slice_num=128
@@ -10,6 +10,14 @@
   `val_avg/mae_surf_p = 109.47` — 18 % over baseline, all per-split
   numbers cohort-best. Sent back for rebase (was created on slice_num=64
   pre-#328); on-baseline confirmation pending.
+- **Noise floor: ±10 % at single seed.** Thorfinn (PR #337) ran the same
+  config twice (kon60q79=153.19, nphltrz9=139.39) — a ~10 % spread
+  purely from random seed / data-order randomness. **This is a
+  methodological constraint affecting every PR's number on this
+  branch.** Single-seed deltas <10 % vs baseline (133.55) are not
+  statistically distinguishable; merge decisions on borderline PRs
+  should require multi-seed replication. Frieren's 109.47 sits outside
+  this noise band, so it remains a real signal.
 - Primary metric: `val_avg/mae_surf_p`. Paper-facing:
   `test_avg/mae_surf_p` (currently NaN — bug-fix PR #367 in flight).
 - W&B project: `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r2`.
@@ -28,23 +36,37 @@
 | 330 | frieren   | MSE → Huber β=1            | sent back → rebase + re-run | **109.47** (epoch 14/50, on slice_num=64; merge-candidate after rebase) |
 | 332 | nezuko    | surf_weight 10 → 25 (sweep)| wip            | 137.42 surf-15 (sweep ongoing) |
 | 335 | tanjiro   | warmup + cos, peak 1e-3    | sent back → cosine_t_max sweep | 154.57 (epoch 13/14) |
-| 337 | thorfinn  | BS 4→8, lr 7e-4            | wip            | 139.39 (W&B obs)        |
+| 337 | thorfinn  | BS 4→8, lr 7e-4            | sent back → rebase + BS=16/lr=1e-3 (+ multi-seed if budget) | 139.39 / 153.19 (2-seed mean 146.29; ~9.5 % worse than baseline on mean) |
 | 367 | fern      | bug fix: cruise-NaN scoring| **wip (new)**  | n/a (bug fix, not experiment) |
 
-PRs surfaced for advisor review this cycle: **#330**. Action:
-**#330 sent back for rebase** — Huber result is the largest
-single-axis jump observed (109.47 vs 133.55 baseline, ~18 %), but
-the branch was created pre-#328 and would silently revert
-slice_num=128. Rebase + re-run + resubmit will land the next merge
-if the gain stacks on the slice-128 baseline (highly likely; loss
-formulation is orthogonal to attention bottleneck).
+PRs surfaced for advisor review this cycle: **#337**. Action:
+**#337 sent back** — borderline-not-close result (139.39 / 153.19
+straddling the 133.55 baseline within ±10 % noise), branch needs
+rebase, and the lever wasn't pushed to its limit (BS=8 ≪ 96 GB
+headroom). Asked for: rebase onto current advisor, **BS=16 + lr=1e-3
+as primary follow-up** (sqrt-rule), multi-seed where budget allows,
+fallback to BS=12 if OOM.
 
 Earlier cycle actions (recap): #328 merged (round-1 winner, new
-baseline at 133.55); #311 + #326 + #335 sent back with specific
-follow-up instructions; #367 NEW bug-fix PR assigned to fern for
-cruise-NaN scoring.
+baseline at 133.55); #311 + #326 + #335 + #330 sent back with
+specific follow-up instructions; #367 NEW bug-fix PR assigned to
+fern for cruise-NaN scoring.
 
 ## What we learned this cycle (and last)
+
+0. **Single-seed noise floor on this branch is ≈ ±10 %.** Thorfinn's
+   accidental same-config replicate (kon60q79 vs nphltrz9, both
+   `bs=8 lr=7e-4`) showed a 13.8-point spread (153.19 vs 139.39)
+   purely from random seed / data-order. This means:
+   - Differences smaller than ~10 % between single-seed runs are not
+     statistically meaningful.
+   - The 134-138 cohort (alphonse, fern, edward, nezuko surf-15) is
+     effectively tied within noise.
+   - Merge decisions for results inside ±10 % of baseline must use
+     multi-seed replication to disambiguate.
+   - Frieren's 109.47 (18 % over baseline) is the only round-1
+     result outside the noise band on a single seed; it's the only
+     result we can be confident about without replication.
 
 1. **Loss formulation is the highest-leverage axis we've found.**
    Frieren's Huber-β=1 result (109.47 on slice_num=64) is roughly 4×
@@ -71,13 +93,13 @@ cruise-NaN scoring.
    `0.0 * NaN = NaN` in `accumulate_batch` defeats the `y_finite`
    mask). PR #367 puts up the 2-line `nan_to_num` fix.
 5. **Branches need rebases as soon as the advisor branch moves.**
-   Frieren's #330 was created pre-#328; a direct squash-merge would
-   have silently reverted slice_num=128 → 64. The senpai workflow
-   send-back-for-rebase pattern caught this. Worth flagging similar
-   risk on every other in-flight round-1 PR (alphonse, askeladd,
-   edward, nezuko, tanjiro, thorfinn) — when each gets close to
-   merge-ready, they'll need to rebase onto whatever the advisor
-   branch is at that point.
+   Confirmed twice this cycle: frieren's #330 and thorfinn's #337
+   were both created pre-#328 and both would silently revert
+   slice_num=128 → 64 on direct squash-merge. The send-back-for-
+   rebase pattern catches it. **All other in-flight round-1 PRs
+   (alphonse, askeladd, edward, nezuko, tanjiro)** are pre-#328
+   too and will need the same rebase before merge. Reviewers should
+   diff against current advisor head before merging anything.
 
 ## Round 2 candidate stacks (post round-1 settle, will compound on the new baseline)
 

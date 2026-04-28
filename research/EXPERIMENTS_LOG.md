@@ -238,6 +238,80 @@ surface-tail residuals; (b) at high Re, normalized residuals exceed
 from dominating the update. Frieren's `val_re_rand=100.85` (best in
 cohort) is direct evidence of (b).
 
+## 2026-04-28 00:25 — PR #337: Round 1 axis: batch + LR scaling — BS 4→8, lr 5e-4→7e-4
+
+- Branch: `willowpai2d2-thorfinn/batch-8-lr-7e4`
+- Hypothesis: 2–5 % reduction in `val_avg/mae_surf_p` from BS 4→8
+  with sqrt-rule LR scaling. The hypothesis was CLI-only — no code
+  changes.
+- W&B run config confirmed: `slice_num = 64` (the **pre-#328
+  baseline** at the time the branch was created — same rebase need
+  as frieren #330).
+
+### Results (two runs, same config — seed-variance datapoint)
+
+Both runs used `--batch_size 8 --lr 7e-4` with all other defaults.
+
+| W&B run | best_val_avg/mae_surf_p | best_epoch |
+|-|-:|-:|
+| `kon60q79` (run 2) | **153.19** | 13 |
+| `nphltrz9` (run 1) | **139.39** | 14 |
+| **delta** | **+13.80 (~10 %)** | – |
+
+Per-split for `kon60q79` (the primary):
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|-|-:|-:|-:|
+| val_single_in_dist | 240.41 | 2.56 | 1.10 |
+| val_geom_camber_rc | 141.54 | 2.93 | 1.19 |
+| val_geom_camber_cruise | 109.02 | 1.68 | 0.60 |
+| val_re_rand | 121.78 | 2.44 | 0.89 |
+| **val_avg** | **153.19** | 2.40 | 0.94 |
+
+Test side: `test_geom_camber_cruise/mae_surf_p = NaN` on both runs
+(known #367 bug); other test splits finite.
+
+### Critical methodology finding: seed variance ≈ ±10 %
+
+The two thorfinn runs shared **every** configuration knob and command
+flag — they differ only in the random seed implied by torch's
+default initialization plus DataLoader shuffle order. Spread of
+~10 % between them establishes a **noise floor** that affects how
+every other round-1 PR's number should be interpreted.
+
+This is a methodological constraint, not a hypothesis result. It
+means single-seed differences smaller than ~10 % between runs are
+not statistically distinguishable. Concretely, on this branch:
+
+- alphonse 134.13, fern 133.55, nezuko surf-15 137.42, edward 137.83
+  are all inside ±10 % of each other and of the merged baseline —
+  effectively tied within seed noise.
+- Frieren's 109.47 sits well outside the ±10 % band of 133.55, so
+  the Huber win is a real signal even at single seed.
+- Future PR results in the borderline band (within ±10 %) will need
+  multi-seed replication before merging.
+
+### Conclusion on the hypothesis
+
+**Send back** for rebase + push the lever. Best of two runs (139.39)
+is ~4.4 % worse than the merged baseline 133.55 — not a clear
+regression; 2-run mean (146.29) is ~9.5 % worse — outside noise on
+the mean. Hypothesis isn't dead, just under-tested at the lever's
+limit. VRAM has clear headroom (84 GB peak / 96 GB cap) for BS=12 or
+BS=16, which the original PR didn't explore. Sent back with:
+
+- Rebase onto current advisor (slice_num=128).
+- **Primary follow-up:** BS=16 + lr=1e-3 (sqrt-rule scaling from BS=4
+  baseline = 5e-4 · √4 = 1e-3).
+- **Multi-seed where wall-clock allows** (3 seeds at BS=16/lr=1e-3 if
+  budget allows — single seed if not). Add explicit seed via
+  `SENPAI_SEED` env var so the runs are deterministic.
+- **Fallback** if BS=16 OOMs: BS=12 + lr ≈ 9e-4.
+
+Schedule mismatch (cosine T_max=50 vs 14-epoch achievable budget) is
+acknowledged but kept out of scope — tanjiro is iterating on
+`--cosine_t_max` in #335.
+
 ## Round-1 cohort observation (current snapshot)
 
 | W&B name | best_val_avg/mae_surf_p | best_epoch | status |
@@ -247,10 +321,11 @@ cohort) is direct evidence of (b).
 | willow-r2-alphonse-width-192 | 134.13 | 10 | sent back |
 | willow-r2-nezuko-surf-15 | 137.42 | 13 | wip (sweep ongoing) |
 | willow-r2-edward-mlp-ratio-4 | 137.83 | 11 | sent back |
-| willow-r2-thorfinn-bs8-lr7e-4 | 139.39 | 14 | wip |
+| willow-r2-thorfinn-bs8-lr7e-4 | 139.39 / 153.19 (2 seeds) | 14 / 13 | sent back (rebase + BS=16) |
 | willow-r2-askeladd-depth-8 | 150.06 | 9 | wip |
 | willow-r2-tanjiro-warmup-cos-1e3 | 154.57 | 13 | sent back |
 
-No unmodified-baseline finished run exists yet. The merged slice-128
-run anchors the current baseline at 133.55. Frieren's huber result
-is awaiting rebased confirmation before merge.
+**Noise floor:** ±10 % at single seed (thorfinn replicate evidence).
+Merged baseline 133.55 has implicit ±13 in either direction at
+single-seed precision — winners must beat this band convincingly,
+not by 1-3 %. Frieren's 109.47 is the only result outside the band.
