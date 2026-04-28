@@ -170,9 +170,14 @@ class TransolverBlock(nn.Module):
                 nn.Linear(hidden_dim, out_dim),
             )
 
+        # Layer scale: per-channel learnable gating on each residual branch.
+        # Init at 1e-4 — near-identity early; learnable upward as needed.
+        self.gamma_attn = nn.Parameter(torch.ones(hidden_dim) * 1e-4)
+        self.gamma_mlp = nn.Parameter(torch.ones(hidden_dim) * 1e-4)
+
     def forward(self, fx):
-        fx = self.attn(self.ln_1(fx)) + fx
-        fx = self.mlp(self.ln_2(fx)) + fx
+        fx = self.gamma_attn * self.attn(self.ln_1(fx)) + fx
+        fx = self.gamma_mlp * self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
         return fx
@@ -583,6 +588,13 @@ for epoch in range(MAX_EPOCHS):
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+    # Layer-scale gamma diagnostics: per-block mean(|gamma|) tells us
+    # whether each block engaged the residual-gating lever.
+    gamma_stats = {}
+    with torch.no_grad():
+        for i, blk in enumerate(model.blocks):
+            gamma_stats[f"block_{i}/gamma_attn_abs_mean"] = blk.gamma_attn.detach().abs().mean().item()
+            gamma_stats[f"block_{i}/gamma_mlp_abs_mean"] = blk.gamma_mlp.detach().abs().mean().item()
     append_metrics_jsonl(metrics_jsonl_path, {
         "event": "epoch",
         "epoch": epoch + 1,
@@ -596,6 +608,7 @@ for epoch in range(MAX_EPOCHS):
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
+        "gamma": gamma_stats,
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
