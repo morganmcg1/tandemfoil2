@@ -31,6 +31,48 @@
 
 ---
 
+## 2026-04-28 04:53 — PR #347 (resubmit): H5 random Fourier features on (x, z) — **SENT BACK FOR REBASE-ONTO-#404**
+
+- Branch: `willowpai2d4-nezuko/h5-fourier-features` (rebased onto post-#344 advisor branch, but **not yet rebased onto post-#404**)
+- Hypothesis: Fourier features on raw (x, z) coords with `(num_freq, sigma)` tuned should reduce `val_avg/mae_surf_p` by 2–8%, primarily on geom-OOD splits.
+- 4-cell rebased σ-sweep in W&B group `h5-fourier-rebased`:
+
+| Run | num_freq | σ | val_avg/mae_surf_p | test_avg/mae_surf_p | W&B |
+|-----|----------|---|---------------------:|----------------------:|-----|
+| E | 32 | 3.0 | 125.81 | 111.32 | `uneydgsj` |
+| B' | 32 | 4.0 | 125.16 | 115.87 | `pnodx65v` |
+| **F** | **32** | **5.0** | **117.17** | **106.46** | `dk13xxhh` |
+| G | 64 | 4.0 | 125.27 | 113.13 | `4oap45xp` |
+
+### Per-split test for Run F (winner) vs PR #344 baseline
+
+| Split | PR #344 baseline | Run F | Δ |
+|-------|-----------------:|------:|--:|
+| `test_single_in_dist` | 127.09 | 128.57 | +1.16% |
+| `test_geom_camber_rc` | 123.58 | 116.27 | **−5.92%** |
+| `test_geom_camber_cruise` | 81.16 | 74.09 | **−8.71%** |
+| `test_re_rand` | 107.83 | 106.93 | −0.83% |
+| **avg** | 109.92 | **106.46** | **−3.15%** |
+
+### Conclusions
+
+- **Hypothesis confirmed on the post-#344 schedule.** Run F at σ=5 / num_freq=32 beats the PR #344 baseline by -3.14% / -3.15%. Both effect size and cross-split signature match the original H5 prediction (geometry-OOD specific gain, slight in-dist regression).
+- **σ-curve direction reversed on the merged schedule.** Round 1 (pre-merge code) found σ=4 as the U-shape winner. Round 2 (post-merge code) finds {3, 4, 5} monotone-decreasing. The merged warmup+cosine schedule benefits high-frequency Fourier features specifically — at lower σ the network duplicates information already in raw (x,z) and just slows convergence.
+- **Capacity (num_freq) does not substitute for σ.** Run G (σ=4, num_freq=64) ≈ Run B' (σ=4, num_freq=32). Doubling num_freq while holding σ fixed buys nothing.
+- **Branch was NOT rebased onto PR #404.** Run F's val=117.17 is on the post-#344, pre-#404 code path (no FiLM, default wd=1e-4). The current merged baseline is val=119.36 with FiLM enabled.
+- **Squash-merging as-is would create an untested Fourier × FiLM combination.** Possible outcomes: additive (val ≈ 115), partial overlap (val ≈ 117), antagonistic (val > 119.36).
+
+### Action
+
+Sent back for one focused **Run H — Fourier σ=5 stacked on top of the merged FiLM baseline** (`--film_re True --fourier_num_freq 32 --fourier_sigma 5.0 --epochs 25 --lr 7e-4 --weight_decay 5e-4 --seed 123`). Decision rule: merge if Run H beats val=119.36; close if it regresses materially; need one more run at σ=6 if it lands within ~1%.
+
+### Useful follow-ups (deferred)
+
+- Search above σ=5 (σ ∈ {6, 7, 8}) — the monotone-decreasing observation in {3, 4, 5} likely continues. Worth pushing right after the FiLM-stacking question is answered.
+- Re-run with longer schedule once H6 lands — all four current runs hit the 30-min wall at epoch 14/25. The cosine doesn't reach zero.
+
+---
+
 ## 2026-04-28 04:09 — PR #404: H11 Re-conditional FiLM modulation — **MERGED** (Round 0 winner #2)
 
 - Branch: `willowpai2d4-edward/h11-film-re-conditioning`

@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 04:25 UTC
+- **Date:** 2026-04-28 05:00 UTC
 - **Advisor branch:** `icml-appendix-willow-pai2d-r4`
 - **Most recent human-team direction:** none received yet on this advisor branch
 - **Current best:** PR #404 (edward H11) merged. `val_avg/mae_surf_p=119.36`, `test_avg/mae_surf_p=107.54`. See BASELINE.md for full details and recommended config (`--film_re True --epochs 25 --lr 7e-4 --weight_decay 5e-4 --seed 123`).
@@ -25,7 +25,7 @@
 |----|---------|------------|--------|-------------|--------|
 | #342 | alphonse | H1: per-sample y-std loss normalization | Loss reformulation | -8% to -18% | wip (sent back for rebase + sw sweep on merged schedule; first round Run B at sw=5 gave clean −7.9% val on apples-to-apples pre-merge baseline, cross-split signature matched prediction precisely) |
 | #343 | askeladd | H6: bf16 + torch.compile + larger batch | Throughput | -3% to -9% | wip |
-| #347 | nezuko | H5: random Fourier features on (x, z) | Position | -2% to -8% | wip (rebase + re-run on merged schedule; first round σ-sweep ID'd σ=4 as winner) |
+| #347 | nezuko | H5: random Fourier features on (x, z) | Position | -2% to -8% | wip (sent back round 2 — needs rebase onto #404 + Run H to verify Fourier × FiLM compounds; round 2 σ=5 alone gave clean −3.14% vs #344 baseline with predicted geom-OOD signature) |
 | #348 | tanjiro | H3: Smooth L1 (Huber) on surface pressure | Loss reformulation | -2% to -6% | wip |
 | #442 | thorfinn | H12: EMA of model weights for evaluation | Optimization | -1% to -4% | wip (sent back for decay=0.99 + every-other-epoch EMA eval; first round confirmed EMA mechanism within-run but absolute test didn't beat baseline) |
 | #468 | fern | H9: surface-arc pressure-gradient penalty | Physics-aware | -2% to -5% | wip |
