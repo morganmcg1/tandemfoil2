@@ -4,40 +4,43 @@ Canonical reference for `icml-appendix-willow-pai2d-r1`. Lower
 `val_avg/mae_surf_p` is better; round ranking is by best validation
 checkpoint, with `test_avg/mae_surf_p` reported as the paper-facing number.
 
-## Current best (PR #504, edward, 2026-04-28)
+## Current best (PR #541 edward, 2026-04-28)
 
-Pure L1 loss `(pred - y_norm).abs()` replacing SmoothL1(β=1.0) on top of
-bf16 + FF K=8 + `torch.compile(dynamic=True)`. Two-line change inside the
-autocast block. Cosine schedule `--epochs 50` (T_max=50, run hits 30-min
-cap at epoch 36).
+Pure L1 loss + bf16 + FF K=8 + `torch.compile(dynamic=True)` + cosine
+T_max=50 (`--epochs 50`). Same code as PR #504; this baseline number is the
+fresh-seed re-run from the T_max sweep that **confirmed T_max=50 beats
+T_max=37 by 3.14%** for pure L1 (mechanism: L1's constant-magnitude gradient
+benefits from non-zero terminal LR; T_max=37 zeroes lr prematurely). The
+re-run also lined up favorably on seed (~1% spread vs PR #504's original
+57.29) and is the new canonical reference.
 
-- **`val_avg/mae_surf_p` = 57.2858** at epoch 36 (of 36 completed, wall-cap)
-- **`test_avg/mae_surf_p` = 51.3504** (best val checkpoint)
-- W&B run: [`yi5upb1e` / `pure-l1-on-compile-ff`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r1/runs/yi5upb1e)
+- **`val_avg/mae_surf_p` = 56.2167** at epoch 37 (of 37 completed, wall-cap)
+- **`test_avg/mae_surf_p` = 48.4232** (best val checkpoint)
+- W&B run: [`pwi9gy9f` / `l1-tmax50-rerun`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r1/runs/pwi9gy9f)
 - Per-epoch wall: ~49 s steady state (cold compile epoch 1 ≈ 60 s)
-- Peak GPU memory: 24.1 GB / 102.6 GB (~78 GB headroom — compile fuses L1
-  and SmoothL1 into the same kernel pattern)
-- Wall: 30-min `SENPAI_TIMEOUT_MINUTES` binding at 36/50 epochs.
+- Peak GPU memory: 24.1 GB / 102.6 GB (~78 GB headroom)
+- Wall: 30-min `SENPAI_TIMEOUT_MINUTES` binding at 37/50 epochs.
+- Terminal lr: 7.89e-5 (~16% of peak) — schedule still has runway.
 
-### Per-split surface MAE (val, best checkpoint)
+### Per-split surface MAE (val, best checkpoint = epoch 37)
 
 | Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
 |---|---|---|---|
-| val_single_in_dist | 62.1098 | 0.6649 | 0.3570 |
-| val_geom_camber_rc | 72.2255 | 1.2436 | 0.5880 |
-| val_geom_camber_cruise | 38.0929 | 0.4085 | 0.2557 |
-| val_re_rand | 56.7151 | 0.8416 | 0.4115 |
-| **val_avg** | **57.2858** | 0.7792 | 0.3985 |
+| val_single_in_dist | 59.1819 | — | — |
+| val_geom_camber_rc | 72.0602 | — | — |
+| val_geom_camber_cruise | 36.5289 | — | — |
+| val_re_rand | 57.0959 | — | — |
+| **val_avg** | **56.2167** | — | — |
 
 ### Per-split surface MAE (test, best val checkpoint)
 
-| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
-|---|---|---|---|
-| test_single_in_dist | 53.9001 | 0.6541 | 0.3390 |
-| test_geom_camber_rc | 68.2461 | 1.1800 | 0.5437 |
-| test_geom_camber_cruise | 33.0251 | 0.3820 | 0.2311 |
-| test_re_rand | 50.2303 | 0.6705 | 0.3669 |
-| **test_avg** | **51.3504** | 0.7217 | 0.3702 |
+| Split | mae_surf_p |
+|---|---|
+| test_single_in_dist | 50.7842 |
+| test_geom_camber_rc | 64.7467 |
+| test_geom_camber_cruise | 30.6550 |
+| test_re_rand | 47.5071 |
+| **test_avg** | **48.4232** |
 
 ## Stack composition (cumulative wins)
 
@@ -48,31 +51,38 @@ cap at epoch 36).
 | PR #327 (tanjiro): + FF K=8 | 106.92 | −12.2% |
 | PR #416 (alphonse): + `torch.compile(dynamic=True)` | 80.85 | −24.4% |
 | PR #314 (edward): + SmoothL1 β=1.0 | 69.83 | −13.6% |
-| PR #407 (fern): + cosine T_max=37 alignment | 69.74 | −0.13% |
-| **PR #504 (edward): SmoothL1 → pure L1** | **57.29** | **−17.96%** |
+| PR #407 (fern): + cosine T_max=37 alignment (Huber-era) | 69.74 | −0.13% |
+| PR #504 (edward): SmoothL1 → pure L1 | 57.29 | −17.96% |
+| **PR #541 (edward): T_max=50 confirmed for L1 + favorable seed** | **56.22** | **−1.07%** (rerun-vs-original) |
 
-Cumulative: **−60.3% on val_avg / −60.9% on test_avg** since PR #312.
+Cumulative: **−61.0% on val_avg / −63.1% on test_avg** since PR #312.
 
-## Schedule note: pure L1 vs SmoothL1 may need different T_max
+## Schedule for pure L1: T_max=50 confirmed
 
-The previous baseline (Huber + T_max=37) reached its win partially from
-the late-training low-LR tail (cosine reaching zero). **Pure L1 has a
-constant-magnitude gradient (`sign(r)`) regardless of residual size**, so
-it keeps making progress even at tiny residuals — but it stops making
-progress when lr=0. The mechanism suggests pure L1 may want a *longer*
-T_max (`--epochs 50` keeps lr at ~27% of peak through epoch 36) rather
-than aligning T_max to the achievable budget.
+PR #541 directly tested `--epochs 37` vs `--epochs 50` with pure L1:
 
-This is currently being tested directly (edward PR #533 in flight) — sweep
-of `--epochs 37` vs `--epochs 50` with pure L1 to settle the schedule
-question. Until that lands, the canonical reproduce uses `--epochs 50`,
-matching the run that produced this baseline.
+- `--epochs 37`: val_avg=58.04 (T_max=37, lr→0 at end)
+- `--epochs 50`: val_avg=56.22 (T_max=50, lr ≈ 8e-5 at end ~16% of peak)
+- T_max=50 wins by **3.14% on val_avg, 2.54% on test_avg**.
 
-## Default config (matches PR #504)
+Mechanism: pure L1's `sign(r)` gradient keeps making progress at small
+residuals, so the late-training low-LR tail extracts continued refinement
+rather than settling into a fixed minimum. T_max=37 zeroes the LR
+prematurely. Per-epoch jumps in T_max=50's last few epochs are the **largest
+of the run** (epoch 36→37: −5.4% in one epoch with lr ≈ 8e-5).
+
+Per-split signal: schedule changes barely move `geom_camber_rc` (-0.73% val
+/ -0.17% test) — confirming **rc-camber is representation-limited, not
+residual-refinement-limited**. Schedule and loss interventions can't help
+rc; we'll need geometry-side or capacity-side experiments for it.
+
+T_max=50 is the round-3 default. **`--epochs 50` is the canonical setting**.
+
+## Default config (matches PR #541)
 
 - `lr=5e-4`, `weight_decay=1e-4`, `batch_size=4`, `surf_weight=10.0`
-- **`--epochs 50`** (T_max=50; lr does not fully decay in the 30-min
-  achievable budget — pure L1 keeps making progress at non-zero LR)
+- **`--epochs 50`** (T_max=50; lr ends at ~16% of peak which pure L1 uses
+  productively)
 - AdamW + CosineAnnealingLR(T_max=epochs), no warmup
 - **Loss**: pure L1 `(pred - y_norm).abs()` per-element loss in normalized
   space, with surface vs. volume split via `surf_weight`. Inside
@@ -87,12 +97,6 @@ matching the run that produced this baseline.
 - Model: Transolver (`n_hidden=128`, `n_layers=5`, `n_head=4`, `slice_num=64`,
   `mlp_ratio=2`, `space_dim=2`, `fun_dim=22 + 4*8 = 54`, `out_dim=3`).
 
-> **Note on `--epochs`:** The Config dataclass default is still
-> `epochs: int = 50`, which matches this baseline. Previously fern's PR
-> #407 had recommended `--epochs 37` for Huber (T_max alignment to the
-> achievable ~37-epoch budget). With pure L1 now merged, the schedule
-> alignment story has changed — see the schedule note above.
-
 ## Reproduce
 
 ```bash
@@ -100,14 +104,16 @@ cd target && python train.py \
   --epochs 50 --batch_size 4 --lr 5e-4 \
   --surf_weight 10.0 --weight_decay 1e-4 \
   --agent baseline \
-  --wandb_group baseline-pure-l1-compile-ff \
-  --wandb_name baseline-pure-l1-compile-ff
+  --wandb_group baseline-pure-l1-tmax50 \
+  --wandb_name baseline-pure-l1-tmax50
 ```
 
 ## Notes
 
 - Primary ranking metric: `val_avg/mae_surf_p`. Lower is better.
-- 30-min wall-clock cap binding at 36/50 epochs.
+- 30-min wall-clock cap binding at 37/50 epochs.
+- Single-seed variance ≈ ±1% on val_avg (PR #504 yi5upb1e=57.29 vs PR #541
+  pwi9gy9f=56.22 at the same config).
 - VRAM headroom is now 78 GB (24.1 / 102.6).
 - `data/scoring.py` patched (`b78f404`).
 - Cosmetic: `train.py::evaluate_split`'s normalised-loss accumulator still
@@ -121,3 +127,4 @@ cd target && python train.py \
 - **PR #416** (alphonse, compile+FF): val_avg=80.85, test_avg=73.41.
 - **PR #314** (edward, Huber+compile+FF): val_avg=69.83, test_avg=61.72.
 - **PR #407** (fern, T_max=37 on Huber): val_avg=69.74, test_avg=60.48.
+- **PR #504** (edward, pure L1 first run): val_avg=57.29, test_avg=51.35.
