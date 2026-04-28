@@ -2,6 +2,30 @@
 
 Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pressure MAE across the four val splits). Paper-facing metric is `test_avg/mae_surf_p` from the best-val checkpoint.
 
+## 2026-04-28 06:15 — PR #563: Semantics-aware feature noise std 0.005 → 0.0025
+
+- **Best `val_avg/mae_surf_p`**: **66.841** (epoch 14, −0.69% vs 67.306 prior baseline)
+- **`test_avg/mae_surf_p`** (paper-facing, all 4 splits finite): **58.488** (vs 59.296 prior, −1.36%)
+- **Per-split val MAE for `p`**:
+  - val_single_in_dist: 79.768 (+2.71% vs prior — slight in-dist regression)
+  - val_geom_camber_rc: 78.262 (−3.01% — biggest val gain)
+  - val_geom_camber_cruise: 47.065 (+0.40%, flat)
+  - val_re_rand: 62.268 (−2.70%)
+- **Per-split test MAE for `p`**:
+  - test_single_in_dist: 68.487 (−0.35%)
+  - test_geom_camber_rc: 71.596 (−1.42%)
+  - test_geom_camber_cruise: 38.544 (−2.83%)
+  - test_re_rand: 55.325 (−1.48%)
+- **Recipe**: huber(δ=0.25) + bias-corrected EMA(0.99, warmup=50) + SwiGLU + DropPath(0.1) + AdamW betas (0.9, 0.95) + wd=3e-5 + PhysicsAttention temperature init=1.5 + cosine 1-ep warmup + T_max=13 + **feature noise std=0.0025** (was 0.005) + NaN-safe.
+- **Noise profile** (monotone-descending, no saturation yet): 0.0025 < 0.005 < 0.01 (orig) < 0.02 (regression). Profile still heading downward; optimum may be in (0, 0.0025].
+- **Mechanism**: With DropPath(0→0.1) + huber(δ=0.25) + bias-corrected EMA(0.99) + wd=3e-5 + warmup already providing strong regularization, explicit feature noise mostly adds gradient noise in the cosine fine-tuning tail. Less noise = cleaner signal, especially benefiting the harder OOD splits (camber_rc, re_rand).
+- **Metric summary**: `models/model-feature-noise-0025-20260428-052613/metrics.jsonl`
+- **Reproduce**:
+  ```bash
+  cd target
+  python train.py --epochs 50 --experiment_name feature-noise-0025 --agent <name>
+  ```
+
 ## 2026-04-28 05:50 — PR #548 merged on top of #525 (slice-temp init 1.5 replaces 1.0)
 
 - **Best `val_avg/mae_surf_p`** (last directly measured): **67.306** (PR #525 with slice-temp=1.0). Post-#548 measurement pending; thorfinn's standalone showed slice-temp=1.5 beats slice-temp=1.0 by −1.51% on the same starting baseline (71.6985 → 70.617), so combined-stack expected to be at-or-below 67.306.
