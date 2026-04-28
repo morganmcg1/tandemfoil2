@@ -1,5 +1,64 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 00:35 — PR #298 (CLOSED, positive on MSE / loses to L1): 8-freq Fourier positional features
+- Branch: `charliepai2d3-nezuko/fourier-pos-features` (deleted on close)
+- Hypothesis: Fourier positional encoding of `(x, z)` at 8 octave-spaced
+  frequencies addresses MLP/attention spectral bias against high-frequency
+  content of low-d inputs; predicted −2% to −8%.
+- Config: MSE surface loss (pre-L1 advisor), all other knobs at defaults.
+  +1.2% params (32 extra input channels at the first preprocess MLP).
+
+### Headline (best-val checkpoint, epoch 13/14)
+
+| Metric | This PR | vs PR #306 (MSE peer, 135.20) | vs PR #280 (L1, 102.64) |
+|--------|--------:|------------------------------:|------------------------:|
+| `val_avg/mae_surf_p`  | 116.62 | **−13.7% (win on MSE)** | +13.6% (loses to L1) |
+| `test_avg/mae_surf_p` | 105.85 | **−14.1%** | +8.3% |
+| Peak GPU memory       | 42.36 GB | — | — |
+| Param count           | 670,551 | +1.2% (+8,192 weights) | — |
+| Epochs in 30-min cap  | 14/50 | — | — |
+
+### Per-split val (best epoch 13)
+
+| split | mae_surf_p |
+|-------|-----------:|
+| val_single_in_dist     | 138.75 |
+| val_geom_camber_rc     | 122.13 |
+| val_geom_camber_cruise |  95.00 |
+| val_re_rand            | 110.60 |
+
+### Decision
+
+**Closed.** The hypothesis was validated on the MSE baseline assigned to
+this branch (−13.7% on val), but L1 surface loss landed mid-round and
+became the new baseline at val 102.64 — a much larger lever than Fourier
+features. Per the merge criterion (must beat current baseline), this PR
+does not merge. Per the close criterion (>5% regression vs current
+baseline), it is technically closeable — but the regression is an
+artefact of the merge-order race, not a failure of the lever.
+
+**The lever is on the round-4 candidate list** as L1 + Fourier features.
+The student is the right person to run that compose test (already owns
+the code). They've been re-assigned to test exactly that.
+
+**Useful per-split insight**: student observed the worst val split was
+`val_single_in_dist` (138.75), inverting their prediction that
+single-in-dist would benefit most from Fourier features. The split
+ranking is dominated by raceCar high-Re extremes, not by spectral bias
+on input position — which points round 5 toward applying Fourier
+features to `log(Re)` and other scalar inputs (student's own follow-up #2).
+
+**On bug fix**: student's pred-side workaround in `evaluate_split` is
+redundant on the current advisor branch — the GT-side fix landed as
+commit `2eb5c7f` per thorfinn/alphonse's earlier identification.
+Student validated the merged approach (their option (2) recommendation
+matches the merged fix exactly).
+
+Per-epoch metrics not centralised in `EXPERIMENT_METRICS.jsonl` —
+branch deleted on close.
+
+---
+
 ## 2026-04-28 00:30 — PR #288 (CLOSED): 3-epoch warmup + cosine to 1e-5, peak lr=1e-3
 - Branch: `charliepai2d3-fern/lr-warmup-peak1e3` (deleted on close)
 - Hypothesis: warmup unlocks higher peak LR; cosine to `eta_min=1e-5`

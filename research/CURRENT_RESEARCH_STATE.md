@@ -29,7 +29,7 @@ larger than the bs/lr win it superseded.
 **Round-3 dominant lever:** loss formulation. Aligning the gradient with
 the reported MAE metric is the highest-impact change found so far.
 
-**Closed PRs (negative results, 2026-04-28):**
+**Closed PRs (2026-04-28):**
    - PR #283 — askeladd (wider+deeper): val 166.64 (+62% vs L1 baseline);
      compute-starvation under wallclock cap is structural.
    - PR #366 — thorfinn (mlp_ratio=4): val 144.70 (+41% vs L1 baseline);
@@ -40,18 +40,20 @@ the reported MAE metric is the highest-impact change found so far.
    - PR #288 — fern (warmup + lr=1e-3): val 147.50 (+44% vs L1 baseline);
      mean of 3 seeded runs 143.2±5.7 — schedule mismatched with wallclock
      cap (warmup eats 21% of actual epoch budget).
+   - PR #298 — nezuko (Fourier features 8-freq): **val 116.62 — −13.7%
+     vs MSE peer (PR #306) but +13.6% vs current L1 baseline**. Lever
+     validated on its assigned baseline; loses to the merged L1 baseline
+     by merge-order timing. Re-assigned as L1 + Fourier compose test.
 
-**In-flight (3 originally on pre-L1 + 5 on L1 baseline) — still useful for
-round-4 composition even if they don't outright beat 102.64:**
+**In-flight (2 on pre-L1 + 6 on L1 baseline) — still useful for round-4
+composition even if they don't outright beat 102.64:**
 
 1. **Loss formulation (pre-L1 baseline)**
    - PR #302 — tanjiro: Huber (smooth-L1, δ=1.0) surface loss — informs
      whether the L2-near-zero region helps over pure L1.
    - PR #285 — edward: `surf_weight` 10 → 30 (with MSE) — informs how much
      of the L1 win is just heavier surface gradient signal.
-2. **Input representation (pre-L1 baseline)**
-   - PR #298 — nezuko: 8-frequency Fourier positional encoding for x/z
-3. **L1-baseline composition (post-#280 merge, with L1 already in
+2. **L1-baseline composition (post-#280 merge, with L1 already in
    `train.py`):**
    - PR #383 — alphonse: L1 + 3× pressure channel weight in surface loss
      *(loss focus)*
@@ -59,8 +61,10 @@ round-4 composition even if they don't outright beat 102.64:**
      the schedule fully decays inside the 30-min cap *(schedule)*
    - PR #390 — thorfinn: L1 + bs=8 + `lr=7.07e-4` — composes the two
      merged round-3 winners *(optimization)*
-   - PR (frieren, new): L1 + `weight_decay 1e-4 → 1e-3` *(regularisation)*
-   - PR (fern, new): L1 + EMA of weights for evaluation *(weight averaging)*
+   - PR #395 — frieren: L1 + `weight_decay 1e-4 → 1e-3` *(regularisation)*
+   - PR #396 — fern: L1 + EMA of weights for evaluation *(weight averaging)*
+   - PR (nezuko, new): L1 + 8-freq Fourier positional features for `(x, z)`
+     *(input encoding compose test)*
 
 **Caveats:**
 
