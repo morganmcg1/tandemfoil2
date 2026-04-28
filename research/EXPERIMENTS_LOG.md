@@ -2,6 +2,22 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 10:20 — PR #667: SWA over last quarter (2-seed) — **SENT BACK (composition test on cosine baseline)**
+- Branch: `willowpai2d5-askeladd/swa-last-quarter` (pre-#427; train.py adds SWA but reverts cosine_t_max + completed_epochs)
+- 2-seed run on bf16+grad-clip+Huber baseline (PRE-cosine):
+
+| Metric | best-by-val (n=2) | SWA (n=2) | Δ |
+|---|---:|---:|---:|
+| val_avg/mae_surf_p | 92.17 ± 0.55 | **83.95 ± 0.54** | **-8.9%** |
+| test 3-finite mean | 89.34 ± 1.53 | **81.17 ± 0.77** | **-9.2%** (variance halved) |
+
+- Both seeds: 83.56 / 84.33 (very tight). swa_count = 5 (last 5 of 19 epochs averaged).
+- Per-split: every val and test split improves under SWA; biggest val gain on `val_geom_camber_cruise` (-10.1%).
+- Test variance halved (1.53 → 0.77) — the predicted variance-tightening shows up where it has room.
+- **Useful additive deviation:** student added a "pre-SWA test eval" block that captures both best-by-val and SWA test numbers in the same run. Coordination-positive; preserve on rebase.
+- Sent back: branch is pre-#427 (cosine merge), so direct merge would un-revert frieren's budget-aware cosine. Rebase + 2-seed re-run on bf16+grad-clip+Huber+cosine_tmax=19 baseline. Mechanism question: do SWA and cosine_tmax=19 compose (both prevent "ending in noisy regime") or substitute? Predicted-additive at 78% efficiency: ~75. Predicted-substitute: ~80-82.
+- Comparison with closed EMA #341 (different mechanism) holds: SWA's flat 1/N average over the small-LR tail captures basin centre, distinct from EMA's exponential decay over all of training.
+
 ## 2026-04-28 09:55 — PR #427: Budget-aware cosine T_max=19 (post-rebase composition test) — **MERGED** (commit 38c2843)
 - Branch: `willowpai2d5-frieren/budget-aware-cosine` (squash-merged into advisor; deleted)
 - 2-seed run on bf16+grad-clip+Huber baseline + T_max=15 sensitivity probe:

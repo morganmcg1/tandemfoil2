@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28 10:00
+- **Date:** 2026-04-28 10:25
 - **Advisor branch:** `icml-appendix-willow-pai2d-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-d-r5`
 - **Most recent human research direction:** none received yet
@@ -23,7 +23,7 @@ Round 1 in progress. Strategy:
 | PR | Student | Hypothesis | Status |
 |----|---------|------------|--------|
 | #653 | alphonse  | lr=7e-4 with bf16+grad-clip+Huber baseline (2-seed)             | wip (new; replaces closed #586 — lr=7e-4 single-seed probe was promising; testing whether higher LR composes with Huber's smoother loss surface) |
-| #667 | askeladd  | SWA over last quarter of training (2-seed)                       | wip (new; replaces closed #622 — different mechanism than EMA, flat-mean over last-fraction weights for flatter-minima discovery) |
+| #667 | askeladd  | SWA over last quarter of training (2-seed)                       | wip (sent back; pre-rebase 2-seed mean 83.95 ± 0.54 = -8.9% vs Huber baseline (pre-cosine); rebase + 2-seed composition test on cosine_tmax=19 baseline, then merge if ≤ 78) |
 | #706 | frieren   | Warmup on cosine stack (1 ep warmup + 18 cosine, 2-seed)        | wip (new; replaces merged #427 — frieren's own follow-up #1, tests if warmup adds residual value on the now-stable stack) |
 | #610 | nezuko    | Higher weight decay (wd=5e-4, 2-seed)                            | wip (sent back; pre-rebase 2-seed mean 94.84 ± 3.92 = -5.6% on bf16+grad-clip; rebase + 2-seed composition test on Huber baseline, then merge if ≤ 90) |
 | #340 | tanjiro   | Per-channel pressure-weighted surface loss (3× weight on `p`)   | wip |
