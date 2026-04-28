@@ -1,6 +1,6 @@
 # Baseline — TandemFoilSet (willow-pai2d-r5)
 
-**Status:** Round 1 in flight. Sequential merges: PR #441 bf16 (commit `b605b44`) → PR #434 grad-clip max_norm=1.0 (commit `426b4c4`) → PR #413 surface-Huber δ=1.0 (commit `e35acdf`). New round-1 baseline: **2-seed mean = 90.98 ± 0.81** at 19 epochs (CV ~0.9% — best variance band of round 1, back to bf16-baseline-level tightness). Composition arithmetic: stack captures ~78% of perfect-additive (-26.4 vs -33.7 max), confirming Huber and grad-clip are **complements** attacking different parts of the optimization step. Several round-2 stack candidates in flight.
+**Status:** Round 1 in flight. Sequential merges: PR #441 bf16 (commit `b605b44`) → PR #434 grad-clip max_norm=1.0 (commit `426b4c4`) → PR #413 surface-Huber δ=1.0 (commit `e35acdf`) → PR #427 budget-aware cosine T_max=19 (commit `38c2843`). New round-1 baseline: **2-seed mean = 81.36 ± 0.54** at 19 epochs (CV 0.66% — tightest variance band of round 1). Cumulative -38% improvement vs the original Transolver baseline. **All four mechanisms compose additively** at orthogonal points in the training step: bf16 (precision), grad-clip (gradient direction), Huber (loss shape), cosine T_max-matched (LR schedule).
 
 **Quirk note:** `max_norm=1.0` clips 100% of training steps at this regime (median pre-clip grad-norm ≈ 38). Effectively normalized-gradient training (Lion-like). Future students changing the optimizer or LR should be aware that the gradient-magnitude amplification effect is removed; lr values that would overshoot under unclipped MSE are safe here.
 
@@ -15,6 +15,7 @@ The baseline is the default Transolver in `train.py` at HEAD of `icml-appendix-w
 - **Loss:** MSE volume + Huber(δ=1.0) surface, in normalized space; `loss = vol_loss_mse + surf_weight * surf_loss_huber`, `surf_weight=10` (PR #413)
 - **Mixed precision:** bf16 autocast in train + eval, fp32 cast before squaring loss + before denormalization (PR #441)
 - **Gradient clipping:** `clip_grad_norm_(model.parameters(), max_norm=1.0)` after `loss.backward()` (PR #434)
+- **Schedule:** `CosineAnnealingLR(T_max=cosine_t_max if set else MAX_EPOCHS, eta_min=0.0)` — when `--cosine_t_max` is sized to the realised epoch count (~19 with bf16), the cosine fully anneals and avoids the post-T_max LR-rebound pathology (PR #427)
 - **Training:** `epochs=50`, capped by `SENPAI_TIMEOUT_MINUTES=30` wall-clock
 - **Sampling:** `WeightedRandomSampler` over balanced domain weights
 
@@ -41,7 +42,8 @@ _(round 1 in flight; baseline distribution being established by thorfinn's PR #4
 
 | PR | val_avg/mae_surf_p | test_avg/mae_surf_p | Notes |
 |----|--------------------|---------------------|-------|
-| **#413** | **90.98 ± 0.81** (n=2) | 88.16 (3-finite-split) * | + surface Huber δ=1.0; -9.4% vs #434; complements grad-clip (~78% of perfect-additive); CV ~0.9% — best-yet variance |
+| **#427** | **81.36 ± 0.54** (n=2) | 78.72 (3-finite-split) * | + budget-aware cosine T_max=19; -10.6% vs #413; CV 0.66% — tightest variance band of round 1; sensitivity probe T_max=15 confirmed cosine-rebound pathology when undersized |
+| #413 | 90.98 ± 0.81 (n=2) | 88.16 (3-finite-split) * | + surface Huber δ=1.0; -9.4% vs #434; complements grad-clip (~78% of perfect-additive) |
 | #434 | 100.44 ± 5.54 (n=2) | 96.73 (3-finite-split) * | + gradient clipping max_norm=1.0; -14.4% vs #441; 100% steps clipped → Lion-like normalized-gradient regime |
 | #441 | 117.37 ± 0.85 (n=2) | 115.59 (3-finite-split) * | bf16 mixed precision standalone; 19 epochs reached vs ~14 fp32; CV ~0.7% |
 

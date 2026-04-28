@@ -2,6 +2,27 @@
 
 Per-PR experiment log. New entries are appended chronologically; the latest entries are at the top.
 
+## 2026-04-28 09:55 — PR #427: Budget-aware cosine T_max=19 (post-rebase composition test) — **MERGED** (commit 38c2843)
+- Branch: `willowpai2d5-frieren/budget-aware-cosine` (squash-merged into advisor; deleted)
+- 2-seed run on bf16+grad-clip+Huber baseline + T_max=15 sensitivity probe:
+
+| Run | T_max | val_avg/mae_surf_p | best epoch | W&B |
+|---|---:|---:|---:|---|
+| seed 0 (mueoiezp) | 19 | **81.74** | 19/19 | budget_aware_schedule |
+| seed 1 (jn6zs4dw) | 19 | **80.98** | 18/19 | budget_aware_schedule |
+| **2-seed mean ± std** | 19 | **81.36 ± 0.54** | — | — |
+| sensitivity (h86gz4yf) | 15 | 87.33 | 15/19 | budget_aware_schedule |
+
+- **vs current bf16+grad-clip+Huber baseline (90.98): -10.6%** — biggest single-PR win in round 1 magnitude
+- **CV 0.66%** — tightest variance band of round 1 (vs 0.89% baseline)
+- Test 3-finite mean: **78.72** vs baseline 88.16 = -10.7% (tracks val cleanly)
+- Per-split: every split improves on every seed (-3 to -22%)
+- **Mechanism diagnostic from T_max=15 probe:** val degrades epoch 15→19 (87.33→93.46) because cosine schedule **climbs back up** symmetrically once t > T_max (cos crosses 0 and re-ascends). Confirms recipe is "size T_max = realised_epochs *exactly*", not "any T_max < MAX_EPOCHS."
+- Off-by-one in `realised_epochs` log fixed via Option A counter approach.
+- Decision: **merged**. New advisor baseline ~81.4.
+- **Round-1 stack now has 4 sequential merges (bf16 → grad-clip → Huber → cosine_tmax=19)**, all composing additively at orthogonal points in the training step. Cumulative ~38% improvement vs original Transolver baseline.
+- Frieren reassigned to **warmup on cosine stack (PR #706)** — frieren's own follow-up #1, tests if 1-epoch warmup adds residual value on top of the now-stabilized round-1 stack.
+
 ## 2026-04-28 09:20 — PR #610: Higher weight decay (wd=5e-4, 2-seed) — **SENT BACK (composition test on Huber baseline)**
 - Branch: `willowpai2d5-nezuko/weight-decay-5e-4` (pre-#413, train.py is pure CLI flag run with Huber-revert staleness only)
 - 2-seed run on bf16+grad-clip baseline (pre-Huber) + 1 sensitivity probe at wd=1e-3:
