@@ -1,5 +1,60 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 08:30 — PR #453: w_p ramp 0.5→1.0 (rebased onto post-#549)
+- Branch: `charliepai2d4-fern/pchannel-p-ramp05-10` (deleted on close)
+- Student: charliepai2d4-fern
+- **Outcome: CLOSED** (paired -1.80% within noise floor; rebase dropped --film and --warmup_epochs 3; absolute 57.86 vs merged 54.12 = +6.9%).
+
+### Headline (epoch 33 of 33, EMA-evaluated, paired in same PR)
+| Run | val_avg | test_avg |
+|---|---|---|
+| baseline-ref-film (no film, no warmup despite name) | 58.92 | 51.01 |
+| w-ramp-huber-rebased (w_p ramp 0.5→0.83) | 57.86 | 49.87 |
+| **Δ paired** | **-1.80%** | **-2.23%** |
+| Δ vs merged #549 | +6.9% | +4.9% |
+
+### Per-channel mechanism survives but shrinks
+| Channel | pre-rebase Δ (vs β=1.0 base) | post-rebase Δ (vs β=0.5 base) |
+|---|---|---|
+| val surf_Ux | **-13.1%** | -4.2% |
+| val surf_Uy | -7.3% | -3.9% |
+| val surf_p | -3.5% | -1.8% |
+| Velocity:pressure gain ratio | ~4× | ~2× |
+
+Mechanism preserved (velocity gains > pressure gains), but magnitude compressed — Huber β=0.5 already does part of the velocity-vs-pressure rebalancing the ramp used to handle.
+
+### Mechanism rotation: early-velocity → late-pressure
+| Epoch | Pre-rebase ramp Δ vs base | Post-rebase ramp Δ vs base |
+|---|---|---|
+| 1 | -2% | **+13%** (low w_p starves pressure when Huber already underweights tail) |
+| 13 | -6.1% (peak) | +0.8% |
+| 30 | -3.9% | -1.7% |
+| 33 | -3.5% | **-1.8%** (final, ramp pulls ahead late) |
+
+**Mechanism rotated**: pre-rebase was "free velocity gradient early"; post-rebase is "refine pressure late". Trajectory: ramp behind early, catches up mid-training, pulls ahead from epoch 30 as w_p approaches 1.0.
+
+### Per-split distribution flipped
+| Split | Pre-rebase val Δ | Post-rebase val Δ |
+|---|---|---|
+| val_single_in_dist | **-7.72%** (biggest gain) | **+1.50%** (regresses) |
+| val_geom_camber_rc | -1.44% (smallest) | **-5.00%** (biggest gain) |
+| val_geom_camber_cruise | -3.34% | -1.34% |
+| val_re_rand | -1.24% | -1.48% |
+
+With FiLM + Fourier providing in-distribution capacity, the ramp's marginal benefit migrated to OOD camber splits where pressure prediction is still the bottleneck.
+
+### Why close
+- Paired -1.80% is at the empirical 5pp variance floor — borderline mechanism evidence.
+- Absolute 57.86 vs merged 54.12 (#549, has warmup3 but not in fern's run) = +6.9% behind.
+- Rebase missed --film and --warmup_epochs 3 (despite "baseline-ref-film" naming, no --film flag was passed). Fully-stacked compounding measurement would have predicted ~53-54 (well within noise of #549) given the diminishing-returns trajectory.
+- Mechanism findings (rotation, per-split flip) are valuable for round-2 design but not a winning lever on their own.
+
+### Round-2 candidates from fern's analysis
+- Smarter ramp shapes: shorter ramp window post-warmup, or post-cosine-tail late refinement.
+- Per-channel β (askeladd's queued #4 from #467): different β for pressure vs velocity, exploits the same heavy-tail-pressure asymmetry without the schedule complexity.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=453 records, 35 lines from rebased run).
+
 ## 2026-04-28 07:50 — PR #594: FiLM at all 5 block boundaries (mid-network specialization)
 - Branch: `charliepai2d4-thorfinn/film-all-blocks` (deleted on close)
 - Student: charliepai2d4-thorfinn
