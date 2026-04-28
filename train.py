@@ -210,16 +210,22 @@ class TransolverBlock(nn.Module):
                        n_layers=0, res=False, act=act)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
-            self.mlp2 = nn.Sequential(
+            # Capacity-matched split heads: a shared 1-layer projection feeds
+            # two specialised final linears — one for velocity (Ux, Uy), one
+            # for pressure (p). Total params equal the baseline ``mlp2``
+            # (~16.9k), isolating "specialisation" from "capacity".
+            self.shared = nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim), nn.GELU(),
-                nn.Linear(hidden_dim, out_dim),
             )
+            self.head_vel = nn.Linear(hidden_dim, 2)
+            self.head_p = nn.Linear(hidden_dim, 1)
 
     def forward(self, fx):
         fx = self.attn(self.ln_1(fx)) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
-            return self.mlp2(self.ln_3(fx))
+            h = self.shared(self.ln_3(fx))
+            return torch.cat([self.head_vel(h), self.head_p(h)], dim=-1)
         return fx
 
 
