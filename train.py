@@ -418,6 +418,17 @@ def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
 DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 
 
+def feature_noise_std_schedule(epoch: int, base_std: float, decay_horizon: int) -> float:
+    """Linear decay from base_std at epoch 0 to 0 at epoch decay_horizon.
+
+    For epoch >= decay_horizon, returns 0. Aligns noise injection with the
+    cosine LR schedule (warmup_epochs + cosine_epochs = decay_horizon).
+    """
+    if epoch >= decay_horizon:
+        return 0.0
+    return base_std * (1.0 - epoch / decay_horizon)
+
+
 @dataclass
 class Config:
     lr: float = 5e-4
@@ -542,6 +553,10 @@ for epoch in range(MAX_EPOCHS):
 
     t0 = time.time()
     epoch_lr = optimizer.param_groups[0]["lr"]
+    current_noise_std = feature_noise_std_schedule(
+        epoch, cfg.feature_noise_std, warmup_epochs + cosine_epochs,
+    )
+    print(f"[epoch {epoch}] feature_noise_std = {current_noise_std:.6f}")
     model.train()
     epoch_vol = epoch_surf = 0.0
     epoch_grad_norm_sum = 0.0
@@ -556,14 +571,14 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
-        if cfg.feature_noise_std > 0.0:
+        if current_noise_std > 0.0:
             B, N, _ = x_norm.shape
             # Per-node noise on dims 0..12 (positions, saf, dsdf, is_surface)
             noise_per_node = torch.randn(B, N, 13, device=x_norm.device, dtype=x_norm.dtype)
             # Per-sample noise on dims 13..23 (per-sample globals: log_re, AoA*, NACA*, gap, stagger)
             noise_per_sample = torch.randn(B, 1, 11, device=x_norm.device, dtype=x_norm.dtype).expand(B, N, 11)
             noise = torch.cat([noise_per_node, noise_per_sample], dim=-1)   # [B, N, 24]
-            x_norm = x_norm + cfg.feature_noise_std * noise
+            x_norm = x_norm + current_noise_std * noise
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
         err = F.huber_loss(pred, y_norm, delta=0.25, reduction='none')
@@ -630,6 +645,7 @@ for epoch in range(MAX_EPOCHS):
         "seconds": dt,
         "peak_memory_gb": peak_gb,
         "lr": epoch_lr,
+        "feature_noise_std": current_noise_std,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
         "train/grad_norm_mean": grad_norm_mean,
