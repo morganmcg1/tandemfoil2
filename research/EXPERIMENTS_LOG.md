@@ -1,5 +1,114 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 02:56 — PR #416 round-2 (merged, NEW BASELINE): `torch.compile(dynamic=True)` + bf16 + FF
+
+- branch: `willowpai2d1-alphonse/torch-compile-pilot` (deleted on merge)
+- hypothesis: stack `torch.compile(dynamic=True)` on top of FF baseline.
+  Predicted -2 to -5% from compile alone, but rebased run expected to land
+  in 80-85 (combined with FF speedup).
+
+### Results
+
+| Metric | Value | Δ vs prior baseline (PR #327, FF) |
+|---|---|---|
+| Best `val_avg/mae_surf_p` | **80.8506** (epoch 37 of 37 completed) | **−24.4%** |
+| `test_avg/mae_surf_p` | **73.4107** | **−24.2%** |
+| Per-epoch wall (steady) | ~49 s | **−50%** (2.0× speedup) |
+| Cold compile time | 27.85 s (one-time) | up from 9.26 s on bf16-only (FF graph nodes) |
+| Epochs completed | **37 / 50** | +18 (+95%) |
+| Peak GPU memory | 24.1 GB | −9.2 GB (kernel fusion, FF concat near-free at +0.3 GB) |
+| Recompiles in 30 min | 1 (grad_mode flip at first eval) | None shape-driven across 74K-242K node range |
+| W&B run | `ewq3guz2` (`compile-bf16-ff-bsz4`) | — |
+
+Cumulative improvement: **−44.0% val_avg / −44.0% test_avg** since original PR #312 reference (144.21 → 80.85, 131.18 → 73.41).
+
+### Per-split delta vs FF baseline (val)
+
+| Split | FF baseline | Compile + FF | Δ |
+|---|---|---|---|
+| val_single_in_dist | 117.22 | 84.20 | **−28.2%** |
+| val_geom_camber_rc | 125.94 | 93.39 | **−25.8%** |
+| val_geom_camber_cruise | 80.26 | 65.95 | **−17.8%** |
+| val_re_rand | 104.27 | 79.86 | **−23.4%** |
+| **val_avg** | **106.92** | **80.85** | **−24.4%** |
+
+### Stack composition vs single-lever predictions
+
+| Stack | val_avg/mae_surf_p | Δ vs raw bf16 |
+|---|---|---|
+| bf16 only (#359) | 121.85 | — |
+| bf16 + FF (#327) | 106.92 | −12.2% (FF alone) |
+| bf16 + compile (off-base, sent back) | 87.20 | −28.4% (compile alone) |
+| **bf16 + FF + compile (this run)** | **80.85** | **−33.7% (stack)** |
+
+Subadditive stacking (~83% of naive sum). Both interventions partly cash in
+on "more cosine decay reaches the model" — compile gives 2× more epochs,
+FF gives faster per-epoch convergence — so they overlap on that mechanism
+but throughput-wise are orthogonal (steady batch wall identical, peak GB
++0.3 GB vs compile-only).
+
+### Analysis & conclusions
+
+- **Merged. New round baseline.** Largest single win. Implementation gem:
+  `_orig_mod.` prefix strip on save/load keeps W&B model artifacts portable
+  into non-compiled modules.
+- **Big update on rc-camber understanding:** FF on its own only relieved
+  the OOD rc-camber split by −3.3%, suggesting a "camber→pressure mapping"
+  representation bottleneck. Compile + FF gets to **−25.8%** on the same
+  split — so the rc-camber gap was *schedule-truncation-bound*, not a
+  representation bottleneck. The "camber-aware feature embedding" round-2
+  experiment is **dequeued**. Throughput unlock alone closed the gap.
+- VRAM headroom is now ~70 GB. Capacity scale-up (the parked PR #393
+  territory) becomes feasible again.
+- **Cosine T_max=50 is now even more misaligned** — the model now reaches
+  37 epochs but the schedule still decays as if for 50, so lr at epoch 37
+  is ~7.9e-5 (still 16% of peak rather than 0).
+- Followup queued: `mode="reduce-overhead"` (CUDA Graphs on dynamic-shape
+  compiled graph). Assigned as alphonse's next experiment.
+
+
+
+## 2026-04-28 02:54 — PR #314 round-2 (sent back again): SmoothL1/Huber + FF on bf16
+
+- branch: `willowpai2d1-edward/huber-loss` (in flight as draft after second send-back)
+- hypothesis: SmoothL1 stacks with FF (orthogonal: FF=upstream features,
+  Huber=downstream gradient profile). Predicted ~90.
+
+### Results (Huber + FF on bf16, BEFORE compile merge)
+
+| Metric | Value | vs PR #327 (FF, prior baseline) | vs PR #416 (compile+FF, NEW baseline) |
+|---|---|---|---|
+| Best `val_avg/mae_surf_p` | **92.3221** (epoch 19 of 19) | **−13.65%** | **+14.2%** (regression) |
+| `test_avg/mae_surf_p` | 84.3064 | −12.92% | +14.8% |
+| Per-epoch wall | ~97 s | ≈baseline | +2× (no compile speedup) |
+| Peak GPU memory | **~98.2 GB** transient | +5 GB vs FF baseline | over-cap concern |
+| W&B run | `eohccx3j` | | |
+
+### Stacking decomposition
+
+| Stack | val_avg | Δ vs raw bf16 |
+|---|---|---|
+| bf16 only | 121.85 | — |
+| bf16 + FF | 106.92 | −12.2% |
+| bf16 + Huber | 104.27 | −14.4% |
+| **bf16 + FF + Huber** | **92.32** | **−24.2%** |
+| bf16 + FF + compile (NEW BASELINE) | 80.85 | −33.7% |
+
+FF + Huber stacking is ~91% of sum-of-individuals (very clean). But the
+compile merge happened simultaneously and pushed the baseline past Huber's
+best. Edward needs to add Huber on top of compile+FF.
+
+### Analysis & conclusions
+
+- **Sent back, second time.** Result is a clean Huber+FF win, but compile
+  merged at the same time and now leads by 11.5 absolute MAE.
+- Memory peak ~98.2 GB is concerning — only 4.5 GB headroom on 102.6 GB
+  GPU. With compile dropping peak by ~9 GB on FF baseline, the
+  compile+FF+Huber peak should land ~88-90 GB. Need to verify
+  experimentally. **Cannot scale batch_size with FF + Huber.**
+- Predicted post-rebase val_avg: **65-75**. Mechanisms remain orthogonal.
+- Followups (β sweep, pure L1) queued for after this rebased run lands.
+
 ## 2026-04-28 02:28 — PR #324 (sent back): EMA(0.9999) + grad-clip(1.0) on bf16
 
 - branch: `willowpai2d1-nezuko/ema-and-grad-clip` (in flight as draft after send-back)
