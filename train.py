@@ -437,7 +437,7 @@ class Config:
     surf_weight: float = 10.0
     epochs: int = 50
     drop_path_max: float = 0.1
-    feature_noise_std: float = 0.0025
+    feature_noise_std: float = 0.005   # was 0.0025 (higher base std with steeper decay)
     compile: bool = False  # enable torch.compile(mode="default") on the model
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
@@ -553,8 +553,9 @@ for epoch in range(MAX_EPOCHS):
 
     t0 = time.time()
     epoch_lr = optimizer.param_groups[0]["lr"]
+    DECAY_HORIZON = 8   # was warmup_epochs + cosine_epochs = 14 (steeper decay)
     current_noise_std = feature_noise_std_schedule(
-        epoch, cfg.feature_noise_std, warmup_epochs + cosine_epochs,
+        epoch, cfg.feature_noise_std, DECAY_HORIZON,
     )
     print(f"[epoch {epoch}] feature_noise_std = {current_noise_std:.6f}")
     model.train()
