@@ -25,7 +25,7 @@ The four merged mechanisms — bf16, FF K=8, `torch.compile(dynamic=True)`, Smoo
 |---|---|---|---|
 | #321 | frieren | Optimization & schedule | warmup + cosine peak=7e-4 (sent back from peak=1e-3; will likely need rebase onto Huber baseline) |
 | #324 | nezuko | Stability / regularization | EMA-only **decay=0.999** — sent back AGAIN to rebase onto compile+FF (NOW will need to rebase onto Huber baseline) |
-| #333 | thorfinn | Loss / metric alignment | **sw=15 single run on Huber+compile+FF** (sent back from {15, 25, 40} sweep that showed sw=15 wins; targeted re-run on new baseline) |
+| #509 | thorfinn | Throughput | **batch_size=8 + lr=7.07e-4 revisit on Huber+compile+FF** (PR #360 ruled out without compile; memory math fundamentally different now — 78 GB headroom) |
 | #407 | fern | Schedule | Cosine T_max alignment via `--epochs 37` (was for compile+FF; rebase onto Huber needed) |
 | #443 | tanjiro | Spatial features | Gaussian RFF K=16 σ=10 (was for compile+FF; rebase onto Huber needed) |
 | #451 | askeladd | Loss formulation | Surface-only pressure weighting (1,1,5) on surf_loss only |
@@ -58,7 +58,7 @@ The four merged mechanisms — bf16, FF K=8, `torch.compile(dynamic=True)`, Smoo
 - Sinusoidal Fourier features (x,z) K=8: **MERGED**
 - `torch.compile(dynamic=True)`: **MERGED**
 - SmoothL1/Huber loss (β=1.0): **MERGED** (also a memory win post-compile)
-- Larger batch size: ruled out *without* compile (#360); **revisit queued** post-compile (78 GB headroom)
+- Larger batch size: ruled out *without* compile (#360); **revisit in flight (#509, thorfinn)** post-compile (78 GB headroom)
 - Domain-bucketed sampler: **RULED OUT**
 - Pressure weighting (uniform): **RULED OUT post-bf16**
 - `mode="reduce-overhead"`: **RULED OUT**

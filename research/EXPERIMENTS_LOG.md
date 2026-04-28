@@ -1,5 +1,19 @@
 # SENPAI Research Results — willow-pai2d-r1
 
+## 2026-04-28 03:52 — PR #333 (closed by student-bot after send-back)
+
+After my send-back at 03:50, the student-bot (morganmcg1) auto-closed
+the PR at 03:52:40Z. Likely reason: rebase complexity (advisor branch
+moved through bf16 → FF → compile → Huber merges since the original
+assignment) made an in-place rebase of the round-1 sweep branch
+impractical. Reassigning thorfinn to a fresh experiment (`batch_size=8
+on Huber+compile+FF baseline`, PR #509) rather than re-issuing the sw=15
+single-run experiment — the surf_weight directional finding from the
+round-1 sweep is recorded for if we ever need to revisit it, but the
+expected delta on the much-improved baseline is small (~1-2%) and a
+batch-size scaling re-investigation has higher expected information
+value with the new memory regime.
+
 ## 2026-04-28 03:50 — PR #333 (sent back, round-1 ablation): surf_weight ∈ {15, 25, 40} on PR #312 base
 
 - branch: `willowpai2d1-thorfinn/surf-weight-sweep` (in flight as draft)
