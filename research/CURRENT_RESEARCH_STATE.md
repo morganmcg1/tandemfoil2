@@ -1,33 +1,37 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 03:15 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
+- **Last update:** 2026-04-28 03:30 (advisor branch `icml-appendix-charlie-pai2d-r2`, fresh isolated replicate)
 - **Most recent human-team direction:** N/A — no team issues consulted (isolated replicate; only entrypoint-surfaced PRs in scope).
-- **Current baseline (merged): `val_avg/mae_surf_p = 80.480`, `test_avg/mae_surf_p = 72.328`** (PR #455 DropPath on EMA(0.99)+SwiGLU baseline).
+- **Current baseline (merged): `val_avg/mae_surf_p = 72.414`, `test_avg/mae_surf_p = 63.082`** (PR #463 huber δ=0.25 on the EMA(0.99)+SwiGLU+DropPath stack — pre-DropPath measurement, post-merge stack expected at-or-better).
   - PR #282 — Huber loss (δ=1.0). val_avg = 105.999.
   - PR #361 — NaN-safe `evaluate_split` workaround. First finite test_avg = 97.957.
-  - PR #363 — EMA(decay 0.999). val_avg = 101.350 (−4.39% vs huber).
-  - PR #391 — LLaMA-style SwiGLU FFN. val_avg = 88.227 (−12.95% vs EMA). Param-matched.
-  - PR #426 — EMA decay 0.999 → 0.99. val_avg = 83.223 (−5.67% vs SwiGLU). Mechanism: cold-start bias correction.
-  - PR #455 — Stochastic depth (DropPath linear schedule 0→0.1, last block kept). **val_avg = 80.480 (−3.30% vs EMA(0.99)), test_avg = 72.328 (−2.13%).** Param-identical. Mechanism: generic regularization (uniform offset on val curve), NOT OOD-targeted as predicted.
+  - PR #363 — EMA(decay 0.999). val_avg = 101.350.
+  - PR #391 — LLaMA-style SwiGLU FFN. val_avg = 88.227. Param-matched.
+  - PR #426 — EMA decay 0.999 → 0.99. val_avg = 83.223.
+  - PR #455 — Stochastic depth (DropPath 0→0.1). val_avg = 80.480. Param-identical.
+  - PR #463 — Huber δ=1.0 → 0.25. **val_avg = 72.414 (−13.0% vs EMA(0.99)+SwiGLU; −10.0% vs DropPath baseline). test_avg = 63.082 (−14.6%, all 4 splits finite).** All 4 val splits improved 10–18%. Cruise canary gained MOST (−17.88%). Largest single-PR delta of the entire research programme.
 
 ## Current research focus
 
 Compound improvements on the round-1 huber baseline. Recover the paper-facing test metric. Test orthogonal levers (capacity, slice count, optimizer recipe, surface weighting, regularization, EMA, channel weighting) so round-3 can stack winners.
 
-## Outcomes to date (23 reviewed)
+## Outcomes to date (26 reviewed)
 
-| Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Δ vs 80.480 (current) | Decision |
+| Rank | PR | Student | Slug | best `val_avg/mae_surf_p` | Δ vs 72.414 (current) | Decision |
 |------|----|---------|------|--------------------------:|----------------------:|----------|
-| 1 | #455 | thorfinn | stochastic-depth-01 | **80.480** | (current baseline, MERGED) | MERGED |
-| 2 | #426 | askeladd | ema-decay-099 | 83.223 | +3.4% | MERGED (intermediate) |
-| 3 | #456 | edward | layerscale-1e4 | 83.544 | +3.8% | CLOSED (gammas didn't reach specialization regime in 13 ep) |
-| 4 | #391 | thorfinn | swiglu-mlp | 88.227 | +9.6% | MERGED (SwiGLU baseline) |
-| 5 | #439 | fern | huber-delta-05 | 87.265 | +8.4% | CLOSED (δ profile diminishing returns) |
-| 6 | #454 | askeladd | ema-bias-correction (0.999) | 84.645 | +5.2% | CLOSED |
-| 7 | #440 | tanjiro | silu-everywhere | 88.128 | +9.5% | CLOSED |
-| 8 | #424 | thorfinn | swiglu-head | 90.298 | +12.2% | CLOSED |
-| 9 | #425 | frieren | input-noise-001 | 89.984 | +11.8% | CLOSED |
-| 10 | #450 | alphonse | rmsnorm-everywhere (nn.RMSNorm) | 91.342 | +13.5% | CLOSED (per-step quality won; nn.RMSNorm wall-clock penalty cost 1 epoch) |
+| 1 | #463 | fern | huber-delta-025 | **72.414** | (current baseline, MERGED) | MERGED — biggest single-PR delta |
+| 2 | #455 | thorfinn | stochastic-depth-01 | 80.480 | +11.1% | MERGED (DropPath intermediate) |
+| 3 | #460 | frieren | per-sample-feature-noise | 81.437 | +12.5% | CLOSED (diagnosis confirmed; doesn't beat current) |
+| 4 | #426 | askeladd | ema-decay-099 | 83.223 | +14.9% | MERGED (intermediate) |
+| 5 | #456 | edward | layerscale-1e4 | 83.544 | +15.4% | CLOSED |
+| 6 | #454 | askeladd | ema-bias-correction (0.999) | 84.645 | +16.9% | CLOSED |
+| 7 | #439 | fern | huber-delta-05 | 87.265 | +20.5% | CLOSED |
+| 8 | #440 | tanjiro | silu-everywhere | 88.128 | +21.7% | CLOSED |
+| 9 | #391 | thorfinn | swiglu-mlp | 88.227 | +21.8% | MERGED (SwiGLU baseline) |
+| 10 | #459 | tanjiro | swiglu-preprocess | 88.299 | +21.9% | CLOSED (SwiGLU at input prunes physical signal) |
+| 11 | #425 | frieren | input-noise-001 | 89.984 | +24.2% | CLOSED |
+| 12 | #424 | thorfinn | swiglu-head | 90.298 | +24.7% | CLOSED |
+| 13 | #450 | alphonse | rmsnorm-everywhere (nn.RMSNorm) | 91.342 | +26.1% | CLOSED (per-step won; ATen wall-clock penalty) |
 | 11 | #363 | thorfinn | ema-eval | 101.350 | +25.9% | MERGED (intermediate) |
 | 12 | #282 | edward | huber-loss | 105.999 | +31.7% | MERGED (huber baseline) |
 | 12b | #361 | edward | nan-safe-eval | 108.103 (rerun) | n/a — RNG | MERGED (metric-pipeline fix) |
@@ -55,27 +59,27 @@ Per-experiment numbers in `research/EXPERIMENT_METRICS.jsonl`. Per-experiment JS
 
 
 
-## Round-5 in flight (5 students)
+## Round-5 in flight (2 students)
 
-Branched on EMA(0.99)+SwiGLU baseline (83.223), pre-DropPath. Will be ranked against the now-current DropPath baseline (80.480) when they return.
+Branched on EMA(0.99)+SwiGLU baseline (83.223) pre-DropPath and pre-fern. Will be ranked against the now-current huber(δ=0.25) baseline (72.414) when they return.
 
 | PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
 |----|---------|------|-------|-------------------------------------|
-| #459 | tanjiro | swiglu-preprocess | replace preprocess MLP with `SwiGLU_MLP` | −0.5% to −2% |
-| #460 | frieren | per-sample-feature-noise | semantics-aware noise (per-node dims 0–12, per-sample broadcast dims 13–23) | −1% to −3% |
-| #463 | fern | huber-delta-025 | huber `δ → 0.25` on previous baseline | −0.5% to −1.5% |
 | #479 | askeladd | bias-corrected-ema-099 | EMA `decay_target=0.99, warmup_steps=10` | −0.5% to −1.5% |
 | #480 | nezuko | adamw-betas-095 | AdamW betas (0.9, 0.999) → (0.9, 0.95) | −0.5% to −1.5% |
 
-## Round-6 just-assigned (3 students)
+## Round-6 in flight (6 students)
 
-Built on the merged DropPath+EMA(0.99)+SwiGLU baseline (80.480). All single-axis tests; all are student-suggested follow-ups from their own diagnostic write-ups.
+Built on the merged DropPath+EMA(0.99)+SwiGLU baseline (80.480) pre-fern; will be ranked against the now-current huber(δ=0.25) baseline (72.414) when they return.
 
 | PR | Student | Slug | Lever | Predicted Δ on `val_avg/mae_surf_p` |
 |----|---------|------|-------|-------------------------------------|
-| #486 | thorfinn | drop-path-02 | Push `drop_path_max` 0.1 → 0.2; effective per-block drop rates `[0, 0.05, 0.1, 0.15, 0.0]` — ~2× more stochasticity. DeiT/Swin uses 0.2-0.4 routinely. | −0.5% to −2% |
-| #487 | edward | layerscale-1e2 | LayerScale init 1e-4 → 1e-2 (100× shorter trip from init to specialization regime); on top of merged DropPath. His own follow-up #2. | −0.5% to −1.5% |
-| #488 | alphonse | rmsnorm-manual | RMSNorm with **manual nn.Module** instead of nn.RMSNorm (which had a 16.9% wall-clock penalty as ATen op). Tests whether per-step quality lead carries to the headline. His own follow-up #1. | −0.5% to −1.5% |
+| #486 | thorfinn | drop-path-02 | Push `drop_path_max` 0.1 → 0.2 | −0.5% to −2% |
+| #487 | edward | layerscale-1e2 | LayerScale init 1e-4 → 1e-2 | −0.5% to −1.5% |
+| #488 | alphonse | rmsnorm-manual | RMSNorm with manual nn.Module (fix wall-clock penalty) | −0.5% to −1.5% |
+| #493 | fern | huber-delta-01 | Push δ profile further: 0.25 → 0.1 (saturation test) | −1% to −5% |
+| #494 | tanjiro | weight-decay-3e-4 | AdamW weight_decay 1e-4 → 3e-4 (orthogonal regularization knob) | −0.5% to −1.5% |
+| #495 | frieren | feature-noise-002 | Sweep semantics-aware feature noise std 0.01 → 0.02 (her own follow-up #1) | −0.5% to −2% |
 
 ## Disconfirmed directions (do not retry on this branch)
 
@@ -88,7 +92,8 @@ Built on the merged DropPath+EMA(0.99)+SwiGLU baseline (80.480). All single-axis
 - **SwiGLU output head (`mlp2`)** — PR #424 (+2.35% vs SwiGLU FFN). Head has no residual buffer (unlike per-block FFN which sits inside `+fx`), so SwiGLU's gating non-linearity acts unbuffered and the 3× param count amplifies non-generalizing directions. Direction not dead at residual-SwiGLU-head, but that's a future fix.
 - **Fourier embedding of `log(Re)` standalone** — PRs #386 (bands=8, +23.7% vs SwiGLU) and #418 (bands=4, +16.6% vs SwiGLU). Real signal on `val_single_in_dist` (smooth low-freq Re-trend), but doesn't beat the SwiGLU lever. FiLM-style Re conditioning is a queued alternative.
 - **Activation choice (GELU vs SiLU)** — PR #440 (null result, −0.11% on val within noise; +1.06% on test). Below the noise floor at this scale (0.67M params, 1499 train samples). Don't sweep activation again unless model size doubles.
-- **Per-node Gaussian feature noise (uniform across all 24 dims)** — PR #425 (+1.76% vs SwiGLU; +8.1% vs current). Falsified because dims 13–23 are per-sample-constant globals (Re, AoA, NACA, gap, stagger) — per-node noise destroyed (geometry, flow conditions) → field map. **Semantics-aware version queued as PR #460.**
+- **Per-node Gaussian feature noise (uniform across all 24 dims)** — PR #425 (+1.76% vs SwiGLU; +8.1% vs current). Falsified because dims 13–23 are per-sample-constant globals (Re, AoA, NACA, gap, stagger) — per-node noise destroyed (geometry, flow conditions) → field map. **Semantics-aware version PR #460 confirmed the diagnosis (−2.15% vs EMA(0.99)+SwiGLU).**
+- **SwiGLU preprocess MLP (LLaMA-everywhere at the input projection)** — PR #459 (+6.1% vs EMA(0.99)+SwiGLU; +9.7% vs DropPath baseline). Per-block SwiGLU gates AFTER attention has mixed the residual stream (prunes redundancy in already-mixed representations); input-projection SwiGLU gates BEFORE mixing, so it prunes raw physical input channels (Re, AoA, NACA, etc.) that the network needs later. **Gating at the input prunes signal, not redundancy.** Trajectory matched baseline through ep5 then diverged as fine-detail learning kicked in. Don't extend SwiGLU to the input projection.
 
 ## Test-metric NaN (cross-PR issue)
 
