@@ -446,6 +446,11 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
+# SWA: average of weights over the last fraction of completed epochs.
+swa_state: dict[str, torch.Tensor] | None = None
+swa_count = 0
+SWA_START_EPOCH = 14   # 0-indexed; "epoch 15 of 1-indexed". 19-epoch budget → 5 averages.
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 t_max = cfg.cosine_t_max if cfg.cosine_t_max is not None else MAX_EPOCHS
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=t_max, eta_min=0.0)
@@ -563,6 +568,26 @@ for epoch in range(MAX_EPOCHS):
         log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
     wandb.log(log_metrics)
 
+    # SWA: only start averaging in the last quarter of completed epochs.
+    # We don't know the realised epoch count in advance (timeout-bound), so use
+    # epoch SWA_START_EPOCH onward as a conservative trigger — this matches the
+    # typical 19-epoch realised budget at advisor HEAD, averaging the last ~5-6.
+    if epoch >= SWA_START_EPOCH:
+        if swa_state is None:
+            swa_state = {k: v.detach().clone().to(device)
+                         for k, v in model.state_dict().items()}
+            swa_count = 1
+        else:
+            sd = model.state_dict()
+            for k in swa_state:
+                if swa_state[k].dtype.is_floating_point:
+                    swa_state[k].mul_(swa_count / (swa_count + 1)).add_(
+                        sd[k].detach(), alpha=1.0 / (swa_count + 1)
+                    )
+                else:
+                    swa_state[k].copy_(sd[k].detach())
+            swa_count += 1
+
     tag = ""
     if avg_surf_p < best_avg_surf_p:
         best_avg_surf_p = avg_surf_p
@@ -590,6 +615,54 @@ peak_gb_full = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_availabl
 print(f"\nTraining done in {total_time:.1f} min, peak VRAM {peak_gb_full:.1f} GB")
 wandb.summary["peak_vram_gb"] = peak_gb_full
 wandb.summary["realised_epochs"] = completed_epochs
+
+# --- Pre-SWA test eval on best-by-val (so we report both checkpoints) ---
+# Only runs when SWA was triggered, so the existing test eval below ends up on SWA.
+if best_metrics and swa_state is not None and swa_count >= 2 and not cfg.skip_test:
+    print("\nPre-SWA: evaluating best-by-val checkpoint on held-out test splits...")
+    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    model.eval()
+    _bestval_test_datasets = load_test_data(cfg.splits_dir, debug=cfg.debug)
+    _bestval_test_loaders = {
+        name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
+        for name, ds in _bestval_test_datasets.items()
+    }
+    bestval_test_metrics = {
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        for name, loader in _bestval_test_loaders.items()
+    }
+    bestval_test_avg = aggregate_splits(bestval_test_metrics)
+    print(f"  TEST (best-by-val) avg_surf_p={bestval_test_avg['avg/mae_surf_p']:.4f}")
+    for split_name, m in bestval_test_metrics.items():
+        for k, v in m.items():
+            wandb.summary[f"bestval/test/{split_name}/{k}"] = v
+    for k, v in bestval_test_avg.items():
+        wandb.summary[f"bestval/test_{k}"] = v
+
+# --- SWA: replace model with averaged weights, re-eval val, save SWA weights ---
+if swa_state is not None and swa_count >= 2:
+    swa_first = SWA_START_EPOCH + 1                    # 1-indexed
+    swa_last = SWA_START_EPOCH + swa_count             # 1-indexed (inclusive)
+    print(f"\nSWA: averaging {swa_count} epoch checkpoints (epochs {swa_first}..{swa_last})")
+    model.load_state_dict(swa_state)
+    model.eval()
+    print("Re-evaluating val with SWA weights...")
+    swa_split_metrics = {
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        for name, loader in val_loaders.items()
+    }
+    swa_val_avg = aggregate_splits(swa_split_metrics)
+    swa_avg_surf_p = swa_val_avg["avg/mae_surf_p"]
+    print(f"SWA val_avg/mae_surf_p = {swa_avg_surf_p:.4f}")
+    wandb.summary["swa_val_avg/mae_surf_p"] = swa_avg_surf_p
+    wandb.summary["swa_count"] = swa_count
+    wandb.summary["swa_start_epoch"] = swa_first
+    wandb.summary["swa_end_epoch"] = swa_last
+    for name, m in swa_split_metrics.items():
+        for k, v in m.items():
+            wandb.summary[f"swa/{name}/{k}"] = v
+    # Save SWA weights so the existing test+artifact block runs on SWA.
+    torch.save(model.state_dict(), model_path)
 
 # --- Test evaluation + artifact upload ---
 if best_metrics:
