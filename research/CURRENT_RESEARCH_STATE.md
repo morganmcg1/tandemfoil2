@@ -1,7 +1,7 @@
 # SENPAI Research State
 
-- 2026-04-28 02:15 — round 1 mostly settled on `icml-appendix-willow-pai2d-r2`,
-  round 2 building momentum
+- 2026-04-28 02:30 — round 1 mostly settled on `icml-appendix-willow-pai2d-r2`,
+  round 2 building momentum, scoring bug fix landed
 - **Baseline updated:** PR #330 (frieren, Huber β=1) merged on top of
   PR #328. Current best `val_avg/mae_surf_p = 115.61` (W&B run
   `uip4q05z`, best epoch 11/50). −13.4 % over the prior baseline,
@@ -23,6 +23,9 @@
   - **PR #332** (nezuko, surf_weight=25): 133.19 on slice_num=64
     (now 15.2 % WORSE than the new baseline). Bar is even higher
     after the Huber merge.
+- **Bug fix landed:** PR #367 (fern, scoring NaN `nan_to_num`)
+  merged. `test_avg/mae_surf_p` is finite on the next run of every
+  PR — paper-facing metric finally works.
 - **Noise floor: ±10 % at single seed.** Thorfinn (PR #337) ran the same
   config twice (kon60q79=153.19, nphltrz9=139.39) — a ~10 % spread
   purely from random seed / data-order randomness. **This is a
@@ -54,32 +57,31 @@
 | 332 | nezuko    | surf_weight 10 → 25 (sweep)| sent back → rebase + on-baseline + multi-seed | sweep done: surf-15=137.42, **surf-25=133.19**, surf-40=142.59 (clean interior optimum at 25; absolute level inside ±10 % noise of baseline) |
 | 335 | tanjiro   | warmup + cos, peak 1e-3    | sent back → rebase + on-baseline re-run | sweep done on slice-64+MSE: best **(b) 113.96** at lr=1e-3, T_max=15 (a tied at 115.15, c@135.24 likely seed-unlucky); needs on-baseline confirmation |
 | 337 | thorfinn  | BS 4→8, lr 7e-4            | sent back → rebase + BS=16/lr=1e-3 (+ multi-seed if budget) | 139.39 / 153.19 (2-seed mean 146.29; ~9.5 % worse than baseline on mean) |
-| 367 | fern      | bug fix: cruise-NaN scoring| sent back → rebase + Huber-aware reapplication | patch verified (test_avg: NaN → 125.05) but on pre-Huber base |
+| 367 | fern      | bug fix: cruise-NaN scoring| **MERGED ★** | rebased + verified on Huber baseline: test_avg: NaN → 117.59, cruise_p: NaN → 96.92 |
+| 452 | fern      | round 2: push slice_num to 192/256 | NEW assignment (status:wip) | n/a |
 
-PRs surfaced for advisor review this cycle: **#326**. Action:
-**#326 closed** — three FFN variants (mlp_ratio ∈ {2, 3, 4}) across
-two architectures all show smaller-is-better at the 30-min cap.
-Best variant 21 % worse than merged Huber baseline. Student
-explicitly recommended closing in their own follow-up #1.
-**Reassigned edward to round-2 axis #429 (per-channel loss
-weighting on pressure)** — zero compute cost, direct push on the
-metric we're ranked on (which only counts surface pressure but the
-loss weights all 3 channels equally), stacks naturally with all
-in-flight work. Sweep design: `p_weight ∈ {2, 3, 5}` with a
-`_channel_weighted_huber` helper.
+PRs surfaced for advisor review this cycle: **#367**. Action:
+**#367 MERGED ★** as the third merged PR in this round (after
+#328 + #330). Bug fix is clean: 2-line `nan_to_num` insertions on
+`accumulate_batch` and `evaluate_split`. Verification on run
+`fitecuaq` (slice-128 + Huber baseline + bug fix) yielded
+`test_avg/mae_surf_p = 117.59` (was NaN), `test_geom_camber_cruise/
+mae_surf_p = 96.92` (was NaN) — paper-facing primary metric is
+finite for the first time on this branch. Three independent root-
+cause confirmations across the round (edward, askeladd, fern) all
+converged on the same fix.
+**Reassigned fern to round-2 axis #452 (push slice_num to 192/256)**
+— natural continuation of fern's merged round-1 winner. Same
+mechanism (slice bottleneck on N=242K cruise meshes), just pushed
+further. Cost geometry favorable (slice² stays small relative to
+O(N · slice_num) einsums).
 
-Bonus: edward's control re-run at identical config (136.54 vs
-published baseline 133.55 = 3-point spread) is the second
-independent corroboration of the ±10 % single-seed noise floor
-(after thorfinn #337). Two convergent measurements now anchor the
-methodology.
-
-Earlier cycle actions (recap): #328 + #330 merged (slice-128 +
-Huber β=1, current baseline 115.61); #311 + #332 + #335 + #337
-sent back; #367 sent back for Huber-aware reapplication; #325 +
-#326 closed (depth-8 + FFN axes exhausted at 30-min cap); #399 +
-#415 + #429 assigned (askeladd bf16, frieren asinh-on-pressure,
-edward p_weight — three round-2 axes in flight).
+Earlier cycle actions (recap): #328 + #330 + #367 merged (slice-128 +
+Huber β=1 + scoring fix; current val baseline 115.61, test baseline
+117.59); #311 + #332 + #335 + #337 sent back; #325 + #326 closed
+(depth-8 + FFN axes exhausted at 30-min cap); #399 + #415 + #429 +
+#452 assigned (askeladd bf16, frieren asinh-on-pressure, edward
+p_weight, fern slice-push — four round-2 axes in flight).
 
 ## What we learned this cycle (and last)
 
@@ -132,8 +134,8 @@ edward p_weight — three round-2 axes in flight).
 
 ## Round 2 candidate stacks (post round-1 settle, will compound on the new baseline)
 
-- **Push `slice_num` further.** 128 worked; 192 or 256 likely also
-  helps. Slice² scaling stays small relative to O(N · slice_num).
+- **Push `slice_num` further.** ASSIGNED as PR #452 to fern.
+  Continuation of the merged #328 win. Sweep slice_num ∈ {192, 256}.
 - **Stack slice-128 + width.** alphonse's width axis on top of the
   merged slice-128 baseline — directly tests the
   arch-stack hypothesis. Pending alphonse's width-160 result first.

@@ -13,6 +13,73 @@ in the pressure channel; `accumulate_batch` masks the sample but
 fern** with the 2-line `nan_to_num` patch — once it lands, every
 round-1 run can recompute a finite `test_avg/mae_surf_p` from W&B.
 
+## 2026-04-28 02:30 — PR #367 (rebased): Bug fix — guard against non-finite values ★ MERGED ★
+
+- Branch: `willowpai2d2-fern/scoring-nan-fix` (rebased onto post-Huber
+  advisor; clean two-line `nan_to_num` insertions on
+  `data/scoring.py::accumulate_batch` (wrapping `err`) and
+  `train.py::evaluate_split` (wrapping the merged Huber
+  `F.smooth_l1_loss(...)`). Training loop left untouched per the
+  send-back instruction.
+- Verification run: `fitecuaq` on slice-128 + Huber baseline.
+
+### Verification (run `fitecuaq`, post-rebase)
+
+| metric | pre-fix | post-fix |
+|-|-:|-:|
+| `test_geom_camber_cruise/mae_surf_p` | NaN ⚠ | **96.92** |
+| `test_geom_camber_cruise/loss` | inf ⚠ | **0.978** |
+| `test_avg/mae_surf_p` | NaN ⚠ | **117.59** |
+
+Per-split test on the verification run (slice-128 + Huber + bug fix):
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|-|-:|-:|-:|
+| test_single_in_dist | 136.54 | 2.22 | 0.77 |
+| test_geom_camber_rc | 118.04 | 2.30 | 0.94 |
+| test_geom_camber_cruise | **96.92 ★** | 1.83 | 0.53 |
+| test_re_rand | 118.84 | 2.02 | 0.75 |
+| **test_avg** | **117.59 ★** | 2.09 | 0.75 |
+
+The verification run's val_avg = 126.64 is 9.5 % worse than the
+merged Huber baseline (115.61) — inside the ±10 % single-seed
+noise floor (corroborated by thorfinn #337 + edward #326 control
+re-runs at identical config). Same training command, same monotone
+descent through epoch 11/50, just different RNG state.
+
+### Conclusion
+
+**Merged.** Paper-facing `test_avg/mae_surf_p` is now finite for
+the first time on this branch. Every PR currently in flight will
+report finite test metrics on their next runs automatically.
+
+### Three independent confirmations of the same bug
+
+This is the third independent diagnosis of the masking-NaN-defeats-the-mask
+root cause across this round (edward #326 bug-report, askeladd #325
+bug-report, fern #367 patch + verification). All three converged on
+equivalent fixes (`nan_to_num` on `err` before the masked sum, or
+equivalently `torch.where` to zero-fill non-finite positions before
+the multiply). Strong cross-validation that the patch is correct.
+
+### Reassignment
+
+Fern → PR #452 (round-2 axis: push slice_num further to 192/256).
+Continuation of fern's merged round-1 winner. Detailed below.
+
+## 2026-04-28 02:30 — PR #452 (NEW, fern round 2): push slice_num further (192 / 256)
+
+- Reassigning fern after merging #367.
+- Hypothesis: with N up to 242K mesh nodes and the slice bottleneck
+  shown to bind at 64 (round 1, fern's #328 merged win), pushing
+  beyond 128 may continue to help. Cost geometry favorable: O(N ·
+  slice_num) einsums dominate; slice² attention stays small.
+  Predicted 2–5 % reduction over the merged 115.61 baseline.
+- Sweep: slice_num=192 primary; slice_num=256 if budget allows.
+  Decision rule: ≤105 single-seed (or ≤110 multi-seed mean) merges;
+  borderline → multi-seed; > 115 → close (slice-128 is the ceiling).
+- Status: assigned, draft, status:wip.
+
 ## 2026-04-28 02:15 — PR #326 (iter 2): FFN ratio mlp_ratio={2, 3} on slice-128 ❌ CLOSED
 
 - Branch: `willowpai2d2-edward/mlp-ratio-4` (deleted on close).
