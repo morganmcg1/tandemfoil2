@@ -2,59 +2,64 @@
 
 ## Current measured baseline
 
-PR #578 (charliepai2d3-thorfinn) — **L1 + 12-freq spatial FF +
-EMA(0.997) + matched cosine + lr=7.5e-4 + grad clipping (max_norm=1.0)
-+ decoupled head LR (2× on `mlp2` + `ln_3`)**. Run on pre-#572 advisor
-(no aux log-p, no max_norm=5.0 yet — see caveat).
+PR #657 (charliepai2d3-fern) — **L1 + 12-freq spatial FF + EMA(0.997)
++ matched cosine + lr=7.5e-4 + grad clipping (max_norm=5.0) + decoupled
+head LR (2× on `mlp2` + `ln_3`) + aux log-p loss (weight=0.25) + layer
+scale (CaiT-style, γ_init=1e-4 on attn + mlp residual branches)**.
 
 | Metric | Value |
 |--------|-------|
-| `val_avg/mae_surf_p` (best, epoch 14/14) | **75.78** |
-| `test_avg/mae_surf_p` (NaN-safe, best-val checkpoint) | **66.27** |
-| Per-epoch wallclock | ~132 s |
-| Peak GPU memory (batch=4) | 42.51 GB |
-| Wallclock total | ~32 min |
+| `val_avg/mae_surf_p` (best, epoch 13/14 — timeout) | **67.29** |
+| `test_avg/mae_surf_p` (NaN-safe, best-val checkpoint) | **58.39** |
+| Per-epoch wallclock | ~142 s |
+| Peak GPU memory (batch=4) | 47.50 GB |
+| Wallclock total | ~31 min (timeout-bounded; ep 14 not run) |
 
-Per-split val (best epoch 14):
+Per-split val (best epoch 13):
 
 | split | mae_surf_p |
 |-------|-----------|
-| val_single_in_dist     | 84.61 |
-| val_geom_camber_rc     | 85.83 |
-| val_geom_camber_cruise | 58.09 |
-| val_re_rand            | 74.58 |
-| **val_avg**            | **75.78** |
+| val_single_in_dist     | 73.91 |
+| val_geom_camber_rc     | 79.82 |
+| val_geom_camber_cruise | 49.58 |
+| val_re_rand            | 65.84 |
+| **val_avg**            | **67.29** |
 
 Per-split test (NaN-safe, best-val checkpoint):
 
 | split | mae_surf_p |
 |-------|-----------|
-| test_single_in_dist     | 72.57 |
-| test_geom_camber_rc     | 75.92 |
-| test_geom_camber_cruise | 49.56 |
-| test_re_rand            | 67.02 |
-| **test_avg**            | **66.27** |
+| test_single_in_dist     | 63.55 |
+| test_geom_camber_rc     | 70.41 |
+| test_geom_camber_cruise | 41.32 |
+| test_re_rand            | 58.29 |
+| **test_avg**            | **58.39** |
 
-**Critical caveat**: PR #578 was branched off pre-#572 advisor (no
-aux log-p, max_norm=1.0). The post-merge advisor includes:
-- aux log-p (weight=0.25) from PR #572
-- max_norm=5.0 from PR #596
-- decoupled head LR (2x) from this PR (#578)
+**Critical caveat**: PR #657 was timeout-bounded at epoch 13/14
+(per-epoch wallclock rose from ~132 s to ~142 s with layer scale).
+Best-val at epoch 13 was still actively descending (epoch 12 → 13:
+−1.57%); a full 14-epoch run (or 16 with looser timeout) could
+improve further. Round-5 should consider raising `SENPAI_TIMEOUT_MINUTES`
+or trimming eval frequency.
 
-The actual joint config (all stacked) is **untested** but expected
-to land below 75.78 since PR #572 (+aux log-p) and PR #596
-(+max_norm=5.0) both individually showed val improvements on their
-assigned baselines.
+**Mechanistic insight from PR #657**: layer scale is a per-channel
+learnable scalar `γ` (init 1e-4) on each residual branch. Diagnostic
+from final-epoch γ values:
+- `γ_mlp` grew to ~3.0e-2 (avg, all blocks); `γ_attn` grew to ~8.0e-3
+  (avg). MLP branches dominate residual contribution by ~3×.
+- Block 1 has the highest γ in both branches; block 2 deliberately
+  downweights its attention branch (γ_attn=4.7e-3). The model
+  expresses real per-block heterogeneity that PR #578 had partially
+  captured via the head's 2× LR.
+- Layer scale composes orthogonally with PR #578's decoupled head LR
+  — γ parameters live in `backbone_params` group at LR=7.5e-4, while
+  head's mlp2+ln_3 stay at 1.5e-3.
 
-**Mechanistic insight from PR #578**: the largest gains were on
-`val_single_in_dist` (−7.18%) and `val_geom_camber_rc` (−5.45%),
-opposite of the original prediction (which expected OOD-camber-cruise
-to gain most). The askeladd #489 finding ("OOD-camber wants higher
-LR") was incomplete — the actual story is **the head fits in-dist
-patterns slowly under the conservative 7.5e-4 backbone LR**, and
-giving the head 2× lets it converge in matched-cosine epochs without
-dragging the backbone faster. `val_geom_camber_cruise` mildly
-regressed (+3.44%) but remains the smallest-magnitude split.
+The win is uniform across all 4 splits (val: −7% to −15%; test: −7%
+to −17%), with the largest improvement on `val_geom_camber_cruise`
+(−14.6%) — the same split that PR #578 had mildly regressed (+3.44%).
+**Layer scale recovers and extends those gains.** This is the largest
+single-knob delta seen since PR #280 (L1 surface loss, −24.1% on val).
 
 **Recommended reproduce command**:
 
@@ -63,9 +68,11 @@ cd target/
 python train.py --epochs 14 --lr 7.5e-4 --experiment_name baseline_ref
 ```
 
-The post-merge advisor `train.py` has L1 + 12-freq FF + EMA(0.999) +
-grad clipping baked in. The two CLI flags supply matched cosine
-(`--epochs 14`) and the bumped peak LR (`lr=7.5e-4`).
+The post-merge advisor `train.py` bakes in L1 + 12-freq FF +
+EMA(0.997) + grad clipping max_norm=5.0 + aux log-p (weight=0.25) +
+decoupled head LR (2×) + **layer scale (γ_init=1e-4)**. The two CLI
+flags supply matched cosine (`--epochs 14`) and the bumped peak LR
+(`lr=7.5e-4`).
 
 ## Round 3 progress
 
@@ -83,11 +90,12 @@ grad clipping baked in. The two CLI flags supply matched cosine
 | PR #534 |  78.60 |  67.77 | + EMA_DECAY=0.997 (schedule × EMA fix) | −0.25% / −1.97% |
 | PR #572 |  77.78 |  67.71 | + aux log-p loss (weight=0.25) | −1.06% / −0.09% |
 | PR #596 |  77.01 |  67.78 | + max_norm=5.0 (loosened clip) | −0.99% / +0.10% |
-| **PR #578 (current)** | **75.78** | **66.27** | **+ decoupled head LR (2×)** | **−1.60% / −2.23%** |
+| PR #578 |  75.78 |  66.27 | + decoupled head LR (2×) | −1.60% / −2.23% |
+| **PR #657 (current)** | **67.29** | **58.39** | **+ layer scale (γ_init=1e-4)** | **−11.21% / −11.89%** |
 
-**Cumulative round-3 improvement: −43.9% on val, −46.2% on test.**
+**Cumulative round-3 improvement: −50.2% on val, −52.6% on test.**
 
-## Round-3 proven levers (cumulative — seven stacked levers)
+## Round-3 proven levers (cumulative — twelve stacked levers)
 
 1. **L1 surface loss** (PR #280)
 2. **8→12-freq spatial Fourier features** (PR #400 → PR #506)
@@ -100,8 +108,9 @@ grad clipping baked in. The two CLI flags supply matched cosine
 9. **Auxiliary log-pressure loss (weight=0.25)** (PR #572) — per-split tradeoff lever.
 10. **Loosened gradient clipping (max_norm=5.0)** (PR #596) — clip × LR joint optimum shift.
 11. **Decoupled head LR (2× on `mlp2`+`ln_3`)** (PR #578) — head adapts faster than backbone.
+12. **Layer scale (γ_init=1e-4)** (PR #657) — per-channel learnable residual gating; largest single-knob delta of round 3 since L1 surface loss.
 
-The advisor `train.py` bakes in 1, 2, 4, 6, 7, 8, 9, 10, 11 by
+The advisor `train.py` bakes in 1, 2, 4, 6, 7, 8, 9, 10, 11, 12 by
 default. Levers 3 and 5 are CLI flags (`--epochs 14 --lr 7.5e-4`).
 
 ## Compose pattern map (round-3 finding, comprehensive)
@@ -111,6 +120,8 @@ Round-3 PRs revealed multiple compose patterns:
 | compose pattern | with FF/EMA | examples | result |
 |----------------|---------|----------|:--|
 | Distributional / trajectory averaging | additive | matched cosine + lr=7.5e-4 (#461), grad clipping (#462), FF freq bump (#506) | merged |
+| Per-channel residual gating (deterministic) | clean orthogonal | layer scale γ_init=1e-4 (#657) | merged |
+| Per-parameter-group LR | additive | decoupled head LR (#578) | merged |
 | Magnitude-based regulariser, small dose | additive | wd=5e-4 standalone (#469) | partial — saturates on full stack (#500) |
 | Magnitude-based regulariser, large dose | destructive on rc-camber | wd=1e-3 (#437), beta2=0.95 (#446) | closed |
 | Loss-shape regulariser | overlaps with EMA | L1-volume × EMA (#492) | closed |
@@ -119,16 +130,21 @@ Round-3 PRs revealed multiple compose patterns:
 | Schedule × averaging interference | OOD regression | matched cosine × EMA (#476) | closed |
 | Saturated regularisation overlap | no marginal value | wd=5e-4 × full stack (#500) | closed |
 | Input encoding on already-rich features | net-flat / regression | log(Re) FF (#432) | closed |
+| Magnitude-dependent compressor (Pareto trade) | partial improvement | head wd 5e-4 (#656), max_norm=10 (#616), eta_min=5e-5 (#617), slice_num=32 (#642), ext-head 2× (#639), anneal-noise (#607) | all closed |
+| Activation swap | regression | SiLU (#663, +12.4% on stack) | closed |
+| BF16 precision (any guard) | regression on stack | full BF16 (#587), narrow guard (#606), broad guard (#626), attn-FP32 (#655) | all closed |
 
 **Round-5 assignment heuristic**:
-- Prefer levers that are **distributional**, **trajectory-averaging**,
-  or **mechanistically different** from existing regularisers.
-- Magnitude-based regularisers (wd, beta2) compose with FF only at
-  small doses; large doses interfere on rc-camber.
-- Schedule × averaging × magnitude-regulariser interactions are
-  non-trivial; the canonical 6-lever-with-EMA stack hides
-  significant interference (matched cosine × EMA per PR #476).
-- Per-split signal is load-bearing for compose decisions.
+- Prefer **deterministic per-channel gating** levers (layer scale was
+  the breakthrough; SwiGLU, gated MLP variants are mechanism-aligned).
+- Prefer **per-parameter-group** levers that compose with existing
+  decoupled head LR (#578).
+- Per-split signal remains load-bearing for compose decisions; the
+  Pareto-frontier pattern (cruise wins, in-dist + rc-camber lose) is
+  resolved at the merged stack level by layer scale.
+- **Avoid** activation swaps, BF16 attempts, and magnitude-dependent
+  regularisers — all 12+ closed PRs in these categories show the
+  round-3 stack is now at a balanced state.
 
 ## Reference (unmodified Transolver) configuration
 
@@ -143,10 +159,11 @@ Round-3 PRs revealed multiple compose patterns:
 | `fun_dim` | `X_DIM - 2 + 4 * NUM_FOURIER_FREQS` = 22 + 48 = **70** (FF=12) |
 | Optimizer | AdamW(lr=5e-4, weight_decay=1e-4) |
 | Schedule | CosineAnnealingLR(T_max=epochs) |
-| Loss | `vol_loss + 10.0 * surf_loss`, **MSE volume + L1 surface** |
+| Loss | `vol_loss + 10.0 * surf_loss + 0.25 * log_p_aux`, **MSE volume + L1 surface + aux log-p** |
 | Input encoding | raw 24-d `x` + 12-frequency Fourier of `(x, z)` |
 | Weight averaging | **EMA(decay=0.997)** at every step, swap for val/test eval |
 | Gradient clipping | **`clip_grad_norm_(max_norm=5.0)`** before optimiser step |
+| Layer scale | **γ_init=1e-4 on each residual branch (attn + mlp)** |
 | Sampler | `WeightedRandomSampler` (balanced over 3 train domains) |
 | Batch size | 4 |
 | Default epochs | **50** (override with `--epochs 14` for matched cosine) |
