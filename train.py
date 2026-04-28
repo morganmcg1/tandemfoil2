@@ -236,6 +236,20 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Drop entire samples whose ground truth has any non-finite value.
+            # data/scoring documents this per-sample skip but its masked sum
+            # propagates `nan*0 = nan` / `inf*0 = nan`, corrupting the metric
+            # (e.g. test_geom_camber_cruise/000020.pt has -inf in volume p).
+            y_finite_per_sample = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)
+            if not y_finite_per_sample.all():
+                keep = y_finite_per_sample
+                if not keep.any():
+                    continue
+                x = x[keep]
+                y = y[keep]
+                is_surface = is_surface[keep]
+                mask = mask[keep]
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
@@ -380,6 +394,9 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    slice_num: int = 64
+    n_hidden: int = 128
+    n_head: int = 4
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -414,14 +431,20 @@ val_loaders = {
     for name, ds in val_splits.items()
 }
 
+if cfg.n_hidden % cfg.n_head != 0:
+    raise ValueError(
+        f"n_hidden ({cfg.n_hidden}) must be divisible by n_head ({cfg.n_head}) "
+        f"so dim_head = n_hidden // n_head is integer."
+    )
+
 model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=128,
+    n_hidden=cfg.n_hidden,
     n_layers=5,
-    n_head=4,
-    slice_num=64,
+    n_head=cfg.n_head,
+    slice_num=cfg.slice_num,
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
