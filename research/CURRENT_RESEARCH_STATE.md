@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-28 ~21:55 (round 2 mid-flight; FiLM #816 sent back for rebase)
+- **As of:** 2026-04-28 ~22:10 (round 2 mid-flight; FiLM #816 + Fourier PE #820 both sent back for rebase — both strong winners)
 - **Most recent human direction:** none yet for this track
 - **Branch:** `icml-appendix-willow-pai2e-r4`
 - **Current best:** `val_avg/mae_surf_p = 99.226` (PR #754, L1 + ch=[1,1,3] merged)
@@ -32,16 +32,19 @@ weight signal.
 
 | PR | Student | Round-2 idea | Predicted impact | Status |
 |---|---|---|---|---|
-| #816 | alphonse | FiLM conditioning of LayerNorm (#2) | -5 to -12% | rebase + rerun (96.61 on L1-only; -2.6% on new baseline if it holds) |
+| #816 | alphonse | FiLM conditioning of LayerNorm (#2) | -5 to -12% | **rebase + rerun (96.61 on L1-only → -2.6% on new baseline expected)** |
+| #820 | thorfinn | Fourier PE on (x, z) coords (#3) | -4 to -10% | **rebase + rerun (91.15 on L1-only → -8.2% on new baseline expected — strongest single signal)** |
 | #851 | tanjiro | Huber loss δ=1.0 (#5) — replaces #818 SGDR (closed) | -3 to -8% | wip |
 | #819 | frieren | Relative L2 loss (per-sample norm) (#1) | -5 to -15% | wip |
-| #820 | thorfinn | Fourier PE on (x, z) coords (#3) | -4 to -10% | wip |
-| #829 | fern | Continuation: p-channel weight 5× / 10× sweep | -1 to -3% (5×); 10× could regress | wip |
+| #861 | fern | Volume subsampling (15%) (#7) — replaces #829 (closed) | -3 to -8% | wip |
 
 **Closed in round 2:**
 - #818 tanjiro SGDR T_0=10 → +6% worse, structural budget mismatch
   (restart fires at natural convergence epoch). Schedule lever family
   exhausted at this budget — two negatives in a row (#758 + #818).
+- #829 fern p-channel 5× → +3.6% worse. Optimum in (3×, 5×). Channel-
+  weight scalar lever saturated at 3×; split-aware weighting would be
+  the next step but is a larger redesign.
 
 ## Round 2 hypotheses ranked and ready
 
@@ -76,19 +79,21 @@ Best two-by-two interactions to test once round 1 winners are merged:
 - PCA output reparameterization × any winning loss
 - Surface oversampling × winning surf_weight from round 1
 
-## Open uncertainties (from researcher-agent + #754 outcome)
+## Open uncertainties (from researcher-agent + round-2 outcomes)
 
 - Which lever contributes more: relative L2 loss vs. FiLM conditioning. They
   likely compound but the interaction is unknown.
-- **Where the channel-weight optimum sits.** 1× → 3× was −2.65%. The shape
-  of the curve at 5×/10× tells us whether the optimum is in [3, 5] or
-  beyond — fern's #829 sweep answers that.
+- **Channel-weight optimum is settled** at 3× — fern's sweep showed 5× is
+  past the inflection. Split-level heterogeneity (camber_rc still gains
+  from more p-weight, others hurt) suggests split-aware weighting as a
+  future round-3 redesign, not a round-2 lever.
 - Whether a PCA basis fit on training data transfers to OOD camber splits
   (`val_geom_camber_rc`, `val_geom_camber_cruise`).
-- Whether surface-node oversampling interacts adversely with the existing
-  balanced-domain sampler.
-- Whether the velocity MAE regression at higher p-weight (1.43 → 1.79 surf
-  Ux at 3×) eventually starts hurting pressure too via gradient coupling.
+- Whether 15% volume subsampling preserves enough Re signal for
+  `val_re_rand` (where the volume Re field is the regime signal).
+- Whether the FiLM `val_geom_camber_rc` regression (+9.9% on alphonse's
+  L1-only run) is from spurious foil-2 conditioning in raceCar samples,
+  and whether it persists on the rebased baseline.
 
 ## Notes / constraints
 

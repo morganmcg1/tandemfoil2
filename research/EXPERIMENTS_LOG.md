@@ -1,5 +1,83 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-28 22:05 — PR #820: Fourier PE on (x, z) coordinates — **SENT BACK (rebase)**
+
+- Branch: `willowpai2e4-thorfinn/fourier-pe-coords`
+- Student: willowpai2e4-thorfinn
+- W&B run: [`rixnmfuk`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/rixnmfuk)
+
+**Hypothesis.** Pre-encode `(x, z)` with multi-scale sin/cos features
+(K=4 frequency bands → 16 extra input dims) to overcome MLP spectral bias
+on sharp boundary-layer pressure peaks. Predicted −4 to −10%.
+
+**Results (best epoch 13/14, 30.8 min wall, on L1-only baseline)**
+
+| Metric | This run (`rixnmfuk`) | L1 baseline (`8lyryo5g`) | Current baseline (#754) |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | **91.15** | 101.93 | 99.23 |
+| 3-split test mean | **88.63** | 100.83 | 99.34 |
+| `val_single_in_dist` | 109.24 | 133.25 | 116.68 |
+| `val_geom_camber_rc` | 99.09 | 109.26 | 113.94 |
+| `val_geom_camber_cruise` | 67.35 | 76.13 | 75.02 |
+| `val_re_rand` | 88.92 | 89.07 | 91.28 |
+
+vs L1-only: **−10.6%** (top of predicted band)
+vs current merged baseline (#754): **−8.2%** (after rebase, if it holds — strongest single result on the branch)
+
+**Diagnostics confirmed mechanism.** Coord range `|x_norm|`max=7.32,
+p99=4.69 — plenty of dynamic range for high-frequency bands (highest band
+≈ 25 rad). Param count delta +4096 weights matches predicted ~+5K. Most
+striking: `val_re_rand` improved only −0.2% — clean negative control,
+since Re randomization doesn't introduce new spatial frequencies, Fourier
+PE shouldn't help there, and it doesn't. Spectral-bias story holds.
+
+Sharp-feature splits gained the most:
+- `val_single_in_dist` (raceCar single, ground-effect peaks): −18.0%
+- `val_geom_camber_cruise` (sharp tandem-cruise gradients): −11.5%
+- `val_geom_camber_rc` (tandem raceCar): −9.3%
+
+Val curve still bending at epoch 13 — the 30-min timeout cut training
+short of the asymptotic minimum.
+
+**Decision.** Sent back for **rebase**. Branch was created from L1
+baseline #752 before the channel-weight #754 merged. PR is
+`CONFLICTING`. Asked thorfinn to rebase, resolve the train.py conflict
+(keep both: x_in Fourier-encoded path AND channel_weights multiplication
+on abs_err — orthogonal: input encoding vs loss formulation), and
+re-run on top of L1+ch=[1,1,3]. Expected after rebase: val_avg comfortably
+beats 99.23 by ~−7 to −10%. **Will merge as soon as the rebased run
+lands** — this is the strongest single signal so far.
+
+## 2026-04-28 22:00 — PR #829: p-channel weight sweep 5× — **CLOSED**
+
+- Branch: `willowpai2e4-fern/p-channel-weight-sweep` (deleted)
+- Student: willowpai2e4-fern
+- W&B run: [`ampb9xcb`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/ampb9xcb)
+
+**Hypothesis.** 5× → 10× continuation of the merged 3× channel-weight
+to map the curve. Decision rule: skip 10× if 5× regresses past 99.23.
+
+**Results (best epoch 13, 30 min wall)**
+
+| Run | `val_avg/mae_surf_p` | Δ vs 3× baseline |
+|---|---:|---:|
+| 3× (merged, `m46h5g4s`) | 99.226 | — |
+| **5× (this PR, `ampb9xcb`)** | **102.782** | **+3.6% worse** |
+| 10× | (skipped per decision rule) | — |
+
+Per-split: only `val_geom_camber_rc` (highest baseline error) improved
+(−7.5%). Cruise +16.3% worse, single_in_dist +7.5% worse, re_rand +1.9%
+worse. Surface Uy regressed on all 4 splits (+7.1% avg) — velocity
+starvation pattern, mild. Surface Ux *improved* on val_avg (−7.9%) —
+unexpected nuance not predicted.
+
+**Decision.** Closed as planned by the decision rule. Optimum is in
+(3×, 5×); 5× is past the inflection. The split-level heterogeneity
+(camber_rc still wants more p-weight; cruise / single / re_rand want
+less) suggests **split-aware loss weighting** as a future direction
+(student's #3 follow-up suggestion). Reassigned fern to volume
+subsampling (PR #861) — a mechanistically different lever.
+
 ## 2026-04-28 21:55 — PR #816: FiLM-condition Transolver blocks on global scalars — **SENT BACK (rebase)**
 
 - Branch: `willowpai2e4-alphonse/film-conditioning`
