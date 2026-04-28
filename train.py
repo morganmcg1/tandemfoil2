@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import time
@@ -45,6 +46,19 @@ from data import (
     load_test_data,
     pad_collate,
 )
+
+NUM_FOURIER_FREQS = 8
+
+
+def fourier_pos_features(pos: torch.Tensor, num_freqs: int = NUM_FOURIER_FREQS) -> torch.Tensor:
+    """Multi-frequency sin/cos encoding of normalised (x, z) coordinates.
+
+    pos: [B, N, 2] in normalised input space (already (x - x_mean) / x_std).
+    out: [B, N, 4*num_freqs]  (2 coords * num_freqs * sin+cos).
+    """
+    freqs = (2.0 ** torch.arange(num_freqs, dtype=pos.dtype, device=pos.device)) * math.pi
+    angles = pos.unsqueeze(-1) * freqs  # [B, N, 2, num_freqs]
+    return torch.cat([torch.sin(angles), torch.cos(angles)], dim=-1).reshape(*pos.shape[:-1], 4 * num_freqs)
 
 # ---------------------------------------------------------------------------
 # Transolver model
@@ -237,6 +251,8 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             mask = mask.to(device, non_blocking=True)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            ff = fourier_pos_features(x_norm[..., :2])
+            x_norm = torch.cat([x_norm, ff], dim=-1)
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
@@ -390,7 +406,7 @@ val_loaders = {
 
 model_config = dict(
     space_dim=2,
-    fun_dim=X_DIM - 2,
+    fun_dim=X_DIM - 2 + 4 * NUM_FOURIER_FREQS,
     out_dim=3,
     n_hidden=128,
     n_layers=5,
@@ -444,6 +460,8 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
+        ff = fourier_pos_features(x_norm[..., :2])
+        x_norm = torch.cat([x_norm, ff], dim=-1)
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
         err = pred - y_norm
