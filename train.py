@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -422,7 +423,7 @@ model_config = dict(
     n_layers=5,
     n_head=4,
     slice_num=64,
-    mlp_ratio=2,
+    mlp_ratio=4,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
@@ -462,6 +463,37 @@ model_dir.mkdir(parents=True, exist_ok=True)
 model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
+
+# Local JSONL metrics — one record per training event (epoch / final / test).
+# Path is also reproducibly addressable via cfg.wandb_name / cfg.agent.
+jsonl_tag = cfg.wandb_name or cfg.agent or run.id
+jsonl_tag = "".join(c if c.isalnum() or c in "-_." else "_" for c in jsonl_tag)
+metrics_dir = Path("metrics")
+metrics_dir.mkdir(parents=True, exist_ok=True)
+metrics_path = metrics_dir / f"{jsonl_tag}.jsonl"
+print(f"Local metrics JSONL: {metrics_path}")
+
+
+def _write_jsonl(record: dict) -> None:
+    with open(metrics_path, "a") as f:
+        f.write(json.dumps(record, default=float) + "\n")
+
+
+_write_jsonl({
+    "event": "config",
+    "run_id": run.id,
+    "agent": cfg.agent,
+    "wandb_name": cfg.wandb_name,
+    "model_config": model_config,
+    "lr": cfg.lr,
+    "weight_decay": cfg.weight_decay,
+    "batch_size": cfg.batch_size,
+    "surf_weight": cfg.surf_weight,
+    "epochs_configured": MAX_EPOCHS,
+    "timeout_min": MAX_TIMEOUT_MIN,
+    "n_params": n_params,
+    "git_commit": _git_commit_short(),
+})
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
@@ -535,8 +567,9 @@ for epoch in range(MAX_EPOCHS):
         log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
     wandb.log(log_metrics)
 
+    is_best = avg_surf_p < best_avg_surf_p
     tag = ""
-    if avg_surf_p < best_avg_surf_p:
+    if is_best:
         best_avg_surf_p = avg_surf_p
         best_metrics = {
             "epoch": epoch + 1,
@@ -555,6 +588,21 @@ for epoch in range(MAX_EPOCHS):
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
 
+    _write_jsonl({
+        "event": "epoch",
+        "epoch": epoch + 1,
+        "epoch_time_s": dt,
+        "peak_gb": peak_gb,
+        "lr": scheduler.get_last_lr()[0],
+        "train/vol_loss": epoch_vol,
+        "train/surf_loss": epoch_surf,
+        "val_avg/mae_surf_p": avg_surf_p,
+        "val/loss": val_loss_mean,
+        "is_best": is_best,
+        "per_split": {name: dict(m) for name, m in split_metrics.items()},
+        "val_avg": dict(val_avg),
+    })
+
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
 
@@ -565,6 +613,14 @@ if best_metrics:
         "best_epoch": best_metrics["epoch"],
         "best_val_avg/mae_surf_p": best_avg_surf_p,
         "total_train_minutes": total_time,
+    })
+
+    _write_jsonl({
+        "event": "best",
+        "best_epoch": best_metrics["epoch"],
+        "best_val_avg/mae_surf_p": best_avg_surf_p,
+        "total_train_minutes": total_time,
+        "per_split": {name: dict(m) for name, m in best_metrics["per_split"].items()},
     })
 
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
@@ -596,6 +652,12 @@ if best_metrics:
             test_log[f"test_{k}"] = v
         wandb.log(test_log)
         wandb.summary.update(test_log)
+
+        _write_jsonl({
+            "event": "test",
+            "test_avg": dict(test_avg),
+            "per_split": {name: dict(m) for name, m in test_metrics.items()},
+        })
 
     save_model_artifact(
         run=run,
