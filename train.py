@@ -427,7 +427,7 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-ema_decay = 0.999
+ema_decay = 0.99
 ema_model = copy.deepcopy(model).eval()
 for p in ema_model.parameters():
     p.requires_grad_(False)
