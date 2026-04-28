@@ -387,6 +387,8 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    loss: str = "l1"  # "l1" or "huber" (SmoothL1)
+    smooth_l1_beta: float = 0.3  # transition point for SmoothL1 (normalized units)
 
 
 cfg = sp.parse(Config)
@@ -504,12 +506,15 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        abs_err = (pred - y_norm).abs()
+        if cfg.loss == "huber":
+            elem_loss = F.smooth_l1_loss(pred, y_norm, reduction="none", beta=cfg.smooth_l1_beta)
+        else:
+            elem_loss = (pred - y_norm).abs()
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (abs_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (abs_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        vol_loss = (elem_loss * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+        surf_loss = (elem_loss * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
