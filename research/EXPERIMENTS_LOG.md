@@ -1,5 +1,68 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 01:10 — PR #285 (CLOSED): surf_weight 10 → 30 (MSE)
+- Branch: `charliepai2d3-edward/surf-weight-30` (deleted on close)
+- Hypothesis: tripling the surface loss weight pushes more gradient
+  signal to surface nodes; predicted −2% to −8%.
+- Config: MSE surface loss (pre-L1 advisor), `surf_weight=30`, all
+  other knobs at defaults.
+
+### Headline (best-val checkpoint, epoch 14)
+
+| Metric | This PR (canonical run) | vs L1 baseline (PR #280, 102.64) | vs MSE peer baseline (PR #306, 135.20) |
+|--------|------------------------:|---------------------------------:|---------------------------------------:|
+| `val_avg/mae_surf_p`  | 125.53 | +22% | −7.2% |
+| `test_avg/mae_surf_p` | 112.81 | +15.4% | — |
+| Peak GPU memory       | 42.1 GB | — | — |
+
+### Cross-seed variance — the central observation
+
+| seed | val_avg/mae_surf_p (surf_weight=30) | val_avg/mae_surf_p (surf_weight=10) |
+|------|------------------------------------:|------------------------------------:|
+| 1 | 144.82 (NaN'd test, val still valid) | 127.95 |
+| 2 | 125.53 (canonical) | 131.40 |
+| **mean ± span** | **135.18 ± 9.6** | **129.67 ± 1.7** |
+
+The surf_weight=30 effect (~3% directional) is **smaller than the
+within-condition seed spread (~13%)**. Cannot separate signal from noise
+at single replicates.
+
+### Decision
+
+**Closed.** Above-threshold regression vs current L1 baseline. The more
+useful round-4 takeaway is that this is the **third PR in a row** where
+the predicted effect is comparable to or smaller than measured cross-seed
+variance (preceded by frieren #292 slice_num=128 with ~4% noise floor,
+fern #288 warmup+lr=1e-3 with std 5.7). Round-3 is operating well below
+the seed-noise floor for everything except the L1 surface loss change
+(which moved val by 24%, well clear of any seed noise observed).
+
+### Round-4 implications
+
+- **Seed pinning is round-4 infra priority #1.** With current single-run
+  comparisons we cannot distinguish ~3% effects from noise. `torch.manual_seed`
+  + matching numpy/python seeds at the top of `train.py`, and a documented
+  per-PR seed in the experiment metadata.
+- **Replicate budget**: at 30 min/run × 8 students/round, doing 3 seeds per
+  hypothesis halves the round throughput. This is a real tradeoff — but
+  a 3% effect at 1 seed is uninterpretable, and a clean 3% at 3 seeds is
+  worth a round-4 win.
+- **`test_geom_camber_cruise` sample 020 is a CFD divergence** (761
+  non-finite p values). Worth a heads-up to whoever owns the dataset
+  preprocessing; not actionable from the advisor branch.
+
+### Bug-fix attribution
+
+Edward independently rediscovered the `0 * NaN = NaN` scoring bug fixed
+on advisor branch as commit `2eb5c7f`. Three students (thorfinn, alphonse,
+edward) converged on the same fix in the same shape — solid validation
+of the merged patch.
+
+Per-epoch metrics not centralised in `EXPERIMENT_METRICS.jsonl` —
+branch deleted on close.
+
+---
+
 ## 2026-04-28 01:05 — PR #390 (CLOSED): L1 baseline + bs=8 + sqrt LR (compose test)
 - Branch: `charliepai2d3-thorfinn/l1-bs8-sqrt-lr` (deleted on close)
 - Hypothesis: composing the two merged round-3 winners (PR #280 L1 +

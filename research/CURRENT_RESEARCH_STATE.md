@@ -49,15 +49,18 @@ the reported MAE metric is the highest-impact change found so far.
      noise-reduction effect** — the two round-3 winners do not compose.
      bs=8 + L1 lever is closed; bs=12 is out of reach without throughput
      infra (linear VRAM extrapolation gives ~126 GB > 96 GB cap).
+   - PR #285 — edward (surf_weight=30 with MSE): val 125.53 (+22% vs
+     L1 baseline). Within-condition seed spread (~13%) dwarfs directional
+     effect (~3%); third PR in a row where seed noise > predicted effect.
+     Independently rediscovered the `0*NaN=NaN` scoring bug — three-student
+     convergence validates the merged fix.
 
-**In-flight (2 on pre-L1 + 6 on L1 baseline) — still useful for round-4
+**In-flight (1 on pre-L1 + 7 on L1 baseline) — still useful for round-4
 composition even if they don't outright beat 102.64:**
 
 1. **Loss formulation (pre-L1 baseline)**
    - PR #302 — tanjiro: Huber (smooth-L1, δ=1.0) surface loss — informs
      whether the L2-near-zero region helps over pure L1.
-   - PR #285 — edward: `surf_weight` 10 → 30 (with MSE) — informs how much
-     of the L1 win is just heavier surface gradient signal.
 2. **L1-baseline composition (post-#280 merge, with L1 already in
    `train.py`):**
    - PR #383 — alphonse: L1 + 3× pressure channel weight in surface loss
@@ -68,8 +71,9 @@ composition even if they don't outright beat 102.64:**
    - PR #396 — fern: L1 + EMA of weights for evaluation *(weight averaging)*
    - PR #400 — nezuko: L1 + 8-freq Fourier positional features for `(x, z)`
      *(input encoding compose test)*
-   - PR (thorfinn, new): L1 + AdamW(beta2=0.95) — modern transformer
+   - PR #419 — thorfinn: L1 + AdamW(beta2=0.95) — modern transformer
      optimiser config for noisier gradients *(optimiser)*
+   - PR (edward, new): L1 + gradient clipping `max_norm=1.0` *(stability)*
 
 ## Round-4 throughput infra (new debt from PR #390 close)
 
@@ -79,6 +83,24 @@ Any future "bigger batch" or "bigger model" lever requires activation
 checkpointing or BF16 first. Round 4 should treat this as a deliberate
 infra PR if other levers stall — likely BF16 autocast (1.5-2× speedup) is
 the cleanest first move; activation checkpointing is the second tier.
+
+## Round-4 seed-pinning infra (new debt from PR #285 close)
+
+Three round-3 PRs (PR #292 frieren slice_num=128, PR #288 fern warmup+1e-3,
+PR #285 edward surf_weight=30) had cross-seed variance comparable to or
+larger than their predicted effect size: 4-13% noise floor vs 2-8% effect.
+Only the L1 surface loss change cleared this floor decisively (24% vs ~5%
+noise). Round-4 priority: add `torch.manual_seed(...)` + numpy/python seed
+pinning at the top of `train.py`, parameterised so each PR can record a
+seed in its experiment metadata. Without this, all "moderate-effect"
+hypotheses are uninterpretable at single replicates.
+
+## Data forensics flag
+
+`test_geom_camber_cruise` sample 020 has 761 non-finite p values — likely
+a CFD divergence (turbulent reattachment, mesh degeneracy, etc.). Worth
+flagging to whoever owns dataset preprocessing; not actionable from the
+advisor branch.
 
 **Caveats:**
 
