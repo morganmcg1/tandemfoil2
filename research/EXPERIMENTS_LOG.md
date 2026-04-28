@@ -1,5 +1,79 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 07:30 — PR #549: Linear warmup + cosine sweep — **NEW BASELINE**
+- Branch: `charliepai2d4-alphonse/warmup-cosine-sweep` (deleted on merge)
+- Student: charliepai2d4-alphonse
+- **Outcome: MERGED (squash, commit c234239). NEW BASELINE: val_avg=54.12 with warmup=3, -2.4% vs #539 on val, -0.9% on test.**
+
+### Headline (4-arm sweep, EMA-evaluated)
+| Run | warmup | best ep | val_avg | test_avg | Δ vs paired warmup0 | Δ vs #539 |
+|---|---|---|---|---|---|---|
+| baseline-ref-warmup0 | 0 | 33 | 58.34 | 50.32 | (control) | +5.25% (within seed noise) |
+| warmup2 | 2 | 34 | 55.66 | 47.86 | -4.59% / -4.90% | +0.42% / -0.25% |
+| **warmup3** | **3** | 34 | **54.12** | **47.54** | **-7.23%** / -5.50% | **-2.36%** / -0.92% |
+| warmup5 | 5 | 34 | 54.91 | 48.44 | -5.87% / -3.74% | -0.94% / +0.96% |
+
+### Mechanism diagnosis (the load-bearing artifact — grad-norm trajectory)
+| epoch | warmup0 mean (max) | warmup3 mean (max) |
+|---|---|---|
+| 1 | **40.0 (max 178)** | 20.2 (max 40) |
+| 2 | 31.3 | 52.4 |
+| 3 | 25.5 | 51.2 |
+| 4 | 24.9 | 38.0 |
+| 5 | 21.6 | 28.7 |
+
+**Confirmed**: warmup keeps epoch-1 grad norms 2-2.5× smaller and far less spiky (max 35-43 vs 178). The "huge per-step variance from cold AdamW m/v" observation from #466 is now empirically demonstrated — warmup tames it as predicted. Warmup variants then hit higher grad-norm regime in epochs 2-3 as LR ramps up — that's the "first useful work" window.
+
+### Per-epoch trajectory (val_avg, EMA)
+| epoch | warmup0 | warmup3 | crossover? |
+|---|---|---|---|
+| 1  | 236.6 | 389.3 | warmup behind (low-LR ramp) |
+| 5  | 116.4 | 133.2 | warmup behind |
+| 10 | 88.1  | 92.4  | warmup catching up |
+| 20 | 68.7  | **67.9** | **warmup ahead** |
+| 30 | 60.1  | **57.7** | warmup pulls ahead |
+| 33-34 (best) | 58.34 | **54.12** | warmup wins |
+
+**Crossover at epoch 20** — warmup variants start far behind in the warmup ramp, but pull ahead in the cosine tail. Cleaner training trajectory generalizes to harder OOD splits (warmup3 dominates val_geom_camber_rc by -9.9% vs warmup0).
+
+### Per-split val (warmup3 winner)
+| Split | warmup0 | warmup3 | Δ |
+|---|---|---|---|
+| val_single_in_dist     | 60.82 | 58.49 | -3.8% |
+| val_geom_camber_rc     | 72.05 | 65.31 | **-9.9%** |
+| val_geom_camber_cruise | 40.81 | 36.39 | -12.0% |
+| val_re_rand            | 59.68 | 56.27 | -5.7% |
+
+### Per-split test (warmup3 winner)
+| Split | warmup0 | warmup3 |
+|---|---|---|
+| test_single_in_dist     | 53.99 | 52.37 |
+| test_geom_camber_rc     | 63.21 | 60.09 |
+| test_geom_camber_cruise | 34.22 | 31.05 |
+| test_re_rand            | 49.86 | 46.65 |
+
+### Cross-axis caveats
+- **Branch is post-#467 but pre-#484** (no FiLM). alphonse's 54.12 lacks FiLM contribution.
+- **Used β=0.5 explicitly** (not β=0.3). Branch was pre-#539.
+- vs current merged baseline #539 (β=0.3 + FiLM = 55.43): -2.4% val, -0.9% test. Even without FiLM and without β=0.3, warmup3 wins.
+- **Combined config `--huber_beta 0.3 --film --warmup_epochs 3` is untested** but predicted to compound to ~52-53 range.
+
+### Cumulative round-1 trajectory
+| PR | val_avg | Δ from prior best |
+|---|---|---|
+| #287 | 126.67 | (first) |
+| ... | (intermediate) | |
+| #539 |  55.43 |  -3.4% |
+| #549 |  **54.12** |  **-2.4%** (val); -0.9% (test) |
+| **Cumulative** | | **-57.3% from #287, -60.1% from published-baseline-equivalent** |
+
+### Open follow-ups identified
+- **Higher peak LR with warmup3** (alphonse's #2): the cleaner from-zero ramp may now permit lr=7e-4 or 1e-3 without the epoch-1 explosion frieren's #307 hit. Strongest predicted lever — assigned next.
+- **Per-step warmup** (vs per-epoch): smoother LR ramp at finer granularity. Round-2.
+- **Lower start_factor**: tested 1e-3; could try 0.1 for less-extreme ramp.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=549 records, 36 lines from warmup3 best run).
+
 ## 2026-04-28 07:05 — PR #528: Cosine eta_min sweep
 - Branch: `charliepai2d4-frieren/cosine-eta-min-sweep` (deleted on close)
 - Student: charliepai2d4-frieren

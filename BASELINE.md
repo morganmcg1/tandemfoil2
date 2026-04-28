@@ -1,42 +1,44 @@
 # Baseline — icml-appendix-charlie-pai2d-r4
 
-**Status:** Round 1 in flight. PR #539 (Huber β=0.3 + Config default flip to 0.5) is the current best.
+**Status:** Round 1 in flight. PR #549 (linear warmup=3 epochs on top of merged stack) is the current best.
 
 > **Round-1 budget caveat (revised after #401).** `SENPAI_TIMEOUT_MINUTES=30` is still binding, but with `torch.compile(mode=reduce-overhead, dynamic=True)` on top of bf16, per-epoch wall-clock dropped from 141 s → 55 s. **Round 1 is now a ~33-epoch ranking exercise** — the cosine schedule actually enters its decay tail and EMA has time to do its job. The bottleneck has shifted from "compute-bound" to "architecture and effective EMA horizon". Future architectural-scale PRs (wider, deeper) that previously couldn't fit the budget should be revisited.
 
-## Current best (PR #539, askeladd, merged 2026-04-28)
+## Current best (PR #549, alphonse, merged 2026-04-28)
 
 | Metric | Value | Epoch |
 |---|---|---|
-| `val_avg/mae_surf_p`  | **55.43** (EMA-evaluated) | 34 / 50 (timeout-capped) |
-| `test_avg/mae_surf_p` | **47.98** (EMA-evaluated) | best ckpt = epoch 34 |
-| Per-epoch wall-clock | 53-55 s (median) | matches #484 |
+| `val_avg/mae_surf_p`  | **54.12** (EMA-evaluated) | 34 / 50 (timeout-capped) |
+| `test_avg/mae_surf_p` | **47.54** (EMA-evaluated) | best ckpt = epoch 34 |
+| Per-epoch wall-clock | 53-55 s (median) | matches #539 |
 | Total epochs in budget | 34 | |
 | Peak GPU memory | 24.2 GB | unchanged |
 
-> **Reproduce status — there are TWO meaningful configurations:**
-> 1. `python train.py --epochs 50` (no flags) reproduces β=0.5 + FiLM (Config default) ≈ 57.37 val (matches #484, since #539 only flipped default to 0.5 not 0.3).
-> 2. `python train.py --epochs 50 --huber_beta 0.3 --film` reproduces the **best-known** config = 55.43 val (this PR's headline number, but askeladd's run was without FiLM; combined β=0.3+FiLM expected to compound a bit further).
+> **Reproduce status — three meaningful configurations now:**
+> 1. `python train.py --epochs 50` (no flags) reproduces the Config default: β=0.5, no FiLM, no warmup ≈ 58.34 val (alphonse's paired warmup0 ref).
+> 2. `python train.py --epochs 50 --huber_beta 0.3 --film` reproduces best β=0.3 + FiLM ≈ 55.43 val (#539's headline).
+> 3. `python train.py --epochs 50 --huber_beta 0.5 --warmup_epochs 3` reproduces this PR's best ≈ 54.12 val (no FiLM in alphonse's measurement).
+> **Predicted combined config** `--huber_beta 0.3 --film --warmup_epochs 3`: ~52-53 val (untested). Future PRs should include all three flags to test the full compound.
 
-### Per-split val (epoch 34, EMA weights, β=0.3, no FiLM in askeladd's measurement)
+### Per-split val (epoch 34, EMA weights, warmup3 + β=0.5, no FiLM in alphonse's measurement)
 | Split | mae_surf_p |
 |---|---|
-| val_single_in_dist     |  57.83 |
-| val_geom_camber_rc     |  70.08 |
-| val_geom_camber_cruise |  36.67 |
-| val_re_rand            |  57.16 |
+| val_single_in_dist     |  58.49 |
+| val_geom_camber_rc     |  65.31 |
+| val_geom_camber_cruise |  36.39 |
+| val_re_rand            |  56.27 |
 
-### Per-split test (best EMA checkpoint, post-fix scoring, β=0.3)
+### Per-split test (best EMA checkpoint, post-fix scoring, warmup3 + β=0.5)
 | Split | mae_surf_p |
 |---|---|
-| test_single_in_dist     |  51.08 |
-| test_geom_camber_rc     |  62.30 |
-| test_geom_camber_cruise |  31.21 |
-| test_re_rand            |  47.31 |
+| test_single_in_dist     |  52.37 |
+| test_geom_camber_rc     |  60.09 |
+| test_geom_camber_cruise |  31.05 |
+| test_re_rand            |  46.65 |
 
 ## Configuration of the current best
 
-Reproduce: `cd target && python train.py --epochs 50 --huber_beta 0.5 --film` (Fourier + Huber β=0.5 + surface-conditional FiLM + EMA + clip + bf16 + compile + cudagraph_skip all stacked).
+Reproduce: `cd target && python train.py --epochs 50 --huber_beta 0.5 --warmup_epochs 3` (Fourier + Huber β=0.5 + linear warmup=3 + EMA + clip + bf16 + compile + cudagraph_skip — but no FiLM since alphonse's branch was pre-#484). Untested config that should beat this number: `--huber_beta 0.3 --film --warmup_epochs 3` (combining all three winning levers).
 
 | Setting | Value |
 |---|---|
@@ -47,7 +49,8 @@ Reproduce: `cd target && python train.py --epochs 50 --huber_beta 0.5 --film` (F
 | Epochs (configured / completed) | 50 / ~33 (capped by `SENPAI_TIMEOUT_MINUTES=30`) |
 | Model | Transolver: n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2 |
 | **Input encoding** | **8-frequency Fourier features** on (x, z) position (from #368). fun_dim 22 → 54, +8K params on preprocess. |
-| **Loss** | **SmoothL1 / Huber β=0.3** in normalized space (from #539; Config default flipped to 0.5 by #539, so `python train.py` reproduces β=0.5; **best-known is β=0.3 — pass `--huber_beta 0.3` to reproduce**) |
+| **Loss** | SmoothL1 / Huber β=0.5 in this PR's measurement (β=0.3 is independently best from #539 but wasn't combined here; combined config untested) |
+| **Schedule** | **3-epoch linear warmup** (start_factor=1e-3, end_factor=1.0) → cosine over remaining epochs (from #549). Cosine endpoint preserved by `T_max = cosine_epochs - warmup_epochs`. |
 | **EMA** | decay=0.995; eval + test use EMA weights |
 | **Grad clip** | max_norm=10.0 |
 | **bf16 autocast** | wraps `model({"x":x_in})["preds"]` in train + eval (from #372) |
@@ -57,7 +60,7 @@ Reproduce: `cd target && python train.py --epochs 50 --huber_beta 0.5 --film` (F
 | **`--cosine_epochs` flag** | plumbed at default 50 (from #466), available for explicit override |
 | Eval | MAE in physical space, primary metric `val_avg/mae_surf_p` |
 
-JSONL: `models/model-beta0.3-20260428-052101/metrics.jsonl`
+JSONL: `models/model-charliepai2d4-alphonse-warmup3-20260428-060819/metrics.jsonl`
 
 > **Known compile flakiness:** 2 of 4 launches at this stack crashed before completion, both with CUDAGraph private-pool blowup at variable mesh sizes. Setting `torch._inductor.config.triton.cudagraph_skip_dynamic_graphs = True` would eliminate this failure mode at ~10-15% throughput cost. Queued as a small infrastructure PR.
 
@@ -81,4 +84,5 @@ PR #287 (surf_weight=25) was merged independently before #308 landed; the artifa
 | #467 (merged) | 57.50 | Huber β=0.5 + cudagraph_skip robustness flag. -8.65% val, -7.71% test vs #368 — strongest single-knob win since compile. |
 | #466 (merged, infrastructure) | 64.20 (reproduce-of-#289) | --cosine_epochs flag plumbed at default 50 (no behavior change; available for explicit override). cudagraph_skip auto-deduped. |
 | #484 (merged) | 57.37 | Surface-conditional FiLM. +512 params. -0.23% val / -3.06% test vs #467. Paired -3.05% val, all 8 splits gain. |
-| #539 (merged) | **55.43** | **Huber β finer sweep — β=0.3 wins** by -6.2% val / -4.9% test (paired). All 4 val + 4 test splits gain at β=0.3. Per-channel mechanism: cruise pressure -11.6% (heavy-tailed residuals benefit most from L1-leaning shape). 5-pt monotone β grid {0.3, 0.5, 0.7, 1.0, 2.0} — no interior optimum. **Config default flipped from 1.0 to 0.5** (verified). vs current merged baseline #484: -3.4% val, -2.0% test. **Note**: askeladd's run was pre-#484 (no FiLM); β=0.3+FiLM combined expected to compound to ~54-55 range. Reproduce best: `--huber_beta 0.3 --film`. |
+| #539 (merged) | 55.43 | Huber β=0.3 wins by -6.2% paired val. 5-pt monotone β grid {0.3-2.0} — no interior optimum. Config default flipped 1.0→0.5. |
+| #549 (merged) | **54.12** | **Linear warmup=3 epochs** (start_factor=1e-3 → 1.0, then cosine to existing endpoint). Mechanism: epoch-1 grad norms 2-2.5× smaller (max 35-43 vs 178), AdamW m/v init properly. Crossover at ep 20: warmup arms start behind, pull ahead in cosine tail. Sweet spot at warmup=3 (warmup=2 too short, warmup=5 over-spends). Paired -7.23% vs warmup=0; vs #539: -2.4% val, -0.9% test. **Note**: alphonse's run was pre-#484 (no FiLM) and β=0.5 (not 0.3); combined `warmup3 + β=0.3 + FiLM` predicted ~52-53 range, untested. |
