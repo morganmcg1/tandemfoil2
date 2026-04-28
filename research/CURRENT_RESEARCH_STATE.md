@@ -35,12 +35,13 @@
 | #751 | Dropout + stoch-depth | v1 sent back (halve reg + rebase) | 138.81 |
 | #750 | LR warmup + cosine | v2 winner, rebase pending | 111.12 |
 | #756 | Fourier Re-encoding | v2 winner, rebase pending | 120.22 |
+| #847 | Huber delta sweep (0.5, 2.0) | Closed — flat in 0.5-2.0 (val=102.97); L1 dominates by 9.9% | 102.97 |
 
 ## Active WIP PRs
 
 | Student | PR | Hypothesis | Status |
 |---------|-----|-----------|--------|
-| askeladd | #847 | Huber delta=0.5 sweep | WIP (informational vs L1 win — delta→0 confirms L1 ordering) |
+| askeladd | #884 | RevIN output normalization (per-sample y norm for cross-Re amplitude invariance) | WIP |
 | thorfinn | #815 | FiLM conditioning per-block on log(Re) | WIP — v1b: −3.0% vs founding baseline (val=118.50), rebase onto L1 pending |
 | nezuko | #858 | Focal surface loss gamma=1.0 (L1 base) | WIP |
 | fern | #751 | Dropout 0.05 + drop_path 0.05 (v2, rebase pending) | WIP |
@@ -53,7 +54,7 @@
 
 - **Timeout is the binding constraint (~14 epochs at 30 min).** All assignments include `--epochs 14` so cosine annealing completes.
 - **NaN test poisoning FIXED** via PR #807. All future runs produce finite `test_avg/mae_surf_p`.
-- **L1 > Huber(1.0) > MSE on surface pressure.** PR #761 confirms pure L1 (val=92.63) beats Huber(delta=1.0) (103.13) by 10.2%. Heavy-tailed pressure residuals respond better to always-linear gradient. Huber delta=0.5 (#847 WIP) will complete the ordering.
+- **L1 dominates the loss-shape sensitivity curve.** Full ordering now confirmed (PRs #761, #814, #847): L1 (92.63) << Huber(0.5) (102.97) ≈ Huber(1.0) (103.13) < Huber(2.0) (106.78). Within Huber regime (0.5-2.0), trend is monotonic but flat (3.6% spread). The big lever is the Huber→L1 step (−9.9%). Heavy-tailed pressure residual diagnosis confirmed all the way to the L1 limit.
 - **Channel weighting stacks with Huber** (alphonse #743 v2: −3.8% on top of Huber). Pending whether it also stacks with L1 (v3 in progress).
 - **Surface dominates volume ~7:1 at L1 convergence** (tanjiro diagnosis). surf_weight=3.0 (#869) tests whether rebalancing frees volume capacity.
 - **Boundary-layer features falsified.** log(Re·|saf|) is redundant; volume-node saf mismatch hurts in-dist.
@@ -61,7 +62,7 @@
 ## Potential next research directions
 
 1. **Stack L1 + FiLM** — if thorfinn #815 beats baseline, combining with L1 is the natural round-3 stack (orthogonal mechanisms: loss-shape vs hidden-state regime modulation). High EV.
-2. **RevIN output normalization** — per-sample amplitude normalization of y before loss (targets 10× intra-split y_std variation across Re). Unassigned.
+2. **RevIN output normalization** — per-sample amplitude normalization of y before loss (targets 10× intra-split y_std variation across Re). **Assigned → askeladd PR #884.**
 3. **Re-stratified oversampling** — within-domain oversample top Re-quintile; addresses high-Re gradient under-coverage. Unassigned.
 4. **Per-channel L1 on p only, MSE on Ux/Uy** — tanjiro follow-up #2; assign after #869 result.
 5. **Budget-matched capacity scaling** — revisit 2× capacity with `--epochs 4`. Deferred from askeladd #748.

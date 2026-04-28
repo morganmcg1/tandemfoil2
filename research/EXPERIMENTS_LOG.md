@@ -25,6 +25,28 @@
 
 ---
 
+## 2026-04-28 22:40 — PR #847 (CLOSED): Huber surface loss delta sweep (delta=0.5, 2.0)
+- **Branch:** `willowpai2e3-askeladd/huber-delta-sweep`
+- **Hypothesis:** Tighten Huber delta from 1.0 to 0.5 (closer to L1) for tighter L1-like gradient on most residuals. Predicted -2 to -5%. Optional delta=2.0 sensitivity probe.
+- **Runs:** W&B `2hi8vsek` (delta=0.5) and `ua6tw32g` (delta=2.0), 14/14 epochs both, full cosine cycles.
+
+| delta | val_avg/mae_surf_p | test_avg/mae_surf_p |
+|-------|-------------------:|--------------------:|
+| 2.0 (probe) | 106.78 | 95.11 |
+| 1.0 (#814 baseline) | 103.13 | 92.99 |
+| 0.5 (this PR) | **102.97** | **91.21** |
+| **L1 (delta→0, merged #761)** | **92.63** | **82.83** |
+
+### Decision: CLOSE
+- delta=0.5 just clears the OLD beat-threshold (103.13 → 102.97 = −0.16% on val). But during the run, **PR #761 L1 merged** with val_avg=92.63 — the new baseline.
+- delta=0.5 is **+11.2% worse than current best**. Merging it would code-revert from L1 to Huber(0.5), worsening the model.
+- **Loss-shape sensitivity curve confirmed monotonic in 0.5-2.0 range** but flat (3.6% spread). The big lever was MSE→Huber (#814: −15.6%); within the Huber regime, delta tuning hits diminishing returns.
+- The Huber→L1 step (delta 0.5 → 0) accounts for −9.9%, much bigger than the entire Huber-delta sensitivity range. **Heavy-tailed pressure residual diagnosis confirmed all the way to the L1 limit.**
+- Askeladd's analysis was correct on the trend (smaller delta better) but used the *pre-rebase* tanjiro number (109.53) as the L1 reference; the merged L1 is 92.63.
+- **Closed 2026-04-28. Next assignment: #884 RevIN output normalization.**
+
+---
+
 ## 2026-04-28 22:30 — PR #815 v1b: FiLM conditioning per-block on log(Re)
 - **Branch:** `willowpai2e3-thorfinn/film-re-conditioning`
 - **Hypothesis:** Add FiLM (γ, β) conditioning on log(Re) to each Transolver block — explicit per-layer regime adaptation across Reynolds ranges. Predicted −5 to −15% with biggest gains on Re-stratified and OOD-camber splits.
