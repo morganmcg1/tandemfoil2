@@ -508,10 +508,43 @@ print(
     + (" [torch.compile default]" if cfg.compile else "")
 )
 
+attn_params = []
+mlp_params = []
+other_params = []
+named_params_source = (
+    model._orig_mod.named_parameters() if cfg.compile else model.named_parameters()
+)
+for name, p in named_params_source:
+    if not p.requires_grad:
+        continue
+    name_lower = name.lower()
+    if "attn" in name_lower:
+        attn_params.append(p)
+    elif "mlp" in name_lower or "ffn" in name_lower:
+        mlp_params.append(p)
+    else:
+        other_params.append(p)
+n_attn = sum(p.numel() for p in attn_params)
+n_mlp = sum(p.numel() for p in mlp_params)
+n_other = sum(p.numel() for p in other_params)
+print(
+    f"Optimizer parameter groups: attn={n_attn:,}, mlp={n_mlp:,}, other={n_other:,}"
+)
+assert n_attn > 0 and n_mlp > 0, (
+    f"Per-group wd split is invalid: attn={n_attn} mlp={n_mlp}. Fix keyword matching."
+)
+
+WD_ATTN = 1e-4
+WD_MLP = 1e-5
+WD_OTHER = cfg.weight_decay
+
 optimizer = torch.optim.AdamW(
-    model.parameters(),
+    [
+        {"params": attn_params, "weight_decay": WD_ATTN},
+        {"params": mlp_params, "weight_decay": WD_MLP},
+        {"params": other_params, "weight_decay": WD_OTHER},
+    ],
     lr=cfg.lr,
-    weight_decay=cfg.weight_decay,
     betas=(0.9, 0.95),
 )
 warmup_epochs = 3
