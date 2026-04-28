@@ -270,6 +270,35 @@ Round-1 reviews. Primary ranking metric: `val_avg/mae_surf_p` (lower is better).
 - Curve was strictly monotone (no spikes — smoothness prediction held), but post-EMA the baseline is also smooth, so smoothness alone wasn't a differentiator at this point in the research.
 - Decision: **CLOSE.** Hypothesis fundamentally requires equal optimizer-step count, which we don't have at fixed wall-clock. Worth revisiting if `SENPAI_TIMEOUT_MINUTES` ever doubles, or as a building block once the model converges within budget.
 
+## 2026-04-28 03:05 — PR #455: Stochastic depth (DropPath) with linear schedule 0 → 0.1 — **WINNER**
+
+- Branch: `charliepai2d2-thorfinn/stochastic-depth-01` — metrics committed.
+- Hypothesis: DropPath is a textbook regularizer that should help on the OOD-camber generalization bottleneck. Predicted −1% to −3%.
+- Result: best `val_avg/mae_surf_p = 80.480` at epoch 14. **−3.30% vs EMA(0.99) baseline (83.223), upper end of predicted range.** test_avg = 72.328 (−2.13%). Param-identical (no new learnable params).
+- Per-split val MAE for `p`: single_in_dist 92.91 (−5.98%), camber_rc 95.53 (−1.12%, near noise), cruise 57.24 (−6.41%), re_rand 76.24 (−0.08%, flat).
+- Per-split test MAE for `p`: single_in_dist 85.50 (−4.82%), camber_rc 85.57 (+1.38% — within noise), cruise 49.23 (−3.17%), re_rand 69.01 (−2.17%).
+- **Hypothesis-aligned with mechanism, not target**: DropPath worked as a generic regularizer (uniform offset on the val curve), but did **not** preferentially target the OOD-camber splits frieren had flagged as the bottleneck. `val_single_in_dist` improved 5× more than `val_geom_camber_rc` and 75× more than `val_re_rand`. This refines the bottleneck story: the camber_rc / re_rand splits are limited by something else (data coverage in the camber range, or Re-extreme sample handling) rather than implicit-ensembling regularization.
+- Effective drop probabilities are small ([0, 0.025, 0.05, 0.075, 0.0]) — at 5 layers, DropPath at 0.1 max is a mild lever. Pushing it further (0.2, 0.3) is the natural next test.
+- Decision: **MERGE.** New baseline `val_avg/mae_surf_p = 80.480`, `test_avg/mae_surf_p = 72.328`.
+
+## 2026-04-28 03:05 — PR #456: CaiT-style LayerScale residual gating (init 1e-4)
+
+- Branch: `charliepai2d2-edward/layerscale-1e4` — metrics committed.
+- Hypothesis: per-branch scalar gates (γ_attn, γ_mlp) initialized to 1e-4 stabilize the init-time gradient regime; should give cleaner early-epoch descent. Predicted −1% to −2%.
+- Result: best `val_avg/mae_surf_p = 83.5436` at epoch 13. **+0.39% vs EMA(0.99) baseline (83.223), near-tie.** test_avg = 74.3636 (+0.62%).
+- Per-split val: helped harder splits (single_in_dist −2.25%, camber_rc −0.76%) but hurt easier ones (cruise +5.09%, re_rand +1.48%). Net is roughly zero.
+- **Student's structural diagnosis**: LayerScale gammas DID grow (50–400× from 1e-4 init) but are still 25–200× smaller than 1.0 by epoch 13 — they never reach the "specialization regime" where LayerScale's value lies. Under our 13-epoch budget, near-identity-at-init silences early-epoch signal without enough time for the gammas to mature. Empirically, epoch 1 was *worse* than baseline (198 vs 193), not gentler — the prediction failed mechanically.
+- Decision: **CLOSE.** Direction not dead at larger init or longer budget. Student's follow-up #2 (`layerscale_init=1e-2` — same shape, 100× shorter trip from init to specialization regime) is queued as the round-5 reassignment.
+
+## 2026-04-28 03:05 — PR #450: RMSNorm everywhere in TransolverBlock
+
+- Branch: `charliepai2d2-alphonse/rmsnorm-everywhere` — branched on SwiGLU pre-EMA(0.99); metrics committed.
+- Hypothesis: replace `nn.LayerNorm` with `RMSNorm` for LLaMA-style stack alignment with SwiGLU. Predicted −0.5% to −1.5%.
+- Result: best `val_avg/mae_surf_p = 91.342` at epoch 12. **+3.53% vs SwiGLU baseline (88.227); +9.8% vs current EMA(0.99) baseline (83.223).** But this is a wall-clock result, not a per-step result.
+- **Per-step quality wins at every measured epoch**: RMSNorm matched-or-beat LayerNorm at epochs 1, 5, 8, 10, 11, 12 (largest gap −6.84% at epoch 5; settled to −1.01% at epoch 12). The hypothesis is **qualitatively validated** on per-step quality.
+- **What killed the headline metric is wall-clock**: `nn.RMSNorm` in PyTorch 2.10 ran 16.9% slower per epoch (162.4s vs 138.9s) and used 11.9% more peak VRAM than `nn.LayerNorm`. This burned exactly one epoch under the 30-min cap (12 vs baseline's 13), and that final epoch is exactly where SwiGLU pulls away (92.27 → 88.23, a −5.4% jump in one step under the still-monotonically-descending curve). Almost certainly a kernel-dispatch issue with the ATen op on this Blackwell build; the LLM-style hand-written `nn.Module` RMSNorm should compile via TorchInductor and recover wall-clock parity.
+- Decision: **CLOSE this run** but the direction has clear signal. Re-run with the manual implementation (student's follow-up #1) is the queued reassignment. **The hypothesis is valid; the implementation choice was wrong.**
+
 ## Test-metric NaN follow-up (cross-PR)
 
 All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the student diagnoses:
