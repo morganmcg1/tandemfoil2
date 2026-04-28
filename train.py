@@ -258,6 +258,13 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             ff = fourier_features(x_norm[..., :2])
             x_norm = torch.cat([x_norm, ff], dim=-1)
+            # AoA x NACA-M interaction features capturing tandem wake-coupling.
+            # Front-foil (AoA1 * M1) is non-trivial on every sample; rear-foil
+            # (AoA2 * M2) is constant on single-foil samples (raw values are 0,
+            # so the normalized product collapses to mean18*mean19/(std18*std19)).
+            aoa_m_front = x_norm[..., 14:15] * x_norm[..., 15:16]
+            aoa_m_rear = x_norm[..., 18:19] * x_norm[..., 19:20]
+            x_norm = torch.cat([x_norm, aoa_m_front, aoa_m_rear], dim=-1)
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
 
             with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
@@ -496,7 +503,7 @@ val_loaders = {
 
 model_config = dict(
     space_dim=2,
-    fun_dim=X_DIM - 2 + 4 * FOURIER_K,
+    fun_dim=X_DIM - 2 + 4 * FOURIER_K + 2,  # +2 for AoA*M interactions
     out_dim=3,
     n_hidden=128,
     n_layers=5,
@@ -550,6 +557,7 @@ run = wandb.init(
         "re_median_per_domain": re_median_per_domain,
         "ema_decay": ema_decay,
         "ema_val_interval": EMA_VAL_INTERVAL,
+        "interaction_features": ["aoa1_x_m1", "aoa2_x_m2"],
     },
     mode=os.environ.get("WANDB_MODE", "online"),
 )
@@ -597,6 +605,9 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         ff = fourier_features(x_norm[..., :2])
         x_norm = torch.cat([x_norm, ff], dim=-1)
+        aoa_m_front = x_norm[..., 14:15] * x_norm[..., 15:16]
+        aoa_m_rear = x_norm[..., 18:19] * x_norm[..., 19:20]
+        x_norm = torch.cat([x_norm, aoa_m_front, aoa_m_rear], dim=-1)
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
 
         with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
