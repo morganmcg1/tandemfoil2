@@ -479,6 +479,7 @@ for epoch in range(MAX_EPOCHS):
     t0 = time.time()
     model.train()
     epoch_vol = epoch_surf = 0.0
+    epoch_log_p_aux = 0.0
     epoch_grad_sum = 0.0
     epoch_grad_max = 0.0
     n_batches = 0
@@ -502,7 +503,17 @@ for epoch in range(MAX_EPOCHS):
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
         surf_loss = (abs_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+
+        y_p = y[..., 2]
+        pred_p_orig = pred[..., 2] * stats["y_std"][2] + stats["y_mean"][2]
+        y_p_log = torch.sign(y_p) * torch.log1p(torch.abs(y_p))
+        pred_p_log = torch.sign(pred_p_orig) * torch.log1p(torch.abs(pred_p_orig))
+        log_p_aux = (
+            (pred_p_log - y_p_log).abs() * surf_mask
+        ).sum() / surf_mask.sum().clamp(min=1)
+
+        LOG_P_AUX_WEIGHT = 0.5
+        loss = vol_loss + cfg.surf_weight * surf_loss + LOG_P_AUX_WEIGHT * log_p_aux
 
         optimizer.zero_grad()
         loss.backward()
@@ -517,11 +528,13 @@ for epoch in range(MAX_EPOCHS):
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
+        epoch_log_p_aux += log_p_aux.item()
         n_batches += 1
 
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
+    epoch_log_p_aux /= max(n_batches, 1)
     epoch_grad_mean = epoch_grad_sum / max(n_batches, 1)
 
     # --- Validate ---
@@ -556,6 +569,7 @@ for epoch in range(MAX_EPOCHS):
         "peak_memory_gb": peak_gb,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/log_p_aux": epoch_log_p_aux,
         "train/grad_norm_mean": epoch_grad_mean,
         "train/grad_norm_max": epoch_grad_max,
         "val_avg/mae_surf_p": avg_surf_p,
@@ -564,7 +578,7 @@ for epoch in range(MAX_EPOCHS):
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
-        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f} gn_mean={epoch_grad_mean:.2f} gn_max={epoch_grad_max:.2f}]  "
+        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f} logp={epoch_log_p_aux:.4f} gn_mean={epoch_grad_mean:.2f} gn_max={epoch_grad_max:.2f}]  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
     )
     for name in VAL_SPLIT_NAMES:
