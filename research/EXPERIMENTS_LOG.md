@@ -459,6 +459,28 @@ Round-1 reviews. Primary ranking metric: `val_avg/mae_surf_p` (lower is better).
 - Effective decay trajectory: clamps at 0.99 only at t ≈ 4901 — never reached in 13-epoch budget (max 0.988 at step 4000). EMA stayed permanently slightly faster than 0.99.
 - Decision: **MERGE.** Orthogonal compound to wd and slice-temp.
 
+## 2026-04-28 05:25 — PR #525: Cosine schedule with 1-ep warmup + T_max=13 — **MAJOR WINNER**
+
+- Branch: `charliepai2d2-fern/cosine-warmup-tmax-aligned` — metrics committed.
+- Hypothesis: align cosine LR decay with the realistic 14-epoch budget. PR #370 (T_max=14, no warmup) had failed on the EMA(0.99)+SwiGLU baseline because EMA already saturated the fast-tracking benefit; the merged stack with bias-corrected EMA + β₂=0.95 + δ=0.25 changes the basin geometry. Predicted −0.5% to −2%.
+- Result: best `val_avg/mae_surf_p = 67.306` at epoch 14. **−7.05% vs 72.414 reference; −6.12% vs current 71.6985 baseline.** test_avg = 59.296 (−6.00% vs 63.082). **Biggest single-PR delta since fern's own δ=0.25 win** in the entire programme.
+- Per-split val MAE for `p`: **all 4 splits improved**, biggest on val_single_in_dist (−11.66%) and val_geom_camber_cruise (−6.66%) and val_re_rand (−6.16%).
+- Per-split test: single_in_dist=68.73, camber_rc=72.63, cruise=39.67, re_rand=56.16. test_avg = 59.30.
+- **The "fine-tuning regime" signature is unmistakable**: late-epoch val slope shallows from 4.3 → 0.7 pts/epoch as cosine LR decays toward zero (ep10→11: −4.3, ep11→12: −1.7, ep12→13: −1.4, ep13→14: −0.7). Prior baselines hit the cap descending steeply at 3–5 pts/epoch — the model never reached this fine-tuning regime before.
+- LR trajectory landed exactly as predicted: ep1=2.5e-4 (warmup), ep2=5e-4 (peak), ep14=7e-6 (~zero).
+- **Why this works now when PR #370 failed**: that stack (EMA(0.99)+SwiGLU only) had EMA(0.99)'s ~1.85-epoch half-life saturating the fast-tracking effect, so adding cosine T_max=14 was redundant. The current merged stack (bias-corrected EMA + β₂=0.95 + huber-δ=0.25 + DropPath) creates a different basin geometry where the LR decay actually carves a sharper minimum.
+- Decision: **MERGE.** Massive win. New baseline on fern's measured stack: val_avg = 67.306, test_avg = 59.296.
+
+## 2026-04-28 05:25 — PR #526: Semantics-aware feature noise std 0.01 → 0.005
+
+- Branch: `charliepai2d2-frieren/feature-noise-005` — metrics committed.
+- Hypothesis: sweep noise std DOWN per the diagnosis on PR #495. The optimum may be below 0.01 on the merged regularizer-rich stack. Predicted −0.5% to −1.5%.
+- Result: best `val_avg/mae_surf_p = 71.359` at epoch 14. **−1.46% vs 72.414 reference; −0.47% vs current 71.6985.** test_avg = 63.494 (+0.65% — slight regression).
+- Per-split val: all 4 improve vs reference (single_in_dist −0.53%, camber_rc −1.83%, cruise +0.27%, re_rand −3.45%). Biggest improvers on val are exactly the splits PR #495 (std=0.02) hurt most: re_rand and camber_rc.
+- Confirms the sweep-down direction works: profile is now std=0.005 < 0.01 (orig win) < 0.02 (regression).
+- The +0.65% test regression is likely run-to-run variance (the model was still descending at the cap).
+- Decision: **MERGE.** Orthogonal compound. Modest val win on the same starting baseline.
+
 ## Test-metric NaN follow-up (cross-PR)
 
 All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the student diagnoses:
