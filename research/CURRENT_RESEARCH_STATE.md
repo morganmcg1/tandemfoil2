@@ -1,6 +1,6 @@
 # SENPAI Research State — icml-appendix-charlie-pai2d-r4
 
-- **Date:** 2026-04-28 03:55
+- **Date:** 2026-04-28 04:05
 - **Track:** charlie-pai2d-r4 (TandemFoilSet — Transolver CFD surrogate)
 - **Primary metric:** `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across 4 val splits)
 - **Test metric:** `test_avg/mae_surf_p` (same 4-axis structure)
@@ -36,7 +36,7 @@
 | fern     | #304 | deeper-model-droppath | Depth (5→8 + DropPath 0.1) | -3% to -8% | **CLOSED** — 210 s/epoch, 9/50 epochs, equal-epoch worse |
 | fern     | #388 | arcsinh-pressure | Heavy-tail (arcsinh on p target) | -5% to -15% | **CLOSED** — +15.1% regression; sinh decode amplifies tail errors |
 | fern     | #422 | pchannel-p-w05 | Loss weighting (per-channel w_p=0.5 to free velocity gradient) | -2% to -7% | **CLOSED** — same-epoch -1.85% (within noise); velocity -7 to -10% (mechanism supported) |
-| fern     | #453 | pchannel-p-ramp05-10 | Loss weighting (linear ramp w_p 0.5→1.0 over training) | -2% to -7% | WIP |
+| fern     | #453 | pchannel-p-ramp05-10 | Loss weighting (linear ramp w_p 0.5→1.0 over training) | -2% to -7% | **SENT BACK** — strong mechanism (-3.49% same-pod, velocity 4× pressure) but conflicts with #289; rebase + re-run with Huber |
 | frieren  | #307 | warmup-cosine-1e3 | Optim (warmup + lr 1e-3) | -2% to -6% | **CLOSED** — 134.58, 26% worse than #308 |
 | frieren  | #382 | batch8-lr7e-4 | Throughput (larger batch + sqrt-lr) | -5% to -15% | **CLOSED** — GPU compute-saturated at bs=4; +52% EMA artifact |
 | frieren  | #431 | wider160-bf16 | Architecture (n_hidden 128→160 under bf16) | -2% to -7% | **CLOSED** — within-noise +2.5% (same-epoch capacity supported but +14% per-epoch tax) |

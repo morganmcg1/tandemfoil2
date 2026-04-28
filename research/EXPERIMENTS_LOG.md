@@ -1,5 +1,53 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2d-r4
 
+## 2026-04-28 04:00 — PR #453: Linear w_p ramp 0.5 → 1.0 over training
+- Branch: `charliepai2d4-fern/pchannel-p-ramp05-10` (still in flight)
+- Student: charliepai2d4-fern
+- **Outcome: SENT BACK** (mechanism strong, but auto-merge CONFLICTING with #289; +1.1% vs merged baseline within noise).
+
+### Headline (epoch 33 of 33, EMA-evaluated, both runs in PR)
+| Run | val_avg/mae_surf_p (EMA) | test_avg/mae_surf_p (EMA) |
+|---|---|---|
+| baseline-ref (paired) | 66.35 | 58.02 |
+| w_p ramp | **64.03** | **56.01** |
+| Δ vs paired | **-3.49%** | -3.47% |
+| vs merged #289 anchor | +1.1% (within noise) | +1.0% |
+
+### Per-channel mechanism diagnostic (the load-bearing data)
+| Channel | baseline-ref | ramp | Δ |
+|---|---|---|---|
+| val surf_Ux | 1.07 | 0.93 | **-13.1%** |
+| val surf_Uy | 0.50 | 0.46 | **-7.3%** |
+| val surf_p  | 66.35 | 64.03 | -3.5% |
+
+**~4× velocity:pressure ratio** is the freed-velocity-gradient mechanism signature. Predicted by the physics-coupling argument from #422 post-mortem. Independent confirmation.
+
+### Per-split val Δ (ramp − baseline-ref)
+| Split | Δ on mae_surf_p |
+|---|---|
+| val_single_in_dist     | **-7.72%** (largest) |
+| val_geom_camber_rc     | -1.44% (smallest — OOD camber irreducible geometric gap) |
+| val_geom_camber_cruise | -3.34% |
+| val_re_rand            | -1.24% |
+
+### Same-epoch trajectory (val_avg)
+- Epoch 1: ramp +4.86% (low w_p means less pressure focus initially)
+- Epoch 13: ramp -6.09% (max gap, w_p ≈ 0.62)
+- Epoch 33: ramp -3.49% (gap shrinks as w_p approaches 1.0)
+- Ramp monotonically ahead from epoch 2 to 33
+
+### Schedule caveat
+- `w_p` only reached **0.827** at the timeout cap (not 1.0).
+- Early-velocity phase clearly observed; late-pressure refinement phase only partially executed.
+- Fern's analysis: "the early-velocity phase carries most of the value" — consistent with the trajectory data showing peak gain at mid-training.
+
+### Why send back rather than close
+- Auto-merge conflicts with #289 (Huber replacing MSE). Manual conflict resolution required.
+- Mechanism evidence is strong (per-channel, per-split, per-epoch trajectory all coherent).
+- Predicted compounding with Huber (orthogonal levers — Huber=loss shape, w_p_ramp=channel weight) → rebased run highly likely to clear the 63.33 baseline.
+
+JSONL: `research/EXPERIMENT_METRICS.jsonl` (PR=453 records, 35 lines from both runs).
+
 ## 2026-04-28 03:50 — PR #436: Additive surface decoder (preds_vol + is_surface * preds_surf)
 - Branch: `charliepai2d4-thorfinn/additive-surf-head` (deleted on close)
 - Student: charliepai2d4-thorfinn
