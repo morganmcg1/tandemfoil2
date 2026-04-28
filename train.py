@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -30,6 +31,7 @@ import torch.nn.functional as F
 import wandb
 import yaml
 from einops import rearrange
+from lion_pytorch import Lion
 from timm.layers import trunc_normal_
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
@@ -375,8 +377,8 @@ DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 
 @dataclass
 class Config:
-    lr: float = 5e-4
-    weight_decay: float = 1e-4
+    lr: float = 3e-4  # Lion default (was 5e-4 for AdamW)
+    weight_decay: float = 1e-2  # Lion default (was 1e-4 for AdamW)
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
@@ -431,8 +433,14 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+optimizer = Lion(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+
+_wandb_mode = os.environ.get("WANDB_MODE")
+if _wandb_mode is None and not (os.environ.get("WANDB_API_KEY") or Path.home().joinpath(".netrc").exists()):
+    _wandb_mode = "disabled"
+elif _wandb_mode is None:
+    _wandb_mode = "online"
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -447,8 +455,37 @@ run = wandb.init(
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
     },
-    mode=os.environ.get("WANDB_MODE", "online"),
+    mode=_wandb_mode,
 )
+
+# Local JSONL metrics — primary record since experiment logging is local-only.
+metrics_dir = Path("metrics")
+metrics_dir.mkdir(parents=True, exist_ok=True)
+_label = cfg.wandb_name or cfg.agent or "tandemfoil"
+_safe_label = "".join(c if c.isalnum() or c in "-_." else "_" for c in _label).strip("-_.") or "tandemfoil"
+metrics_path = metrics_dir / f"{_safe_label}-{run.id}.jsonl"
+_metrics_fh = open(metrics_path, "a")
+print(f"Metrics: {metrics_path}")
+
+def _log_jsonl(record: dict) -> None:
+    _metrics_fh.write(json.dumps(record, default=float) + "\n")
+    _metrics_fh.flush()
+
+_log_jsonl({
+    "type": "config",
+    "agent": cfg.agent,
+    "wandb_name": cfg.wandb_name,
+    "wandb_run_id": run.id,
+    "optimizer": "Lion",
+    "config": asdict(cfg),
+    "model_config": model_config,
+    "n_params": n_params,
+    "train_samples": len(train_ds),
+    "val_samples": {k: len(v) for k, v in val_splits.items()},
+    "git_commit": _git_commit_short(),
+    "timeout_minutes": MAX_TIMEOUT_MIN,
+    "max_epochs": MAX_EPOCHS,
+})
 
 wandb.define_metric("global_step")
 wandb.define_metric("train/*", step_metric="global_step")
@@ -546,6 +583,14 @@ for epoch in range(MAX_EPOCHS):
         torch.save(model.state_dict(), model_path)
         tag = " *"
 
+    _log_jsonl({
+        "type": "epoch",
+        "epoch": epoch + 1,
+        "global_step": global_step,
+        "is_best": tag == " *",
+        **{k: v for k, v in log_metrics.items() if k != "global_step"},
+    })
+
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
@@ -595,21 +640,32 @@ if best_metrics:
         for k, v in test_avg.items():
             test_log[f"test_{k}"] = v
         wandb.log(test_log)
+        _log_jsonl({"type": "test", **test_log})
         wandb.summary.update(test_log)
 
-    save_model_artifact(
-        run=run,
-        model_path=model_path,
-        model_dir=model_dir,
-        cfg=cfg,
-        best_metrics=best_metrics,
-        best_avg_surf_p=best_avg_surf_p,
-        test_metrics=test_metrics,
-        test_avg=test_avg,
-        n_params=n_params,
-        model_config=model_config,
-    )
+    if _wandb_mode != "disabled":
+        save_model_artifact(
+            run=run,
+            model_path=model_path,
+            model_dir=model_dir,
+            cfg=cfg,
+            best_metrics=best_metrics,
+            best_avg_surf_p=best_avg_surf_p,
+            test_metrics=test_metrics,
+            test_avg=test_avg,
+            n_params=n_params,
+            model_config=model_config,
+        )
+    _log_jsonl({
+        "type": "summary",
+        "best_epoch": best_metrics["epoch"],
+        "best_val_avg/mae_surf_p": best_avg_surf_p,
+        "total_train_minutes": total_time,
+        "test_avg/mae_surf_p": test_avg["avg/mae_surf_p"] if test_avg else None,
+    })
 else:
     print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping artifact upload.")
+    _log_jsonl({"type": "summary", "best_epoch": None, "total_train_minutes": total_time})
 
+_metrics_fh.close()
 wandb.finish()
