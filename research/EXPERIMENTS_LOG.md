@@ -13,6 +13,96 @@ in the pressure channel; `accumulate_batch` masks the sample but
 fern** with the 2-line `nan_to_num` patch — once it lands, every
 round-1 run can recompute a finite `test_avg/mae_surf_p` from W&B.
 
+## 2026-04-28 05:45 — PR #485 (iter 1): RMSNorm (drop-in for nn.LayerNorm) ❌ CLOSED
+
+- Branch: `willowpai2d2-alphonse/rmsnorm` (deleted on close).
+- Iteration: assigned as round-2 normalization axis after closing
+  width PR #311.
+
+### Implementation: PyTorch fused `nn.RMSNorm` (not hand-rolled)
+
+Alphonse's first attempt used a hand-rolled `RMSNorm` (`x.float().pow(2).mean().rsqrt()`)
+and was **slower than baseline LayerNorm** — 195 s/epoch vs 172 s
+baseline because the hand-rolled chain launches ~5 separate kernels
+per norm site while `nn.LayerNorm` is a single fused CUDA kernel.
+Switched to `nn.RMSNorm` (fused PyTorch op) for the production runs.
+
+### Results — 3-seed multi-seed
+
+| seed | val_avg/mae_surf_p | test_avg/mae_surf_p | best_epoch | epoch_time_s |
+|-:|-:|-:|-:|-:|
+| 0 | 124.84 | 112.80 | 10 | 168.4 |
+| 1 | 134.30 | 125.56 | 8  | 167.7 |
+| 2 | 124.09 | 113.16 | 11 | 167.8 |
+| **mean** | **127.74** | **117.17** | – | **168.0** |
+
+vs current Huber baseline 115.61: mean val = +10.5 % (just outside
+±10 % noise band on the wrong side). Test mean = -0.4 % vs
+baseline 117.59 (essentially at-baseline on test).
+
+Throughput delta = -2.3 % (168 vs 172 s/epoch) — **below the ≥3 %
+bar** for infrastructure merge.
+
+### Conclusion
+
+**Closed.** Not in [110, 121] at-baseline band → no infrastructure
+merge. Throughput unlock didn't materialize at our scale. Per-split
+shows the 6th instance of the per-distribution-shift pattern:
+cruise +1 %, raceCar splits +12-17 %, val_re_rand +10 %.
+
+### Critical methodology contribution
+
+**"PyTorch's fused LayerNorm is already close to optimal at our
+scale."** Alphonse's diagnostic — that the 5-10 % speedup typically
+attributed to RMSNorm-vs-LayerNorm benchmarks doesn't apply when
+LayerNorm is fused (single kernel) — is a clean piece of
+"what doesn't apply at our scale" data. Future round-3 stacks
+shouldn't expect RMSNorm to give meaningful throughput at this
+model scale.
+
+### Sixth instance of per-distribution-shift pattern
+
+(After alphonse #311 width-160, tanjiro #335 schedule, edward #429
+p_weight, fern #478 curriculum, nezuko #332 partial.) RMSNorm
+shifts cost into raceCar splits (+12-17 %) while leaving cruise
+flat (+1 %). **Exactly the signature of perturbations on top of
+Huber** per fern's #478 mechanism analysis. RMSNorm doesn't address
+the underlying Huber-induced gradient imbalance.
+
+### Carry-forward contributions
+
+1. **"Fused LayerNorm is already optimal at our scale"** — guides
+   round-3 normalization-axis decisions.
+2. **Test parity without val improvement signal** — fp32-equivalent
+   downstream metric quality, just without metric upside. Mild
+   round-3 stacking candidate if fern #559 y_std-weighting shifts
+   the gradient distribution.
+
+### Reassignment
+
+Alphonse → PR #568 (round-2 axis: fp16 with scoped autocast).
+Detailed below.
+
+## 2026-04-28 05:45 — PR #568 (NEW, alphonse round 2): fp16 with scoped autocast + GradScaler
+
+- Reassigning alphonse after closing #485.
+- Hypothesis: fp16 with the loss-outside-autocast pattern (validated
+  by alphonse's bf16 PR #399) + GradScaler. fp16 typically gives
+  ~1.5-2× over fp32-eager on Hopper/Blackwell vs bf16's measured
+  1.23×; if it stacks beyond bf16, that's an additional 10-30 %
+  throughput unlock.
+- Decision rule (relative to bf16+Huber baseline mean 112.13):
+  ≤102 single-seed (or ≤107 multi-seed mean) merges metric+infra;
+  at-baseline-with-throughput-unlock (107-117 mean AND ≥5 % faster
+  than bf16's 140.6 s) merges as infrastructure; at-baseline
+  without throughput unlock closes (fp16 gives nothing over bf16);
+  divergence/instability closes.
+- Implementation: ~30 LOC builds directly on alphonse's #399 bf16
+  scope. Parametrize `amp_dtype ∈ {fp32, bf16, fp16}` config flag,
+  add GradScaler for fp16 only, log `amp/grad_scale` panel for
+  diagnostics.
+- Status: assigned, draft, status:wip.
+
 ## 2026-04-28 05:30 — PR #478 (iter 1): curriculum learning by per-sample pressure y-std ❌ CLOSED
 
 - Branch: `willowpai2d2-fern/curriculum-y-std` (deleted on close).
