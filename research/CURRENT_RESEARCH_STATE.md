@@ -34,30 +34,47 @@ landscape after a single round of merges.
 | tanjiro | Higher peak LR (1e-3) with 10% warmup | Default 5e-4 is conservative |
 | thorfinn | Larger batch (`batch_size=8`) | Better gradient estimates, VRAM available |
 
-## Potential next research directions (round 2 onwards)
+## Round 2 hypotheses ranked and ready
 
-These are not assigned yet — they are queued for after we have round 1 data:
+Researcher-agent literature pass landed in
+[`RESEARCH_IDEAS_2026-04-28_round2.md`](RESEARCH_IDEAS_2026-04-28_round2.md)
+on 2026-04-28. Top 10 in expected-impact order, queued for assignment as
+soon as round 1 PRs return for review:
 
-1. **Loss reformulation continued** — Charbonnier / Huber, log-cosh, or
-   physics-aware blends (e.g. weighted MAE in physical-units space).
-2. **Output target reparameterization** — predict `Cp` (`p / (0.5 ρ U_inf²)`)
-   instead of raw `p`; should regularize the high-Re extremes.
-3. **Conditioning improvements** — separate embedding for `log(Re)`, AoA,
-   gap/stagger; FiLM-style conditioning of slice tokens.
-4. **Mesh/domain-aware features** — explicit foil-1 vs foil-2 marker, distance
-   to nearest surface as a feature, signed distance for a richer geometry
-   prior.
-5. **Architecture replacements** — GINO/Geo-FNO style spectral kernel, neural
-   operator alternatives, or a Transformer with rotary position encoding over
-   `(x, z)` instead of slice attention.
-6. **Sampler / class-balancing** — stratify by Re bin in addition to domain;
-   downweight low-Re samples that dominate the easy metric, upweight high-Re
-   that drive the cross-Re holdout.
-7. **Data augmentation** — vertical mirror flip (sign-flip `Uy`, `z`, AoA),
-   small mesh-node dropout, Re jitter.
-8. **Test-time tricks** — TTA (mirror), seed/checkpoint ensembling.
-9. **Distillation / self-training** on the unlabeled test inputs (legitimate
-   given inputs are in the public test set).
+1. **Relative L2 loss** — sample-normalized MSE; the high-Re samples are
+   dominating the gradient. (-5–15%)
+2. **FiLM conditioning of LayerNorm** — global scalars (log(Re), AoAs,
+   geometry) get direct modulation authority over every block. (-5–12%)
+3. **Fourier positional encoding** on `(x, z)` — captures the 1000:1
+   wavelength range from boundary layer to background. (-4–10%)
+4. **POD/PCA output reparameterization** — surface pressure lives in a
+   low-dim modal subspace; predict K=32 PCA coefficients. (-5–15%, won
+   ML4CFD 2024 1st place via MMGP)
+5. **Huber loss δ=1.0** — outlier-robust variant of MSE on the same
+   error tensor. (-3–8%)
+6. **LinearNO ELU linear attention** — drops slice-token attention from
+   O(S²) to O(S·d), often beats Transolver at lower compute. (-3–8%)
+7. **Surface-node geometric oversampling** — keep only 15% of volume
+   nodes per step; raises surface share to ~25%. (-3–8%)
+8. **Domain-ID embedding** — derive 3-class domain ID from gap/AoA1 and
+   embed; resolves the regime discontinuity baked into the dataset. (-2–6%)
+9. **SGDR warm restarts** — three cosine basins inside the 50-epoch cap. (-2–5%)
+10. **Test-time augmentation** (vertical mirror) — 2× inference cost,
+    no training change. (-1–4%)
+
+Best two-by-two interactions to test once round 1 winners are merged:
+- Relative L2 × FiLM conditioning (likely the largest compounded gain)
+- PCA output reparameterization × any winning loss
+- Surface oversampling × winning surf_weight from round 1
+
+## Open uncertainties (from researcher-agent)
+
+- Which lever contributes more: relative L2 loss vs. FiLM conditioning. They
+  likely compound but the interaction is unknown.
+- Whether a PCA basis fit on training data transfers to OOD camber splits
+  (`val_geom_camber_rc`, `val_geom_camber_cruise`).
+- Whether surface-node oversampling interacts adversely with the existing
+  balanced-domain sampler.
 
 ## Notes / constraints
 
