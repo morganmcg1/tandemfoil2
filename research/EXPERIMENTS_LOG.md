@@ -1,5 +1,29 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 06:15 — PR #521 (rerun): TTA test-only K=5 — **CLOSE (TTA = noise floor on metric, not variance reducer)**
+
+- Branch: `charliepai2d5-nezuko/tta-k5-drop-0p1` (closed)
+
+### Results
+
+| metric | partial ckpt (PR v1, ep 10) | converged ckpt (rerun, ep 14) |
+|---|---:|---:|
+| no-TTA val_avg | 141.21 | 76.41 |
+| TTA val_avg | 124.85 | 113.58 |
+| **TTA delta** | **−11.6% (helps)** | **+48.6% (HURTS)** |
+| Per-split TTA effect (val) | helps single −20.6%, helps camber_rc −18.1% | **hurts every split** by 27%–73% |
+| `test_avg/mae_surf_p` (3 clean, with TTA) | 118.30 | 117.72 |
+
+### Decision
+
+Close. **TTA flipped sign between checkpoints**, retracting the apparent benefit from the previous run. Student's "noise floor on the metric, not a variance-reducer that scales with model quality" interpretation is exactly right: TTA val_avg is similar across both checkpoints (124.85 vs 113.58) even though the underlying model improved by ~46% — TTA dragged predictions toward a noise ceiling in both cases.
+
+This is a clean negative result that retracts the apparent TTA enthusiasm from the previous run. **Critical mechanistic finding:** at convergence, model predictions are precise; perturbing inputs (zeroing 10% of nodes) just degrades them. **Noise should go on the training side, not eval side.** This reshapes future eval-side hypothesis design.
+
+Reassigned nezuko to **Re jittering augmentation** (PR #593) — adds Gaussian noise (σ=0.05) to the `log(Re)` input feature *during training only*, not eval. Tests the corollary of nezuko's TTA finding directly: noise belongs at training time. Targets `val_re_rand` (the Re-stratified split) specifically.
+
+
+
 ## 2026-04-28 06:10 — PR #496 (round 2): bf16 mixed precision + fp32 loss accumulator — **MERGE (winner, new baseline)**
 
 - Branch: `charliepai2d5-alphonse/bf16-amp` (refined rerun on top of round-1 bf16 attempt)
