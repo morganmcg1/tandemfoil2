@@ -1,14 +1,15 @@
 # SENPAI Research State
 
-- 2026-04-28 04:45 — round 1 settled on `icml-appendix-willow-pai2d-r2`,
-  round 2 deep iteration (8 axes in flight, 1 just closed), all hands on deck
-- **Baseline updated:** PR #330 (frieren, Huber β=1) merged on top of
-  PR #328. Current best `val_avg/mae_surf_p = 115.61` (W&B run
-  `uip4q05z`, best epoch 11/50). −13.4 % over the prior baseline,
-  outside ±10 % noise floor. Default config now: `n_hidden=128
-  n_layers=5 n_head=4 slice_num=128 mlp_ratio=2 lr=5e-4
-  weight_decay=1e-4 batch_size=4 surf_weight=10.0 epochs=50` plus
-  `loss=Huber(beta=1.0)` on normalized residuals.
+- 2026-04-28 05:15 — round 1 settled on `icml-appendix-willow-pai2d-r2`,
+  round 2 4th merge (bf16 infrastructure), 8 axes in flight, all hands on deck
+- **Baseline updated (4 merges total):** PR #328 + #330 + #367 + #399.
+  Anchor val_avg/mae_surf_p = **115.61** (fp32 anchor, run `uip4q05z`).
+  After #399 bf16 infrastructure merge: 3-seed bf16+Huber mean = 112.13
+  (σ=4.53), test_avg = 101.82 (FINITE, first time on this branch).
+  Default config now: `n_hidden=128 n_layers=5 n_head=4 slice_num=128
+  mlp_ratio=2 lr=5e-4 weight_decay=1e-4 batch_size=4 surf_weight=10.0
+  epochs=50` + `loss=Huber(beta=1.0)` + `amp_dtype=bf16` +
+  `nan_to_num` scoring guard.
 - **Round 2 candidates in flight:**
   - **PR #415** (frieren, asinh on pressure target): NEW
     assignment. Pairs with merged Huber β=1 — orthogonal
@@ -55,7 +56,8 @@
 | 547 | edward    | round 2: layer-wise learning rate decay (LLRD) | NEW assignment (status:wip) | n/a |
 | 328 | fern      | slice_num 64 → 128         | **MERGED ★**   | **133.55 (new baseline)**|
 | 330 | frieren   | MSE → Huber β=1            | **MERGED ★ (new baseline 115.61)** | rebased run = 115.61 (slice-128, epoch 11/50, run uip4q05z) |
-| 399 | askeladd  | round 2: bf16 mixed precision | sent back → rebase + on-baseline (3 seeds) | 3-seed mean 133.46 on slice-128+MSE (1.23× speedup, +18 % epochs, no instability) |
+| 399 | askeladd  | round 2: bf16 mixed precision | **MERGED ★ infrastructure** | 3-seed bf16+Huber mean 112.13 (σ=4.53) on slice-128 — at-baseline within new noise floor; throughput unlock (1.23× / +30 % epochs); first finite test_avg=101.82 |
+| 553 | askeladd  | round 2: torch.compile on top of bf16 | NEW assignment (status:wip) | n/a |
 | 415 | frieren   | round 2: asinh on pressure target | NEW assignment | n/a (assigned this cycle) |
 | 332 | nezuko    | surf_weight 10 → 25 (sweep)| **closed** (3-seed mean 151.94 on slice-128 = +13.8 %, ~11 SE outside noise; vol_p also up; val curve oscillation) | superseded |
 | 472 | nezuko    | round 2: Lion optimizer    | NEW assignment (status:wip) | n/a |
@@ -67,34 +69,25 @@
 | 452 | fern      | round 2: push slice_num to 192/256 | **closed** (slice-192 single-seed = 133.30, +15.3 % vs 115.61 baseline; per-split mechanism-inversion confirms slice-128 is the ceiling) | superseded |
 | 478 | fern      | round 2: curriculum by per-sample y-std | NEW assignment (status:wip) | n/a |
 
-PRs surfaced for advisor review this cycle: **#429**. Action:
-**#429 closed** — p_weight=2 single-seed (112.07) was a textbook
-lucky-pull from the noise distribution; 3-seed mean 118.65 (σ=6.24)
-lands +2.6 % above 115.61 baseline. Per the explicit decision rule,
-clean close. **Critical methodology contribution preserved**:
-Edward's mechanism analysis ("Huber already absorbs the
-channel-weighting effect") matches tanjiro's #335 finding ("Huber
-already covers what cosine decay was doing on MSE") — **two
-independent PRs converge on the same root explanation for why
-round-2 small-effect optimization-axis levers don't compound with
-Huber**. Now load-bearing for round-3 axis selection: orthogonal
-mechanisms (target distribution / throughput / parameter-noise /
-normalization / regularization / data exposure / update-rule shape /
-per-layer LR allocation) are the axes that don't overlap with
-Huber's gradient shaping. **Fourth instance of per-distribution-shift
-pattern** (alphonse #311, tanjiro #335, nezuko #332, now edward
-#429) — overwhelming evidence that per-distribution architecture /
-loss specialization is the highest-priority round-3 axis.
-**Reassigned edward to round-2 axis #547 (layer-wise learning rate
-decay / LLRD)** — split parameters into per-layer groups with
-geometric LR decay by depth. Structurally distinct from Lion (update
-rule) and EMA (post-step averaging); doesn't overlap with Huber's
-clipping mechanism. Sweep `llrd_decay ∈ {0.7, 0.85, 1.0 anchor}`.
-Plays to edward's sweep-design + mechanism-analysis strengths.
+PRs surfaced for advisor review this cycle: **#399**. Action:
+**#399 MERGED ★ as infrastructure** — 4th merged PR in this round
+(after #328 + #330 + #367). 3-seed bf16+Huber mean 112.13 (σ=4.53)
+falls in [110, 121] band per the explicit infrastructure-merge rule.
+Throughput unlock real and stable (1.23×, +30 % epochs). Test_avg
+finite for the first time on this branch (101.82). Most importantly:
+**σ=4.53 on bf16+Huber vs σ=8.13 on bf16+MSE** — Huber tightens the
+seed-noise floor by ~half. Updated noise-floor anchor for round-2
+multi-seed budgeting: σ ≈ 4.5 / ~4 % (was ±10 %).
+**Reassigned askeladd to round-2 axis #553 (`torch.compile` on top
+of bf16)** — kernel fusion + Python-overhead elimination, predicted
+1.10–1.30× additional speedup (compounding with bf16 → ~1.4–1.6×
+total over fp32-eager). Variable mesh sizes (74K–242K nodes) need
+`dynamic=True` to avoid recompilation per batch. Sweep
+`compile_mode ∈ {"none", "default", "reduce-overhead"}` with
+multi-seed at the winner.
 
-Cycle 17 actions (recap): #335 closed (schedule axis no longer pays
-on Huber; same Huber-absorbs mechanism), #517 assigned (tanjiro
-DropPath).
+Cycle 18 actions (recap): #429 closed (p_weight axis exhausted via
+Huber-absorbs mechanism), #547 assigned (edward LLRD).
 
 Earlier cycle actions:
 **#335 closed** — schedule axis doesn't stack on Huber+slice-128.
@@ -116,17 +109,18 @@ lever (no other in-flight axis touches block-level dropout).
 Cycle 16 actions (recap): #311 closed (width axis exhausted),
 #485 assigned (alphonse RMSNorm).
 
-#328 + #330 + #367 merged (slice-128 + Huber β=1 + scoring fix;
-current val baseline 115.61, test baseline 117.59); #399 sent back;
-**eight closed axes** (#311 width, #325 depth, #326 FFN, #332
-surf_weight, #335 schedule, #337 BS+LR, #429 p_weight, #452
-slice-192 — all axes that fight the 30-min cap or that overlap
-with merged Huber's implicit gradient shaping); **eight round-2
-axes currently in flight**: #399 askeladd bf16 [iter 2 rebasing],
-#415 frieren asinh-on-pressure, #457 thorfinn EMA, #472 nezuko
-Lion, #478 fern curriculum, #485 alphonse RMSNorm, #517 tanjiro
-DropPath, #547 edward LLRD. **All eight students busy on actionable
-WIP work.**
+**Four merges**: #328 (slice_num=128, anchored prior baseline at
+133.55) + #330 (Huber β=1, current anchor 115.61) + #367 (scoring
+NaN fix, infrastructure) + #399 (bf16, infrastructure with bf16+Huber
+mean 112.13 / first-finite-test_avg 101.82). **Eight closed axes**
+(#311 width, #325 depth, #326 FFN, #332 surf_weight, #335 schedule,
+#337 BS+LR, #429 p_weight, #452 slice-192 — all axes that fight
+the 30-min cap or that overlap with Huber's implicit gradient
+shaping). **Eight round-2 axes currently in flight**: #415 frieren
+asinh-on-pressure, #457 thorfinn EMA, #472 nezuko Lion, #478 fern
+curriculum, #485 alphonse RMSNorm, #517 tanjiro DropPath, #547
+edward LLRD, #553 askeladd torch.compile. **All eight students
+busy on actionable WIP work.**
 
 ## What we learned this cycle (and last)
 
@@ -212,12 +206,15 @@ WIP work.**
 - **Stack slice-128 + width.** alphonse's width axis on top of the
   merged slice-128 baseline — directly tests the
   arch-stack hypothesis. Pending alphonse's width-160 result first.
-- **AMP / mixed precision.** ASSIGNED as PR #399 to askeladd:
-  bf16 autocast around the model forward (loss kept in fp32),
-  building on alphonse's fp16-failure-mode diagnosis. Expected to
-  give 1.4–1.8× per-step speedup with no dynamic-range collapse.
-  If clean, makes all heavier round-2 stacks viable inside the
-  30-min cap.
+- **bf16 mixed precision.** **MERGED ★ as infrastructure (#399).**
+  3-seed bf16+Huber mean 112.13 (σ=4.53), 1.23× speedup, +30 %
+  epoch headroom, first finite test_avg=101.82.
+- **`torch.compile`.** ASSIGNED as PR #553 to askeladd: kernel
+  fusion + Python-overhead elimination on top of the just-merged
+  bf16 baseline. Predicted 1.10–1.30× additional speedup
+  (compounding with bf16). Sweep
+  `compile_mode ∈ {"none", "default", "reduce-overhead"}`.
+  Variable mesh-size handling via `dynamic=True`.
 - **Schedule that fits the budget.** OneCycleLR over `total_steps`
   (not epochs) is robust to 30-min wall-clock cuts. May supersede
   `T_max=epochs` cosine entirely. Pending tanjiro's iteration.
