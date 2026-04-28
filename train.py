@@ -199,11 +199,19 @@ class Transolver(nn.Module):
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
+        # Asymmetric slice budget by depth: early broad, late sharp.
+        # Hypothesis: late-block aggregation benefits from concentrated
+        # routing (cruise +4.55% at slice_num=32, PR #642), while early
+        # blocks need broad routing for multi-scale flow capture.
+        slice_nums_per_block = [64, 64, 64, 32, 32]
+        assert len(slice_nums_per_block) == n_layers, \
+            f"slice_nums_per_block length {len(slice_nums_per_block)} != n_layers {n_layers}"
         self.blocks = nn.ModuleList([
             TransolverBlock(
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
-                slice_num=slice_num, last_layer=(i == n_layers - 1),
+                slice_num=slice_nums_per_block[i],
+                last_layer=(i == n_layers - 1),
             )
             for i in range(n_layers)
         ])
