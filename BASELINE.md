@@ -2,6 +2,32 @@
 
 Lower is better. Primary ranking metric is `val_avg/mae_surf_p` (mean surface pressure MAE across the four val splits). Paper-facing metric is `test_avg/mae_surf_p` from the best-val checkpoint.
 
+## 2026-04-28 07:30 — PR #510: torch.compile mode="default" (infrastructure: +28.6% epochs in budget)
+
+- **Best `val_avg/mae_surf_p`**: **64.824** (epoch 18, on rebased post-#582 stack; vs eager-same-stack 66.149 = −2.0%)
+- **`test_avg/mae_surf_p`** (paper-facing, all 4 splits finite): **56.391** (vs 57.654 eager, −2.2%)
+- **Per-split val MAE for `p`** (best epoch 18, compile=default):
+  - val_single_in_dist: 75.841
+  - val_geom_camber_rc: 77.872
+  - val_geom_camber_cruise: 45.438
+  - val_re_rand: 60.143
+- **Per-split test MAE for `p`** (best ckpt):
+  - test_single_in_dist: 65.765
+  - test_geom_camber_rc: 70.295
+  - test_geom_camber_cruise: 36.650
+  - test_re_rand: 52.855
+- **Recipe**: huber(δ=0.25) + bias-corrected EMA(0.995, warmup=50) + SwiGLU + DropPath(0.1) + AdamW betas (0.9, 0.95) + wd=3e-5 + PhysicsAttention temperature init=2.0 + cosine 3-ep linear warmup (start_factor=0.3) + T_max=11 + feature noise std=0.0025 + NaN-safe + clip_grad_norm_(max_norm=10.0) + **`--compile=True` (torch.compile mode="default")**.
+- **Throughput**: 18 epochs in 30-min budget (vs 14 eager), 103.4 s/epoch mean (vs 134.6 s eager). +28.6% epochs / −23.1% wall-clock. Peak VRAM 42.6 GB (−7%).
+- **Compile mechanism**: TorchInductor kernel fusion on forward+backward only. CUDA Graphs disabled (mode="reduce-overhead" OOMs from one-graph-per-mesh-shape with variable padding). Compile is mode-orthogonal to all merged levers (verified via `ema_decay` and `train/grad_norm_*` numerical equivalence vs eager). One soft graph break in DropPath at `torch.rand(1).item()` (no error, just split). Compile cost: epoch 1 = 122.9 s including warmup (faster than eager's 139.3 s — fusion benefit on rest of epoch 1 pays back).
+- **Schedule downstream consequence**: cosine T_max=11 + 18-epoch budget leaves epochs 12–18 at LR≈eta_min=0 (7 "free" EMA-stabilization epochs at the floor). Future schedule PRs may want to extend T_max=11→14 or set `eta_min>0` to fully utilize the new budget.
+- **Vs current baseline (PR #562)**: val_avg 64.824 vs 64.696 = +0.128 (essentially flat — within seed noise). The merge is justified by the throughput compounding for every future PR, not by standalone val_avg improvement.
+- **Metric summary**: `models/model-torch-compile-rebased-20260428-064446/metrics.jsonl`
+- **Reproduce**:
+  ```bash
+  cd target
+  python train.py --epochs 50 --experiment_name torch-compile-rebased --agent <name> --compile=True
+  ```
+
 ## 2026-04-28 07:15 — PR #562: Cosine schedule revision (3-ep warmup, T_max=11, start_factor=0.3)
 
 - **Best `val_avg/mae_surf_p`**: **64.696** (epoch 14, −2.20% vs 66.149 prior / −3.91% vs 67.306)
