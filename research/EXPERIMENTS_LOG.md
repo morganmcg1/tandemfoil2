@@ -177,6 +177,17 @@ Round-1 reviews. Primary ranking metric: `val_avg/mae_surf_p` (lower is better).
 - Student's mechanism: at the high-error training regime we're stuck in (val going 328→108 over 14 epochs, far from optimum), δ=2's quadratic region for |err|∈[1,2] *underweights* moderate errors relative to δ=1's bounded gradient, while giving 2× more pull to outliers. On a 14-epoch budget that's the wrong trade. δ=1 sits at a sweet spot. Pure MSE (δ→∞) was 105.999 without EMA; δ=1+EMA=101.350; δ=2+EMA=107.609 here — the curve is unimodal in δ.
 - Decision: **CLOSE.** δ=1.0 is the sweet spot for huber on this problem. Direction not dead at smaller δ — student's follow-up suggestion (`δ=0.5` or `δ=0.25`, pushing toward L1) is a valid one-line sweep, especially now that the SwiGLU baseline gives much smoother val curves.
 
+## 2026-04-28 02:00 — PR #279: Scale model capacity (n_hidden=192, n_layers=6, n_head=6)
+
+- Branch: `charliepai2d2-alphonse/capacity-medium` — branched at the very start of round 1 (pre-huber). Metrics committed.
+- Hypothesis: balanced capacity scale-up (depth+width+heads) targets the "model is undersized for ~1500 train samples × 74K-242K nodes" framing. Predicted −5% to −12%.
+- Result: best `val_avg/mae_surf_p = 142.4462` at epoch 8 (timeout cut at 8/50 epochs, ~240 s/epoch). **+61.5% vs SwiGLU baseline (88.227)** and +34.4% vs original huber baseline.
+- Per-split val MAE for `p`: single_in_dist=166.25, geom_camber_rc=152.88, geom_camber_cruise=116.81, re_rand=133.84.
+- test_avg = 133.23 (finite via the student's own NaN-safe filter — see below).
+- **Compute-infeasible at this budget**: same shape of failure as PR #297 (depth-8). Val was still in steep descent at the cap (epoch 7→8: 166→142, i.e. dropping >24 points per epoch). 1.71M params (~2.6× baseline) at 30-min budget = no chance of convergence.
+- **Independent NaN-fix rediscovery**: alphonse independently identified the `data/scoring.py` Inf*0=NaN propagation bug AND implemented a byte-identical workaround to edward's PR #361. (PR #361 is already merged on advisor — alphonse's tree-side fix is now harmless duplication, but the diagnosis is exactly right.)
+- Decision: **CLOSE.** Capacity scale-up at this depth/width is not testable under the 30-min wall-clock cap. Same finding as PR #297 — compute is binding for capacity experiments. The newly-merged SwiGLU win (PR #391) shows the actual lever is architectural quality at param-matched cost, not raw capacity.
+
 ## Test-metric NaN follow-up (cross-PR)
 
 All three reviewed PRs report `test_avg/mae_surf_p = NaN`. Root cause from the student diagnoses:
