@@ -1101,3 +1101,17 @@ Past merge gate cleanly. **Predicted band was −1 % to +2 %** (uncertain due to
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #567 | edward | smoothl1-beta-0p25 | SmoothL1 β=0.5 → 0.25 on merged #535 baseline | Edward's own follow-up #1; β-axis bracket-narrowing. Tests whether L1-tail mechanism continues to scale or saturates. Honest band −2 % to +1 %. |
+
+## 2026-04-28 05:32 — PR #545: Lion β1 = 0.9 → 0.95 (charliepai2d1-frieren) — **CLOSED (regression)**
+- val=68.366 (+6.55 % vs #352 run-base, **+11.15 % vs current #535**), test=60.122 (+7.50 % / **+14.88 %**).
+- Frieren's 8th exceptional write-up: clean **win-vs-lose mechanism trade-off**.
+  - **Win mechanism (smoother direction)**: late-epoch raw monotone descent (94.9 → 92.5 → 87.0 → 82.0) vs #352's bouncy 89.9 → 85.6 → 76.5 → 79.5. Mean pre-clip grad-norm dropped 25 % (15.2 → 11.5). EMA-vs-raw spread shrunk 15.4 → 13.6.
+  - **Lose mechanism (slower convergence under fixed budget)**: EMA gap from #352 widens monotonically (ep1 −1.8 → ep4 +3.1 → ep8 +3.3 → ep12 +4.2). Same step-count-starvation pattern as closed #403 (different mechanism — β1 inertia rather than batch-step ratio).
+- **Stationary-vs-non-stationary split signature** (the appendix-quality finding): β1=0.95 *won* on `single_in_dist` (most-stationary, single-foil flow, −1.97 % val) and *lost* on all three tandem splits (rc +7.7 %, cruise +16.4 %, re_rand +9.0 %) where front-rear foil interaction makes gradient direction non-stationary. **"Stationary regimes prefer inertia, non-stationary regimes prefer responsiveness."**
+- Reassigned to **PR #571 (lion-beta2-0p999)** — fresh single-knob continuation; β2 affects the persistent buffer rather than the direction signal.
+
+## 2026-04-28 05:35 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #571 | frieren | lion-beta2-0p999 | Lion `betas = (0.9, 0.99) → (0.9, 0.999)` on merged #535 baseline | Slower momentum buffer (10× more inertial); direction signal still responsive at β1=0.9. Tests whether buffer-side smoothing without responsiveness penalty wins. Honest band −2 % to +3 %. |
