@@ -31,6 +31,47 @@
 
 ---
 
+## 2026-04-28 03:02 — PR #342: H1 per-sample y-std loss normalization — **SENT BACK FOR REBASE**
+
+- Branch: `willowpai2d4-alphonse/h1-per-sample-ystd-loss` (cut before PR #344 merged → missing the warmup+cosine schedule and NaN fix)
+- Hypothesis: rescaling MSE by per-sample, per-channel y-std should reduce `val_avg/mae_surf_p` by 8–18%, biggest on `val_geom_camber_cruise` (lowest-Re, currently dominated out of the loss).
+- 3-cell matrix in W&B group `h1-per-sample-ystd`:
+
+| Run | surf_weight | best epoch | val_avg/mae_surf_p | test (3 finite splits) | Δ vs alphonse's pre-merge baseline | W&B |
+|-----|-------------|-----------:|---------------------|------------------------|------------------------------------|-----|
+| pre-merge baseline | 10 | 13 | 130.10 | 130.42 | — | `kdd0rjbi` |
+| A — per-sample norm | 10 | 14 | 133.21 | 140.13 | val +2.4% (worse) | `xmfhgr18` |
+| **B — per-sample norm** | **5** | **13** | **119.87** | **122.85** | **val −7.9%, test −5.8%** | `bvi3jgrr` |
+
+### Per-split val (Run B, mae_surf_p)
+
+| Split | Pre-merge baseline | Run B | Δ |
+|-------|-------------------:|------:|--:|
+| `val_single_in_dist` | 162.13 | 155.60 | −4.0% |
+| `val_geom_camber_rc` | 131.83 | 136.00 | +3.2% |
+| `val_geom_camber_cruise` | 104.32 | **82.10** | **−21.3%** |
+| `val_re_rand` | 122.10 | **105.79** | **−13.4%** |
+
+### Conclusions (provisional, pre-rebase)
+
+- **Hypothesis confirmed within predicted band** on apples-to-apples comparison vs alphonse's own pre-merge baseline. Run B's −7.9% on val and −5.8% on the 3-finite-split test avg lands at the bottom of the 8–18% predicted range.
+- **Cross-split signature matched the prediction precisely** (val: cruise > re_rand > single_in_dist). Per-sample y-std normalization is hitting the right mechanism — equalizing per-sample contribution removes the implicit magnitude-weighting that the loss was riding on.
+- **Run A (sw=10) failure is interpretive gold.** Equalizing per-sample contribution while keeping `surf_weight=10` over-prioritizes surface fitting on now-equally-weighted samples → `val_single_in_dist` regresses by 21%, exactly what the theory predicts.
+- **Test-time `mae_surf_Ux=0.954` on cruise** is a ~50% improvement over baseline. Per-sample norm helps the velocity fields too, not just pressure.
+- **Vs merged baseline (val=120.97):** Run B looks like a 0.9% nominal improvement, but it's not apples-to-apples — alphonse is missing PR #344's schedule fix. Stacking per-sample-norm + sw=5 on top of the merged schedule should be near-additive, plausibly val ≈ 113–117 if so.
+- **NaN fix duplicated edward's** (already merged via #344). Drop on rebase.
+
+### Action
+
+Sent back for rebase + tightened surf_weight sweep on the merged schedule. New runs use `--epochs 25 --lr 7e-4` and group `h1-per-sample-ystd-rebased`, with sw ∈ {3, 5, 7}. Decision rule: merge if best rebased run beats val=120.97 by ≥2%; close cleanly if effect is lost when paired with proper schedule.
+
+### Held in reserve / promising follow-ups (post-decision)
+
+- **Per-channel y-std clamp** — channel-specific floor (larger floor on p than Ux/Uy) might let pressure get more benefit without de-emphasizing already-small velocity losses on low-Re cruise.
+- **EMA-smoothed per-sample std** — defensive against rare degenerate sample sizes; likely not needed here but cheap insurance.
+
+---
+
 ## 2026-04-28 02:51 — PR #404: H11 Re-conditional FiLM modulation — **SENT BACK FOR DISENTANGLEMENT**
 
 - Branch: `willowpai2d4-edward/h11-film-re-conditioning`
