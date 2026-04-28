@@ -1,12 +1,12 @@
 # SENPAI Research State
-- 2026-04-27 23:42 — round 1 in flight; **first merged baseline established by PR #356**
+- 2026-04-28 00:48 — round 1 mid-flight; **two big wins merged so far**: PR #356 (EMA, −3.1 %), PR #374 (grad-clip(1.0), −14.45 %)
 - Primary metric: `val_avg/mae_surf_p` (equal-weight mean surface pressure MAE across the four val splits); ranking final metric is `test_avg/mae_surf_p`
 
-## Current best (post-PR-#356, baseline of round 1)
-- **`val_avg/mae_surf_p` = 132.276** (EMA, ep13/50 timeout-cut)
-- **`test_avg/mae_surf_p` = 118.041**
+## Current best (post-PR-#374)
+- **`val_avg/mae_surf_p` = 113.157** (EMA, ep13/50 timeout-cut)
+- **`test_avg/mae_surf_p` = 99.322**
 - See `BASELINE.md` for the full per-split breakdown.
-- **Pending winner**: PR #352 (smoothl1-surface) raw run measured val=105.56, test=95.39 (−20.2% / −19.2% vs current). Sent back for rebase onto post-#356; will merge as new baseline after re-run.
+- **Pending winner**: PR #352 (smoothl1-surface) raw run measured val=105.56, test=95.39 (−20.2 % / −19.2 % vs the *prior* baseline 132.276 / 118.041). Once rebased onto post-#374 baseline + EMA, projected to land near **val ≈ 90, test ≈ 80** (assuming SmoothL1's gain composes with EMA + grad-clip).
 
 ## Resolved: scoring NaN bug
 - **Root cause** (independently flagged by tanjiro on #356 and askeladd on #351): one sample (`test_geom_camber_cruise` idx 20) has non-finite `y[p]`. `data/scoring.py:accumulate_batch` builds the right per-sample mask but does `err = |pred − y|` *before* the masked sum, so IEEE-754 `NaN*0 = NaN` (and `inf*0 = NaN`) defeats it and poisons the float64 accumulator → `mae_surf_p`/`mae_vol_p` go NaN for the whole split.
@@ -20,26 +20,33 @@
 | #350 | alphonse  | bigger-transolver-bf16   | Architecture (n_hidden 128→256, n_head 4→8) + bf16 | wip |
 | #351 | askeladd  | surf-weight-50           | Loss balance (10→50) | **sent back 23:42**: val=135.19 raw, test NaN; rebase onto post-#356 + retain surf_weight=50; test compounding with EMA |
 | #352 | edward    | smoothl1-surface         | Loss form (SmoothL1 β=1 on surface) | **sent back 04-28 00:10** for rebase + re-run: val=105.56 raw / test=95.39 (−20.2% / −19.2% vs EMA baseline; raw-vs-raw −22.7%). Decisive winner; conflicts with merged #356 in `evaluate_split`. Will merge as new baseline once post-rebase numbers land. |
-| #353 | fern      | warmup-cosine-1e3        | LR schedule (5-ep warmup + cosine to 1e-5, peak 1e-3) | wip |
+| #353 | fern      | warmup-cosine-1e3        | LR schedule (5-ep warmup + cosine to 1e-5, peak 1e-3) | wip — **note**: pre-#374 base; if it lands a non-trivial gain we may need a rebase + re-run on post-#374 |
 | ~~#354~~ | ~~frieren~~   | ~~slice-128-heads-8~~        | ~~Slice/head count (slice 64→128, n_head 4→8)~~ | **CLOSED 23:51**: val=156.48 (+18%), test=144.10 (+22%); throughput-bound (250 s/ep, 8/50 epochs) |
 | ~~#355~~ | ~~nezuko~~    | ~~mlp-ratio-4~~              | ~~MLP capacity (mlp_ratio 2→4)~~ | **CLOSED 04-28 00:30**: re-run on EMA baseline gave val=132.96 (+0.52 %), test=118.09 (+0.04 %) — wash. Real raw-vs-raw gain (−5.2 %) hidden by EMA at 12-ep budget. In-dist −2.7 % vs OOD +0.3 % to +2.1 % suggests capacity → in-dist memorization. Reassigned to #398 SwiGLU at matched params. |
-| #356 | tanjiro   | ema-eval                 | EMA(0.999) shadow for val + checkpoint | **MERGED 23:42** as new baseline (val=132.276, test=118.041) |
+| #356 | tanjiro   | ema-eval                 | EMA(0.999) shadow for val + checkpoint | **MERGED 23:42** as first round-1 baseline (val=132.276, test=118.041) |
 | ~~#357~~ | ~~thorfinn~~  | ~~channel-weighted-loss~~    | ~~Per-channel surface weights ([1,1,5] for Ux,Uy,p)~~ | **CLOSED 04-28 00:18**: val=150.91 (+14.1 %), test=143.07 (+21.2 %); raw-vs-raw +10.5 %. Severe per-epoch oscillation; loss-shape lever (#352) dominates this direction by ~30 %. |
 
 ## Round 1.5 follow-up assignments (post-#356, all targeting `icml-appendix-charlie-pai2d-r1` baseline)
 
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
-| #373 | frieren | mixed-slice-last-layer | Last-layer-only `slice_num=128` (mixed slicing) | Replaces closed #354; pays slice cost only at the regression head — fits in 30-min budget |
-| #374 | tanjiro | grad-clip-1p0 | Gradient clipping at `max_norm=1.0` between backward and step | Variance-reduction lever complementary to EMA; pre-clip grad norm logged as diagnostic |
+| ~~#373~~ | ~~frieren~~ | ~~mixed-slice-last-layer~~ | ~~Last-layer-only `slice_num=128`~~ | **CLOSED 04-28 00:48**: val=133.49 (+0.92 %), test=120.85 (+2.38 %); same in-dist-helps/OOD-regresses pattern as closed #355. Reassigned to #403. |
+| #374 | tanjiro | grad-clip-1p0 | Gradient clipping at `max_norm=1.0` between backward and step | **MERGED 00:43** as second round-1 baseline (val=113.157, test=99.322) — −14.45 % val / −15.86 % test vs #356. Pre-clip norm 50–100× max_norm → effective LR cap. |
 | #394 | thorfinn | torch-compile-throughput | `torch.compile(model, ema_model)` mode=reduce-overhead, dynamic=True | Replaces closed #357; structural throughput improvement — every subsequent PR gets more epochs in the 30-min timeout |
 | #398 | nezuko | swiglu-mlp-matched | SwiGLU MLP `(W_g(x)⊙silu(W_v(x)))W_o` at `swiglu_inner=168`, matched to baseline param count | Replaces closed #355; cleaner per-node-nonlinearity test (no capacity/wall-clock confound vs `mlp_ratio=4 GELU`) |
+| #402 | tanjiro | grad-clip-0p5 | Aggressive grad-clip: `max_norm=1.0 → 0.5` | Tanjiro's own follow-up; with pre-clip norms 50–100× threshold on #374, more aggressive damping might compound or might starve the optimizer |
+| #403 | frieren | batch8-lr-sqrt2 | `batch_size=4 → 8`, `lr=5e-4 → 7e-4` (√2 scaling) | Replaces closed #373; variance reduction at the gradient-aggregation level, complementary to EMA + grad-clip |
 
-## Updated picture from round-1 partial returns
-- **#356 (EMA) merged** as round-1 baseline at val=132.276 (−3.1% vs same-run best raw).
-- **#352 (SmoothL1) raw run** beats baseline by −20.2% / −19.2% — by far the strongest single-lever delta of round 1. Pending rebase + re-run.
-- **#354 (slice_num=128 + heads=8)** closed: throughput-bound at 250 s/epoch.
-- The biggest signal so far: **loss form (MSE→SmoothL1) is more impactful than checkpoint smoothing or any other lever measured to date**. Round 2 priorities should re-rank to put loss-form variants high.
+## Updated picture from round-1 returns
+- **#356 (EMA) merged** at val=132.276 (−3.1 % vs same-run best raw).
+- **#374 (grad-clip(1.0)) merged** at val=113.157 (−14.45 % val, −15.86 % test). Pre-clip grad norms 50–100× max_norm → clip is acting as effective LR cap. Beats baseline on every val and test split.
+- **#352 (SmoothL1) raw run** beats prior baseline by −20.2 % / −19.2 % — strongest single-lever delta seen. Pending rebase onto post-#374.
+- **Variance reduction is the dominant winning direction so far**:
+  - iterate-level: EMA (merged)
+  - step-magnitude-level: grad-clip (merged)
+  - aggregation-level: larger batch (PR #403, in flight)
+- **Loss-form direction** also strongly winning: SmoothL1 (PR #352, pending rebase).
+- **Closed levers**: more capacity at this epoch budget (#355 mlp_ratio=4, #373 last-layer slice_num=128) showed an in-dist-helps / OOD-regresses pattern — extra capacity goes to in-dist memorization rather than generalization. Consistent across two architecturally distinct experiments.
 
 ## Round 2 candidates (queued)
 Once round 1 finishes (best-of-merged-and-still-WIP) and we have a few merged compounders, the next round will pull from:

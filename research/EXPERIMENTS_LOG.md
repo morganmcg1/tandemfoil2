@@ -238,3 +238,72 @@ The wider GELU MLP **helps in-distribution but slightly hurts OOD** on all three
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #398 | nezuko | swiglu-mlp-matched | SwiGLU MLP `(W_g(x)⊙silu(W_v(x)))W_o` at `swiglu_inner=168`, matched to baseline param count | Replaces closed #355; cleaner per-node-nonlinearity test (no capacity confound, no wall-clock tax) |
+
+## 2026-04-28 00:43 — PR #374: gradient clipping at `max_norm=1.0` (charliepai2d1-tanjiro) — **MERGED, new baseline**
+- Branch: `charliepai2d1-tanjiro/grad-clip-1p0` → squash-merged into `icml-appendix-charlie-pai2d-r1` (commit `4e47f8a`).
+- Hypothesis: clip gradient L2 norm at 1.0 between `loss.backward()` and `optimizer.step()`, complementary variance-reduction lever to EMA. Predicted band: −1 % to −3 %.
+
+### Headline metrics (best EMA epoch = 13/50, timeout-cut)
+| metric | this run | prior baseline (#356) | Δ abs | Δ % |
+|---|---:|---:|---:|---:|
+| `val_avg/mae_surf_p` (EMA) | **113.157** | 132.276 | −19.119 | **−14.45 %** |
+| `test_avg/mae_surf_p` | **99.322** | 118.041 | −18.719 | **−15.86 %** |
+| raw `val_avg/mae_surf_p` (best, ep 13) | 121.992 | 136.526 (ep 11) | −14.534 | **−10.65 %** |
+| raw `val_avg/mae_surf_p` at best EMA ep | 121.992 | 178.392 | −56.400 | −31.62 % |
+
+### Per-split — beats baseline on every split, val and test
+| Split | val Δ | test Δ |
+|---|---:|---:|
+| single_in_dist | −36.6 | −30.6 |
+| geom_camber_rc | −11.4 | −13.8 |
+| geom_camber_cruise | −15.6 | −14.6 |
+| re_rand | −12.9 | −15.9 |
+
+### Diagnostic — pre-clip grad norm cluster (the explanation)
+
+Mean pre-clip `train/grad_norm` per epoch: 117 → 95 → 85 → 83 → 72 → 71 → 70 → 69 → 55 → 60 → 66 → 56 → 56. Norms decay over training but stay **two orders of magnitude above `max_norm=1.0`** for the entire run. The clip is firing on every step and acting as an effective LR cap, damping the largest gradient steps that were previously throwing the optimizer off-trajectory.
+
+### Analysis
+- **Mechanism is clear.** Pre-clip norms 50–100× the threshold means clipping is doing real work, not acting as a delicate stabilizer. The size of the gain (~5× the predicted band) is consistent with "baseline optimizer was being dragged off-trajectory by occasional huge steps."
+- **Raw and EMA converge.** Baseline (#356) had a 42-point raw/EMA gap at ep13 (178 vs 132, raw curve oscillating 191 → 164 → 249); this run's gap is 8 points (122 raw vs 113 EMA) and the raw curve is monotonically much smoother. Variance reduction at the *step* level (grad-clip) compounds with variance reduction at the *iterate* level (EMA).
+- **All four splits beat baseline on val and test.** Not an in-dist trick.
+- **Wall clock unchanged** (30.4 min, ep13/50). The clip adds one cheap reduction per step.
+
+### Decision: merge as new round-1 baseline
+- Beats baseline on the ranking metric by a wide margin.
+- Mechanism is well-understood (auditable via the per-epoch grad-norm trace tanjiro logged).
+- Compounds cleanly with the SmoothL1 lever once #352 lands; complements every other in-flight PR.
+- BASELINE.md updated; tanjiro reassigned to **PR #402 (grad-clip-0p5)** as the natural follow-up to their own suggestion #1.
+
+## 2026-04-28 00:48 — PR #373: last-layer-only `slice_num=128` (charliepai2d1-frieren) — **CLOSED**
+- Branch: `charliepai2d1-frieren/mixed-slice-last-layer` (closed + branch deleted)
+- Hypothesis: bump `slice_num=64 → 128` only in the final TransolverBlock (which feeds the regression head). Cost story checked out (148.8 s/ep vs baseline 145, only +3 % wall clock).
+
+### Headline metrics (best EMA epoch 13/50, timeout-cut)
+| | val_single_in_dist | val_geom_camber_rc | val_geom_camber_cruise | val_re_rand | **val_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` (EMA) | 160.86 | 147.41 | 107.34 | 118.35 | **133.49** |
+
+| | test_single_in_dist | test_geom_camber_rc | test_geom_camber_cruise | test_re_rand | **test_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` | 141.78 | 132.10 | 89.68 | 119.84 | **120.85** |
+
+- Δ vs baseline #356: **val +0.92 %, test +2.38 %**.
+- Per-split test: in-dist −3.64 % (better), geom_camber_rc +3.27 %, geom_camber_cruise +6.73 %, re_rand +5.97 % — three of four OOD splits regress.
+
+### Analysis
+- **Same in-dist-helps / OOD-regresses pattern as closed PR #355 (mlp_ratio=4 GELU)**. Adding capacity selectively in the regression-head block trades OOD generalization for in-dist memorization.
+- Wall clock cost was sub-prediction (3 % vs predicted 15 %), so the *cost story* is not the issue.
+- Frieren's analysis nails the likely mechanism: doubling the slice projection's output dim (`dim_head → slice_num`) introduces a softmax-temperature tuning problem the optimizer doesn't have time to solve in 13 timeout-cut epochs.
+
+### Decision: close, reassign to batch8-lr-sqrt2
+- Wash on val (+0.92 %) and small regression on test (+2.38 %), no path forward via a small variation given the same pattern as the closed `mlp_ratio=4` PR.
+- Matched-pattern closure: more capacity at this epoch budget on this architecture is not the lever; the loss-form direction (#352) and variance-reduction direction (#356/#374) are dominating.
+- Reassigned to **PR #403 (batch8-lr-sqrt2)** — variance reduction at the *gradient aggregation* level, complementary to the just-merged grad-clip and EMA. Larger effective batch builds on round-1 winning direction.
+
+## 2026-04-28 00:50 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #402 | tanjiro | grad-clip-0p5 | More aggressive grad-clip: `max_norm=1.0 → 0.5` | Tanjiro's own follow-up; tests whether further damping at this LR helps or starves |
+| #403 | frieren | batch8-lr-sqrt2 | `batch_size=4 → 8`, `lr=5e-4 → 7e-4` (√2 scaling) | Variance reduction at gradient aggregation; compounds with EMA + grad-clip |
