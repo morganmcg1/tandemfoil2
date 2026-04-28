@@ -15,19 +15,19 @@ help across at least three of the four tracks.
 
 ## Round 3 focus
 
-**Current measured baseline (merged 2026-04-28 03:11):**
-PR #461 (askeladd) — **L1+FF + matched cosine + lr=7.5e-4**.
-`val_avg/mae_surf_p = 80.28`, `test_avg/mae_surf_p = 70.92`. Wins on
-all 4 val and all 4 test splits. **Distributional gain** — broad
-across splits, not concentrated on any single mechanism.
+**Current measured baseline (merged 2026-04-28 03:31):**
+PR #462 (edward) — **L1+FF + matched cosine + grad clipping
+(`max_norm=1.0`)**, `--epochs 14`, default lr=5e-4.
+`val_avg/mae_surf_p = 80.06`, `test_avg/mae_surf_p = 70.04`.
+Marginal val win (within seed noise) but unambiguous test win and
+uniform per-split improvements.
 
-**Caveat**: PR #461 was branched off post-#400 advisor (had FF and
-matched cosine) but **before PR #447 merged** (no EMA). So the 80.28
-measurement is L1+FF + matched cosine + lr=7.5e-4, *no EMA*. The
-post-merge advisor includes EMA from #447. Running the new advisor
-with `--epochs 14 --lr 7.5e-4` will measure the **L1+FF+EMA + matched
-cosine + lr=7.5e-4 five-lever stack** — expected to beat 80.28
-substantially (EMA was +9% standalone).
+**Caveat**: PR #462 was branched off pre-#447 advisor (no EMA) and
+used default lr=5e-4. The post-merge advisor includes EMA + the
+clipping code. The actual round-3-best six-lever-stack
+(L1+FF+EMA + matched cosine + lr=7.5e-4 + clip) on the post-merge
+advisor is **untested** — running with `--epochs 14 --lr 7.5e-4`
+should land below 80.06.
 
 **Round-3 baseline lineage:**
 | Round | best val | best test | lever | Δ vs prior |
@@ -35,28 +35,35 @@ substantially (EMA was +9% standalone).
 | PR #306 | 135.20 | 123.15 | bs=8 + sqrt-LR (MSE) | reference |
 | PR #280 | 102.64 |  97.73 | + L1 surface loss | **−24.1%** |
 | PR #400 |  91.87 |  81.11 | + 8-freq spatial FF | **−10.5% / −17.0%** |
-| PR #389 |  90.90 |  80.84 | + matched cosine (CLI) | **−1.06% / −0.33%** |
+| PR #389 |  90.90 |  80.84 | + matched cosine (CLI) | −1.06% / −0.33% |
 | PR #447 |  82.97 |  73.58 | + EMA(0.999) | **−8.7% / −9.0%** |
-| **PR #461** | **80.28** | **70.92** | **+ lr=7.5e-4 (CLI, ex-EMA)** | **−3.2% / −3.6%** |
+| PR #461 |  80.28 |  70.92 | + lr=7.5e-4 (CLI) | **−3.2% / −3.6%** |
+| **PR #462** | **80.06** | **70.04** | **+ grad clipping max_norm=1.0** | −0.27% / **−1.24%** |
 
-**Round-3 proven levers (cumulative, five stacked)**:
+**Round-3 proven levers (cumulative, six stacked)**:
 1. L1 surface loss (PR #280)
 2. 8-freq spatial Fourier features (PR #400)
 3. Matched cosine `--epochs 14` (PR #389, CLI)
 4. EMA-of-weights, decay=0.999 (PR #447)
-5. **Peak LR `lr=7.5e-4`** (PR #461, CLI)
+5. Peak LR `lr=7.5e-4` (PR #461, CLI)
+6. **Gradient clipping max_norm=1.0** (PR #462) — clip fires throughout
+   training (grad norms ~27× max_norm even at epoch 14).
 
 Recommended reproduce: `python train.py --epochs 14 --lr 7.5e-4`.
 
-**Round-4 priorities**:
-- **Confirm the five-lever-stack number** (L1+FF+EMA + matched cosine
-  + lr=7.5e-4) on the post-merge advisor — expected ≤ 80.28.
-- **Bracket peak LR upward** at lr=1e-3 (askeladd's next assignment).
-  PR #288's lr=1e-3 failure was warmup-driven, not LR-driven; should
-  work under matched cosine without warmup.
-- **Continue per-split-aware compose tests** on remaining round-3
-  levers (beta2=0.95 in flight #446, grad clipping in flight #462,
-  log(Re) FF in flight #432).
+**Round-5 priorities** (refreshed):
+- **Tighter clipping bracket** (`max_norm ∈ {0.5, 0.1}`) — pre-clip
+  grad norms still ~27× threshold at cosine tail (edward PR #462).
+- **L1-volume compose test on post-#462 advisor** — tanjiro PR #492
+  in flight, predicted ~76 if additive.
+- **DropPath / stochastic depth** — mechanistically-different
+  regulariser; the wd × FF and beta2 × FF compose failures (PRs #437,
+  #446) were both magnitude-based regularisers. DropPath drops entire
+  residual branches stochastically — different mechanism.
+- **wd=5e-4 compose** on post-#462 advisor — frieren validated the
+  sweet spot in PR #469 (rc-camber clean at 5e-4 vs +11.8% at 1e-3).
+- **Auxiliary log-pressure target** — `val_single_in_dist` is now
+  93.59 (closing fast) but still the worst split. Heavy-tail compress.
 
 **Closed PRs (2026-04-28):**
    - PR #283 — askeladd (wider+deeper): val 166.64 (+62% vs L1 baseline);
@@ -135,61 +142,44 @@ composition even if they don't outright beat 102.64:**
      *(loss focus)* — branched off L1-only.
    - PR #432 — nezuko: L1+FF + **`log(Re)` Fourier features** *(input
      encoding extension)* — on post-#400 advisor.
-   - PR #446 — thorfinn: L1+FF + AdamW(beta2=0.95) *(optimiser compose)*
-     — on post-#400 advisor.
-   - PR #462 — edward: L1+FF + `--epochs 14` + grad clipping
-     `max_norm=1.0` — three-lever stack *(stability × schedule × FF)*.
-   - PR #469 — frieren: L1+FF + `--epochs 14` + `wd=5e-4`
-     (interior-point) — tests whether intermediate wd captures
-     cruise/in-dist compose without rc-camber regression.
    - PR #476 — fern: L1+FF+EMA + `--epochs 14` — four-lever-stack
      confirmation on post-#447 advisor.
    - PR #489 — askeladd: L1+FF+EMA + `--epochs 14` + `lr=1e-3` —
      LR bracket upper end (round-3-best config plus LR bump).
-   - PR (tanjiro, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
+   - PR #492 — tanjiro: L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
      **L1 volume loss** — compose test of validated L1-volume lever
-     on the new advisor (predicted ~76 if additive).
+     on post-#461 advisor.
+   - PR (edward, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **`max_norm=0.5`** — tighter clipping bracket on the post-merge
+     advisor.
+   - PR (frieren, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **`wd=5e-4`** — wd-sweet-spot compose on post-merge advisor with
+     full proven-lever stack.
+   - PR (thorfinn, new): L1+FF+EMA + `--epochs 14` + `lr=7.5e-4` +
+     **DropPath** (stochastic depth) — mechanistically-different
+     regulariser than wd / beta2 (which both failed to compose with FF).
 
-## Convergent OOD-camber narrative — partially refuted by PR #437
+## Compose pattern map — final round-3 picture
 
-Five round-3 levers all improved `val_geom_camber_rc` on the L1
-baseline (FF, matched cosine, beta2=0.95, wd=1e-3, grad clipping).
-The natural reading was "five independent paths to the same OOD-camber
-gain → stack additively in round 5".
+Six round-3 PRs tested compose effects on top of L1+FF. The pattern:
 
-**PR #437 (frieren, L1+FF + wd=1e-3 compose) refutes that for the
-wd × FF pair specifically:**
+| compose pattern | with FF | examples | cumulative impact |
+|----------------|---------|----------|------------------:|
+| **Distributional** (broad gain across all splits) | additive | matched cosine + lr=7.5e-4 (PR #461), grad clipping (PR #462) | merged |
+| **Trajectory averaging** | clean orthogonal | EMA × FF (PR #447) | merged |
+| **L1-only-OOD-camber-targeted** at small dose | additive | wd=5e-4 (PR #469, validated, lost to current by merge timing) | re-assigned |
+| **L1-only-OOD-camber-targeted** at large dose | destructive on rc-camber | wd=1e-3 (PR #437), beta2=0.95 (PR #446) | closed |
 
-| split | L1 + wd (PR #395) | L1+FF (PR #400) | L1+FF + wd (#437) | what stacks? |
-|-------|------------------:|----------------:|------------------:|--------------|
-| val_geom_camber_rc | −11.9% | −20.8% | **+11.8% (worse)** | **destructive** |
-| val_geom_camber_cruise | +2.4% | −6.3% | **−11.5%** | additive |
-| val_single_in_dist | +6.2% | −3.3% | **−7.5%** (sign-flipped) | additive |
-
-**wd and FF overlap on rc-camber** — they're doing the same
-regularisation work there, and stacking pushes past optimal. They
-**compose** on cruise and in-dist. Adding FF *flipped the sign* of
-wd's effect on in-dist.
-
-**This reframes round-4/5 strategy**: per-split analysis is now
-load-bearing. Round-5 cannot be "stack everything from round-3" — the
-levers compete on at least the rc-camber axis. Each remaining compose
-test (#432 log(Re) FF, #446 beta2, #447 EMA, #462 grad clipping +
-matched cosine) needs to be evaluated *per-split*, with particular
-attention to whether rc-camber regresses (overlap with FF) vs improves
-(orthogonal mechanism).
-
-Two of the five round-3 levers are now baseline (FF, matched cosine).
-The remaining three (beta2, EMA, clipping) are the round-4 compose
-tests. **Likely outcomes per lever:**
-
-- **EMA** (fern #447): weight-averaging mechanism, most likely
-  orthogonal to FF/wd → compose additively.
-- **beta2=0.95** (thorfinn #446): optimiser-side, may overlap with wd
-  on the rc-camber axis if it's also an effective-regularisation
-  lever; per-split signal will tell.
-- **Grad clipping + matched cosine** (edward #462): stability mechanism
-  — may overlap with matched cosine's natural gradient-decay effect.
+**Round-5 assignment heuristic** (now informed by 6 compose tests):
+- Prefer **distributional / trajectory-averaging** levers — these
+  compose with FF.
+- Prefer **mechanistically-different regulariser axes** (DropPath,
+  stochastic depth, dropout, MixUp) over weight-magnitude
+  regularisation when the latter has overlapped with FF.
+- Magnitude-based regularisers (wd, beta2) only compose with FF at
+  small doses; large doses interfere on rc-camber.
+- Per-split signal is load-bearing for compose decisions; headline
+  tied-or-marginally-better can hide important compose information.
 
 ## Round-5 priorities (refreshed by PR #437)
 

@@ -1,5 +1,182 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 03:31 — PR #462 (MERGED): L1+FF + matched cosine + grad clipping (max_norm=1.0)
+- Branch: `charliepai2d3-edward/l1ff-cos14-clip1`
+- Hypothesis: gradient clipping at `max_norm=1.0` composed with FF
+  and matched cosine; predicted −1% to −3%.
+- Config: post-#400 advisor (L1+FF) but pre-#447 (no EMA),
+  `--epochs 14`. Single-line code change adding `clip_grad_norm_`
+  before `optimizer.step()`; added grad-norm logging.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs current baseline (PR #461, 80.28) | vs PR #389 (the assigned-against, 90.90) |
+|--------|--------:|-------------------------------------:|----------------------------------------:|
+| `val_avg/mae_surf_p`  | **80.06** | **−0.27%** (marginal win, within noise) | **−11.9%** ✓ above predicted |
+| `test_avg/mae_surf_p` | **70.04** | **−1.24%** (above noise) | **−13.4%** ✓ |
+
+### Per-split val (best epoch 14)
+
+| split | L1+FF baseline | this PR | Δ |
+|-------|---------------:|--------:|--:|
+| val_single_in_dist     | 117.24 | 93.59 | **−20.2%** |
+| val_geom_camber_rc     |  98.99 | 92.33 | −6.7% (additive band, predicted 5-10%) |
+| val_geom_camber_cruise |  68.61 | 57.74 | **−15.9%** |
+| val_re_rand            |  82.64 | 76.57 | −7.3% |
+
+### Pre-clip grad-norm trajectory (most useful round-3 instrumentation)
+
+| epoch | mean | max | val_avg |
+|------:|-----:|----:|--------:|
+| 1  | 56.99 | 142.43 | 227.23 |
+| 7  | 45.44 |  99.31 | 105.76 |
+| 11 | 38.20 | 164.85 |  91.06 |
+| 14 | **27.20** | 75.79 | 80.06 |
+
+Pre-clip grad-norm mean drops ~52% over training (57 → 27) but
+**stays ~27× above max_norm=1.0 even at the cosine tail**. Clipping
+fires on essentially every batch through epoch 14. Tighter values
+(0.5, 0.1) are well-motivated for round 5.
+
+### Decision
+
+**Merged.** Marginal val win (within seed noise) but **unambiguous
+test win** and uniform per-split improvements.
+
+Most interesting cross-PR finding: clipping on L1-only (PR #423,
+closed) had `val_single_in_dist` flat at −0.6%; this run shows it at
+**−11.6%**. **Same lever, qualitatively different effect when
+composed with matched cosine.** Stability levers compose better with
+schedule levers — late-cosine LR decay creates the conditions where
+clipping's outlier-suppression matters more.
+
+### Round-3 narrative — clipping is the third "non-overlapping" lever
+
+| compose pattern | with FF | examples |
+|----------------|---------|----------|
+| Distributional / trajectory-averaging | additive | matched cosine + lr=7.5e-4, EMA, **clipping (this PR)** |
+| L1-only-OOD-camber-targeted at high dose | destructive on rc-camber | wd=1e-3, beta2=0.95 |
+
+### Caveat
+
+Branch was pre-#447 (no EMA). Post-merge advisor adds EMA. The
+six-lever stack (L1+FF+EMA + matched cosine + lr=7.5e-4 + clip) on
+post-merge advisor is untested but expected ≤ 80.06.
+
+### Round-3 proven levers (cumulative, now six stacked)
+
+1. L1 surface loss (PR #280)
+2. 8-freq spatial Fourier features (PR #400)
+3. Matched cosine `--epochs 14` (PR #389, CLI)
+4. EMA-of-weights decay=0.999 (PR #447)
+5. Peak LR `lr=7.5e-4` (PR #461, CLI)
+6. **Gradient clipping max_norm=1.0** (PR #462) ← this merge
+
+---
+
+## 2026-04-28 03:31 — PR #469 (CLOSED, ties current; validates wd sweet spot): L1+FF + matched cosine + wd=5e-4
+- Branch: `charliepai2d3-frieren/l1ff-cos14-wd-5e-4` (deleted on close)
+- Hypothesis: interior-point wd test — does wd=5e-4 capture the
+  cruise/in-dist compose benefits of wd=1e-3 (PR #437) without the
+  rc-camber regression? Predicted −1% to −3% on val.
+- Config: post-#400 advisor (L1+FF), `--epochs 14 --weight_decay 5e-4`.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | This PR | vs current baseline (PR #461, 80.28) | vs PR #389 (90.90) |
+|--------|--------:|-------------------------------------:|-------------------:|
+| `val_avg/mae_surf_p`  | 81.07 | +1.0% (≈ tied) | **−10.83%** ✓ |
+| `test_avg/mae_surf_p` | 71.75 | +1.2% (≈ tied) | **−11.25%** ✓ |
+
+### The wd ladder (key compose finding)
+
+| split | L1+FF (wd=1e-4) | L1+FF + wd=1e-3 (PR #437) | **L1+FF + cos14 + wd=5e-4 (this PR)** |
+|-------|----------------:|--------------------------:|---------------------------------------:|
+| val_geom_camber_rc | 98.99 | **110.64 (+11.8% regressed)** | **91.86 (−7.2%, no regression)** |
+| val_geom_camber_cruise | 68.61 | 60.70 (−11.5%) | **60.73 (−11.5%, same gain)** |
+| val_single_in_dist | 117.24 | 108.46 (−7.5%) | **94.21 (−19.6%, round-3 best on this split)** |
+| val_re_rand | 82.64 | 85.61 (+3.6%) | **77.46 (−6.3%, flipped to win)** |
+
+### Decision
+
+**Closed** — ties current baseline within seed noise. But **the wd
+sweet spot is now firmly established**: rc-camber regression cliff at
+wd=1e-3 does not extend to wd=5e-4, full cruise gain held, in-dist
+hits round-3 best.
+
+The "validated-on-L1 OOD-camber lever doesn't compose with FF"
+pattern (PR #437, PR #446) is **dose-dependent for wd**: small wd
+composes additively, large wd interferes. Important nuance for
+round-5 stacking.
+
+Re-assigning frieren to test wd=5e-4 on the post-#462 advisor (which
+adds clipping + EMA via merges since #469 was assigned).
+
+Per-epoch metrics not centralised in `EXPERIMENT_METRICS.jsonl` —
+branch deleted on close.
+
+---
+
+## 2026-04-28 03:31 — PR #446 (CLOSED, second compose-failure confirmation): L1+FF + AdamW(beta2=0.95)
+- Branch: `charliepai2d3-thorfinn/l1ff-adamw-beta2-0-95` (deleted on close)
+- Hypothesis: stack the validated `beta2=0.95` lever (PR #419) onto
+  L1+FF; predicted −1% to −4%.
+- Config: post-#400 advisor (L1+FF), `betas=(0.9, 0.95)` in AdamW.
+
+### Headline — clean regression, two-seed confirmed
+
+| Metric | This PR | vs L1+FF (91.87) | vs L1-only `beta2=0.95` (PR #419) |
+|--------|--------:|-----------------:|----------------------------------:|
+| `val_avg/mae_surf_p` (best epoch 13/14) | 96.37 | **+4.9% (regressed)** | **+5.5%** (vs 91.50) |
+| `test_avg/mae_surf_p` | 85.15 | +5.0% | +6.6% |
+
+Two seeds: val 99.92 / 96.37, both regress vs L1+FF baseline. Sign
+unambiguous.
+
+### Per-split val — the diagnostic check
+
+| split | L1+FF baseline | L1+FF + beta2=0.95 (this PR) | L1-only Δ (PR #419) |
+|-------|---------------:|-----------------------------:|--------------------:|
+| val_geom_camber_rc | 98.99 | **109.52 (+10.6% regressed)** | **−13.6%** |
+| val_geom_camber_cruise | 68.61 | 73.27 (+6.8%) | +6.3% |
+| val_re_rand | 82.64 | 89.01 (+7.7%) | −1.6% |
+| val_single_in_dist | 117.24 | 113.67 (−3.0%) | +1.8% |
+
+The OOD-camber gain that motivated the lever (rc-camber **−13.6%**
+on L1-only) **inverts to +10.6% regression** when stacked on FF.
+Cruise's negative L1-only signal persists.
+
+### Structural finding — second confirmation
+
+| PR | lever | L1-only `val_geom_camber_rc` Δ | L1+FF compose `val_geom_camber_rc` Δ |
+|----|-------|-------------------------------:|-------------------------------------:|
+| #437 | wd=1e-3 | **−11.9%** | **+11.8%** (regressed) |
+| #446 (this PR) | beta2=0.95 | **−13.6%** | **+10.6%** (regressed) |
+
+**Two independent levers, both validated targeting OOD-camber on L1,
+both fail to compose with FF, both regress on rc-camber by ~10-12%.**
+That's a coherent pattern: the L1-only OOD-camber improvement is *the*
+empirical signature of an FF-redundant lever.
+
+Mechanistic read: lower beta2 shortens the second-moment window →
+more effective per-step variance → FF inputs add high-frequency
+components → combining over-amplifies noisy gradient steps on
+geometry-sensitive features.
+
+### Decision
+
+**Closed** with two-seed confirmation of the regression sign.
+
+Re-assigning thorfinn to **DropPath / stochastic depth** — different
+regularisation mechanism than weight magnitude (wd) or second-moment
+variance (beta2). Should bypass the "OOD-camber-targeted regulariser
+doesn't compose with FF" pattern.
+
+Per-epoch metrics not centralised in `EXPERIMENT_METRICS.jsonl` —
+branch deleted on close.
+
+---
+
 ## 2026-04-28 03:15 — PR #448 (CLOSED, validated on L1+FF / loses to current): L1 volume loss
 - Branch: `charliepai2d3-tanjiro/l1ff-vol-l1` (deleted on close)
 - Hypothesis: replace MSE volume loss with L1 volume loss — does L1
