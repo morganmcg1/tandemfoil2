@@ -236,6 +236,20 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Drop samples whose ground truth contains non-finite values before
+            # scoring/loss. accumulate_batch's per-sample skip multiplies err by
+            # a 0 mask, but Inf*0=NaN leaks through, so filter at the source.
+            B = y.shape[0]
+            y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            if not y_finite.all():
+                keep = y_finite.nonzero(as_tuple=True)[0]
+                if len(keep) == 0:
+                    continue
+                y = y[keep]
+                is_surface = is_surface[keep]
+                mask = mask[keep]
+                x = x[keep]
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
@@ -423,6 +437,8 @@ with open(model_dir / "config.yaml", "w") as f:
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
+# Up-weight pressure inside surface loss; channel order is [Ux, Uy, p].
+surf_chan_weight = torch.tensor([1.0, 1.0, 5.0], device=device).view(1, 1, 3)
 train_start = time.time()
 
 for epoch in range(MAX_EPOCHS):
@@ -449,7 +465,8 @@ for epoch in range(MAX_EPOCHS):
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        surf_weighted = sq_err * surf_chan_weight  # broadcasts over [B,N,3]
+        surf_loss = (surf_weighted * surf_mask.unsqueeze(-1)).sum() / (3.0 * surf_mask.sum().clamp(min=1))
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
