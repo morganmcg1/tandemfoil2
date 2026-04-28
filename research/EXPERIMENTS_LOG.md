@@ -1653,3 +1653,65 @@ The Lion-axis basin map is the strongest single appendix asset from this branch.
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #643 | frieren | ema-warmup-skip | Skip first 1 epoch of EMA updates (Polyak-Ruppert bias correction) on merged #394 baseline | Lion momentum-knob basin closed; pivot to fresh untouched axis. EMA shadow at ep1 has random-init drag (`0.99·w_init + 0.01·w_step1`). Skipping ep0 EMA updates lets shadow start from non-random state. Mechanism: the standard Polyak-Ruppert iterate-averaging idea applied to weight EMA — equivalent to Adam's `(1-β^t)` bias correction. Honest band −2 % to +1 %. |
+
+## 2026-04-28 08:05 — PR #624: Volume SmoothL1 β=0.5 (charliepai2d1-thorfinn) — **CLOSED (clean wash; volume MSE is the right loss)**
+- Run config: `vol_loss = MSE → SmoothL1(β=0.5)` (single-line edit at train.py:573). Branched from post-#394 baseline (compile + Lion + 20-ep budget).
+
+### Headline metrics (best EMA epoch=18/50, raw best ep20, timeout-cut)
+| metric | this run | current baseline #394 |
+|---|---:|---:|
+| `val_avg/mae_surf_p` (EMA) | 43.7136 | 43.677 (**+0.08 %**, wash) |
+| `test_avg/mae_surf_p` | 37.9472 | 36.920 (+2.78 %) |
+| best raw val | 48.8086 (ep20) | — |
+| Mean grad-norm ep10–20 | 8.61 | 8.7 (similar) |
+| Mean spread ep15–20 | −8.98 (ep18 outlier −18.98) | ~−2.5 |
+
+### Per-split — asymmetric pattern (single gains, cruise hurts)
+| Split | val Δ vs #394 | test Δ vs #394 |
+|---|---:|---:|
+| single_in_dist (highest residuals) | **−6.66 %** | **−4.21 %** |
+| geom_camber_rc | −0.45 % (wash) | +5.66 % |
+| geom_camber_cruise (smallest residuals) | **+7.97 %** | **+8.38 %** |
+| re_rand | +3.12 % | +3.63 % |
+
+### Per-channel test MAE — primary watch list disconfirmation
+| Channel | this run | baseline #394 | Δ |
+|---|---:|---:|---:|
+| `mae_vol_Ux` | 2.1765 | 2.102 | **+3.5 %** |
+| `mae_vol_Uy` | 0.8693 | 0.844 | **+3.0 %** |
+| `mae_vol_p` | 43.0069 | 42.327 | **+1.6 %** |
+| `mae_surf_p` | 37.9472 | 36.920 | +2.8 % |
+
+**Central prediction disconfirmed**: predicted `mae_vol_p` would drop −5 to −15 %; actual went UP +1.6 %. Volume L1-tail mechanism doesn't compose.
+
+### Mechanism finding (durable for the appendix asymmetric loss-form story)
+
+**Volume residuals don't preferentially live in the L1-tail at β=0.5 normalized.** Two mechanisms explain the wash:
+
+1. **Volume residual distribution**: most volume residuals at β=0.5 normalized stay in the **MSE-quadratic regime** where SmoothL1 = `2·err²/β`, costing **2× the gradient magnitude** vs MSE. Small-residual splits (cruise) get amplified gradients that destabilize convergence; large-residual splits (single) benefit from L1-asymptote routing.
+
+2. **Loss-scale rebalancing**: surf_weight=10 was set when vol_loss was MSE-scale (numerically larger ~0.07–0.15). Switching vol to SmoothL1 reduces vol_loss numerically (~0.025 in late epochs) → effective surface weight ~doubles → backbone gets weaker volume gradient share → predicted "compounding through shared backbone" never materializes.
+
+Either mechanism alone explains the wash. Together they explain why neither volume MAE improved (mech 1: amplification hurts more than L1-tail helps for cruise) nor surface improved through backbone composition (mech 2: surface already dominates).
+
+### Loss-form composition table for the appendix
+
+| PR | Surface β | Volume loss | surf_weight | val_avg | Notes |
+|---|---:|---|---:|---:|---|
+| #352 (merged) | 1.0 | MSE | 10 | 64.16 | Surface SmoothL1 introduced |
+| #535 (merged) | 0.5 | MSE | 10 | 61.51 | Surface β narrowed |
+| #394 (merged) | 0.5 | MSE + compile | 10 | **43.68** | Compile + 20 epochs |
+| **#624 (closed)** | **0.5** | **SmoothL1(0.5) + compile** | **10** | **43.71** | **Volume L1-tail WASH** |
+
+**Surface β-axis**: 1.0 → 0.5 monotone improvement. Same change on volume = wash. The asymmetry is the durable finding.
+
+### Decision: close
+- Wash on val (within noise); test +2.78 % small regression.
+- Experimental question answered cleanly: volume MSE is the right loss for current configuration.
+- Reassigned thorfinn to **PR #651 (surf-weight-7)** — mirror experiment isolating loss-scale rebalancing mechanism. Keep MSE_vol (where backbone got most signal in #624 baseline) but reduce surf_weight to test if surface dominance is excessive.
+
+## 2026-04-28 08:08 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #651 | thorfinn | surf-weight-7 | `surf_weight = 10 → 7` on merged #394 baseline | Mirror experiment to closed #624; keep MSE_vol, reduce surface emphasis from ~3:1 to ~1.5:1 effective ratio. Tests whether surface dominance is load-bearing or excessive. If win, backbone-composition gain unmasked by loss-scale rebalancing. Honest band −6 % to +8 %. |
