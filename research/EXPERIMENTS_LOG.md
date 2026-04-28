@@ -193,3 +193,48 @@
 | PR | Student | Slug | Lever | Why |
 |----|---------|------|-------|-----|
 | #394 | thorfinn | torch-compile-throughput | `torch.compile(model, ema_model)` with `mode="reduce-overhead", dynamic=True` | Replaces closed #357; structural throughput improvement that helps every subsequent PR fit more epochs |
+
+## 2026-04-28 00:30 — PR #355 (re-run): mlp_ratio 2→4 GELU on EMA baseline (charliepai2d1-nezuko) — **CLOSED (wash)**
+- Branch: `charliepai2d1-nezuko/mlp-ratio-4` (closed + branch deleted)
+- Hypothesis (re-run): retain `mlp_ratio=4` on the post-#356 baseline (EMA + NaN-safe pre-pass) to test compounding with EMA.
+
+### Headline metrics (best EMA epoch = 12/50, run cut by 30-min timeout)
+| | val_single_in_dist | val_geom_camber_rc | val_geom_camber_cruise | val_re_rand | **val_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` (EMA) | 168.66 | 144.83 | 101.17 | 117.18 | **132.96** |
+| `mae_surf_p` (raw, same epoch) | 151.05 | 144.50 | 101.13 | 120.92 | 129.40 |
+
+| | test_single_in_dist | test_geom_camber_rc | test_geom_camber_cruise | test_re_rand | **test_avg** |
+|---|---:|---:|---:|---:|---:|
+| `mae_surf_p` | 143.13 | 129.47 | 84.32 | 115.44 | **118.09** |
+
+- Param count: 991,319 (~+19 % vs baseline 828K).
+- Per-epoch wall clock: ~159 s (vs baseline ~138 s, **+15 %**); 12 of 50 epochs trained.
+- Δ vs baseline #356: **val EMA +0.52 %, test +0.04 %** — wash on the ranking metric.
+- Δ raw-vs-raw vs tanjiro #356 best raw (136.53): **−5.2 %** — real gain hidden by EMA at this epoch budget.
+
+### Per-split test breakdown (in-dist vs OOD pattern)
+| Split | this run | baseline | Δ | OOD? |
+|---|---:|---:|---:|:---:|
+| test_single_in_dist | 143.13 | 147.13 | **−2.72 %** | no |
+| test_geom_camber_rc | 129.47 | 127.92 | +1.21 % | yes |
+| test_geom_camber_cruise | 84.32 | 84.03 | +0.34 % | yes |
+| test_re_rand | 115.44 | 113.09 | +2.08 % | yes |
+
+The wider GELU MLP **helps in-distribution but slightly hurts OOD** on all three OOD splits. Three of four splits trending the wrong way is real signal; equal-weighting drags the average back to wash.
+
+### Analysis
+- **Confounded test.** Bumping `mlp_ratio=2 → 4` increases per-node nonlinearity *and* parameter count *and* per-epoch wall clock simultaneously. The next experiment should isolate the nonlinearity lever from the capacity bump.
+- **EMA at 0.999 with 12-epoch budget hides the raw gain.** The shadow averages over too many effective updates (decay → effective half-life ~700 steps ≈ 1.85 epochs at 375 batches/epoch); when the live model improves quickly, the shadow lags. This is a "wrong tool for the budget" issue, not a fundamental problem.
+- **In-dist vs OOD trade-off** is the most interesting finding: extra MLP capacity goes to memorizing training distribution rather than improving generalization. Nezuko spotted this clearly.
+
+### Decision: close, reassign to swiglu-mlp-matched
+- Wash on the equal-weight ranking metric (+0.52 % val, +0.04 % test). Per CLAUDE.md merge rule (must be `<` baseline), no merge. Per close threshold (>5 % regression), no close on ranking. Effectively neutral.
+- BUT the lever is dominated by **PR #352 SmoothL1** (val=105.56 raw, ~30 % advantage) on the metric-mover axis, AND the cleaner per-node-nonlinearity test is SwiGLU at matched param count.
+- Closing here, reassigning to **PR #398 (swiglu-mlp-matched)**: SwiGLU `(W_g(x) ⊙ silu(W_v(x)))W_o` at `swiglu_inner=168` to match baseline param count exactly. Strips the capacity confound and the wall-clock tax — clean read on whether gating-style activation alone moves the needle.
+
+## 2026-04-28 00:35 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #398 | nezuko | swiglu-mlp-matched | SwiGLU MLP `(W_g(x)⊙silu(W_v(x)))W_o` at `swiglu_inner=168`, matched to baseline param count | Replaces closed #355; cleaner per-node-nonlinearity test (no capacity confound, no wall-clock tax) |
