@@ -1,8 +1,8 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 07:15 (advisor branch `icml-appendix-charlie-pai2d-r2`)
+- **Last update:** 2026-04-28 07:30 (advisor branch `icml-appendix-charlie-pai2d-r2`)
 - **Most recent human-team direction:** N/A — no open human-tagged issues at this time.
-- **Current baseline (directly measured): `val_avg/mae_surf_p = 66.195`, `test_avg/mae_surf_p = 58.063`** (PR #575, EMA decay_target=0.995, epoch 14). All 4 test splits finite.
+- **Current baseline (directly measured): `val_avg/mae_surf_p = 66.149`, `test_avg/mae_surf_p = 57.654`** (PR #582, gradient clipping max_norm=10, epoch 14). All 4 test splits finite.
 
 ## Merged compound stack (current advisor branch)
 
@@ -23,32 +23,33 @@
 15. PR #548 — PhysicsAttention temperature init=1.5. Standalone: 70.617.
 16. PR #563 — Feature noise std=0.0025. val_avg = 66.841. test_avg = 58.488.
 17. PR #574 — PhysicsAttention temperature init=2.0. val_avg = 66.847. test_avg = 58.112.
-18. **PR #575 — EMA decay_target 0.99 → 0.995. val_avg = 66.195. test_avg = 58.063. CURRENT BASELINE.**
+18. PR #575 — EMA decay_target 0.99 → 0.995. val_avg = 66.195. test_avg = 58.063.
+19. **PR #582 — Gradient clipping max_norm=10. val_avg = 66.149. test_avg = 57.654. CURRENT BASELINE.**
 
 ## Active experiments (WIP)
 
 | PR | Student | Slug | Lever | Status |
 |----|---------|------|-------|--------|
 | #510 | alphonse | torch-compile-baseline | torch.compile(model) speed-up | WIP — long-running |
-| #581 | edward | slice-num-96 | slice_num 64 → 96 (untested axis) | WIP |
-| #582 | askeladd | grad-clip-10 | Gradient clipping max_norm=10 | WIP |
-| #562 | fern | cosine-tmax-12-warmup-2 | 3-ep warmup + T_max=11 (budget-aligned, softer start) | WIP (sent back, rebase) |
-| #554 | tanjiro | weight-decay-1e-5 | wd=0 on new stack (close wd direction) | WIP (sent back, rebase + wd=0) |
-| #595 | frieren | feature-noise-zero-vs-schedule | std=0.0 (close noise direction) | WIP |
-| #600 | nezuko | ema-decay-target-0999 | EMA decay_target 0.995 → 0.999 (bracket UP direction) | WIP (just assigned) |
-| #601 | thorfinn | huber-delta-0p1 | Huber δ=0.25 → 0.1 (push toward pseudo-L1) | WIP (just assigned) |
+| #605 | edward | surf-weight-15 | surf_weight 10 → 15 (target primary metric) | WIP |
+| #608 | askeladd | slice-temp-2p5 | PhysicsAttention temperature init 2.0 → 2.5 (extend profile) | WIP (just assigned) |
+| #562 | fern | cosine-tmax-12-warmup-2 | T_max=12 + 2-ep warmup | WIP (sent back, rebase) |
+| #554 | tanjiro | weight-decay-1e-5 | AdamW wd=3e-5 → 1e-5 (push wd profile) | WIP (sent back, rebase) |
+| #595 | frieren | feature-noise-zero-vs-schedule | feature noise std=0.0 (close direction) | WIP |
+| #600 | nezuko | ema-decay-target-0999 | EMA decay_target 0.995 → 0.999 (bracket UP direction) | WIP |
+| #601 | thorfinn | huber-delta-0p1 | Huber δ=0.25 → 0.1 (push toward pseudo-L1) | WIP |
 
 ## Current research focus
 
-**Hyperparameter closure + profile extension on multiple active axes.** The merged stack now includes 18 improvements; we are bracketing the remaining open directions:
+**Hyperparameter closure + profile extension on multiple active axes.** The merged stack now includes 19 improvements; we are bracketing the remaining open directions:
 
 1. **EMA decay profile** (nezuko #600, 0.999): profile 0.95→75.655, 0.99→67.306, 0.995→66.195 is still descending — 0.999 brackets the upper end.
-2. **Huber δ profile** (thorfinn #601, 0.1): profile monotone toward L1 with non-diminishing returns. δ=0.1 is pseudo-L1 for ~95% of training gradients.
+2. **Huber δ profile** (thorfinn #601, 0.1): profile monotone toward L1 with non-diminishing returns. δ=0.1 is pseudo-L1 for ~95% of training gradients. NOTE: earlier test of δ=0.1 (PR #493) tied δ=0.25 on the pre-stack; on the full merged stack the result may differ.
 3. **Feature noise std** (frieren #595, 0.0): close direction to zero; optimum may be in (0, 0.0025].
-4. **Weight decay** (tanjiro #554, 0.0): wd profile flattening at 1e-5; wd=0 closes the question.
-5. **LR schedule shape** (fern #562, 3-ep warmup + T_max=11): warmup/cosine tradeoff bracket.
-6. **Slice count** (edward #581, 96): first test of this architectural axis on the merged stack.
-7. **Gradient clipping** (askeladd #582, max_norm=10): safety test for exploding gradient prevention.
+4. **Weight decay** (tanjiro #554, 1e-5): wd profile — 1e-4→70.814, 3e-5→66.149; 1e-5 continues the sweep.
+5. **LR schedule shape** (fern #562, T_max=12 + 2-ep warmup): warmup/cosine tradeoff bracket.
+6. **surf_weight sweep** (edward #605, 15): primary surface pressure lever, not swept since early rounds.
+7. **Slice temperature init** (askeladd #608, 2.5): profile 1.0→71.699, 1.5→70.617, 2.0→66.847 shows accelerating improvement. Optimum not bracketed from above.
 8. **torch.compile throughput** (alphonse #510): speed multiplier enabling more epochs per budget.
 
 ## Most promising potential next research directions
@@ -67,7 +68,7 @@
 
 7. **FiLM-style Re conditioning** — Embed `log(Re)` as a 1D scalar via a learned FiLM affine transform applied per-block (γ, β = Linear(log_Re, 2*n_hidden)). Directly targets the `val_re_rand` split. Re is already in input features but as a shared scalar — FiLM makes it an architectural primitive that modulates per-block.
 
-8. **Slice temperature init=2.5/3.0** — Profile: 1.0→71.699, 1.5→70.617, 2.0→66.847 (accelerating improvement). Optimum not bracketed from above; 2.5 is the natural next probe.
+8. **Slice temperature init=3.0** — Profile: 1.0→71.699, 1.5→70.617, 2.0→66.847, 2.5→TBD (in flight). Optimum not bracketed from above.
 
 9. **Per-block learnable temperature** — PhysicsAttention temperature currently shared across blocks (single init). Making it per-block (5 independent scalars initialized at 2.0) could give different blocks different sharpness profiles. Low complexity.
 
