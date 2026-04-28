@@ -1,8 +1,8 @@
 # SENPAI Research State
 
-- **Last update:** 2026-04-28 09:00 (advisor branch `icml-appendix-charlie-pai2d-r2`)
+- **Last update:** 2026-04-28 09:10 (advisor branch `icml-appendix-charlie-pai2d-r2`)
 - **Most recent human-team direction:** N/A — no open human-tagged issues at this time.
-- **Current baseline (directly measured, all standalone)**: `val_avg/mae_surf_p` = `62.747` (PR #640 per-group wd) / `62.879` (PR #601 δ=0.1) / `63.131` (PR #635 lr=6e-4) / `63.222` (PR #636 decaying noise). Test_avg = 54.512 / 54.561 / 55.026 / 54.900 respectively. **Combined-stack measurement (all 4 levers compounded) pending; expected to compound below 62.747 if all levers orthogonal.**
+- **Current baseline (directly measured, all standalone)**: `val_avg/mae_surf_p` = **`61.872`** (PR #647 per-block temp schedule, BEST) / `62.747` (PR #640 per-group wd) / `62.879` (PR #601 δ=0.1) / `63.131` (PR #635 lr=6e-4) / `63.222` (PR #636 decaying noise). Test_avg = 54.555 / 54.512 / 54.561 / 55.026 / 54.900 respectively. **Combined-stack measurement (all 5 levers compounded) pending; expected to compound below 61.872 if all levers orthogonal.**
 - **Stack throughput**: 17-18 epochs in 30-min budget under compile=True. Cosine T_max=11 → eta_min=0 at ep15, then cosine cycles back from ep16+.
 
 ## Merged compound stack (current advisor branch)
@@ -30,8 +30,9 @@
 21. PR #510 — torch.compile mode="default" (infrastructure: +28.6% epochs / −23.1% wall-clock). val_avg = 64.824 at 18 epochs.
 22. PR #635 — lr peak bump 5e-4 → 6e-4. val_avg = 63.131. test_avg = 55.026.
 23. PR #636 — Decaying feature-noise schedule (linear decay 0.0025→0 over 14 ep). val_avg = 63.222. test_avg = 54.900.
-24. PR #640 — Per-parameter-group weight decay (attn=1e-4, mlp=1e-5, other=3e-5). **val_avg = 62.747. test_avg = 54.512.** Standalone.
-25. **PR #601 — Huber δ=0.25 → 0.10 (rebased on post-#562/#510 stack). val_avg = 62.879. test_avg = 54.561. Standalone. CURRENT BASELINE (combined stack pending).**
+24. PR #640 — Per-parameter-group weight decay (attn=1e-4, mlp=1e-5, other=3e-5). val_avg = 62.747. test_avg = 54.512.
+25. PR #601 — Huber δ=0.25 → 0.10 (rebased on post-#562/#510 stack). val_avg = 62.879. test_avg = 54.561.
+26. **PR #647 — Per-block slice-temp init schedule [1.5, 1.875, 2.25, 2.625, 3.0]. val_avg = 61.872. test_avg = 54.555. Standalone. CURRENT BASELINE (combined stack pending).**
 
 ## Active experiments (WIP)
 
@@ -39,7 +40,7 @@
 |----|---------|------|-------|--------|
 | #661 | alphonse | tf32-matmul-high | TF32 matmul precision (Blackwell tensor cores, single-line throughput) | WIP (just assigned) |
 | #668 | edward | lr-peak-7e-4 | lr 6e-4 → 7e-4 (push lr-peak axis further; clip rate at 6e-4 was 51% at peak) | WIP (just assigned) |
-| #647 | askeladd | slice-temp-per-block-schedule | Per-block slice-temp init schedule [1.5..3.0] linear (hierarchical sharpness) | WIP (just assigned) |
+| #682 | askeladd | slice-temp-per-block-steeper | Steeper per-block schedule [1.0, 1.5, 2.0, 2.5, 3.0] (range doubled, same mean) | WIP (just assigned) |
 | #646 | fern | batch-size-6 | batch_size 4 → 6 with compile (gradient noise reduction) | WIP (just assigned) |
 | #673 | tanjiro | per-group-wd-extreme | wd_attn 1e-4→3e-4, wd_mlp 1e-5→3e-6 (push asymmetry harder) | WIP (just assigned) |
 | #669 | frieren | feature-noise-higher-steeper | base_std 0.0025 → 0.005 with decay_horizon 14 → 8 (push schedule magnitude) | WIP (just assigned) |
@@ -56,7 +57,7 @@
 4. **Per-parameter-group wd** (tanjiro #640): single-scalar wd axis is closed at 3e-5; explore module-type-differential wd to capture the OOD asymmetry (attn higher to help camber_rc, mlp lower to help re_rand).
 5. **Batch-size gradient quality** (fern #646, batch=6 with compile): gradient noise reduction may compound with EMA averaging. Replaces closed warmup-aggressiveness axis.
 6. **LR peak bump further** (edward #668, lr=7e-4): push lr-peak axis past PR #635's win. Clip rate at 6e-4 ep4 was 51%, well below saturation — direct probe of remaining headroom.
-7. **Per-block slice-temp init schedule** (askeladd #647, [1.5, 1.875, 2.25, 2.625, 3.0]): hierarchical sharpness — softer early blocks for spatial pooling, sharper later blocks for token refinement. Replaces saturated global-init axis.
+7. **Per-block slice-temp range push** (askeladd #682, [1.0..3.0]): per-block schedule just merged with -4.55% standalone gain; profile may have more headroom. Block-0 drift signal points to softer-than-1.5 equilibrium.
 8. **TF32 matmul precision** (alphonse #661): single-line `torch.set_float32_matmul_precision("high")` to use Blackwell TF32 tensor cores. Expected 1.5–2× matmul speedup → 25–40% epoch time reduction. Highest EV/effort ratio of the throughput follow-ups.
 
 **Closed axes**: EMA decay_target above 0.995 at warmup_steps=50 (cap doesn't bind within budget — PR #600); feature_noise_std (interior min at 0.0025, U-shaped — PR #595); surf_weight at 15 on huber-clip stack (clip absorbs the increase, single_in_dist vol_p degrades — PR #605); single-scalar wd (basin floor at 3e-5 on new stack; wd=0 regresses +2.75% — PR #554); LinearLR start_factor (sweet spot at 0.3, both 0.5 and 0.2 regress — PR #620); global slice-temp init (saturating at 2.0, camber_rc consistently regresses with sharper attention — PR #608); torch.compile reduce-overhead with naive fixed-shape padding (compute-bound at max-mesh shape, throughput regressed −22% — PR #629; bucketed batching is the right next probe).
