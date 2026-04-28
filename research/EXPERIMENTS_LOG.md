@@ -995,3 +995,23 @@ Past merge gate cleanly. **Predicted band was −1 % to +2 %** (uncertain due to
 |----|---------|------|-------|-----|
 | #535 | edward | smoothl1-beta-0p5 | SmoothL1 β=1.0 → 0.5 on merged #352 baseline | Edward's own follow-up #1; β-sweep narrowing. Tests whether smaller β (more L1-regime fraction) amplifies the per-split gain pattern. |
 | #536 | tanjiro | lion-lr-2p5e-4 | `lr_lion = 1.7e-4 → 2.5e-4` on merged #352 baseline | Tanjiro's bracket-narrowing follow-up; midpoint between basin and lose. Tests Lion's basin upper edge. |
+
+## 2026-04-28 04:48 — PR #513: SwiGLU MLP dropout=0.05 (charliepai2d1-frieren) — **CLOSED (regression)**
+- val=68.594 (+1.27 % vs #430 run-base, **+6.92 % vs current #352**), test=60.069 (+1.05 % / +7.41 %).
+- Frieren's verdict (6th exceptional writeup): **dropout is dead under SwiGLU + Lion at this budget**. Bracket fully mapped: p=0 baseline winning, p=0.05 +1.27 %, p=0.1 +3.97 %. Monotone regression with p; no clean win at any tested level.
+- **Mechanism for the appendix**: Lion's sign-update mutes both win and lose dropout mechanisms toward zero from below. The per-split asymmetry (cruise hardest hit, worst-near-noise-floor) is stable across both p values — confirms the canary.
+- Reassigned to **PR #545 (lion-beta1-0p95)** — fresh optimization-side axis after 6 closures; tests slower Lion momentum decay.
+
+## 2026-04-28 04:48 — PR #474: EMA decay 0.99 → 0.97 (charliepai2d1-askeladd) — **CLOSED (regression)**
+- val=95.169 (+6.51 % vs #398 run-base, **+48.34 % vs current #352**), test=85.628 (+8.13 % / +53.10 %).
+- Askeladd's verdict: **EMA-decay axis fully locked at 0.99 across both GELU and SwiGLU bases**. Bracket: 0.999 +12.71 %, 0.97 +6.51 %, 0.95 +8.53 %. 0.99 wins on both architectures by ≥6 % over nearest neighbors.
+- **Cross-architecture mechanism**: SwiGLU's smoother gradients reduce the value of "faster shadow tracking" — the live iterate is already smoother per-step, so a shorter EMA window doesn't help capture an aggressive descent that isn't there. Useful interaction-effect note for the appendix.
+- **Cruise sensitivity stable across decays**: +16.66 % at 0.95 ≈ +16.26 % at 0.97 ≈ baseline at 0.99. Cruise = canary for "balanced-domain sampler noise floor on smallest-sample-domain."
+- Reassigned to **PR #546 (lion-batch-8)** — fresh batch-side probe under Lion's sign-update (different math than #403's closed AdamW+batch=8).
+
+## 2026-04-28 04:50 — Round-1.5 assignments (continued)
+
+| PR | Student | Slug | Lever | Why |
+|----|---------|------|-------|-----|
+| #545 | frieren | lion-beta1-0p95 | Lion `betas = (0.9, 0.99) → (0.95, 0.99)` on merged #352 baseline | Slower Lion momentum decay; tests whether more inertial direction signal smooths Lion's substantial epoch-to-epoch raw variance. Honest band −1 % to +2 %. |
+| #546 | askeladd | lion-batch-8 | `batch_size = 4 → 8` (no lr scaling) on merged #352 baseline | Replaces closed #474; first batch-side probe under Lion. Lion's bounded `lr × sign` per step changes the math from #403's closed AdamW+batch=8 (catastrophic). Honest band −2 % to +5 %. |
