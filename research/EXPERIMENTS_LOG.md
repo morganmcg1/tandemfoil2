@@ -1,5 +1,62 @@
 # SENPAI Research Results — charlie-pai2d-r5
 
+## 2026-04-28 03:30 — PR #464: Tighten gradient clipping `max_norm` 1.0 → 0.5 — **MERGE (winner, new baseline)**
+
+- Branch: `charliepai2d5-alphonse/grad-clip-0p5` (CLI-flag-only, empty diff)
+
+### Results
+
+| metric | value | vs PR #387 (74.44 / 72.14) |
+|---|---:|---|
+| `val_avg/mae_surf_p` (best ep 14/14) | **73.91** | **−0.71%** |
+| `val_single_in_dist/mae_surf_p` | 81.66 | **−5.79%** |
+| `val_geom_camber_rc/mae_surf_p` | 87.95 | +2.37% (regressed) |
+| `val_geom_camber_cruise/mae_surf_p` | 54.47 | +2.22% (regressed) |
+| `val_re_rand/mae_surf_p` | 71.55 | −0.46% (flat) |
+| `test_avg/mae_surf_p` (3 clean) | **70.37** | **−2.45%** |
+| Pre-clip ‖∇‖ trajectory | peak 269.92 / end 60.61 | matches PR #387's 270.3 / 63.0 |
+
+### Decision
+
+Merge — sixth orthogonal axis (well, refinement of the fifth). val gain is small but lands in the ambiguous band per the decision criteria; test gain (−2.45%) is well past the 1.3% merge threshold and on the more reliable signal (200 vs 100 samples per split). Per-split shows clean redistribution: in-dist gain dominates, camber-OOD regressions small. Config default `grad_clip_norm: 1.0 → 0.5` updated on advisor.
+
+Per-split val regressions on camber-OOD (+2.2-2.4%) are worth tracking on subsequent merges. If they compound, may need to bracket back.
+
+### Diagnostic
+
+Pre-clip norms identical to PR #387 (peak 270, end 60–63), confirming clipping is a per-step magnitude bound, not a gradient computation change. Optimizer sees identical gradients; only applied update magnitudes differ.
+
+Reassigned alphonse to **bf16 mixed precision (autocast) + epochs 14→24** (PR #496) — directly attacks the binding wall-clock constraint by speeding up each step ~1.5–2×, allowing more epochs in the same 30-min budget. Val curve still descending at epoch 14 across every winning PR — more epochs almost certainly help.
+
+---
+
+## 2026-04-28 03:30 — PR #385 (rerun #2 on full stack): wd=5e-4 — **CLOSE (saturation on full stack)**
+
+- Branch: `charliepai2d5-fern/weight-decay-5e-4` (closed)
+
+### Results
+
+| metric | value | vs current baseline (74.44 / 72.14) |
+|---|---:|---|
+| `val_avg/mae_surf_p` (best ep 14/14) | 75.94 | **+2.0%** (worse) |
+| `test_avg/mae_surf_p` (3 clean) | 73.59 | **+2.0%** (worse) |
+| Pre-clip ‖∇‖ at ep 14 | 57.1 | vs alphonse's 63.0 → only −10% reduction |
+
+### Decision
+
+Close. Hypothesis cleanly falsified on the full stack — and **cleanly characterized**:
+- WD=5e-4 helped −7.7% on L1+warmup (no Fourier, no clip)
+- WD=5e-4 helped −12.0% on L1+warmup+Fourier (no clip)
+- WD=5e-4 hurts +2.0% on L1+warmup+Fourier+sw=30+grad-clip (full stack)
+
+Decay-of-returns curve unambiguous: each new orthogonal regularizer absorbs some of the same "training noise" budget WD was after; once 5 axes stack, no budget left for WD to claim. Combined with tanjiro's EMA falsification on the same stack (PR #303 closed earlier), we now have **two independent regularization-style hypotheses** that worked on simpler stacks but saturated on the full stack.
+
+Reassigned fern to **mesh node random subsampling** (PR #497) — different *kind* of regularizer (data augmentation, not weight/optimizer) that may have non-overlapping budget with the current stack. Permutation-invariant model handles random node-loss subsampling cleanly.
+
+Train-vs-val gap was −12.8% relative (small absolute) — the model is *not* severely overfitting, which is itself important context for understanding why heavy regularization saturates on the full stack.
+
+
+
 ## 2026-04-28 03:00 — PR #303 (rerun): EMA weights (decay=0.999) — **CLOSE (falsified on full stack)**
 
 - Branch: `charliepai2d5-tanjiro/ema-weights` (closed)
