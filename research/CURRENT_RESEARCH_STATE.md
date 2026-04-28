@@ -1,7 +1,7 @@
 # SENPAI Research State
 
-- 2026-04-28 03:00 — round 1 mostly settled on `icml-appendix-willow-pai2d-r2`,
-  round 2 in flight (5 axes), scoring bug fix landed
+- 2026-04-28 03:15 — round 1 mostly settled on `icml-appendix-willow-pai2d-r2`,
+  round 2 in flight (6 axes), scoring bug fix landed
 - **Baseline updated:** PR #330 (frieren, Huber β=1) merged on top of
   PR #328. Current best `val_avg/mae_surf_p = 115.61` (W&B run
   `uip4q05z`, best epoch 11/50). −13.4 % over the prior baseline,
@@ -61,32 +61,40 @@
 | 337 | thorfinn  | BS 4→8, lr 7e-4            | **closed** (hardware-blocked at BS≥8 on slice-128; BS=6 3-seed mean 162.63 is 41 % worse than 115.61) | superseded |
 | 457 | thorfinn  | round 2: EMA weight averaging | NEW assignment (status:wip) | n/a |
 | 367 | fern      | bug fix: cruise-NaN scoring| **MERGED ★** | rebased + verified on Huber baseline: test_avg: NaN → 117.59, cruise_p: NaN → 96.92 |
-| 452 | fern      | round 2: push slice_num to 192/256 | NEW assignment (status:wip) | n/a |
+| 452 | fern      | round 2: push slice_num to 192/256 | **closed** (slice-192 single-seed = 133.30, +15.3 % vs 115.61 baseline; per-split mechanism-inversion confirms slice-128 is the ceiling) | superseded |
+| 478 | fern      | round 2: curriculum by per-sample y-std | NEW assignment (status:wip) | n/a |
 
-PRs surfaced for advisor review this cycle: **#332, #399**. Actions:
-**#332 closed** (3-seed mean 151.94 on slice-128 = +13.8 % vs prior
-baseline; surf_weight axis doesn't stack with slice-128 — physics
-explanation: surface bottleneck shifts when slice_num doubles). New
-methodology finding logged: **interior optima are
-architecture-dependent**.
-**#399 sent back** (askeladd bf16) for rebase + on-baseline run —
-throughput unlock confirmed (1.23×, +18 % epochs) but multi-seed
-mean was on the slice-128+MSE state. Updated decision rule allows
-**at-baseline-on-Huber merge as infrastructure** if the rebased
-multi-seed mean lands within ±10 % of 115.61 — bf16 is genuinely
-useful for downstream round-3 stacks even at-baseline metric.
-**Reassigned nezuko to round-2 axis #472 (Lion optimizer)** —
-sign-based update, ~30-line inline implementation, 3-value LR sweep
-({3e-5, 1e-4, 3e-4}) using nezuko's proven curve-shape methodology.
+PRs surfaced for advisor review this cycle: **#452**. Action:
+**#452 closed** — single-seed slice-192 = 133.30 (+15.3 % vs 115.61
+baseline, well outside the ±10 % noise band). Mechanism-inversion in
+the per-split signal: largest regression on `val_geom_camber_rc` (the
+very split that drove the round-1 #328 win), smallest on
+`val_geom_camber_cruise` (the largest meshes where the slice
+bottleneck argument should bind hardest). Combined with #328's
+slice-64→128 win, both endpoints of the axis are bracketed:
+**slice-128 is the architectural ceiling under the 30-min wall-clock
+contract**. Methodology contributions logged: first end-to-end-finite
+test_avg/mae_surf_p on a non-trivial run (123.10 — #367 verified);
+per-step-cost-vs-prediction calibration data (24 % actual vs
+predicted 10–15 %); mechanism-inversion-as-disconfirmation pattern.
+**Reassigned fern to round-2 axis #478 (curriculum learning by
+per-sample pressure y-std)** — data-axis lever, only un-tested
+round-2 axis category. Targets the same high-Re-tail story Huber
+addressed via gradient clipping (#330), but from the data-exposure
+side; should compound.
 
-Earlier cycle actions (recap): #328 + #330 + #367 merged (slice-128 +
-Huber β=1 + scoring fix; current val baseline 115.61, test baseline
-117.59); #311 + #335 sent back; #325 + #326 + #332 + #337 closed
-(depth-8, FFN, surf_weight, BS+LR axes exhausted under 30-min cap +
-slice-128); #399 + #415 + #429 + #452 + #457 + #472 assigned (six
-round-2 axes in flight: askeladd bf16 [iter 2], frieren
-asinh-on-pressure, edward p_weight, fern slice-push, thorfinn EMA,
-nezuko Lion).
+Cycle 14 actions (recap): #332 closed (surf_weight axis exhausted on
+slice-128), #399 sent back for rebase (bf16 throughput unlock at-
+baseline within noise), #472 assigned (nezuko Lion).
+
+Earlier cycle actions:
+#328 + #330 + #367 merged (slice-128 + Huber β=1 + scoring fix;
+current val baseline 115.61, test baseline 117.59); #311 + #335 +
+#399 sent back; #325 + #326 + #332 + #337 + #452 closed (depth-8,
+FFN, surf_weight, BS+LR, slice-192 axes all exhausted under 30-min
+cap); **six round-2 axes currently in flight**: #399 askeladd bf16
+[iter 2 rebasing], #415 frieren asinh-on-pressure, #429 edward
+p_weight, #457 thorfinn EMA, #472 nezuko Lion, #478 fern curriculum.
 
 ## What we learned this cycle (and last)
 
@@ -173,8 +181,12 @@ nezuko Lion).
   follow-up if asinh doesn't capture the gain.
 - **Geometry-preserving augmentation.** x-flip for the ground-effect
   raceCar domain (mirror y-coord and corresponding flow components).
-- **Curriculum.** Sort batches by per-sample y std, warmup the
-  model on low-magnitude samples first.
+- **Curriculum learning.** ASSIGNED as PR #478 to fern: train on
+  bottom-50 % of pressure y_std first, ramp to full set over
+  `curriculum_warmup_epochs` (sweep {3, 5, 8}). Preserves domain
+  balancing. Targets the same high-Re-tail story Huber won on, from
+  the data-exposure side. ~50 LOC in train.py only — loaders stay
+  read-only.
 - **Weight averaging (EMA).** ASSIGNED as PR #457 to thorfinn:
   `torch.optim.swa_utils.AveragedModel` with custom EMA `avg_fn`,
   per-epoch dual val with best-of (live, EMA) checkpoint selection.

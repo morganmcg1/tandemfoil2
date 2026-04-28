@@ -13,6 +13,92 @@ in the pressure channel; `accumulate_batch` masks the sample but
 fern** with the 2-line `nan_to_num` patch — once it lands, every
 round-1 run can recompute a finite `test_avg/mae_surf_p` from W&B.
 
+## 2026-04-28 03:15 — PR #452 (iter 1): push slice_num to 192 ❌ CLOSED
+
+- Branch: `willowpai2d2-fern/slice-push` (deleted on close).
+- Iteration: assigned as round-2 axis after merging #367. Single-seed
+  on slice-192 first (per the staged decision rule), with slice-256
+  contingent on a clean slice-192 win.
+
+### Result (single seed, run `l7dulvjz`)
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy | Δ vs 115.61 |
+|-|-:|-:|-:|-:|
+| val_single_in_dist | 161.97 | 2.00 | 0.93 | +18.0 % |
+| val_geom_camber_rc | **151.75** | 2.85 | 1.20 | **+28.0 %** |
+| val_geom_camber_cruise | 100.59 | 1.77 | 0.60 | +1.9 % |
+| val_re_rand | 118.91 | 2.32 | 0.84 | +10.2 % |
+| **val_avg** | **133.30** | 2.24 | 0.89 | **+15.3 %** |
+| **test_avg** | **123.10 (FINITE)** | 2.14 | 0.85 | – |
+
+Best epoch 9/50 (timeout at 32.1 min, 213 s/epoch — actual slowdown
+**24 %** vs predicted 10–15 %).
+
+### Conclusion
+
+**Closed.** 133.30 is well outside the ±10 % noise band of 115.61.
+Per the PR's decision rule, this falls cleanly in the "slice
+bottleneck is fully resolved at 128. Close" bucket. Three pieces of
+evidence:
+
+1. **Single-seed result is decisively outside noise**: +15.3 %.
+2. **Per-step cost (24 %) was higher than predicted (10–15 %)** —
+   `O(N · slice_num)` einsums dominate, but LayerNorm / softmax /
+   output-projection overheads also scale, and the advance prediction
+   underestimated the constant multiplier.
+3. **The per-split shape contradicts the slice-bottleneck mechanism.**
+   Round-1 #328's win was characterized by the largest improvement on
+   `val_geom_camber_rc`. slice-192 produces the OPPOSITE pattern: the
+   **largest regression** is on `val_geom_camber_rc` (+28 %), the
+   **smallest** on `val_geom_camber_cruise` (+1.9 %, despite cruise
+   meshes being the largest at ~210K nodes). Mechanism inversion.
+
+Combined with #328 (slice-64→128 win) and this run, both endpoints
+are bracketed: **slice-128 is the architectural ceiling on this axis
+under the 30-min wall-clock contract.** Future slice-axis work should
+wait until askeladd #399's bf16 unlock makes higher slice_num
+budget-feasible.
+
+### Methodology contributions
+
+- **First end-to-end-finite `test_avg/mae_surf_p` on a non-trivial run
+  (123.10).** PR #367's bug fix is verified working in the wild —
+  every PR going forward gets this metric automatically.
+- **Per-step-cost-vs-prediction calibration data** (24 % actual vs
+  10–15 % predicted for slice 128→192). Logged as budget-planning
+  reference for any future slice-axis follow-up.
+- **Mechanism-inversion-as-disconfirmation** observation: when a
+  hypothesis predicts a per-split signal in one direction and the
+  actual signal lands in the *opposite* split, that's the strongest
+  form of evidence that the hypothesis's mechanism doesn't apply.
+
+### Reassignment
+
+Fern → PR #478 (round-2 axis: curriculum learning by per-sample
+pressure y-std). Detailed below.
+
+## 2026-04-28 03:15 — PR #478 (NEW, fern round 2): curriculum by y-std
+
+- Reassigning fern after closing #452.
+- Hypothesis: dataset's per-sample y_std spans 10× even within a
+  single domain. Currently presented uniformly via
+  `WeightedRandomSampler`. Curriculum starts on the bottom-50 % of
+  y_std and ramps to the full set over `curriculum_warmup_epochs`,
+  preserving domain balancing. Targets the same high-Re-tail story
+  Huber addressed via gradient clipping (#330) — but from the data-
+  exposure side. Should compound. Predicted 3–8 % reduction over
+  115.61 baseline.
+- Sweep: `curriculum_warmup_epochs ∈ {3, 5, 8}` at fixed
+  `min_quantile=0.5`. Multi-seed at the winner.
+- Implementation: ~50 LOC in train.py — precompute per-sample
+  pressure y_std once, define `curriculum_weights` helper that
+  multiplies domain weights by a per-epoch quantile mask, build the
+  `WeightedRandomSampler` per-epoch instead of once. Loaders stay
+  read-only; logic lives in train.py.
+- Decision rule: ≤105 single-seed (or ≤110 multi-seed mean) merges;
+  borderline → multi-seed; >115 closes the data axis.
+- Status: assigned, draft, status:wip.
+
 ## 2026-04-28 03:00 — PR #399 (iter 1): bf16 mixed precision (round 2 axis)
 
 - Branch: `willowpai2d2-askeladd/bf16-amp` (pre-#330 + pre-#367 — same
