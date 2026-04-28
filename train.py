@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -386,6 +387,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    metrics_path: str | None = None  # local JSONL metrics file
 
 
 cfg = sp.parse(Config)
@@ -420,7 +422,7 @@ model_config = dict(
     out_dim=3,
     n_hidden=128,
     n_layers=5,
-    n_head=4,
+    n_head=8,
     slice_num=64,
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
@@ -462,6 +464,29 @@ model_dir.mkdir(parents=True, exist_ok=True)
 model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
+
+if cfg.metrics_path:
+    metrics_path = Path(cfg.metrics_path)
+else:
+    metrics_path = model_dir / "metrics.jsonl"
+metrics_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def write_jsonl(record: dict) -> None:
+    with open(metrics_path, "a") as fp:
+        fp.write(json.dumps(record, default=float) + "\n")
+
+
+write_jsonl({
+    "event": "config",
+    "run_id": run.id,
+    "agent": cfg.agent,
+    "wandb_name": cfg.wandb_name,
+    "git_commit": _git_commit_short(),
+    "n_params": n_params,
+    "model_config": model_config,
+    "cfg": asdict(cfg),
+})
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
@@ -534,6 +559,7 @@ for epoch in range(MAX_EPOCHS):
     for k, v in val_avg.items():
         log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
     wandb.log(log_metrics)
+    write_jsonl({"event": "epoch", "epoch": epoch + 1, **log_metrics})
 
     tag = ""
     if avg_surf_p < best_avg_surf_p:
@@ -545,6 +571,8 @@ for epoch in range(MAX_EPOCHS):
         }
         torch.save(model.state_dict(), model_path)
         tag = " *"
+        write_jsonl({"event": "best", "epoch": epoch + 1,
+                     "val_avg/mae_surf_p": avg_surf_p})
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
     print(
@@ -596,6 +624,16 @@ if best_metrics:
             test_log[f"test_{k}"] = v
         wandb.log(test_log)
         wandb.summary.update(test_log)
+        write_jsonl({"event": "test", **test_log})
+
+    write_jsonl({
+        "event": "final",
+        "best_epoch": best_metrics["epoch"],
+        "best_val_avg/mae_surf_p": best_avg_surf_p,
+        "total_train_minutes": total_time,
+        "peak_gb": (torch.cuda.max_memory_allocated() / 1e9
+                    if torch.cuda.is_available() else 0.0),
+    })
 
     save_model_artifact(
         run=run,
