@@ -420,6 +420,7 @@ class Config:
     ema_warmup_epochs: int = 5  # epochs to skip EMA accumulation (avoid pulling toward random init)
     huber_delta: float = 0.0  # Huber loss transition point in normalized space; 0 → MSE
     eval_checkpoint: str | None = None  # if set, skip training; load checkpoint and run test eval only
+    slice_num: int = 64  # PhysicsAttention slice token count per layer
 
 
 cfg = sp.parse(Config)
@@ -455,7 +456,7 @@ model_config = dict(
     n_hidden=128,
     n_layers=5,
     n_head=4,
-    slice_num=64,
+    slice_num=cfg.slice_num,
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
