@@ -1,5 +1,125 @@
 # SENPAI Research Results — charlie-pai2d-r3
 
+## 2026-04-28 08:27 — PR #626 (CLOSED): BF16 + broader FP32 pred cast (entire pred to FP32)
+- Branch: `charliepai2d3-edward/l1ff12-ema-cos14-lr-7p5e-4-bf16-broadguard` (deleted)
+- Hypothesis: BF16 autocast everywhere + FP32 cast on entire `pred` tensor for both surf_loss AND aux log-p (vs PR #606's narrow guard on `pred[..., 2]` only). Tests whether broader loss-side precision restoration is sufficient.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | this PR (BF16+broad) | current advisor PR #578 (FP32) | Δ |
+|--------|---------------------:|-------------------------------:|--:|
+| `val_avg/mae_surf_p` | 78.01 | 75.78 | **+2.94% REGRESSION** |
+| `test_avg/mae_surf_p` | 67.66 | 66.27 | +2.09% |
+| Wallclock per epoch | ~101 s | ~132 s | **−23.1%** ✓ |
+| Peak GPU memory | 33.49 GB | 42.51 GB | **−21.2%** ✓ |
+
+Speedup preserved. Outcome #3 (speedup disappears) firmly rejected.
+
+### Per-split val (the inverse of PR #578's gain pattern)
+
+| split | this PR | PR #578 baseline | Δ% |
+|-------|--------:|-----------------:|--:|
+| val_single_in_dist | 90.52 | 84.61 | **+6.99%** ↑ |
+| val_geom_camber_rc | 91.53 | 85.83 | **+6.64%** ↑ |
+| val_geom_camber_cruise | 54.88 | 58.09 | **−5.53%** ↓ |
+| val_re_rand | 75.12 | 74.58 | +0.72% |
+
+**Critical pattern**: PR #578 lifted in-dist −7.18% and rc-camber −5.45% via decoupled head LR (2×). This run loses the same splits in roughly the same magnitude (+6.99% / +6.64%) while OOD-cruise improves. **The pattern is the inverse of PR #578's gains.**
+
+### Analysis
+
+Loss-side broad FP32 guard cleanly restores precision (verified by speed/memory matching BF16 fingerprint), but **headline regresses worse than PR #606's narrow guard (+2.61%)**. Within run-to-run noise (±0.5% typical), so loss-side guarding has no marginal value vs upstream — the precision loss is upstream.
+
+**Mechanistic reading**: BF16 in attention (PhysicsAttention slice softmax + matmuls) and the gradients flowing back to mlp2/ln_3 erode the fine-grained signal that the head's 2× decoupled LR was designed to consume. With BF16 attention, the head's 2× boost amplifies *noise* instead of *signal*. The forward-pass `pred` is downstream of attention — casting it to FP32 cannot recover precision already lost upstream.
+
+Cost-benefit: +2.9% val cost wipes out PR #578's full +1.6% gain in exchange for 24% wallclock savings. **Unfavourable until attention precision is solved.**
+
+### Decision: CLOSED
+
+The "BF16 with loss-side FP32 guard" lever is now strongly characterised across PR #606 (narrow) and PR #626 (broad). Both regress similarly (+2.61% / +2.94%). Loss-side guarding is dead.
+
+Reassigning edward to **BF16 + `autocast(enabled=False)` block inside PhysicsAttention.forward** (PR #655). This is the highest-EV next experiment — the inverse-of-#578 per-split signature is the strongest evidence yet that attention is the precision-loss site.
+
+---
+
+## 2026-04-28 08:27 — PR #625 (CLOSED): decoupled head LR 3× (bracket up from 2×)
+- Branch: `charliepai2d3-thorfinn/l1ff12-ema-cos14-lr-7p5e-4-decouple-head-3x` (deleted)
+- Hypothesis: bracket head LR multiplier upward from PR #578's 2× to 3× to test if optimum is past 2× (PR #578 best-val at ep 14/14 with monotone descent suggested room for more).
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | 3× (this PR) | 2× baseline (PR #578) | Δ |
+|--------|-------------:|----------------------:|--:|
+| `val_avg/mae_surf_p` | 78.10 | 75.78 | **+3.06% REGRESSION** |
+| `test_avg/mae_surf_p` | 68.56 | 66.27 | +3.46% |
+
+### Per-split val
+
+| split | 3× | 2× baseline | Δ% |
+|-------|---:|------------:|---:|
+| val_single_in_dist     | 89.55 | 84.61 | **+5.84% ← worst regressor** |
+| val_geom_camber_rc     | 88.41 | 85.83 | +3.00% |
+| val_geom_camber_cruise | 57.82 | 58.09 | −0.46% (flat) |
+| val_re_rand            | 76.63 | 74.58 | +2.75% |
+
+### Analysis
+
+3× moves past the head-LR optimum. Critically, **`val_single_in_dist` is the worst regressor at +5.84%** — opposite of the prior expectation. Mechanistic refinement of PR #578's story:
+
+PR #578 said "head fits in-dist patterns slowly under conservative backbone LR" — directionally correct, bounded incorrectly. The actual story is **the head-LR sweet spot trades head-convergence speed against gradient noise on high-magnitude splits**:
+- 1× (pre-#578): head convergence too slow.
+- 2× (PR #578 optimum): balanced.
+- 3× (this PR): gradient noise on high-magnitude in-dist (y_std up to 2,077) overwhelms convergence speed.
+
+Head-LR axis is now bracketed:
+- 1× → 75.78 → −1.60% from prior baseline
+- 2× → 75.78 (current) ← optimum
+- 3× → 78.10 → +3.06% above 2×
+
+### Decision: CLOSED
+
+Round-5 stops bracketing the head-LR multiplier upward.
+
+Reassigning thorfinn to **head-only weight decay (5e-4 on head, 1e-4 elsewhere)** (PR #656) — keeps HEAD_LR_MULTIPLIER=2.0 (the proven optimum) and tests whether targeted regularisation absorbs the in-dist over-fit signal observed at 3×. Mechanistic prior: head's higher effective LR makes it sensitive to wd; small targeted dose may recover further headroom without dragging on rc-camber.
+
+Filed for round-5 follow-up: per-block head decoupling (mlp2 + ln_3 of last block + final per-channel output projection at higher multiplier) and head-LR warmup as alternative regularisation routes.
+
+---
+
+## 2026-04-28 08:27 — PR #617 (CLOSED): cosine eta_min=5e-5 (floor LR through cosine tail)
+- Branch: `charliepai2d3-fern/l1ff-ema-cos14-eta5e-5-lr-7p5e-4` (deleted)
+- Hypothesis: set CosineAnnealingLR `eta_min=5e-5` (vs default 0). Holds floor LR through the cosine tail to keep gradient signal flowing for EMA shadow stabilisation.
+
+### Headline (best-val checkpoint, epoch 14/14)
+
+| Metric | this PR | branched-base PR #596 | current advisor PR #578 |
+|--------|--------:|----------------------:|------------------------:|
+| `val_avg/mae_surf_p` | 76.47 | 77.01 (**−0.54% won on base**) | 75.78 (**+0.91% REGRESSION**) |
+| `test_avg/mae_surf_p` | 66.95 | 67.78 (−1.22%) | 66.27 (+1.03%) |
+
+### Per-split val (Pareto trade)
+
+| split | this PR | PR #596 baseline | Δ% |
+|-------|--------:|-----------------:|--:|
+| val_single_in_dist | 90.08 | 85.42 | **+5.46% ↑** |
+| val_geom_camber_rc | 87.39 | 88.01 | −0.70% |
+| val_geom_camber_cruise | 54.85 | 58.13 | **−5.65% ↓** |
+| val_re_rand | 73.57 | 76.48 | **−3.81% ↓** |
+
+3 of 4 splits improve, but in-dist regression is large enough to push val_avg above current baseline.
+
+### Analysis
+
+Same merge-order pattern as PR #437/#395/#596 — lever validated on its branched base but doesn't compose with the post-#578 head-LR mechanism merged after assignment. **Mechanistic reading**: floor LR keeps late-epoch gradient flowing → OOD splits benefit from continued EMA-shadow tracking (predicted), BUT in-dist over-fits because PR #578's head LR 2× already amplifies late-epoch updates on the head — adding non-zero floor LR compounds that into in-dist over-training. The lever and head-LR don't compose orthogonally.
+
+### Decision: CLOSED
+
+Within-class brackets (eta_min=1e-5 / 1e-4) deferred — per-split signal already characterised; the in-dist/OOD tradeoff is intrinsic to the lever-mechanism interaction, not a dose issue.
+
+Reassigning fern to **layer scale (CaiT-style residual gating)** (PR #657) — mechanistically distinct architectural axis untouched in round 3. Adds learnable per-channel scalars (γ_init=1e-4) to each residual branch. Strong precedent in modern ViT recipes (CaiT, DeiT III, DINOv2). Single architectural change with deterministic alternative to closed DropPath/stochastic-depth attempts.
+
+---
+
 ## 2026-04-28 08:13 — PR #607 (CLOSED): annealed input noise sigma=0.05→0
 - Branch: `charliepai2d3-nezuko/l1ff12-ema-cos14-lr-7p5e-4-anneal-noise` (deleted)
 - Hypothesis: Linear-anneal input-space Gaussian noise (sigma 0.05 → 0 over 12 epochs, noise-free for ep13-14) front-loads regularisation while letting late-epoch fine-tuning converge cleanly. Addresses PR #569's "best epoch is final epoch" diagnostic.

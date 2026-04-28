@@ -157,28 +157,26 @@ Recommended reproduce: `python train.py --epochs 14 --lr 7.5e-4`.
    loss *(loss-focus axis)* — branched off pre-#400 (long-running).
 2. **PR #583** — frieren: L1+FF12+EMA + `--epochs 14` + `lr=7.5e-4` +
    **n_head=8** — different attention compute structure.
-3. **PR #642** — nezuko: L1+FF12+EMA + **slice_num=32** (architectural
-   bracket DOWN from current 64) — tests whether the slice-routing
-   softmax is over-parametrised for the 1500-sample regime. Single-line
-   architectural axis (orthogonal to all merged loss/encoding/optimiser
-   levers).
-4. **PR #617** — fern: L1+FF12+EMA + cosine **eta_min=5e-5**.
-5. **PR #625** — thorfinn: L1+FF12+EMA + decoupled head LR
-   **3× (vertical bracket)** — bracket head-LR multiplier upward from
-   merged 2× (best-val at ep 14/14 monotone-descending suggests
-   optimum past 2×).
-6. **PR #626** — edward: L1+FF12+EMA + BF16 autocast + **broader FP32
-   pred cast for both surf_loss AND aux log-p** — addresses loss-side
-   precision comprehensively (single-line guard on PR #606 was
-   insufficient).
-7. **PR #639** — askeladd: L1+FF12+EMA + decoupled head LR
+3. **PR #639** — askeladd: L1+FF12+EMA + decoupled head LR
    **2× on FULL late-block MLP path** (`mlp2 + ln_3 + mlp + ln_2`,
    horizontal bracket) — tests whether PR #578's effect is specific to
    post-attention head or generalises to whole late-block MLP path.
-
-(Roster excludes one further pending PR; see survey-prs output for
-authoritative count. tanjiro ID may also be cycling between WIP and
-review on this cadence.)
+4. **PR #642** — nezuko: L1+FF12+EMA + **slice_num=32** (architectural
+   bracket DOWN from current 64) — tests whether the slice-routing
+   softmax is over-parametrised for the 1500-sample regime.
+5. **PR #655** — edward: L1+FF12+EMA + BF16 autocast +
+   **`autocast(enabled=False)` inside PhysicsAttention.forward** —
+   keeps FP32 in slice softmax + slice-token attention, BF16 elsewhere.
+   Highest-EV BF16 follow-up after PR #626 ruled out loss-side guards.
+6. **PR #656** — thorfinn: L1+FF12+EMA + decoupled head LR 2× +
+   **head-only weight decay 5e-4** (5× backbone wd, with
+   HEAD_LR_MULTIPLIER=2.0 fixed at PR #578's optimum) — addresses the
+   in-dist over-fit signal observed at PR #625's 3× failure.
+7. **PR #657** — fern: L1+FF12+EMA + **layer scale (CaiT-style
+   residual gating, γ_init=1e-4)** — per-channel learnable scalars on
+   each residual branch. Mechanistically distinct architectural axis
+   untouched in round 3.
+8. **One further pending PR** (tanjiro slot — confirm via survey).
 
 ## Compose pattern map — final round-3 picture
 
