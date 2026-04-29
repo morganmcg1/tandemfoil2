@@ -1,5 +1,60 @@
 # TandemFoilSet Baseline Metrics
 
+## 2026-04-29 21:30 — PR #1271: Port SwiGLU FFN to r4 (second half of r1 architectural gap)
+
+**Student:** charliepai2f4-fern
+**Branch:** fern/swiglu-ffn-port
+**Model:** Transolver (n_hidden=192, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2, dropout=0.1) + SwiGLU FFN (gate projection, bias-free LLaMA-style) + gradient clipping (max_norm=1.0) + lr=1e-3 + CosineAnnealingLR(T_max=15, eta_min=1e-6) + AMP bfloat16
+**Best epoch:** 14 / 50 (training timed out at ~14 epochs)
+**Metric summary:** `models/model-charliepai2f4-fern-swiglu-ffn-port-20260429-201338/metrics.yaml`
+
+### Primary metric (lower is better)
+
+| Metric | Value |
+|--------|-------|
+| **val_avg/mae_surf_p** | **79.823** |
+
+### Per-split surface pressure MAE (val)
+
+| Split | mae_surf_p |
+|-------|------------|
+| val_single_in_dist | 93.331 |
+| val_geom_camber_rc | 92.371 |
+| val_geom_camber_cruise | 58.837 |
+| val_re_rand | 74.753 |
+
+### Test split surface pressure MAE
+
+| Split | mae_surf_p |
+|-------|------------|
+| test_single_in_dist | 82.707 |
+| test_geom_camber_rc | 79.046 |
+| test_geom_camber_cruise | NaN (pre-existing corrupt sample 000020.pt) |
+| test_re_rand | 68.332 |
+
+### Key method details
+
+- SwiGLU FFN replaces vanilla GELU MLP in TransolverBlock: 3 linear layers (gate, value, output), bias-free LLaMA-style
+- n_hidden=192, 1.84M params (+25% vs n_hidden=192 vanilla GELU at ~1.47M)
+- Peak VRAM: 51.44 GB (+7.4 GB vs 44.0 GB baseline); epoch time ~135s; 14 epochs in 30-min budget
+- -9.7% improvement on val_avg/mae_surf_p over r4 baseline (PR #1243: 88.421 → 79.823)
+- Consistent improvement across all four val splits: single_in_dist -11.7%, geom_camber_rc -10.7%, geom_camber_cruise -4.4%, re_rand -10.0%
+- Note: r4 is still missing RFF positional encoding (tanjiro #1193 WIP) — combined RFF+SwiGLU expected to approach r1's 75.750
+
+### Reproduce
+
+```bash
+cd target/ && python train.py \
+  --experiment_name swiglu-ffn-port \
+  --n_hidden 192 --n_layers 5 --n_head 4 --slice_num 64 --mlp_ratio 2 \
+  --dropout 0.1 --lr 1e-3 --surf_weight 10 --batch_size 4 \
+  --amp --amp_dtype bfloat16 \
+  --agent charliepai2f4-fern
+```
+(Note: SwiGLU FFN enabled via `--swiglu` flag added after this merge.)
+
+---
+
 ## 2026-04-29 18:00 — PR #1243: n_hidden=192 intermediate capacity scaling step above 160
 
 **Student:** charliepai2f4-fern
