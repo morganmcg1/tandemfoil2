@@ -214,6 +214,65 @@ class Transolver(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Loss helpers
+# ---------------------------------------------------------------------------
+
+def per_sample_normalized_loss(
+    pred_norm: torch.Tensor,
+    y_norm: torch.Tensor,
+    mask: torch.Tensor,
+    stats: dict,
+    surf_mask: torch.Tensor,
+    surf_weight: float,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """Per-sample instance-normalized MSE loss.
+
+    Each sample is renormalized in physical space by its own per-channel mean
+    and std before residuals are taken, so high-Re and low-Re samples
+    contribute equal gradient regardless of target magnitude. ``surf_mask``
+    is True for surface nodes inside ``mask``; padding/non-finite samples
+    must already have been zeroed in ``mask``.
+    """
+    y_std = stats["y_std"]
+    y_mean = stats["y_mean"]
+    y_phys = y_norm * y_std + y_mean
+    pred_phys = pred_norm * y_std + y_mean
+
+    total_loss = pred_phys.new_zeros(())
+    count = 0
+    for b in range(pred_phys.shape[0]):
+        m = mask[b]
+        if m.sum() == 0:
+            continue
+        y_b = y_phys[b][m]
+        p_b = pred_phys[b][m]
+        s_b = surf_mask[b][m]
+
+        b_mean = y_b.mean(dim=0, keepdim=True)
+        b_std = y_b.std(dim=0, keepdim=True) + eps
+
+        y_b_norm = (y_b - b_mean) / b_std
+        p_b_norm = (p_b - b_mean) / b_std
+
+        residual = (p_b_norm - y_b_norm) ** 2
+
+        if s_b.any():
+            surf_loss = residual[s_b].mean()
+        else:
+            surf_loss = pred_phys.new_zeros(())
+        if (~s_b).any():
+            vol_loss = residual[~s_b].mean()
+        else:
+            vol_loss = pred_phys.new_zeros(())
+
+        total_loss = total_loss + surf_weight * surf_loss + vol_loss
+        count += 1
+
+    return total_loss / max(count, 1)
+
+
+# ---------------------------------------------------------------------------
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
@@ -235,6 +294,11 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             y = y.to(device, non_blocking=True)
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
+
+            B = y.shape[0]
+            y_finite_per_sample = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            mask = mask & y_finite_per_sample.unsqueeze(-1)
+            y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
@@ -432,7 +496,7 @@ for epoch in range(MAX_EPOCHS):
 
     t0 = time.time()
     model.train()
-    epoch_vol = epoch_surf = 0.0
+    epoch_vol = epoch_surf = epoch_loss = 0.0
     n_batches = 0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
@@ -441,16 +505,26 @@ for epoch in range(MAX_EPOCHS):
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
 
+        B = y.shape[0]
+        y_finite_per_sample = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+        mask = mask & y_finite_per_sample.unsqueeze(-1)
+        y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
 
-        vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+        loss = per_sample_normalized_loss(
+            pred, y_norm, mask, stats, surf_mask, cfg.surf_weight,
+        )
+
+        # Diagnostic global-normalized losses (logged only, not used for backprop).
+        with torch.no_grad():
+            sq_err = (pred - y_norm) ** 2
+            vol_mask = mask & ~is_surface
+            vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+            surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
 
         optimizer.zero_grad()
         loss.backward()
@@ -458,11 +532,13 @@ for epoch in range(MAX_EPOCHS):
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
+        epoch_loss += loss.item()
         n_batches += 1
 
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
+    epoch_loss /= max(n_batches, 1)
 
     # --- Validate ---
     model.eval()
@@ -493,13 +569,14 @@ for epoch in range(MAX_EPOCHS):
         "peak_memory_gb": peak_gb,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/per_sample_loss": epoch_loss,
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
-        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
+        f"train[loss={epoch_loss:.4f} vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
     )
     for name in VAL_SPLIT_NAMES:
