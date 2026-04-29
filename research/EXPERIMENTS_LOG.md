@@ -64,6 +64,28 @@ Round 1 dispatched 8 hypotheses across the default Transolver baseline. Two PRs 
 
 ## 2026-04-28 23:30 — Round 2 partial review (PRs #831, #832)
 
+## 2026-04-29 00:15 — PR #895: EMA weights (decay=0.999)
+
+- Branch: `charliepai2e3-thorfinn/ema-weights`
+- Hypothesis: EMA of model weights (decay=0.999) acts as an implicit ensemble, smoothing the loss landscape and reducing variance in out-of-distribution generalization. Expected benefit on camber-holdout and Re-holdout splits.
+
+| Split                   | val MAE (EMA, PR #895) | val MAE (baseline #835) | val MAE (current best #889) | Δ vs #835 | Δ vs #889 |
+|-------------------------|------------------------|-------------------------|-----------------------------|-----------|-----------|
+| val_single_in_dist      | 121.18                 | 124.701                 | 118.130                     | -2.82%    | +2.58%    |
+| val_geom_camber_rc      | 109.64                 | 116.841                 | 100.284                     | -6.16%    | +9.33%    |
+| val_geom_camber_cruise  | 74.47                  | 76.934                  | 71.079                      | -3.20%    | +4.77%    |
+| val_re_rand             | 91.04                  | 97.756                  | 88.053                      | -6.84%    | +3.39%    |
+| **val_avg**             | **100.058**            | **104.058**             | **94.387**                  | **-3.84%**| **+6.04%**|
+
+- Epochs: ~14/50, 30-min wall-clock
+- Metrics path: from PR #895 comments
+
+**Analysis:** EMA works. It beats the PR #835 baseline by 3.84%, with the strongest gains on the hardest generalization splits (Re-holdout: -6.84%, camber-rc: -6.16%). However, this experiment was run on the PR #835 codebase and does NOT beat the current best baseline of 94.387 (PR #889, cosine T_max=15 + 1-epoch warmup). As thorfinn correctly observed, EMA and cosine T_max=15 are orthogonal techniques — both act late in training (EMA averages late-epoch weights; T_max=15 prevents premature LR decay) and should compound.
+
+**Decision: SENT BACK** — asked thorfinn to rebase onto current main (which includes PR #889) and re-run EMA on top of cosine T_max=15 + warmup. Target: val_avg/mae_surf_p < 94.387.
+
+
+
 Two carry-over PRs from round 1 returned; neither beat the merged MAE baseline (104.058). Both closed; both students re-assigned to fresh round-2 work.
 
 | PR  | Student   | Hypothesis                                      | val_avg/mae_surf_p | Δ vs baseline (104.058) | Decision |
