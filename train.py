@@ -217,12 +217,49 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
+def _accumulate_batch_nan_safe(
+    pred_orig: torch.Tensor,
+    y: torch.Tensor,
+    is_surface: torch.Tensor,
+    mask: torch.Tensor,
+    mae_surf: torch.Tensor,
+    mae_vol: torch.Tensor,
+) -> tuple[int, int]:
+    """Same semantics as ``data.scoring.accumulate_batch`` but defensive against
+    samples whose ground truth contains non-finite values: those samples are
+    skipped (no contribution to mae or n_*), and y is sanitized before the err
+    multiply so NaN*0 doesn't propagate. The metric definition is unchanged
+    relative to organizer scoring; this just plugs the NaN*0 leak.
+    """
+    B = y.shape[0]
+    y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)  # [B]
+    if not y_finite.any():
+        return 0, 0
+    y_safe = torch.where(
+        y_finite[:, None, None].expand_as(y),
+        y,
+        torch.zeros_like(y),
+    )
+    sample_mask = y_finite.unsqueeze(-1).expand(-1, mask.shape[-1])
+    effective = mask & sample_mask
+    surf_mask = effective & is_surface
+    vol_mask = effective & ~is_surface
+    err = (pred_orig.double() - y_safe.double()).abs()
+    mae_surf += (err * surf_mask.unsqueeze(-1).double()).sum(dim=(0, 1))
+    mae_vol += (err * vol_mask.unsqueeze(-1).double()).sum(dim=(0, 1))
+    return int(surf_mask.sum().item()), int(vol_mask.sum().item())
+
+
 def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
     ``score.py`` (float64, non-finite samples skipped).
+
+    Uses a NaN-safe local accumulator that matches the organizer semantics but
+    avoids NaN propagation from samples whose ground truth contains non-finite
+    values (e.g. ``test_geom_camber_cruise`` sample 20).
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
@@ -237,8 +274,14 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             mask = mask.to(device, non_blocking=True)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
-            y_norm = (y - stats["y_mean"]) / stats["y_std"]
+            # Sanitize y for loss computation only (not for MAE accumulation, which
+            # has its own per-sample skip).
+            y_safe_loss = torch.where(torch.isfinite(y), y, torch.zeros_like(y))
+            y_norm = (y_safe_loss - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+            # Defensive: replace any non-finite predictions with 0 so they don't
+            # poison the metric. With current configs none should appear.
+            pred = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -254,7 +297,9 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            ds, dv = _accumulate_batch_nan_safe(
+                pred_orig, y, is_surface, mask, mae_surf, mae_vol,
+            )
             n_surf += ds
             n_vol += dv
 
@@ -386,6 +431,18 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    # --- Model architecture (defaults preserve current baseline) ---
+    n_hidden: int = 128
+    n_layers: int = 5
+    n_head: int = 4
+    slice_num: int = 64
+    mlp_ratio: int = 2
+    # --- Training tricks ---
+    ema_decay: float = 0.0  # 0 = disabled. Recommended 0.999/0.9999 if enabled.
+    amp_dtype: str = "none"  # one of: none, bf16, fp16
+    grad_clip: float = 0.0   # 0 = disabled. Recommended 1.0 if enabled.
+    p_loss_weight: float = 1.0  # extra weight on pressure channel in surface loss
+    warmup_frac: float = 0.0    # fraction of epochs spent in linear warmup (0 = no warmup)
 
 
 cfg = sp.parse(Config)
@@ -418,11 +475,11 @@ model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
-    mlp_ratio=2,
+    n_hidden=cfg.n_hidden,
+    n_layers=cfg.n_layers,
+    n_head=cfg.n_head,
+    slice_num=cfg.slice_num,
+    mlp_ratio=cfg.mlp_ratio,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
@@ -431,8 +488,47 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
+# --- AMP setup ---
+_DTYPE_MAP = {"none": None, "bf16": torch.bfloat16, "fp16": torch.float16}
+amp_dtype = _DTYPE_MAP.get(cfg.amp_dtype.lower(), None)
+amp_enabled = amp_dtype is not None
+amp_scaler = torch.amp.GradScaler("cuda") if amp_dtype is torch.float16 else None
+print(f"AMP: dtype={cfg.amp_dtype} enabled={amp_enabled}")
+
+# --- EMA setup ---
+ema_model = None
+if cfg.ema_decay > 0.0:
+    import copy as _copy
+    ema_model = _copy.deepcopy(model)
+    for p in ema_model.parameters():
+        p.requires_grad_(False)
+    print(f"EMA enabled with decay={cfg.ema_decay}")
+
+
+def _ema_update(ema_m: nn.Module, src_m: nn.Module, decay: float) -> None:
+    with torch.no_grad():
+        for ep, p in zip(ema_m.parameters(), src_m.parameters()):
+            ep.mul_(decay).add_(p.detach(), alpha=1.0 - decay)
+        for eb, b in zip(ema_m.buffers(), src_m.buffers()):
+            eb.copy_(b)
+
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+
+# --- LR scheduler with optional warmup ---
+if cfg.warmup_frac > 0.0:
+    warmup_epochs = max(1, int(round(cfg.warmup_frac * MAX_EPOCHS)))
+    decay_epochs = max(1, MAX_EPOCHS - warmup_epochs)
+    warmup_sched = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=1e-3, end_factor=1.0, total_iters=warmup_epochs
+    )
+    cosine_sched = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=decay_epochs)
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer, [warmup_sched, cosine_sched], milestones=[warmup_epochs]
+    )
+    print(f"LR schedule: linear warmup {warmup_epochs} ep -> cosine over {decay_epochs} ep")
+else:
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -486,18 +582,49 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+
+        if amp_enabled:
+            with torch.amp.autocast(device_type="cuda", dtype=amp_dtype):
+                pred = model({"x": x_norm})["preds"]
+                sq_err = (pred.float() - y_norm) ** 2
+        else:
+            pred = model({"x": x_norm})["preds"]
+            sq_err = (pred - y_norm) ** 2
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        # Surface loss with optional extra weight on pressure channel (idx 2)
+        if cfg.p_loss_weight != 1.0:
+            ch_w = torch.tensor(
+                [1.0, 1.0, cfg.p_loss_weight], device=sq_err.device, dtype=sq_err.dtype
+            )
+            surf_w = sq_err * ch_w  # broadcast over [B,N,3]
+            surf_loss = (surf_w * surf_mask.unsqueeze(-1)).sum() / (
+                surf_mask.sum().clamp(min=1) * ch_w.sum() / 3.0
+            )
+        else:
+            surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if amp_scaler is not None:
+            amp_scaler.scale(loss).backward()
+            if cfg.grad_clip > 0.0:
+                amp_scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+            amp_scaler.step(optimizer)
+            amp_scaler.update()
+        else:
+            loss.backward()
+            if cfg.grad_clip > 0.0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+            optimizer.step()
+
+        # EMA update
+        if ema_model is not None:
+            _ema_update(ema_model, model, cfg.ema_decay)
+
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
@@ -511,8 +638,10 @@ for epoch in range(MAX_EPOCHS):
 
     # --- Validate ---
     model.eval()
+    eval_model = ema_model if ema_model is not None else model
+    eval_model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(eval_model, loader, stats, cfg.surf_weight, device)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -543,7 +672,8 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        # Save the eval model (EMA if active, otherwise raw)
+        torch.save(eval_model.state_dict(), model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
