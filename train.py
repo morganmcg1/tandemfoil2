@@ -402,6 +402,7 @@ class Config:
     skip_test: bool = False  # skip end-of-run test evaluation
     loss: str = "mse"  # "mse" or "huber"
     huber_delta: float = 1.0  # delta for Huber loss in normalized target space
+    p_weight: float = 1.0  # multiplier on pressure channel (index 2) in training loss
 
 
 cfg = sp.parse(Config)
@@ -448,6 +449,10 @@ model_config = dict(
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+
+# Per-channel loss weights (Ux, Uy, p). Pressure channel is upweighted via cfg.p_weight.
+channel_weights = torch.ones(3, device=device)
+channel_weights[2] = cfg.p_weight
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
@@ -527,6 +532,8 @@ for epoch in range(MAX_EPOCHS):
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
         err = per_element_loss(pred, y_norm, cfg.loss, cfg.huber_delta)
+        if cfg.p_weight != 1.0:
+            err = err * channel_weights  # broadcasts over [B, N, 3]
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
