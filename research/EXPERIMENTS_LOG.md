@@ -1,5 +1,37 @@
 # SENPAI Research Results
 
+## 2026-04-29 03:30 — PR #951: Per-channel Huber δ on 4-way stack (slice=64) — sent back
+
+- Branch: `willowpai2e1-edward/per-channel-huber`
+- Hypothesis: Pressure has heavier residual tails than velocity (PR #769 fingerprint). Per-channel Huber δ_p < δ_vel = 0.5 should improve robustness on pressure-dominated splits.
+
+| variant | val_avg/mae_surf_p | test_avg/mae_surf_p | Δ% vs ctrl | W&B run |
+|---------|-------------------:|--------------------:|:----------:|---------|
+| **δ_p=0.1, δ_vel=0.5** | **85.75** | **75.89** | **−4.45% / −5.04%** | [ckbtdodk](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/ckbtdodk) |
+| δ_p=0.25, δ_vel=0.5 | 85.78 | 76.26 | −4.41% / −4.59% | [5cluhptz](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/5cluhptz) |
+| δ_p=0.5 (control) | 89.74 | 79.93 | — | [wemrch6f](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/wemrch6f) |
+| δ_p=1.0 | 90.22 | 79.28 | +0.53% / −0.81% | [sj97zr0a](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/sj97zr0a) |
+
+All runs: full 4-way stack (warmup=0, clip=0.5, ema=0.99) + δ_vel=0.5 at slice=64 default.
+
+Per-split test (δ_p=0.1, vs control): rc −8.7%, single −6.3%, re_rand −2.5%, cruise −0.4%
+
+**Analysis and conclusions:**
+
+Mechanism cleanly confirmed via per-channel loss diagnostic — δ_p reduces pressure-channel loss monotonically (0.0314 → 0.0092) while velocity losses move only modestly. Heavy-tail-OOD-split concentration (rc −8.7% biggest, cruise −0.4% smallest) matches the PR #769 fingerprint exactly: pressure tail Huberization is the active ingredient.
+
+**Critical comparison: δ_p=0.1 + δ_vel=0.5 (val=85.75) ≈ PR #881 uniform δ=0.1 (val=85.23).** Per-channel asymmetry adds essentially nothing beyond what uniform δ=0.1 already does. The slight difference (~0.5 val units) is within seed noise.
+
+This is informative — it tells us the velocity δ=0.5→0.1 transition contributes ~zero to the gain. The pressure channel is doing all the work.
+
+**Decision: NOT MERGED.** val=85.75 doesn't beat current baseline val=82.64 (PR #862 slice=32 + 4-way). Sent back to edward with focused asymmetric floor probe at slice=32:
+- δ_p=0.1, δ_vel=0.5 + slice=32 (head-to-head with baseline)
+- δ_p=0.05, δ_vel=0.5 + slice=32 (push asymmetric pressure floor)
+
+Open question: can asymmetric δ_p < 0.1 (with δ_vel held at 0.5) push below the uniform δ floor that alphonse #957 is probing? If yes, that's a genuine finding — keeping velocity δ=0.5 stable while pushing pressure δ further may avoid over-Huberization of velocity dynamics.
+
+---
+
 ## 2026-04-29 03:10 — PR #944: Clip norm fine-scan on 4-way stack (slice=64) — sent back
 
 - Branch: `willowpai2e1-nezuko/clip-norm-scan` (rebased onto post-Huber+clip+warmup advisor)

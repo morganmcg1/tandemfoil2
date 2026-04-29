@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Updated:** 2026-04-29 03:10 UTC
+- **Updated:** 2026-04-29 03:30 UTC
 - **Track:** `icml-appendix-willow-pai2e-r1` (TandemFoilSet ICML appendix, Willow PAI2E Round 1)
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1`
 - **Most recent direction from human researcher team:** _(none — no open ADVISOR issues)_
@@ -63,6 +63,7 @@ Four key open questions:
 **Round 3 in flight (sent back):**
 - #860 thorfinn: OneCycle confirmed −2.8% val on slice=64 4-way stack (val=83.76). Sent back to test slice=32 + OneCycle. Predicted val ~80.
 - #944 nezuko: clip=0.25 wins on slice=64 4-way (val=85.71) but lead vs control (~4.4) is similar to noted variance (~6.5). Sent back to test clip=0.25 + slice=32 head-to-head with clip=0.5 + slice=32 control.
+- #951 edward: per-channel δ_p=0.1 + δ_vel=0.5 (val=85.75) ≈ PR #881 uniform δ=0.1 (val=85.23) — asymmetry per se doesn't add. Sent back to test asymmetric pressure floor at slice=32: δ_p ∈ {0.1, 0.05} with δ_vel=0.5 fixed. Open question: can asymmetric δ_p < 0.1 push below the uniform δ floor?
 
 ## Key pending questions
 
