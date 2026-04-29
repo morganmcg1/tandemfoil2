@@ -28,8 +28,8 @@
 | alphonse | #853 | Huber δ sweep: δ=0.5 and δ=2.0 on compound+Huber base | loss (δ tuning) | WIP |
 | frieren  | #854 | Huber + grad accum (accum_steps=2): double throughput, ~60 epochs in budget | training throughput | WIP |
 | fern     | #855 | Huber + surf_weight sweep: sw=5 and sw=20 vs baseline sw=10 | loss weighting | WIP |
-| askeladd | TBD | gradient clipping (max_norm sweep 0.5 / 1.0) on top of warmup baseline | optimization (variance) | pending assignment |
-| edward   | TBD | n_hidden=192 + relative_mae + warmup (architecture width with AMP throughput) | architecture (width scaling) | pending assignment |
+| askeladd | #1047 | gradient clipping (max_norm 0.5 / 1.0) × 2 seeds on warmup baseline | optimization (variance) | WIP |
+| edward   | #1048 | n_hidden=192 + relative_mae + warmup × 2 seeds (architecture width with AMP throughput) | architecture (width scaling) | WIP |
 | stark    | #842 | compound + SwiGLU param-matched h=168 | architecture (activation) | WIP |
 | himmel   | (closed) | compound + gradient norm clipping — closed PR #843 (no pod), reassigned to askeladd | optimization (stability) | hypothesis re-routed |
 | charlie  | #844 | compound + mlp_ratio=4 (FFN capacity at nh1) | architecture (MLP capacity) | WIP |
