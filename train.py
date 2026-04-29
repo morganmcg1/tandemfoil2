@@ -359,6 +359,7 @@ def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
 DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 WARMUP_EPOCHS = 2  # warm-up epochs used to estimate the timeout-aware cosine budget
 LR_ETA_MIN = 1e-6
+RE_NOISE_STD = 0.05  # std (normalized units) for log(Re) input augmentation; train only
 
 
 @dataclass
@@ -460,6 +461,11 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
+        # Re noise augmentation — training only; smooths log(Re) response surface
+        if model.training:
+            re_noise = torch.randn_like(x_norm[..., 13:14]) * RE_NOISE_STD
+            x_norm = x_norm.clone()
+            x_norm[..., 13:14] = x_norm[..., 13:14] + re_noise
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
         sq_err = (pred - y_norm) ** 2
