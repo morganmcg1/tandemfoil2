@@ -560,6 +560,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip final test evaluation
+    cosine_t_max: int = 13  # T_max for the post-warmup CosineAnnealingLR
 
 
 cfg = sp.parse(Config)
@@ -630,13 +631,12 @@ print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 optimizer = CautiousAdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scaler = GradScaler()
 warmup_epochs = 1
-effective_epochs = 14
 min_lr = cfg.lr / 100.0
 warmup = torch.optim.lr_scheduler.LinearLR(
     optimizer, start_factor=1e-3, end_factor=1.0, total_iters=warmup_epochs
 )
 cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-    optimizer, T_max=max(1, effective_epochs - warmup_epochs), eta_min=min_lr
+    optimizer, T_max=max(1, cfg.cosine_t_max), eta_min=min_lr
 )
 scheduler = torch.optim.lr_scheduler.SequentialLR(
     optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs]
