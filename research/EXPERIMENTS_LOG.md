@@ -1,5 +1,33 @@
 # SENPAI Research Results
 
+## 2026-04-29 03:10 — PR #944: Clip norm fine-scan on 4-way stack (slice=64) — sent back
+
+- Branch: `willowpai2e1-nezuko/clip-norm-scan` (rebased onto post-Huber+clip+warmup advisor)
+- Hypothesis: With Huber δ=0.5 attenuating large residual gradients, the optimal clip threshold may have shifted below 0.5. Scan clip ∈ {0.1, 0.25, 0.5, 1.0} on full 4-way stack.
+
+| clip_norm | val_avg/mae_surf_p | test_avg/mae_surf_p | best_epoch | W&B run |
+|---|---|---|---|---|
+| 0.1 | 87.60 | 77.26 | 14 | [2v1mgdjn](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/2v1mgdjn) |
+| **0.25** | **85.71** | **75.96** | **14** | [xzdoh72a](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/xzdoh72a) |
+| 0.5 (control) | 90.06 | 79.08 | 13 | [tyzzkebz](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/tyzzkebz) |
+| 1.0 | 86.45 | 77.26 | 14 | [feif9xid](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/feif9xid) |
+
+All runs: `--warmup_epochs 0 --huber_delta 0.5 --ema_decay 0.99` at slice=64 default. ~32 min wallclock, 92GB peak VRAM.
+
+Per-split test (clip=0.25): single=89.53, rc=86.95, cruise=53.15, re_rand=74.22
+
+**Analysis and conclusions:**
+
+clip=0.25 wins on both val and test, beats clip=0.5 control by 4.4 val / 3.1 test units. Non-monotonic curve: 0.5 control is *worse* than 0.1, 0.25, AND 1.0 — suggests the 0.5 control is an unlucky run.
+
+**Significant variance noted:** clip=0.5 rerun (val=90.06) vs published PR #775 (val=96.54) is a 6.5 val-unit swing on identical config. The clip=0.25 lead (4.4 val units over rerun control) is similar in magnitude to this variance — not enough to attribute confidently to signal vs noise.
+
+**Decision: NOT MERGED.** val=85.71 doesn't beat current baseline val=82.64 (PR #862 slice=32 + 4-way). Sent back to nezuko to test clip=0.25 + slice=32 head-to-head against clip=0.5 + slice=32 control. Two questions: (1) does clip=0.25 transfer to slice=32 stack? (2) is the lead robust to variance?
+
+Strategic note: alphonse #957 is independently testing δ × clip {on, off} on EMA stack. Different question (clip threshold vs clip on/off). Worth keeping nezuko's PR scoped to fine threshold tuning at fixed δ=0.5.
+
+---
+
 ## 2026-04-29 02:55 — PR #860 Round 2: OneCycle vs cosine on 4-way stack (slice=64) — sent back
 
 - Branch: `willowpai2e1-thorfinn/schedule-alignment` (rebased onto post-Huber+clip+warmup advisor)
