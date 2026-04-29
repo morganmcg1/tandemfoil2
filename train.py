@@ -33,7 +33,7 @@ import yaml
 from einops import rearrange
 from timm.layers import trunc_normal_
 from torch.cuda.amp import GradScaler
-from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
+from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn, update_bn
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
@@ -429,6 +429,7 @@ class Config:
     one_cycle_lr: bool = False  # opt-in: use OneCycleLR instead of SequentialLR/CosineAnnealingLR
     one_cycle_max_lr: float = 2e-3  # OneCycleLR max_lr (only used when --one_cycle_lr)
     one_cycle_pct_start: float = 0.3  # OneCycleLR pct_start (only used when --one_cycle_lr)
+    swa_start: int = 20  # epoch (0-indexed) to begin SWA weight averaging; disabled when swa_start >= epochs
 
 
 cfg = sp.parse(Config)
@@ -481,6 +482,16 @@ if cfg.ema_decay > 0.0:
     ema_model = AveragedModel(model, multi_avg_fn=get_ema_multi_avg_fn(cfg.ema_decay))
     print(f"EMA enabled (decay={cfg.ema_decay})")
 val_eval_model = ema_model if ema_model is not None else model
+
+# SWA: average raw model weights at epoch boundaries from epoch >= swa_start.
+# Disabled when swa_start >= MAX_EPOCHS so the flag is safe for existing recipes.
+swa_enabled = cfg.swa_start < MAX_EPOCHS
+swa_model = AveragedModel(model) if swa_enabled else None
+swa_n_averaged = 0
+if swa_enabled:
+    print(f"SWA enabled: averaging raw model weights from epoch {cfg.swa_start} (0-indexed) of {MAX_EPOCHS}")
+else:
+    print(f"SWA disabled: swa_start={cfg.swa_start} >= epochs={MAX_EPOCHS}")
 
 optimizer = torch.optim.AdamW(
     model.parameters(),
@@ -722,11 +733,16 @@ for epoch in range(MAX_EPOCHS):
         torch.save(ckpt_state, model_path)
         tag = " *"
 
+    if swa_enabled and epoch >= cfg.swa_start:
+        swa_model.update_parameters(model)
+        swa_n_averaged += 1
+
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+    swa_tag = f"  swa_n={swa_n_averaged}" if swa_enabled else ""
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
-        f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
+        f"val_avg_surf_p={avg_surf_p:.4f}{tag}{swa_tag}"
     )
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
@@ -738,6 +754,7 @@ for epoch in range(MAX_EPOCHS):
         "lr": scheduler.get_last_lr()[0],
         "peak_gb": peak_gb,
         "is_best": tag == " *",
+        "swa_n_averaged": swa_n_averaged,
         "global_step": global_step,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
@@ -765,8 +782,22 @@ if best_metrics:
         "total_train_minutes": total_time,
     })
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-    model.eval()
+    swa_active = swa_enabled and swa_n_averaged > 0
+    if swa_active:
+        # Refresh BatchNorm running stats for the averaged weights. No-op for
+        # this LayerNorm-only model (update_bn early-returns when no BN found),
+        # but kept per the PR spec to make the recipe robust to future BN.
+        update_bn(train_loader, swa_model, device=device)
+        eval_model = swa_model
+        eval_model.eval()
+        # Replace the saved best-EMA checkpoint with the SWA-averaged weights so
+        # the artifact reflects the model used for the reported test metrics.
+        torch.save(swa_model.module.state_dict(), model_path)
+        print(f"\nSWA active: averaged {swa_n_averaged} epoch checkpoints; saved to {model_path}")
+    else:
+        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+        model.eval()
+        eval_model = model
 
     test_metrics = None
     test_avg = None
@@ -778,7 +809,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+            name: evaluate_split(eval_model, loader, stats, cfg.surf_weight, device,
                                  cfg.loss, cfg.huber_delta)
             for name, loader in test_loaders.items()
         }
@@ -799,6 +830,8 @@ if best_metrics:
             "event": "test",
             "best_epoch": best_metrics["epoch"],
             "best_val_avg/mae_surf_p": best_avg_surf_p,
+            "swa_active": swa_active,
+            "swa_n_averaged": swa_n_averaged,
             **test_log,
         })
 
@@ -823,6 +856,9 @@ if best_metrics:
         "best_per_split": {n: best_metrics["per_split"][n] for n in VAL_SPLIT_NAMES},
         "test_per_split": test_metrics,
         "test_avg": test_avg,
+        "swa_active": swa_active,
+        "swa_n_averaged": swa_n_averaged,
+        "swa_start": cfg.swa_start,
         "total_train_minutes": total_time,
         "peak_gb_final": torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0,
         "model_path": str(model_path),
