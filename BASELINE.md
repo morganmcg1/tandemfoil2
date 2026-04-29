@@ -4,18 +4,22 @@
 
 | Metric | Value |
 |--------|-------|
-| `val_avg/mae_surf_p` | **47.6501** (PR #1241 — adamw_beta2=0.985 fine-tune) |
-| `test_avg/mae_surf_p` | **41.4598** (PR #1241) |
+| `val_avg/mae_surf_p` | **47.5231** (PR #1246 — OneCycleLR: peak 2e-3, 30% ramp, cosine decay) |
+| `test_avg/mae_surf_p` | **41.3253** (PR #1246) |
+| `test_single_in_dist/mae_surf_p` | 44.3980 |
+| `test_geom_camber_rc/mae_surf_p` | 55.9591 |
+| `test_geom_camber_cruise/mae_surf_p` | 25.0234 |
+| `test_re_rand/mae_surf_p` | 39.9207 |
 
-**Source:** PR #1241 — adamw_beta2: 0.98→0.985 (intermediate interpolation between 0.98 winner and 0.999 default; ~67-step effective memory window vs 50-step at 0.98).
-- Branch: `charliepai2f5-askeladd/adamw-beta2-0.985`
-- Config: n_layers=2 (hardcoded), slice_num=8, n_hidden=256, n_head=8, loss=huber, huber_delta=0.1, ema_decay=0.999, grad_clip=1.0, per_sample_norm, warmup_epochs=3, epochs=32, lr=5e-4, batch_size=4, weight_decay=5e-4, adamw_beta2=0.985
+**Source:** PR #1246 — OneCycleLR replaces SequentialLR (LinearLR warmup + CosineAnnealingLR). max_lr=2e-3 (4× base), pct_start=0.3, anneal_strategy='cos', div_factor=25.0, final_div_factor=1e4, total_steps=32×375=12000. Scheduler is per-step (called after each batch).
+- Branch: `charliepai2f5-nezuko/one-cycle-lr-policy`
+- Config: n_layers=2 (hardcoded), slice_num=8, n_hidden=256, n_head=8, loss=huber, huber_delta=0.1, ema_decay=0.999, grad_clip=1.0, per_sample_norm, epochs=32, lr=5e-4 (config), batch_size=4, weight_decay=5e-4, adamw_beta2=0.98
 - Best epoch = 32/32 (final epoch, val curve still descending — training-budget-limited)
-- Peak VRAM: 20.98 GB, Wall-clock: 29.9 min, Run ID: gz5kow96
+- Peak VRAM: 20.97 GB, Wall-clock: 29.94 min, Run ID: z3y61gtc
 
-**Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper reference) — currently +1.29% above target (gap closed from 0.7506 to **0.5298** vs prior best — compete gap narrowed further).
+**Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper reference) — currently +0.96% above target (gap = **0.3953**, down from 0.5298 — 47% of remaining gap closed by OneCycleLR).
 
-## Round r5 — Recommended Working Baseline (compound n_layers=2 + huber_delta=0.1 + weight_decay=5e-4 + warmup_epochs=3 + epochs=32 + adamw_beta2=0.985 + slice_num=8)
+## Round r5 — Recommended Working Baseline (compound n_layers=2 + huber_delta=0.1 + weight_decay=5e-4 + OneCycleLR max_lr=2e-3 + epochs=32 + adamw_beta2=0.98 + slice_num=8)
 
 ```
 python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 32 \
