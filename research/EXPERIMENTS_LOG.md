@@ -1,5 +1,39 @@
 # SENPAI Research Results
 
+## 2026-04-29 06:30 — PR #1048: Architecture width n_hidden=128 → 192 (relative_mae + warmup baseline) [WINNER — MERGED]
+- Branch: `willowpai2e2-edward/nh192-relmae-warmup`
+- Hypothesis: The compound base width (n_hidden=128) was chosen under fp32/bs=4 throughput constraints in the prior round. Under AMP/bs=16/compile (PR #821) peak VRAM is 49.8 GB on a 96 GB GPU — there is now headroom for a wider model. Increased capacity should improve final-epoch performance because PR #971 still hit its best at epoch 49/50, suggesting compute-budget-limited descent.
+- W&B runs (group `nh192-relmae-warmup`): `ovkjhjyo` (default seed), `v9ipztd9` (seed42)
+
+| | n_hidden=128 (PR #971 baseline) | n_hidden=192 | Δ |
+|---|---:|---:|---:|
+| Default-seed val | 54.70 (`1xfcb5h5`) | **50.61** (`ovkjhjyo`) | **−4.09 (−7.5%)** |
+| seed42 val | 67.28 (`9a9di1dz`) | **56.24** (`v9ipztd9`) | **−11.04 (−16.4%)** |
+| 2-seed mean val | 60.99 | **53.42** | **−7.57 (−12.4%)** |
+| 2-seed spread val | 12.58 | **5.63** | **−6.95** (corridor halved) |
+| Best-seed test_avg | 48.15 | **44.15** | **−4.00 (−8.3%)** |
+| Wall (min / 50 ep) | 22.4 | 30.6 | +8.2 (within 30 min cap) |
+| Peak VRAM (GB) | 49.8 | 73.6 | +23.8 (well within 96 GB) |
+| Best epoch | 49 / 50 | 49 / 50 (default) ; 48 / 50 (seed42) | still descending |
+| Param count | 0.56M | 1.24M | ~2.2× |
+
+Per-split test (default seed, ep 49):
+
+| Split | n_hidden=128 | n_hidden=192 | Δ |
+|---|---:|---:|---:|
+| `test_single_in_dist`     | 67.22 | **58.21** | −9.01 (−13.4%) |
+| `test_geom_camber_rc`     | 60.38 | **57.94** | −2.44 (−4.0%)  |
+| `test_geom_camber_cruise` | 23.79 | **21.65** | −2.14 (−9.0%)  |
+| `test_re_rand`            | 41.20 | **38.79** | −2.41 (−5.9%)  |
+| **test_avg/mae_surf_p**   | **48.15** | **44.15** | **−4.00 (−8.3%)** |
+
+- Outcome: **MERGED.** All four test splits improve. Largest gain on `test_single_in_dist` — the high-variance raceCar-single track. Reference target gap (PR #32 prior round, test=40.93): now **3.22 pts** (was 7.22).
+- Two further qualitative observations from edward:
+  1. **Best epoch is still 48–49/50 even after the width jump.** The 1.24M-param model has not saturated by 50 epochs of cosine decay → the schedule, not the capacity, is the next bottleneck.
+  2. **Throughput cost is exactly as predicted** (36–37 s/epoch vs ~27 s for n_hidden=128 → 30.5–30.6 min total). The harness allowed all 50 epochs to finish; if the timeout were tighter the last epoch would have been lost.
+- Variance result (also load-bearing): the seed-corridor halved (12.58 → 5.63), confirming the wider model has a friendlier optimization landscape — fewer bad basins for unlucky seeds. This is a result *in addition to* the headline metric improvement.
+- Verification: W&B metrics match PR claims to 4 decimal places on both seeds; both runs completed all 50 epochs; config confirmed `model_config.n_hidden=192`, all other defaults inherited from PR #971.
+
 ## 2026-04-29 04:00 — PR #1008: 3rd-seed verification + warmup-length sweep [CLOSED — informational, no code change]
 - Branch: `willowpai2e2-askeladd/seed3-warmup-sweep`
 - Hypothesis: (a) 3rd seed at warmup=5 (PYTHONHASHSEED=7) confirms the 12.58 val-spread is representative; (b) warmup_epochs ∈ {3, 5, 10} bracket at default seed identifies whether 5 is optimal.

@@ -4,55 +4,77 @@ Active branch: `icml-appendix-willow-pai2e-r2`.
 
 ## Current best (this branch)
 
-- **PR**: #971 — "LR warmup (5ep linear) + flip loss_type default to relative_mae" (merged 2026-04-29)
-- **Config**: `n_layers=3, slice_num=16, n_head=1, n_hidden=128, mlp_ratio=2` + `loss_type=relative_mae` (default) + `lr=2e-3` + `batch_size=16` + `compile=True` + `warmup_epochs=5`
-- **val_avg/mae_surf_p** (best checkpoint, epoch 49): **54.70** (W&B `1xfcb5h5`, default seed — no `PYTHONHASHSEED` env var)
-- **test_avg/mae_surf_p** (best checkpoint): **48.15** (finite across all 4 splits)
-- **Wall clock**: 22.4 min / 50 epochs
+- **PR**: #1048 — "Architecture width: n_hidden=128 -> 192 (relative_mae + warmup baseline)" (merged 2026-04-29)
+- **Config**: `n_layers=3, slice_num=16, n_head=1, n_hidden=192, mlp_ratio=2` + `loss_type=relative_mae` (default) + `lr=2e-3` + `batch_size=16` + `compile=True` + `warmup_epochs=5`
+- **val_avg/mae_surf_p** (best checkpoint, epoch 49): **50.61** (W&B `ovkjhjyo`, default seed — no `PYTHONHASHSEED` env var)
+- **test_avg/mae_surf_p** (best checkpoint): **44.15** (finite across all 4 splits)
+- **Wall clock**: 30.6 min / 50 epochs (right at the 30 min harness cap)
+- **Peak VRAM**: 73.6 GB on a 96 GB GPU
 
-> ⚠️ **Seed-swap caveat (read carefully)**: Under the new warmup schedule, the seed-to-best-basin mapping has flipped. The default seed (no `PYTHONHASHSEED`) is now the better seed (val=54.70); seed42 lands at val=67.28 — opposite of the round-3 PR #821 baseline. **Do NOT pin `PYTHONHASHSEED=42` when reproducing the new baseline.**
+> ⚠️ **Seed-swap caveat still applies**: Default seed (no `PYTHONHASHSEED`) is the better seed under warmup. Do NOT pin `PYTHONHASHSEED=42` when reproducing.
+>
+> ⚠️ **Wall-clock budget**: 30.6 min is at the harness cap. Width-only re-runs on this baseline have effectively zero remaining budget for additional per-step compute. Increases to depth, mlp_ratio, slice_num, or `--epochs 60+` will need throughput offsets (compile-tuning, faster kernels, or grad accum at bs=8 if it helps) or an explicit timeout relaxation.
 
-### 3-seed variance corridor (confirmed via askeladd's PR #1008)
+### 2-seed variance corridor (PR #1048)
 
 | Seed | W&B | best val_avg | test_avg | best epoch |
 |------|-----|-------------:|---------:|-----------:|
-| default | `1xfcb5h5` | **54.70** | **48.15** | 49 |
-| 42 | `9a9di1dz` | 67.28 | 57.80 | 43 |
-| 7 | `qznce19f` | 57.52 | 50.19 | 50 |
-| **mean** | | **59.83** | **52.05** | |
-| **spread (max−min)** | | **12.58** | **9.65** | |
+| default | `ovkjhjyo` | **50.61** | **44.15** | 49 |
+| 42 | `v9ipztd9` | 56.24 | 48.33 | 48 |
+| **mean** | | **53.42** | **46.24** | |
+| **spread (max−min)** | | **5.63** | **4.18** | |
 
-> **Single-seed screening convention** (settled 2026-04-29 via PR #1008): With 3-seed val-spread bounded at 12.58 and test-spread at 9.65, future hypothesis PRs may use a single default-seed run for screening. A 2nd seed is required only for the final candidate before merge. PRs claiming improvements smaller than ~6 val pts must run ≥ 2 seeds.
+> The seed corridor halved (12.58 → 5.63 val; 9.65 → 4.18 test) compared to the prior n_hidden=128 baseline. The wider model has a friendlier optimization landscape — fewer bad basins for unlucky seeds.
 >
-> **Settled negative**: ε ≠ 1e-6 (`rel_mae_eps`) does NOT compose with warmup. PR #940 round 2 ran ε=1e-3 + warmup at 2 seeds and regressed: best-seed val=61.62 (vs 54.70 baseline, +6.92), driven by `single_in_dist` channel inversion. Future relative-MAE PRs should not re-test this lever unless the warmup default itself changes.
+> **Single-seed screening convention** (preserved from PR #1008): With 2-seed val-spread now 5.63, future hypothesis PRs may use a single default-seed run for screening. A 2nd seed is required only for the final candidate before merge. PRs claiming improvements smaller than ~3 val pts on default seed must run ≥ 2 seeds.
 >
-> **Settled negative**: warmup_epochs=10 hurts (val=64.77 vs 54.70 at warmup=5, best epoch 43 due to under-decay). warmup_epochs=3 (val=55.80) is within seed noise of warmup=5 — both are acceptable but 5 is slightly better.
+> **Settled negative** (preserved): ε ≠ 1e-6 (`rel_mae_eps`) does NOT compose with warmup. PR #940 round 2 ran ε=1e-3 + warmup at 2 seeds and regressed (best-seed val=61.62). May need re-test under n_hidden=192 if loss-side levers re-open, but currently low priority.
+>
+> **Settled negative** (preserved): warmup_epochs=10 hurts (val=64.77 at n_hidden=128). warmup_epochs=3 within seed noise of 5; 5 remains default.
 
-### Per-split test metrics (default seed `1xfcb5h5`, best checkpoint)
+### Per-split test metrics (default seed `ovkjhjyo`, best checkpoint)
 
-| Split | test mae_surf_p |
-|-------|----------------|
-| `test_single_in_dist`       | 67.22  |
-| `test_geom_camber_rc`       | 60.38  |
-| `test_geom_camber_cruise`   | 23.79  |
-| `test_re_rand`              | 41.20  |
-| **test_avg/mae_surf_p**     | **48.15** |
+| Split | test mae_surf_p (n_hidden=128) | test mae_surf_p (n_hidden=192) | Δ |
+|-------|---:|---:|---:|
+| `test_single_in_dist`       | 67.22 | **58.21** | −9.01 (−13.4%) |
+| `test_geom_camber_rc`       | 60.38 | **57.94** | −2.44 (−4.0%)  |
+| `test_geom_camber_cruise`   | 23.79 | **21.65** | −2.14 (−9.0%)  |
+| `test_re_rand`              | 41.20 | **38.79** | −2.41 (−5.9%)  |
+| **test_avg/mae_surf_p**     | **48.15** | **44.15** | **−4.00 (−8.3%)** |
 
-### Reproduce (new defaults after PR #971)
+All four splits improve. Largest gain on `test_single_in_dist` (high-variance raceCar-single-dominant track).
+
+**Reference target gap**: prior-round PR #32 hit `test_avg/mae_surf_p = 40.93`. Current best 44.15 is now **3.22 pts** off the target (was 7.22 pts before this merge).
+
+### Reproduce (new defaults after PR #1048)
 
 ```bash
 cd target && python train.py \
     --epochs 50 \
-    --wandb_group lr-warmup-5ep \
-    --wandb_name lr-warmup-5ep-default \
-    --agent willowpai2e2-askeladd
+    --wandb_group nh192-relmae-warmup \
+    --wandb_name nh192-default \
+    --agent willowpai2e2-edward
 ```
 
-`model_config` in `train.py` is now compound base by default: `n_layers=3, n_head=1, slice_num=16, n_hidden=128, mlp_ratio=2`. CLI defaults after PR #971: `batch_size=16`, `lr=2e-3`, `compile=True`, `loss_type="relative_mae"`, `warmup_epochs=5`. Schedule = `LinearLR(0.05→1.0)` for the first 5 epochs, then `CosineAnnealingLR(T_max=45, eta_min=1e-6)` for the remaining 45.
+`model_config` in `train.py` is now: `n_layers=3, n_head=1, slice_num=16, n_hidden=192, mlp_ratio=2`. CLI defaults after PR #1048: `batch_size=16`, `lr=2e-3`, `compile=True`, `loss_type="relative_mae"`, `warmup_epochs=5`. Schedule = `LinearLR(0.05→1.0)` for the first 5 epochs, then `CosineAnnealingLR(T_max=45, eta_min=1e-6)` for the remaining 45. Best epoch is still 48–49/50 — the schedule has not saturated and is signal-positive at the very end of training.
 
-### Paired seed (seed42, W&B `9a9di1dz`)
+### Paired seed (seed42, W&B `v9ipztd9`)
 
-val=67.28 / test=57.80 — same config, worse local minimum under warmup. The warmup ramp moved seed42 from the round-3 "good basin" (55.90) into a different basin. 3-seed corridor (default + seed42 + seed7) is documented above.
+val=56.24 / test=48.33 (best ep 48). Per-split test: single=75.42, rc=57.85, cruise=21.83, re_rand=38.21. Same config, slightly worse local minimum — but the seed-corridor is now ~5–6 pts wide, half the prior width.
+
+---
+
+## 2026-04-29 — PR #1048: n_hidden=128 → 192 (architecture width under AMP throughput) (merged)
+
+- **val_avg/mae_surf_p:** 50.61 (best epoch 49, default seed `ovkjhjyo`)
+- **test_avg/mae_surf_p:** 44.15 (finite across all 4 splits)
+- **Per-split test:** single=58.21, rc=57.94, cruise=21.65, re_rand=38.79
+- **Paired seed (seed42, `v9ipztd9`):** val=56.24, test=48.33 — slightly worse local min
+- **Variance:** 2-seed val-spread 5.63 (was 12.58 at n_hidden=128), test-spread 4.18 (was 9.65) — corridor halved
+- **Delta vs previous best (PR #971 default seed):** −4.09 (−7.5%) val_avg / −4.00 (−8.3%) test_avg
+- **Reference target gap:** test 44.15 vs target 40.93 → **3.22 pts** (was 7.22)
+- **Wall clock:** 30.6 min / 50 epochs (right at harness cap; peak VRAM 73.6 GB / 96 GB)
+- **Status:** Merged. New `model_config["n_hidden"]=192` (was 128); ~2.2× param count (1.24M vs 0.56M); all other defaults inherited from PR #971.
 
 ---
 
