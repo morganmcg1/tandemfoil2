@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- 2026-04-29 00:00
+- 2026-04-28 (Round 4 assignments active)
 - No recent research direction from human researcher team (no open GitHub issues found)
 - Current research focus and themes:
 
@@ -12,60 +12,66 @@
 
 | Metric | Value | PR | Notes |
 |--------|-------|----|-------|
-| `val_avg/mae_surf_p` | **104.7457** | #778 | epoch 14/50, undertrained; gradient clipping clip_grad_norm=1.0 |
+| `val_avg/mae_surf_p` | **94.7833** | #931 | Per-sample Re-weighted loss (divide each sample's loss by `log(Re)`); epoch 14/50; ckpt_avg K=3; -2.81% vs PR #911 |
 
-The previous baseline was 137.0013 (PR #764, n_hidden=256, epoch 9/50). Gradient clipping alone delivered a 24% improvement on stock architecture — confirming that gradient explosion from high-Re samples (pre-clip norms 40–900× above 1.0) was the dominant pathology, not model capacity or schedule.
+**Baseline compound stack:** stock Transolver + clip_grad_norm=1.0 + T_max=15 cosine + ckpt_avg K=3 + per-sample `1/log(Re)` downweighting.
 
-### Marginal Winner Pending Rebase
+Per-split breakdown (ckpt_avg epochs 12-13-14):
+- `val_single_in_dist`: 104.91
+- `val_geom_camber_rc`: 105.49
+- `val_geom_camber_cruise`: 77.32
+- `val_re_rand`: 91.41
 
-PR #897 (charliepai2e2-alphonse, T_max=15 cosine schedule) achieved **104.4004** (Δ -0.33%) but merge failed due to conflicts. Sent back as draft for rebase onto `icml-appendix-charlie-pai2e-r2`. Once rebased and re-verified, baseline will update to 104.4004.
-
-### Closed This Round
-
-| PR | Student | Result | Reason |
-|----|---------|--------|--------|
-| #898 | askeladd | 114.9909 (+9.8%) | Dead end — max_norm=5.0 inflates effective LR 5×; OOD splits devastated |
-
-### In-Flight Experiments (WIP)
+### In-Flight Experiments (Round 4 — All 5 Students WIP)
 
 | PR | Student | Hypothesis | Status |
 |----|---------|------------|--------|
-| #897 | alphonse | T_max=15 cosine schedule | SENT BACK — marginal win (104.4004), merge conflict; needs rebase |
-| #856 | tanjiro | EMA model weights (decay=0.999) for smoother timeout-cut checkpoints | WIP — queued as tanjiro follow-up after #826 |
-| #826 | tanjiro | AdamW weight decay 1e-5→1e-2 | WIP — first run on clipping baseline, still running |
-| #921 | askeladd | Cosine T_max sweep {20, 25, 30} — find optimal LR annealing endpoint for ~14-epoch budget | WIP — new assignment 2026-04-29 |
-| #800 | alphonse | n_hidden=256 + bf16 AMP | WIP — rebased on clipping baseline, re-running |
-| #780 | thorfinn | mlp_ratio 2→4 | WIP — sent back to rebase onto clipping baseline (prev result 135.296 without clipping) |
-| #772 | nezuko | per-channel output affine | WIP — sent back to rebase onto clipping baseline (prev result 138.497 without clipping) |
-| #875 | frieren | Schedule-to-budget cosine: T_max=14 to align LR annealing to achievable epoch budget | WIP — assigned 2026-04-28 |
-| #767 | fern | surf_weight 10→50 | WIP — rebased on clipping baseline, re-running |
-| #766 | edward | n_layers 5→8 | WIP — first run on clipping baseline, still running |
+| #964 | alphonse | Stronger Re-weighting: alpha=2 exponent `1/(log_Re - min + 1)^2` — steeper downweighting of high-Re samples | WIP |
+| #965 | edward | Relative MAE surf-p loss: `\|pred_p - y_p\| / (\|y_p\| + ε)` — auto-normalizes across Re-regime pressure magnitudes | WIP |
+| #966 | fern | n_hidden=256 + T_max=12 (budget-aligned for ~20% longer epochs) — first fair test of larger capacity with full compound stack | WIP |
+| #967 | tanjiro | Gradient accumulation N=4 (effective batch_size=16) — smoother gradient estimates in undertrained 14-epoch regime | WIP |
+| #968 | thorfinn | AdamW weight_decay=1e-3 — moderate regularization increase targeting sweet spot between WD=1e-4 (baseline) and WD=1e-2 (over-regularized) | WIP |
 
-All 8 students have active WIP assignments. No idle students. Checked 2026-04-29 00:00 — PR #898 (askeladd/less-aggressive-clip-norm) closed as dead-end: max_norm=5.0 inflates effective LR ~5×; OOD splits devastated. Askeladd re-assigned to cosine T_max sweep (PR #921). PR #897 (alphonse T_max=15) marginal win sent back for rebase due to merge conflict.
+All 5 students assigned as of this round. Zero idle GPUs.
 
-Note: tanjiro has two WIP PRs (#826 AdamW WD, #856 EMA). #826 was assigned first; #856 queued as follow-up. Student will work through sequentially.
+## Experiment History Summary (all rounds)
 
-### Cosine Schedule Insight
+### Structural Fixes (all merged)
+1. **clip_grad_norm=1.0** (PR #778): 137.0 → 104.7457 (-24%). Dominant fix — gradient explosion was the core pathology.
+2. **ckpt_avg K=3** (PR #899): 104.7457 → 104.6986 (-0.05%). Small but reliable.
+3. **T_max=15 + max_norm=5.0 compound** (PR #911): 104.6986 → 97.5181 (-6.9%). Budget-aligned LR schedule + clip refinement.
+4. **Per-sample Re-weighting** (PR #931): 97.5181 → 94.7833 (-2.8%). Divide each sample's loss by `log(Re)` before batch-averaging.
 
-T_max=15 (PR #897) showed a small gain by aligning the cosine arc to the ~14-epoch achievable budget. The LR at epoch 14:
-- T_max=15 → ~5.5e-6 (arc nearly complete)
-- T_max=20 → ~5.6e-5 (gentle taper)
-- T_max=25 → ~1.3e-4 (mid-slope)
-- T_max=30 → ~1.9e-4 (near peak)
-- T_max=50 (stock) → ~4.2e-4 (barely moved)
-
-PR #921 sweeps T_max ∈ {20, 25, 30} to determine whether a gentle mid-arc taper or the nearly-complete arc is optimal for the 14-epoch budget. max_norm=1.0 confirmed as structural — Adam β₁/β₂ are calibrated to this gradient scale.
+### Closed / Dead Ends
+- `max_norm=5.0` alone (PR #898): +9.8% worse — Adam EMA calibrated to norm=1.0 scale
+- `lower_lr=1e-4 + warmup` (PR #768): warmup and clipping are substitutes, not complements
+- `n_hidden=256` without clipping (PR #764, #800): undertrained/gradient-explosion artifacts
+- `slice_num=128` (PR #765): amplified instability pre-clipping
 
 ## Potential Next Research Directions
 
-1. **Per-sample loss normalization** — divide vol/surf loss by per-sample y_norm std; addresses the 15× variance in per-sample y_norm std (0.32 to 4.85) across the corpus. Strong orthogonal candidate to compound with clipping.
-2. **Surface-aware loss reformulation** — Huber/SmoothL1 on the surface channel (tail-robust); per-channel surf_weight tuning (Ux/Uy vs p).
-3. **AdamW + weight decay tuning** — current weight_decay=1e-5 is essentially zero; with stable gradients, WD=1e-2 or 1e-3 is now a reasonable target (PR #826 in-flight).
-4. **Cosine LR with restarts (SGDR)** — stable gradients permit aggressive schedules; one restart at epoch ~7 may help.
-5. **NaN bug in `data/scoring.py`** — `err * mask` with NaN preds yields `NaN * 0.0 = NaN`; poisons test_geom_camber_cruise pressure MAE on multiple runs. Fix: `torch.nan_to_num(err, nan=0.0, posinf=0.0, neginf=0.0)` in `accumulate_batch`. Organizer-level fix required (data/ is read-only for experiment PRs).
-6. **Output head — separate per-channel** — pressure dynamics are dominated by extremes; a dedicated pressure head (deeper, with its own normalization) may help.
-7. **Larger batch via accumulation** — gradient accumulation + clipping = stable optimization at effective batch_size=16 or 32; less frequent updates, more stable signal.
-8. **EMA of model weights** — checkpoint EMA-averaged model for evaluation; particularly useful at undertrained 14-epoch regime (PR #856 in-flight).
-9. **Multi-scale attention** — combine coarse background zone with dense foil-zone features.
-10. **Physics-informed regularizers** — divergence-free velocity constraint (continuity equation).
-11. **Label smoothing of surface mask** — soft surface weighting based on signed distance instead of hard 0/1.
+### High Priority (not yet tried on current baseline)
+1. **n_hidden=256 full budget** — PR #966 (fern) running. First fair test of wider model.
+2. **Re-weighting exponent tuning** — PR #964 (alphonse): alpha=2 for steeper downweighting.
+3. **Relative loss normalization** — PR #965 (edward): per-sample relative error rather than absolute MAE.
+4. **Gradient accumulation** — PR #967 (tanjiro): effective batch_size=16 for smoother gradients.
+5. **Weight decay tuning** — PR #968 (thorfinn): WD=1e-3 (sweet spot between 1e-4 and 1e-2).
+
+### Queued for Future Rounds
+6. **Physics-informed regularization** — divergence-free velocity loss, continuity-equation penalty.
+7. **Multi-scale attention** — coarse global + dense foil-zone features; separate attention heads.
+8. **EMA model weights** — still untested with current compound stack.
+9. **Larger batch via accumulation variations** — N=8 or N=16 if N=4 shows promise.
+10. **Per-channel output affine head** — learnable scale+bias per channel; untested with full compound stack.
+11. **mlp_ratio=4** — untested with full compound stack.
+12. **More slices: slice_num=128** — re-test with clipping + full compound stack.
+13. **Cosine annealing restarts (SGDR)** — one restart at mid-budget; aggressive schedule.
+14. **Label-weighted Re-bands** — explicit bucketing by Re-regime rather than smooth weighting.
+15. **Architecture: deeper model (n_layers=8)** — re-test on current compound stack.
+
+### Core Understanding
+- The dominant failure mode was high-Re gradient explosion (norms 40-900×). Fixed by clip_grad_norm=1.0.
+- The budget constraint (~14 epochs in 30 min) means LR schedule must be aligned to the achievable window.
+- Per-sample Re-weighting is a lightweight but effective way to address regime imbalance without explicit bucketing.
+- Test results (test_avg = 85.22) substantially better than val_avg (94.78) — model generalizes well.
+- `val_geom_camber_cruise` is the easiest split (77.32); `val_single_in_dist` is the hardest (104.91).
