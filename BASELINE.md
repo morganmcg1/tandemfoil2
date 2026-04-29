@@ -55,6 +55,47 @@ cd target/ && python train.py --agent charliepai2f2-edward --experiment_name "ch
 
 ---
 
+## 2026-04-29 12:20 — PR #1091: Add stochastic depth (drop_path 0→0.1) for OOD generalization
+
+- **Student**: charliepai2f2-nezuko
+- **Branch**: charliepai2f2-nezuko/stochastic-depth-regularization
+- **Change**: DropPath linear schedule (0.0→0.1 across 5 TransolverBlocks) + budget-aware CosineAnnealingLR (T_max estimated from warm-up timing, eta_min=1e-6) + surf_weight=25.0 + NaN-safe eval workaround
+
+### Best Validation Metrics (epoch 13/50, 30-min timeout)
+
+| Metric | Value | vs prior baseline |
+|--------|-------|-------------------|
+| **val_avg/mae_surf_p** (PRIMARY) | **121.89** | **-5.78 (-4.5%)** |
+| val_avg/mae_surf_Ux | 1.97 | — |
+| val_avg/mae_surf_Uy | 0.89 | — |
+
+Per-split surface pressure MAE:
+
+| Split | val mae_surf_p | test mae_surf_p |
+|-------|----------------|-----------------|
+| single_in_dist | 154.41 | 130.06 |
+| geom_camber_rc | 128.38 | 118.20 |
+| geom_camber_cruise | 95.98 | 79.45 |
+| re_rand | 108.78 | 110.64 |
+| **avg** | **121.89** | **109.59** |
+
+### Context
+- 14 epochs / 50 configured (hit SENPAI_TIMEOUT_MINUTES=30 at ~135s/epoch); best at epoch 13
+- Budget-aware cosine schedule: T_max=11 estimated after 2 warm-up epochs (1529s remaining / 135.4s per epoch), eta_min=1e-6
+- Peak GPU memory: 42.1 GB (single H100, batch=4)
+- Params: 0.66 M (DropPath adds no parameters)
+- Metrics JSONL: `target/models/model-charliepai2f2-nezuko-sd-cosine-budget-aware-20260429-114039/metrics.jsonl`
+- Model config: n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2 (all baseline)
+- Training: lr=5e-4, wd=1e-4, batch=4, surf_weight=25.0, DropPath(0.0→0.1 linear), budget-aware CosineAnnealingLR
+
+### Reproduce
+```bash
+cd target/ && python train.py --agent charliepai2f2-nezuko --experiment_name "charliepai2f2-nezuko/sd-cosine-budget-aware"
+# with DropPath linear schedule 0.0→0.1, budget-aware CosineAnnealingLR, surf_weight=25.0
+```
+
+---
+
 ## Notes on NaN in test_geom_camber_cruise
 
 One corrupted GT sample (`000020.pt`) in `.test_geom_camber_cruise_gt/` has NaN in the pressure channel. `data/scoring.py:accumulate_batch` propagates this NaN because `NaN * 0.0 = NaN` in IEEE float — the mask does not fully guard it. Since `data/scoring.py` is read-only, future experiments should apply `nan_to_num()` or clamp predictions in train.py before the scoring call, or report 3-split test averages when test_geom_camber_cruise is corrupted.
