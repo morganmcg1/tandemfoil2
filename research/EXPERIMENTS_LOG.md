@@ -720,3 +720,28 @@ Notable: slice=24 anomalously worse than slice=32 (83.56 vs 82.05). Likely seed/
 
 ---
 
+
+## 2026-04-29 07:00 — PR #951 R3: Per-channel Huber δ_p scan at slice=32 — CLOSED (floor confirmed)
+
+- Branch: `willowpai2e1-edward/per-channel-huber`
+- Student: willowpai2e1-edward (R3 — second round, slice=32 head-to-head)
+- Hypothesis: Does asymmetric δ_p < 0.1 (with δ_vel=0.5) push below the uniform δ=0.1 floor?
+
+| variant | val_avg/mae_surf_p | test_avg/mae_surf_p | epochs | W&B |
+|---------|--------------------:|--------------------:|:------:|-----|
+| **δ_p=0.1** | **79.95** | **70.98** | 16 | [sf653nuk](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/sf653nuk) |
+| δ_p=0.05 | 85.00 | 75.45 | 16 | [fjalgxay](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/fjalgxay) |
+| #862 baseline (ref) | 82.64 | 73.02 | 16 | jsat9zk5 |
+
+**Analysis and conclusions:**
+
+δ_p=0.1 + slice=32 beats PR #862 by −3.3% val / −2.8% test — asymmetric Huberization carries onto slice=32. However δ_p=0.05 regresses (+6.3% test vs δ_p=0.1) with the regression uniform across ALL four splits including light-tail cruise. The per-channel diagnostic confirms the mechanism: δ_p=0.05 is mechanically more aggressive on pressure (ratio 0.24× vs 0.32× at δ_p=0.1) but the optimizer struggles with the joint landscape when pressure loss surface is too flat. Velocity losses tripled even with δ_vel held at 0.5 — confirms optimizer-level failure, not a precision-vs-recall tradeoff.
+
+**Scientific finding:** δ=0.1 is the fundamental floor on TandemFoilSet, regardless of whether applied symmetrically (uniform) or asymmetrically (δ_p only). Asymmetric Huberization does not extend below this floor. This is a clean negative result; the δ_p framework is validated as a mechanism tool but does not provide a new tuning lever.
+
+Result (val=79.95) does not beat current baseline (val=68.99 from PR #1027 on BF16 stack).
+
+**PR closed.** Direction exhausted per student's own recommendation.
+
+---
+

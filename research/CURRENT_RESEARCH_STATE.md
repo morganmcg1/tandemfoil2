@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Updated:** 2026-04-29 06:35 UTC
+- **Updated:** 2026-04-29 07:05 UTC
 - **Track:** `icml-appendix-willow-pai2e-r1` (TandemFoilSet ICML appendix, Willow PAI2E Round 1)
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1`
 - **Most recent direction from human researcher team:** _(none — no open ADVISOR issues)_
@@ -46,7 +46,7 @@ Key open questions in priority order:
 4. **Does n_layers=6 or 7 help on BF16 stack with VRAM headroom?** (tanjiro #1071 — n_layers ∈ {5,6,7,8})
 5. **Does BF16 stack on top of PR #860's OneCycle win?** (thorfinn #1053 — δ=0.5 path + BF16)
 6. **Does EMA warmup_epochs matter for OneCycle+BF16?** (nezuko #1054 — {3,5,8} epochs)
-7. **Does asymmetric δ_p=0.05 push below uniform δ floor?** (edward #951 R3)
+7. **Does pct_start shape matter for OneCycle on BF16 stack?** (edward #1074 — {0.2,0.3,0.4})
 8. **Surface-aware architecture routing?** (askeladd #770 — long-running)
 
 ## Active PRs (WIP)
@@ -59,7 +59,7 @@ Key open questions in priority order:
 | #1071 | tanjiro | n_layers scan {5,6,7,8} on BF16+slice32+δ=0.1+EMA=0.995 | Status:WIP (NEW) |
 | #1053 | thorfinn | BF16 + OneCycle T=20 on slice=32+δ=0.5+4-way | Status:WIP |
 | #1054 | nezuko | EMA warmup scan {3,5,8} on BF16+OneCycle+slice32+4-way | Status:WIP |
-| #951 | edward | Asymmetric δ_p ∈ {0.1,0.05} + δ_vel=0.5 at slice=32 | Status:WIP |
+| #1074 | edward | OneCycle pct_start scan {0.2,0.3,0.4} on BF16+slice32+δ=0.1+EMA=0.995 | Status:WIP (NEW) |
 | #770 | askeladd | Surface-aware slice routing in PhysicsAttention | Status:WIP |
 
 
@@ -67,8 +67,9 @@ Key open questions in priority order:
 
 - **surf_weight=10**: PR #859 — SW=10 optimal at δ=0.1 (SW=20 regresses +4.55%).
 - **clip_norm=0.5 for slice=32**: PR #944 — clip=0.25 transfers only to slice=64 (slice-dependent).
-- **δ_floor=0.1**: PR #957 — δ=0.05/0.025 both regress; δ=0.1 is the floor.
-- **n_layers=5 (FP32)**: PR #776 — n_layers=8 incompatible with FP32+slice64 budget; BF16+slice32 throughput may now allow n_layers=6-7 (tanjiro #1071 tests this).
+- **δ_floor=0.1**: PRs #957 + #951 R3 — uniform AND asymmetric δ_p < 0.1 both regress. Floor is fundamental.
+- **Asymmetric δ_p**: PR #951 — δ_p=0.1 ≈ uniform δ=0.1; asymmetry does not extend below the floor. Direction closed.
+- **n_layers=5 (FP32)**: PR #776 — n_layers=8 incompatible with FP32+slice64 budget; BF16+slice32 may allow n_layers=6-7 (tanjiro #1071 tests this).
 - **AdamW β₂=0.999**: PR #867 — default optimal.
 - **EMA decay=0.995**: PR #1027 — sweet spot for BF16+slice32+~23 epochs. Replaces 0.99 as default.
 
