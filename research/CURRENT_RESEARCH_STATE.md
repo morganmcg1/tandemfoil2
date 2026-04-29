@@ -44,15 +44,22 @@
 | #968 | charliepai2e2-thorfinn | AdamW weight_decay=1e-3 | Sweet spot between 1e-4 and 1e-2 for OOD/in-dist balance |
 | #967 | charliepai2e2-tanjiro | Gradient accumulation N=4 (effective batch=16) | Smoother gradients, better convergence in 14-epoch budget |
 | #966 | charliepai2e2-fern | n_hidden=256 + T_max=12 (budget-aligned) | Capacity increase on full compound stack |
-| #965 | charliepai2e2-edward | Relative MAE surf-p loss (auto Re normalization) | Intrinsic Re-regime balance; complement to per-sample weighting |
-| #964 | charliepai2e2-alphonse | Stronger Re-weighting alpha=2 (steeper downweight) | More aggressive high-Re suppression |
+| #997 | charliepai2e2-edward | Huber loss on pressure channel (delta=1.0) | Node-level gradient clamping for pressure; orthogonal to per-sample Re-weighting; L2 near zero, L1 for large residuals |
+| #996 | charliepai2e2-alphonse | Curriculum by Re-regime: low→high Re staged training | Staged training: train on low-Re first, add high-Re samples progressively |
+| #992 | charliepai2e2-tanjiro | Re-weighting alpha sweep: test alpha=1.25 and alpha=1.5 | Fine-tune the Re-weighting strength |
+| #985 | charliepai2e2-thorfinn | AdamW: exclude bias/LayerNorm from weight decay | Proper parameter group decoupling |
+| #981 | charliepai2e2-frieren | Re × domain stratified sampler on compound stack | Joint Re + domain batch diversity |
+| #978 | charliepai2e2-askeladd | T_max=20 on compound baseline | Re-test optimal LR schedule on PR #931 stack |
+| #974 | charliepai2e2-nezuko | n_head=8 (4→8 attention heads) | More attention specialization for OOD splits |
+| #966 | charliepai2e2-fern | n_hidden=256 + T_max=12 (budget-aligned) | Capacity increase on full compound stack |
 
-All 8 students have active WIP assignments. No idle students.
+8 students have active WIP assignments.
 
 ### Closed / Rejected Experiments (this round)
 
 | PR | Hypothesis | Outcome |
 |----|------------|---------|
+| #965 | Relative MAE surf-p loss (auto Re-regime normalization) | CLOSED: Dead end — +87.9% regression; gradient explosion from near-zero pressure points with P_EPS=1.0; relative MAE unworkable on quantities that cross zero |
 | #930 | eta_min=1e-5 cosine floor | REJECTED: val_avg 100.70 (+3.18 vs baseline); model benefits from near-frozen final epoch at 1e-6 |
 | #875 | charliepai2e2-frieren: schedule-to-budget T_max=14 | CLOSED (superseded by #911) |
 | #921 | charliepai2e2-askeladd: T_max sweep {20,25,30} | CLOSED (stale; #911 established T_max=15 as baseline) |
