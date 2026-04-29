@@ -48,6 +48,33 @@ from data import (
 )
 
 # ---------------------------------------------------------------------------
+# Geometry feature dropout — applied at training time only.
+# Dims 4-11: dsdf shape descriptors (8 dims)
+# Dims 15-17: NACA foil-1 camber, position, thickness (3 dims)
+# Dims 18-23: foil-2 AoA, NACA foil-2, gap, stagger (6 dims)
+# Always kept: 0-1 (pos), 2-3 (saf), 12 (is_surface), 13 (log Re), 14 (AoA foil-1)
+# ---------------------------------------------------------------------------
+
+GEOM_DROPOUT_DIMS = list(range(4, 12)) + list(range(15, 24))  # 17 dims total
+
+
+def apply_geom_dropout(x: torch.Tensor, p: float = 0.2) -> torch.Tensor:
+    """Zero geometry dims independently per sample with probability p.
+
+    x: [B, N, 24] input feature tensor on device, before normalization.
+    Returns: x with geometry dims randomly zeroed, shape [B, N, 24].
+    """
+    if p <= 0.0:
+        return x
+    B = x.shape[0]
+    mask = x.new_ones(B, 1, 24)
+    for dim in GEOM_DROPOUT_DIMS:
+        drop = torch.bernoulli(torch.full((B,), p, device=x.device))
+        mask[:, 0, dim] = 1.0 - drop
+    return x * mask
+
+
+# ---------------------------------------------------------------------------
 # Transolver model
 # ---------------------------------------------------------------------------
 
@@ -387,6 +414,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    geom_dropout_p: float = 0.2  # geometry feature dropout prob (0=disabled), train only
 
 
 cfg = sp.parse(Config)
@@ -524,6 +552,9 @@ for epoch in range(MAX_EPOCHS):
         re_weight = 1.0 / (log_re_per_sample - log_re_per_sample.min() + 1.0)  # [B]
         re_weight = re_weight / re_weight.sum()  # normalize to sum=1
         re_weight = re_weight.detach()
+
+        if model.training and cfg.geom_dropout_p > 0.0:
+            x = apply_geom_dropout(x, p=cfg.geom_dropout_p)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
