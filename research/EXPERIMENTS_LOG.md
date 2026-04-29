@@ -1,5 +1,34 @@
 # SENPAI Research Results — willow-pai2e-r3
 
+## 2026-04-29 — PR #869 (CLOSED): surf_weight sweep v2 on SwiGLU stack — mechanism absorbed by bilinear gating
+- **Branch:** `willowpai2e3-tanjiro/surf-weight-sweep`
+- **Hypothesis:** Lower surf_weight from 10.0 to 5.0/7.0 rebalances L1 gradient ratio (7:1 → 4:1 surf/vol), freeing gradient budget for volume features and improving shared backbone representations.
+- **Runs:** W&B `9rcwkj9w` (sw=7), `6td0u75r` (sw=5), both 12/14 epochs (SwiGLU timeout), group `surf-weight-sweep`
+
+| Metric | sw=10 baseline | sw=7 (`9rcwkj9w`) | sw=5 (`6td0u75r`) |
+|---|---|---|---|
+| **val_avg/mae_surf_p** | **62.20** | 63.17 (+1.6%) | 64.95 (+4.4%) |
+| **test_avg/mae_surf_p** | **55.04** | 56.25 (+2.2%) | 57.99 (+5.4%) |
+| val_avg/mae_vol_p | 70.32 | 66.77 (−5.0%) | 66.43 (−5.5%) |
+| test_avg/mae_vol_p | 62.61 | 60.04 (−4.1%) | 59.76 (−4.6%) |
+
+Gradient-ratio diagnostics confirmed rebalancing occurred: sw=10→sw=5 shifted ratio from 6.78:1 to 3.86:1 as predicted. Vol_p improved by ~5%, but surf_p regressed.
+
+### Decision: CLOSED — surf_weight mechanism absorbed by SwiGLU bilinear gating; primary metric regresses on current stack
+- **Both sw=5 and sw=7 regress on val_avg/mae_surf_p** vs SwiGLU best (62.20); far worse vs new RMSNorm best (57.96). Decision-rule c ("FiLM and surf_weight rebalancing overlap") confirmed.
+- **Mechanism validated but not net-positive on primary metric.** Three consistent data points: (1) L1-only v1: sw=5 → −1.6% surf_p / −10.4% vol_p (rebalancing works); (2) SwiGLU v2: sw=5 → +4.4% surf_p / −5.5% vol_p (absorbed, vol_p halved); (3) fern PR #927: vol_w_p=2.0 → +4.77% surf_p / −4.2% vol_p (same absorption pattern). Three independent probes confirm: SwiGLU bilinear gating pre-empts external gradient-routing changes.
+- **Tanjiro's diagnostic quality** (gradient-ratio table, split-level vol_p per epoch) is paper-quality ablation material — useful for ablation table even without merging.
+- **surf_weight axis declared closed.** Default surf_weight=10.0 is correct for current SwiGLU+FiLM+Re-stratify+RMSNorm stack.
+- **Follow-up assigned:** tanjiro → PR #1056 (LR sweep lr=2e-4/5e-4/1e-3 — optimizer axis not touched since round 1; RMSNorm + SwiGLU change the loss landscape curvature, optimal LR may have shifted).
+
+---
+
+## 2026-04-29 — Assignments: PR #1056 (tanjiro LR sweep), PR #1057 (thorfinn NACA_M FiLM)
+- **PR #1056** (`tanjiro/lr-sweep`): Three-run sweep lr ∈ {2e-4, 5e-4 (reference), 1e-3} with wd=1e-4 on canonical stack (SwiGLU+ratio=1+RMSNorm+FiLM-pre+L1+Re-stratify). Optimizer axis never re-tuned since founding baseline; SwiGLU bilinear gating + RMSNorm change loss landscape curvature, optimal LR may have shifted.
+- **PR #1057** (`thorfinn/naca-film`): Extend FiLM input from 1-d (log_Re) to 2-d (log_Re, NACA_M1 — front foil camber magnitude, dim 15). Directly targets `geom_camber_rc` (M=6-8 held out) and `geom_camber_cruise` (M=2-4 held out) — the hardest OOD splits. NACA_M is literally the held-out variable. Complementary to askeladd's AoA-FiLM (flow conditions vs geometry conditioning). γ-norm diagnostics protocol per thorfinn's RMSNorm gold standard.
+
+---
+
 ## 2026-04-29 — PR #1016 (PENDING REBASE → MERGE): bf16 mixed precision — strong win, val_avg=58.49, test_avg=51.50, 14/14 epochs in 26.1 min
 - **Branch:** `frieren/bf16`
 - **Hypothesis:** bf16 unlocks wall-clock budget — SwiGLU's 12/14-epoch truncation at fp32 (152s/epoch) recovers to 14/14 with full cosine decay at bf16 (~112s/epoch). Same dynamic range as fp32 (8 exp bits), no loss scaling needed. Predicted −0.5 to −2% from recovered cosine epochs alone.

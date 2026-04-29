@@ -7,16 +7,14 @@
 
 ## Current best (live)
 
-- **val_avg/mae_surf_p = 62.20** (W&B run `sv9ktfk3`, alphonse SwiGLU MLP, merged PR #961, 2026-04-29)
-- **test_avg/mae_surf_p = 55.04**
-- Per-split val: single_in_dist=74.96, geom_camber_rc=73.39, geom_camber_cruise=42.66, re_rand=57.81
-- Beat-threshold for new PRs: **val_avg < 62.20** (will drop to < 57.96 once PR #999 RMSNorm merges after rebase)
-- **Note:** PR #983 (alphonse, merged 2026-04-29) switched canonical config to mlp_ratio=1 (0.62M params, 14/14 epochs). All pre-SwiGLU WIP branches (#869, #975, #976) — if any shows improvement over old baseline (79.54) but not new (62.20), it will be sent back to rebase onto SwiGLU+ratio=1 HEAD and re-run. Post-SwiGLU assignments (#999, #1016, #1020, #1021) build directly on current HEAD (ratio=1). Beat-threshold: val_avg < 62.20 (leaderboard low from PR #961 snapshot; pending PR #999 RMSNorm merge will drop this to 57.96).
+- **val_avg/mae_surf_p = 57.9550** (W&B run `6krvx540`, thorfinn RMSNorm v2, merged PR #999, 2026-04-29)
+- **test_avg/mae_surf_p = 51.1735** (2-seed mean: val=58.30, test=51.51)
+- Per-split val: single_in_dist=61.93, geom_camber_rc=72.84, geom_camber_cruise=40.39, re_rand=56.66
+- Beat-threshold for new PRs: **val_avg < 57.9550**
+- **Note:** PR #999 (thorfinn, merged 2026-04-29) added RMSNorm as canonical normalization. Current canonical stack: SwiGLU(ratio=1) + RMSNorm + FiLM-pre(log_Re) + L1 + Re-stratify, 0.619M params, 14/14 epochs at 148-150s/epoch. All new experiments build on this HEAD.
 
-### Pending merge (both strong wins — mechanical rebases only)
-- **PR #999 RMSNorm:** val_avg=57.95 (best), 58.30 (mean 2 seeds), test_avg=51.17/51.51. Sent back for rebase. Once merged, beat-threshold drops to <57.96.
-- **PR #1016 bf16 mixed precision:** val_avg=58.49, test_avg=51.50, 14/14 epochs in 26.1 min (vs SwiGLU 12/14 in 30 min), bf16 sanity instrumentation clean. Sent back for rebase. Mechanically orthogonal to RMSNorm — both should compound when merged.
-- **Compound prediction (both merged):** val_avg ~56-57 if mechanisms additive (RMSNorm gain primarily on `single_in_dist` from cleaner gradient; bf16 gain primarily from recovered cosine epochs); test_avg ~50.
+### Pending merge (strong win — mechanical rebase only)
+- **PR #1016 bf16 mixed precision:** val_avg=58.49, test_avg=51.50, 14/14 epochs in 26.1 min. Frieren rebasing against new HEAD (now includes #999). Once merged, beat-threshold is min(57.96, new compound val). Compound prediction with RMSNorm already merged: val_avg ~56-57, test_avg ~50.
 
 ### Prior bests (for reference)
 - val_avg/mae_surf_p = 79.54 (nezuko Re-stratified batch sampling, merged PR #910) — superseded by SwiGLU
@@ -66,7 +64,7 @@
 | #927 v2 | Per-channel volume L1 (vol_w_p=2.0) v2 rebased onto SwiGLU | Closed — mechanism absorbed by SwiGLU; vol_p gain shrunk −9.0% → −4.2%; surf_p flipped neutral → +4.77% regression; volume-loss-shape direction declared closed at this architecture | 65.59 |
 | #983 | SwiGLU mlp_ratio ablation (ratio=1 vs ratio=2) | **MERGED** — canonical config switched to mlp_ratio=1; gating-mechanism is primary driver (~97% of gain), capacity contribution ~3%; 0.62M params, 14/14 epochs | 62.74 (paired; test=55.04) |
 | **#1016** | **bf16 mixed precision training (wall-clock unlock + cosine recovery)** | **PENDING REBASE → MERGE** — strong win val_avg=58.49, test_avg=51.50, 14/14 epochs in 26.1 min, sanity instrumentation clean; orthogonal to RMSNorm | **58.49** (pending) |
-| **#999** | **RMSNorm replacing LayerNorm (canonical SwiGLU pairing)** | **PENDING REBASE → MERGE** — strong win val_avg=57.95 best / 58.30 mean (2 seeds), −6.3% val / −6.4% test; Pareto win on params+FLOPs+simplicity | **57.95** (pending) |
+| **#999** | **RMSNorm replacing LayerNorm (canonical SwiGLU pairing)** | **MERGED 2026-04-29** — val_avg=57.9550 best / 58.30 mean (2 seeds), −6.8% val / −7.0% test; **new canonical config** | **57.9550** |
 | **#961** | **SwiGLU MLP — replace GELU MLP with Swish-gated linear unit** | **MERGED — leaderboard low-water-mark** | **62.20** |
 
 ## Active WIP PRs
@@ -75,12 +73,12 @@
 |---------|-----|-----------|--------|
 | alphonse | #1020 | **Ultra-thin SwiGLU (mlp_ratio=2/3, intermediate=85, 0.51M params) — paper-efficiency extension** | WIP — new 2026-04-29 (post-SwiGLU) |
 | askeladd | #976 | AoA-FiLM: extend FiLM input from 1-d log_Re to 3-d (log_Re, AoA1, AoA2) | **SENT BACK 2026-04-29** — pre-SwiGLU mechanism win (val=78.58 < 79.54 old; cruise −7.5%, γ-norms growing); rebase onto SwiGLU+ratio=1 HEAD, paired v2-aoa vs v2-baseline |
-| thorfinn | #999 | **RMSNorm replacing LayerNorm — canonical SwiGLU pairing (LLaMA/Mistral-style normalization)** | **PENDING REBASE → MERGE 2026-04-29** — strong win val_avg=57.95 (best), 58.30 (mean 2 seeds), −6.3% val −6.4% test; sent back for mechanical rebase only |
+| thorfinn | #1057 | **NACA_M FiLM: condition FiLM on (log_Re, NACA_M1) — geometry-aware modulation targeting camber OOD splits** | WIP — new 2026-04-29 |
 | nezuko | #1021 | **slice_num sweep {32, 64, 96, 128} — physics-attention spatial resolution ablation** | WIP — new 2026-04-29 (post-SwiGLU) |
 | fern | #1029 | **Surface loss reweighting by per-node pressure quantile (within-sample, target-value-gated; sweep top10/α=2, top20/α=2, top10/α=3)** | WIP — new 2026-04-29 (post-SwiGLU) |
 | edward | #975 | DropPath rate sweep {0.05, 0.10, 0.15} on FiLM+L1+Re-stratify | WIP — new 2026-04-29 |
 | frieren | #1016 | **bf16 mixed precision training — wall-clock unlock + cosine recovery** | **PENDING REBASE → MERGE 2026-04-29** — strong win val_avg=58.49, test_avg=51.50, 14/14 epochs in 26.1 min, sanity instrumentation clean; sent back for mechanical rebase only |
-| tanjiro | #869 | surf_weight sweep (sw=5 wins on L1 base); v2 rebase onto FiLM+L1 pending | WIP |
+| tanjiro | #1056 | **LR sweep (lr=2e-4, 5e-4 ref, 1e-3) — optimizer axis not touched since round 1; RMSNorm+SwiGLU change loss landscape** | WIP — new 2026-04-29 |
 
 ## Cross-cutting findings
 
@@ -104,6 +102,8 @@
 - **SwiGLU is the new canonical MLP architecture** (PR #961, merged 2026-04-29, val 79.54→62.20 −21.8%). All future experiments build on L1 + FiLM-pre + Re-stratify + SwiGLU. Active pre-SwiGLU WIP branches (#869, #927, #969, #975, #976) — if any beats old baseline (79.54) but not new (62.20), they will be sent back to rebase onto SwiGLU HEAD. Post-SwiGLU assignments (#983, #999, #1016) build directly on SwiGLU HEAD.
 - **Off-Re axes underway:** physics-attention resolution (slice_num #1021), parameter-efficiency push (ultra-thin SwiGLU #1020), regularization (DropPath #975), conditioning multi-variable (AoA-FiLM #976), within-sample heavy-tail surface reweight (#1029), normalization canonical (RMSNorm #999), wall-clock infrastructure (bf16 #1016). [SwiGLU paper ablation #983 MERGED, vol-channel #927 CLOSED].
 - **Volume-loss-shape direction closed at SwiGLU stack** (PR #927 v2): vol_w_p mechanism shrunk −9.0% → −4.2% post-SwiGLU; surf_p flipped neutral → +4.77% regression. SwiGLU's bilinear gating absorbs the channel-residual-balance lever; explicit channel-rebalancing now competes rather than complements. Cross-stack mechanism reversal — node-level reweight is the next refinement direction (fern #1029).
+- **surf_weight rebalancing direction closed at SwiGLU+RMSNorm stack** (PR #869 v2): sw=7 → +1.6%, sw=5 → +4.4% on primary metric vs SwiGLU best. Three consistent data points now confirm: gradient-ratio rebalancing (vol-L1 #927, surf_weight #869 sw=5, sw=7) does not stack with SwiGLU's bilinear gating on the primary metric. Vol_p does improve (~5%), but surface accuracy suffers. surf_weight=10.0 is the correct default for current stack.
+- **RMSNorm is new canonical normalization** (PR #999, merged 2026-04-29): val_avg=57.95/58.30 mean, test_avg=51.17/51.51 mean; −6.8% val / −7.0% test vs SwiGLU. LLaMA/Mistral-style pairing with SwiGLU bilinear gating. Pareto win: −1,408 params, fewer FLOPs, simpler definition. Two-seed std=0.34 well inside noise band.
 - **Y-symmetry axis fully closed:** two independent probes both falsified on dataset-asymmetry grounds (TTA frieren #993 — equivariance prerequisite; training-aug nezuko #969 — NACA M hidden asymmetry). Documented in DATASET_ANALYSIS.md. To retry: must also flip NACA M (col 15, 19) AND subset to bilateral-mesh samples.
 - **Canonical config update:** mlp_ratio=1 is now the merged default. All 14 epochs fit 30-min budget. 0.62M params (−29% vs ratio=2).
 - **Focal loss falsified on L1 base** (PR #858): high-error nodes are convergence-bottlenecked, not gradient-bottlenecked.
@@ -116,17 +116,20 @@
 
 ### Active assignments (2026-04-29)
 1. **Surface loss reweighting by per-node pressure quantile** — within-sample heavy-tail-targeted gradient direction. Three-run sweep top10/α=2, top20/α=2, top10/α=3. **Assigned → fern PR #1029.**
-2. **AoA-FiLM (multi-variable conditioning)** — extend FiLM input from 1-d (log_Re) to 3-d (log_Re, AoA1, AoA2). Tests whether multi-variable conditioning compounds. **Assigned → askeladd PR #976.**
-3. **DropPath rate sweep {0.05, 0.10, 0.15}** on full SwiGLU stack. Regularization axis. **Assigned → edward PR #975.**
-4. **RMSNorm replacing LayerNorm** — canonical SwiGLU pairing (LLaMA/Mistral-style). Removes mean-centering; preserves scale (the bilinear-gate-relevant statistic). Modest expected gain (−0.5 to −2%); paper-friendly architectural simplification. **Assigned → thorfinn PR #999.**
-5. **bf16 mixed precision training** — wall-clock unlock + cosine recovery; once landed, opens width-scaling and longer schedules. **Assigned → frieren PR #1016.**
+2. **AoA-FiLM (multi-variable conditioning)** — extend FiLM input from 1-d (log_Re) to 3-d (log_Re, AoA1, AoA2). Sent back for SwiGLU rebase + paired A/B. **Assigned → askeladd PR #976.**
+3. **DropPath rate sweep {0.05, 0.10, 0.15}** on full SwiGLU+RMSNorm stack. Regularization axis. **Assigned → edward PR #975.**
+4. ~~**RMSNorm replacing LayerNorm**~~ — **MERGED PR #999 (val=57.9550). Canonical normalization.** −6.8% val / −7.0% test; new beat-threshold <57.9550.
+5. **bf16 mixed precision training** — wall-clock unlock + cosine recovery; pending rebase, strong win already confirmed. **Frieren PR #1016.**
 6. **Ultra-thin SwiGLU (mlp_ratio=2/3, 0.51M params)** — paper-efficiency extension of gating-mechanism thesis. **Assigned → alphonse PR #1020.**
 7. **slice_num sweep {32, 64, 96, 128}** — physics-attention spatial resolution ablation. **Assigned → nezuko PR #1021.**
-8. **surf_weight rebalancing** — test surf_weight=5 on FiLM+L1 (tanjiro PR #869 v2 rebase pending).
+8. **LR sweep (lr=2e-4, 5e-4 ref, 1e-3)** — optimizer axis untouched since round 1; SwiGLU bilinear gating + RMSNorm change loss landscape curvature. **Assigned → tanjiro PR #1056.**
+9. **NACA_M FiLM (geometry-aware conditioning)** — extend FiLM to (log_Re, NACA_M1) — front foil camber magnitude. Directly targets hardest OOD splits (geom_camber_rc M=6-8, geom_camber_cruise M=2-4). Complementary to AoA-FiLM. **Assigned → thorfinn PR #1057.**
 
 ### Closed directions (this round)
 - ~~**SwiGLU MLP**~~ — **MERGED (PR #961, val=62.20 −21.8%). New canonical.** Paper ablation **MERGED (PR #983, ratio=1 canonical).** Gating mechanism is primary driver (~97% of gain).
+- ~~**RMSNorm**~~ — **MERGED (PR #999, val=57.9550 −6.8%). New canonical normalization.** Two seeds, std=0.34.
 - ~~**Per-channel volume L1 (vol_w_p=2.0)**~~ — **Closed (PR #927 v2): mechanism absorbed by SwiGLU** (+4.77% surf_p; vol_p gain shrunk −9.0% → −4.2%). Volume-loss-shape direction closed at this architecture.
+- ~~**surf_weight rebalancing (sw=5, 7)**~~ — **Closed (PR #869 v2): mechanism absorbed by SwiGLU bilinear gating** (+1.6% and +4.4% regression on primary metric). Vol_p still improves but doesn't offset surface cost. surf_weight=10.0 is optimal for current stack.
 - ~~**Vertical-flip data augmentation**~~ — **Closed (PR #969): NACA M asymmetry breaks mechanism** (+9.0% val; sign-reversed cruise split). Must also flip NACA M cols 15,19 for self-consistency. Not retrying until higher-EV axes exhausted.
 - ~~**TTA with vertical flip**~~ — **Closed (PR #993): equivariance prerequisite violated by dataset asymmetry** (+114% val). ~54% half-domain meshes; single-foil AoA strictly negative; stagger strictly positive. Documented in DATASET_ANALYSIS.md.
 - ~~**Shared FiLM head (rank-reduction)**~~ — **Closed (PR #970): depth-specialization confirmed** (+5.0%). FiLM-redistribution axis fully saturated (4 probes).
