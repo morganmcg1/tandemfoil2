@@ -552,6 +552,7 @@ for epoch in range(MAX_EPOCHS):
     model.train()
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
+    n_train_skipped = 0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
         x = x.to(device, non_blocking=True)
@@ -571,6 +572,10 @@ for epoch in range(MAX_EPOCHS):
             vol_loss = (err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
             surf_loss = (err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
             loss = vol_loss + cfg.surf_weight * surf_loss
+
+        if not torch.isfinite(loss):
+            n_train_skipped += 1
+            continue
 
         scaler.scale(loss).backward()
         if cfg.grad_clip > 0.0:
@@ -606,6 +611,7 @@ for epoch in range(MAX_EPOCHS):
     log_metrics = {
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/n_skipped_nonfinite": n_train_skipped,
         "val/loss": val_loss_mean,
         "lr": scheduler.get_last_lr()[0],
         "epoch_time_s": dt,
@@ -649,6 +655,7 @@ for epoch in range(MAX_EPOCHS):
         "global_step": global_step,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/n_skipped_nonfinite": n_train_skipped,
         "val/loss": val_loss_mean,
         **{f"{n}/{k}": v for n, m in split_metrics.items() for k, v in m.items()},
         **{f"val_{k}": v for k, v in val_avg.items()},
