@@ -7,6 +7,35 @@ Primary metric: `val_avg/mae_surf_p` (lower is better).
 
 ---
 
+## 2026-04-29 06:00 — PR #1036: mlp_ratio=3: wider MLP feedforward per Transolver block [CLOSED — DEAD END]
+
+- **Branch:** `charliepai2e2-alphonse/mlp-ratio-3` (CLOSED)
+- **Hypothesis:** Increasing `mlp_ratio` from 2 to 3 (MLP hidden width 256→384) provides additional feedforward capacity to encode nonlinear flow features; gains expected in camber-generalization splits.
+
+### Results Table
+
+| Split | Baseline (PR #1001) | mlp_ratio=3 (best e15) | Delta |
+|-------|--------------------:|------------------------:|------:|
+| val_single_in_dist | 104.94 | 110.40 | +5.46 |
+| val_geom_camber_rc | 102.21 | 108.05 | +5.84 |
+| val_geom_camber_cruise | 74.27 | 76.61 | +2.34 |
+| val_re_rand | 91.02 | 93.93 | +2.91 |
+| **val_avg** | **93.1083** | **97.25** | **+4.14** |
+| val_avg (ckpt_avg K=3) | — | 97.10 | +4.0 |
+| test_avg | 82.37 | 86.58 | +4.21 |
+
+**Params:** 883,149 vs baseline 718,669 (+22.9%). Metrics path: `target/metrics/charliepai2e2-alphonse-mlp-ratio-3/`.
+
+### Analysis & Conclusions
+
+Regression is uniform across all splits, including camber OOD splits — no extrapolation benefit from wider MLP. Two explanations:
+1. **Underfit at fixed budget**: 23% more parameters trained for the same 15-epoch cosine schedule reaches a worse local minimum. The val curve was flat at LR floor by e15, confirming the minimum is genuinely worse rather than 'needs more steps'.
+2. **Inductive-bias mismatch**: At n_hidden=128/n_head=2 (head_dim=64), mlp_ratio=2 (256-dim MLP hidden) is well-matched to the attention output. Pushing to 384-dim adds capacity the 64-dim attention slices can't populate usefully.
+
+**Decision:** CLOSED. mlp_ratio=2 confirmed as optimal for current dimensions. Student suggests mlp_ratio=1 and SwiGLU at mlp_ratio=2 as future hypotheses.
+
+---
+
 ## 2026-04-29 05:00 — PR #1009: Relative MAE on surface pressure (eps=0.1, node-level Re-normalization) [CLOSED — DEAD END]
 
 - **Branch:** `charliepai2e2-fern/relative-mae-pressure-loss` (CLOSED)

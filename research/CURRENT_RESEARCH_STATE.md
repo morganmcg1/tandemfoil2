@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- 2026-04-29 05:30 (round 5 ongoing; PR #1009 CLOSED — relative MAE dead end, fern reassigned to #1044 AdamW beta2=0.99; 8 students active)
+- 2026-04-29 06:15 (round 5 ongoing; PR #1036 CLOSED — mlp_ratio=3 dead end (+4.1 MAE), alphonse reassigned to #1046 geometry-feature-dropout; 8 students active)
 - No recent research direction from human researcher team (no open GitHub issues found)
 
 ## Current Focus
@@ -43,7 +43,7 @@ ckpt_avg (epochs 14-15-16) = 93.45 — slightly degrades vs best single (ckpt_av
 | #1040 | charliepai2e2-tanjiro | Huber loss delta=1000 on compound baseline | Robust training against high-Re pressure outliers; delta=1000 should clip only true extremes |
 | #1039 | charliepai2e2-frieren | slice_num=96 (vs baseline 64) | +50% slice tokens; per-epoch signal at ep11 was 3.5 pts better (from closed #1012 at same epoch); budget-aligned test |
 | #1037 | charliepai2e2-nezuko | n_layers=6 (one extra Transolver block) | Depth test with compound stack; T_max=15 still applies; ~17% slower epochs → ~12 in budget |
-| #1036 | charliepai2e2-alphonse | mlp_ratio=3 (wider MLP feedforward) | MLPblock capacity increase; baseline mlp_ratio=2; orthogonal to head count |
+| #1046 | charliepai2e2-alphonse | Geometry feature dropout p=0.2 on NACA/shape dims | OOD camber generalization; zero dims 4-11/15-23 at train time; keep position/Re/AoA always |
 | #1034 | charliepai2e2-edward | n_head=1 (single widest head, dim_head=128) | Continue head sweep: n_head=8 (+15.2%), n_head=4 baseline, n_head=2 (-1.76%); test extreme of single head |
 | #1044 | charliepai2e2-fern | AdamW beta2=0.99 (faster gradient variance adaptation) | 1-line change: betas=(0.9, 0.99) vs default (0.9, 0.999); targets convergence speed in ~16-epoch budget |
 | #1041 | charliepai2e2-thorfinn | SGDR warm restarts T_0=5, T_mult=2 | Two cosine cycles within budget (restarts ~epochs 5 and 15); optimizer escape from narrow minima |
@@ -57,6 +57,7 @@ ckpt_avg (epochs 14-15-16) = 93.45 — slightly degrades vs best single (ckpt_av
 |----|------------|---------|
 | #1009 | charliepai2e2-fern: Relative MAE surface pressure (eps=0.1) | CLOSED: val_avg=102.45 (+10% regression). Objective misalignment — percentage error training down-weights high-pressure nodes, which are most important for absolute mae_surf_p eval. surf_loss_pres/vel ratio 3.8×. Dead end. |
 | #1012 | charliepai2e2-thorfinn: slice_num=128 | CLOSED: Wall-clock budget failure; only 11/16 epochs (+31% per-epoch overhead). Per-epoch signal at ep11 real (+3.5 pts) but single_in_dist regression +5.63; frieren retesting with slice_num=96 |
+| #1036 | charliepai2e2-alphonse: mlp_ratio=3 wider MLP feedforward | CLOSED: val_avg=97.25 (+4.1 MAE / +4.4% regression). Uniform degradation across all 4 splits. mlp_ratio=2 confirmed optimal — pushing hidden MLP to 384-dim not supported by 64-dim attention heads |
 | #978 | charliepai2e2-askeladd: T_max=20 on compound baseline | CLOSED: LR-floor hypothesis falsified; T_max=20→95.84, T_max=18→99.54; both fail. Mechanism confirmed: ckpt_avg K=3 anti-correlates with in-flight LR motion; T_max=15 optimal because last 3 epochs near-frozen |
 | #997 | charliepai2e2-edward: Huber loss on pressure (delta=1.0) | ACCIDENTAL MERGE — no experiment ran; baseline unchanged |
 | #974 | charliepai2e2-nezuko: n_head=8 / head_dim=16 | CLOSED: val_avg=109.18 (+15.2%); head_dim=16 too narrow |
@@ -72,7 +73,7 @@ ckpt_avg (epochs 14-15-16) = 93.45 — slightly degrades vs best single (ckpt_av
 1. **Architecture and capacity** — testing axis within 30-min budget:
    - Head width: #1034 (n_head=1, dim_head=128) — continues n_head=8 (+15.2%) → n_head=2 (-1.76%) head sweep
    - Depth: #1037 (n_layers=6, budget-aligned) — compound stack controls explosion
-   - MLP capacity: #1036 (mlp_ratio=3)
+   - MLP capacity: #1036 CLOSED (mlp_ratio=3 dead end; mlp_ratio=2 confirmed optimal)
    - Slice tokens: #1039 (slice_num=96, budget-aligned) — builds on #1012 per-epoch signal
 
 2. **Loss reformulation** — building on per-sample Re-weighting win (PR #931):
@@ -80,7 +81,10 @@ ckpt_avg (epochs 14-15-16) = 93.45 — slightly degrades vs best single (ckpt_av
    - Relative MAE: #1009 CLOSED (eps=0.1 — objective misalignment; +10% regression)
    - Multi-task Re aux: #1042 (lambda=0.1 — forces Re/geometry disentanglement)
 
-3. **Training dynamics** — LR schedule exploration:
+3. **Regularization / data augmentation** — OOD generalization beyond loss weighting:
+   - Geometry feature dropout: #1046 (alphonse; p=0.2 on NACA/shape dims; targets camber OOD splits)
+
+4. **Training dynamics** — LR schedule exploration:
    - SGDR warm restarts: #1041 (T_0=5, T_mult=2 — two cycles in budget)
    - T_max sweep closed: T_max=15 confirmed optimal for compound stack
 
@@ -96,7 +100,7 @@ ckpt_avg (epochs 14-15-16) = 93.45 — slightly degrades vs best single (ckpt_av
 
 ## High-Priority Backlog (not yet assigned)
 
-1. **Input feature dropout (geometry dropout)** — zero foil-2 geometry features with p=0.2; may improve val_geom_camber splits.
+1. **Input feature dropout (geometry dropout)** — ASSIGNED to alphonse (#1046). Zero NACA/shape dims 4-11, 15-23 with p=0.2; keep position/Re/AoA; targets camber OOD generalization.
 2. **U-Net style skip connections** — residual connections between Transolver layers 1↔5, 2↔4 to preserve low-frequency flow features.
 3. **AdamW beta2=0.99** — ASSIGNED to fern (#1044). 1-line change targeting convergence speed in tight epoch budget.
 4. **slice_num=32 (lower bound ablation)** — test if slice_num=64 is over-sliced for some mesh sizes.
