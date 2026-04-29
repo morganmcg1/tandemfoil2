@@ -82,30 +82,25 @@ class MLP(nn.Module):
         return self.linear_post(x)
 
 
-class SharedFiLMGenerator(nn.Module):
-    """Single shared FiLM generator: scalar log(Re) → (gamma, beta) for all layers."""
+class PerBlockFiLMGenerator(nn.Module):
+    """Independent FiLM generator for a single TransolverBlock."""
 
-    def __init__(self, n_hidden: int, n_layers: int):
+    def __init__(self, n_hidden: int):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(1, n_hidden),
             nn.GELU(),
-            nn.Linear(n_hidden, n_hidden * 2 * n_layers),
+            nn.Linear(n_hidden, n_hidden * 2),
         )
         self.n_hidden = n_hidden
-        self.n_layers = n_layers
 
-    def forward(self, log_re: torch.Tensor) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    def forward(self, log_re: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if log_re.dim() == 1:
             log_re = log_re.unsqueeze(-1)
         out = self.net(log_re)
-        pairs = []
-        for i in range(self.n_layers):
-            offset = i * self.n_hidden * 2
-            gamma = out[:, offset : offset + self.n_hidden]
-            beta = out[:, offset + self.n_hidden : offset + self.n_hidden * 2]
-            pairs.append((gamma, beta))
-        return pairs
+        gamma = out[:, : self.n_hidden]
+        beta = out[:, self.n_hidden :]
+        return gamma, beta
 
 
 class PhysicsAttention(nn.Module):
@@ -228,7 +223,9 @@ class Transolver(nn.Module):
             )
             for i in range(n_layers)
         ])
-        self.film_generator = SharedFiLMGenerator(n_hidden=n_hidden, n_layers=n_layers)
+        self.film_generators = nn.ModuleList([
+            PerBlockFiLMGenerator(n_hidden=n_hidden) for _ in range(n_layers)
+        ])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
 
@@ -244,10 +241,10 @@ class Transolver(nn.Module):
     def forward(self, data, **kwargs):
         x = data["x"]
         log_re_sample = x[:, 0, 13].unsqueeze(-1)  # [B, 1] normalized log(Re) per sample
-        film_pairs = self.film_generator(log_re_sample)
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         for i, block in enumerate(self.blocks):
-            fx = block(fx, film=film_pairs[i])
+            film = self.film_generators[i](log_re_sample)
+            fx = block(fx, film=film)
         return {"preds": fx}
 
 
