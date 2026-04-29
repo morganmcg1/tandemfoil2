@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-29 ~01:35 (**SwiGLU baseline 81.81 / test 73.04** holds; #920 closed (fern coord-skip +4.1% val, +14.4% vs post-#914), fern→#949 LayerScale γ=1e-4; #863 askeladd sent back for rebase #3 onto post-#914 + canonical seeded baseline run; **#873 EMA is the predicted next BIG compounded winner**, awaiting rebase)
+- **As of:** 2026-04-29 ~01:55 (**SwiGLU baseline 81.81 / test 73.04** holds; #883 closed (thorfinn Fourier sweep K=8 −0.43% noise-bounded), thorfinn→#955 per-channel output heads; #920 closed (fern coord-skip +4.1% val), fern→#949 LayerScale γ=1e-4; #863 askeladd rebase #3 in flight; **#873 EMA is the predicted next BIG compounded winner**, awaiting rebase)
 - **Most recent human direction:** none yet for this track
 - **Branch:** `icml-appendix-willow-pai2e-r4`
 - **Current best:** `val_avg/mae_surf_p = 89.714` (#820) and `3-split test mean = 88.16` (run `w9xbc0wl`)
@@ -51,8 +51,9 @@ on L1-only baseline). The compounding mechanism is well-understood.
 | #914 | tanjiro | SwiGLU MLP swap | **−8.81% val, test 73.04** | **MERGED — new baseline 81.81** |
 | #938 | tanjiro | Random Fourier Features σ=10 | -1 to -3% | wip |
 | #939 | frieren | n_layers=6 (one extra block) | -1 to -3% | wip |
-| #883 | thorfinn | Fourier bands sweep K∈{3,6,8} | mapping optimum | **wip (needs rebase onto #914)** |
-| #949 | fern | LayerScale γ_init=1e-4 (CaiT) | -1 to -3% | wip (just assigned, post-#914) |
+| #883 | thorfinn | Fourier bands sweep K∈{3,6,8} | mapping optimum | **CLOSED — K=8 −0.43% noise-bounded; K=4 settled; FOURIER-BAND-SWEEP-AXIS-ALIGNED exhausted** |
+| #949 | fern | LayerScale γ_init=1e-4 (CaiT) | -1 to -3% | wip |
+| #955 | thorfinn | Per-channel output heads (Ux/Uy/p) | -2 to -4% | wip (just assigned, post-#914) |
 
 **Round 3 candidates (queued, contingent on round 2 outcomes):**
 
@@ -75,7 +76,7 @@ on L1-only baseline). The compounding mechanism is well-understood.
 - **RFF σ sweep {5, 20}** — extends tanjiro's #938. Cheap follow-up.
 - **Per-channel output heads** (Ux/Uy/p separate decoder MLP). Decouples
   decoder pathways for the channel-weighted [1,1,3] target distribution.
-  Predicted -2 to -4%.
+  Predicted -2 to -4%. **In flight: thorfinn #955 (post-#914 baseline).**
 - **Gated coord-skip with σ=0 init** (round-3 follow-up to closed #920) —
   sigmoid gate on per-block coord re-injection. Lets the model self-suppress
   on splits where the skip hurts. Likely redundant with SwiGLU's per-feature
@@ -86,6 +87,17 @@ on L1-only baseline). The compounding mechanism is well-understood.
   Askeladd's queued post-merge assignment.
 
 **Closed in round 2:**
+- #883 thorfinn Fourier bands sweep K∈{3,6,8} → K=8 −0.43% val (89.32),
+  −1.40% test 3-split (86.93); K=3, K=6 both regress vs K=4. K=8 win
+  is single-epoch variance at the timeout cliff (val 94→116→89 in
+  epochs 12-14). All runs were on pre-#914 baseline; predicted
+  carry-forward to post-#914 lands within seed noise of current 81.28
+  test 3-split — not a baseline-update candidate. Useful negative side
+  result: **K=8's ~452 cycles/domain at highest band did NOT destabilize
+  training**, evidence that high-σ random Fourier features (tanjiro
+  #938) won't explode. Cruise val/test divergence recurred across all
+  K values — split-design flag for round-3 retrospective. **Lever family
+  FOURIER-BAND-SWEEP-AXIS-ALIGNED settled at K=4.**
 - #920 fern per-block coord skip-connection → val +4.1% (vs pre-#914) /
   +14.4% (vs post-#914). Mechanism active: block norms grew uniformly to
   1.12-1.25 across all 5 blocks (refutes the "depth dilutes spatial signal"
@@ -158,12 +170,15 @@ on L1-only baseline). The compounding mechanism is well-understood.
   variants remain candidates.
 
 **Note on rebasing after #914 merge:** Round-2 in-flight PRs based on
-pre-SwiGLU baselines (#816 FiLM, #863 seed determinism, #873 EMA, #883
-Fourier sweep, #929 DropPath) need rebase onto post-#914 advisor HEAD —
-they all need to beat **81.81** to qualify for merge. PRs assigned post-#914
-(#938 RFF, #939 n_layers=6, #949 LayerScale) are already on the current
-baseline. Closed in round 2 from rebase requirements: #920 fern coord-skip
-(+4.1% on pre-#914; mechanism actively biased away from low-frequency splits).
+pre-SwiGLU baselines (#816 FiLM, #863 seed determinism, #873 EMA,
+#929 DropPath) need rebase onto post-#914 advisor HEAD — they all need
+to beat **81.81** to qualify for merge. PRs assigned post-#914 (#938
+RFF, #939 n_layers=6, #949 LayerScale, #955 per-channel heads) are
+already on the current baseline. Closed in round 2 from
+weak-but-mechanistically-clean negative results: #920 fern coord-skip
+(+4.1% on pre-#914; mechanism actively biased away from low-frequency
+splits) and #883 thorfinn Fourier sweep (K=8 −0.43% noise-bounded by
+timeout cliff; K-axis settled at K=4).
 
 ## Round 2 hypotheses ranked and ready
 

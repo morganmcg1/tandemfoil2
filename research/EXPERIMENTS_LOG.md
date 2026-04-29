@@ -1,5 +1,56 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-29 01:50 — PR #883: Fourier bands sweep K∈{3,6,8} — **CLOSED (lever settled at K=4; K=8 marginal −0.43% noise-bounded by timeout cliff)**
+
+- Branch: `willowpai2e4-thorfinn/fourier-bands-sweep`
+- Student: willowpai2e4-thorfinn
+- W&B runs: `r1uq11fl` (K=3), `rpubh3h2` (K=6), `6p49z9jz` (K=8); group `willow-fourier-bands-sweep`
+
+**Hypothesis.** Map the Fourier-bands axis around the merged K=4 baseline.
+Predicted K=6 to deepen K=4's win; K=3 to hold most of the gain at lower
+preprocess cost; K=8 to risk aliasing-driven instability.
+
+**Results vs pre-#914 K=4 baseline 89.71 (all runs on pre-SwiGLU):**
+
+| K | val_avg | Δ vs K=4 | test 3-split | Δ test | n_params |
+|---|---:|---:|---:|---:|---:|
+| 3 | 91.85 | +2.39% ✗ | 93.24 | +5.76% ✗ | 665,431 |
+| 4 (baseline) | **89.71** | — | **88.16** | — | 662,359 |
+| 6 | 91.44 | +1.93% ✗ | 89.09 | +1.05% ✗ | 668,503 |
+| **8** | **89.32** | **−0.43%** | **86.93** | **−1.40%** | 670,551 |
+
+**Three takeaways:**
+
+1. **K-axis is flatter than the K=4 win suggested.** All three runs in
+   [89.32, 91.85] — 2.8% spread across K∈{3,6,8}. K=6 worse than K=4
+   refutes a smooth deeper-is-better curve. Lever settled at K=4.
+
+2. **K=8 win is timeout-cliff variance.** Val curves show 94→116→89
+   in epochs 12-14 for K=8 — single-epoch swings of ±10%. Earlier
+   timeout would have ranked K=8 as worst, not best. Test 3-split
+   ordering (K=8 −1.4%) is more robust (600+ samples) but doesn't
+   clear the bar to update post-#914 baseline at 81.28 on test 3-split.
+
+3. **Aliasing-stability is the most useful negative result.** K=8's
+   highest band wavelength (~452 cycles/domain) is well below mesh
+   resolution, yet training healthy. Model learns to filter aliased
+   features rather than incorporate them badly. **Direct evidence
+   that high-σ random Fourier features (tanjiro #938) won't blow up.**
+
+**On the merged-baseline question:** Even if K=8 carries forward to
+post-#914 (with SwiGLU), the predicted effect would land 80.1-81.0
+on test 3-split — within seed noise of current 81.28. Not adopted as
+new default; round-3 candidate only after multi-seed mean (after #863
+seed-determinism merge).
+
+**Side observation (split-design flag):** cruise val/test divergence
+recurred across all four K values with similar magnitude. The cruise val
+sample distribution may differ qualitatively from test. Filed as
+research-note for round-3 retrospective; not an experiment.
+
+**Lever family FOURIER-BAND-SWEEP-AXIS-ALIGNED settled at K=4.**
+thorfinn reassigned PR #955 (per-channel output heads).
+
 ## 2026-04-29 01:30 — PR #920: Per-block coord skip-connection — **CLOSED (+4.1% val on pre-#914 baseline; mechanism active but biases against low-frequency splits)**
 
 - Branch: `willowpai2e4-fern/coord-skip-perblock`
