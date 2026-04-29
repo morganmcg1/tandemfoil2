@@ -1,5 +1,60 @@
 # SENPAI Research Results — willow-pai2e-r3
 
+## 2026-04-29 — PR #969 (CLOSED): Vertical-flip data augmentation — NACA M hidden asymmetry breaks mechanism
+- **Branch:** `nezuko/vflip-augmentation`
+- **Hypothesis:** y-mirror incompressible 2D flow symmetry → p=0.5 vflip aug effectively doubles training data for bilateral-mesh samples. Domain-gated (raceCar-single excluded via `min(pos_y) < -0.5` filter).
+- **Run:** W&B `0g2fsgwg`, 14/14 epochs, ~29.2 min, 134.9s/epoch (+5% vs baseline), group `vflip-augmentation`, 443/1499 eligible (30%).
+
+| Split | val v1 | val baseline | Δ val | Eligibility |
+|---|---|---|---|---|
+| `single_in_dist` | 91.58 | 84.70 | +8.1% | 0% (raceCar single) |
+| `geom_camber_rc` | 93.08 | 92.95 | +0.1% | ~0% (raceCar) |
+| `geom_camber_cruise` | **75.39** | 63.49 | **+18.8%** | ~100% (cruise) |
+| `re_rand` | 86.66 | 77.02 | +12.5% | mixed |
+| **avg** | **86.68** | **79.54** | **+9.0%** | |
+
+### Decision: CLOSED — NACA M hidden asymmetry; sign-reversed per-split signal confirms mechanism issue (not hyperparameter)
+- val_avg = **86.68** (+9.0% on old baseline 79.54). Falls clearly in the `close` zone (val_avg > 82).
+- **Sign-reversed per-split signal is the smoking gun:** `geom_camber_cruise` (100% eligible) was the *worst* regression (+18.8% val), not the *best* as predicted. This is a mechanism issue, not a hyperparameter issue — dialing p from 0.5 to 0.3 cannot fix a sign-flipped dominant effect.
+- **Root cause identified by nezuko: NACA M (camber magnitude) was not flipped.** After y-flipping pos_y, the mesh shows a foil with camber on the lower surface (M < 0 effectively), but the metadata still reports M ≥ 0 (NACA M unchanged). The model received mesh-vs-metadata contradictions on every flipped cruise sample. FiLM conditioning (which conditions on geometric metadata) is especially vulnerable to this.
+- Consistent with frieren's PR #993 finding (TTA-vflip equivariance prerequisite falsified). Two independent y-symmetry probes have now hit the same dataset-asymmetry family.
+- **Nezuko's domain-aware gating analysis** (citing Brandstetter et al. LPSDA ICML 2022 on group-action validity) was sharp — correctly excluded raceCar-single ground-effect samples. Gating doesn't rescue the NACA M issue however.
+- **Dataset finding confirmed:** raceCar-single domain has ground plane at y=0 (0/599 bilateral). raceCar-tandem: 258/457 bilateral (57%). Cruise: 185/443 bilateral (42%). Total eligible: 443/1499 (30%). Documented in DATASET_ANALYSIS.md.
+- **If vflip to be retried:** must also flip NACA M (cols 15 and 19 in 24-d input). This puts M into negative range never seen in training — risk, but required for self-consistency. Not assigning immediately — two vflip slots closed; higher-EV fresh axes available.
+- **Follow-up assigned:** nezuko → PR #1021 (slice_num sweep {32, 64, 96, 128} — physics-attention spatial resolution ablation, completely fresh axis).
+
+---
+
+## 2026-04-29 — PR #983 (MERGED): SwiGLU mlp_ratio ablation — gating mechanism is the primary driver
+- **Branch:** `alphonse/swiglu-ablation`
+- **Hypothesis:** PR #961 SwiGLU gain (+21.8%) — from bilinear gating expressivity or added parameters (+24%)? SwiGLU at mlp_ratio=1 (0.62M params, fewer than GELU baseline's 0.70M) tests gating-only contribution.
+- **Runs:** W&B `3m9a8l02` (v2-ratio1) and `2jwarnfe` (v2-ratio2), both 14/14 (ratio=1) and 12/14 (ratio=2), group `swiglu-ablation`
+
+| Run | n_params | Epochs | val_avg | test_avg | s/epoch |
+|---|---|---|---|---|---|
+| **v2-ratio1 (ablation)** | **0.62M** | **14/14** | **62.74** | **55.04** | **138s** |
+| v2-ratio2 (replication) | 0.87M | 12/14 | 64.46 | 57.30 | 152s |
+| PR #961 baseline (`sv9ktfk3`) | 0.87M | 12/14 | 62.20 | 55.04 | ~152s |
+| old GELU (`wakfw4uy`) | 0.70M | 14/14 | 79.54 | 70.26 | 135s |
+
+### Decision: MERGED — canonical config switched to mlp_ratio=1; gating-mechanism verdict is paper-strong
+- **Same-day paired comparison:** ratio=1 (62.74) beats ratio=2 (64.46) by −2.7% val / −3.9% test, with 29% fewer params and 9% faster wall-clock. 
+- **Test_avg matches PR #961 EXACTLY** (55.04 = 55.04) — paper-facing metric, strong parity signal.
+- **Gating-mechanism verdict:** SwiGLU at 0.62M (fewer than GELU's 0.70M) beats old GELU (79.54) by −21.1% val / −21.7% test. Capacity contribution bounded to ~3% of the SwiGLU gain (|62.74−62.20| / (79.54−62.20) ≈ 3%).
+- **Single-seed variance context:** today's ratio=2 drifted 64.46 vs PR #961's 62.20 (+3.6%), showing single-seed noise ~2-3%. The +0.54 drift of ratio=1 vs PR #961 (62.74 vs 62.20) is within that band.
+- **Strategic infra win:** mlp_ratio=1 runs 14/14 epochs vs 12/14 for ratio=2, recovering the 2 lost cosine-annealing epochs. Future PRs benefit from fuller LR decay.
+- **New canonical config:** `--swiglu_ratio 1` is now the default in merged HEAD. BASELINE.md updated.
+- **Leaderboard low-water-mark remains 62.20** (PR #961 snapshot). Future PRs beat 62.20.
+- **Follow-up assigned:** alphonse → PR #1020 (ultra-thin SwiGLU mlp_ratio=2/3, intermediate=85, 0.51M params — paper-strong parameter-efficiency extension of the gating-mechanism thesis).
+
+---
+
+## 2026-04-29 — Assignments: PR #1020 (alphonse ultra-thin SwiGLU), PR #1021 (nezuko slice_num sweep)
+- **PR #1020** (`alphonse/ultra-thin-swiglu`): SwiGLU with `intermediate_dim=85` (= floor(128 × 2/3), ~0.51M params — fewer than GELU baseline's 0.70M). Tests the gating-mechanism thesis at even lower capacity. Paper-strong: if ratio=2/3 beats old GELU (79.54), the bilinear-gating story holds even at 27% fewer params than GELU baseline.
+- **PR #1021** (`nezuko/slice-num-sweep`): slice_num sweep {32, 64, 96, 128} on full SwiGLU+L1+FiLM+Re-stratify stack. First ablation of Transolver's core spatial-resolution hyperparameter. Higher slice_num may help OOD-geometry splits (camber_rc, camber_cruise); sweep identifies the optimal value.
+
+---
+
 ## 2026-04-29 — PR #993 (CLOSED): TTA with vertical flip — equivariance prerequisite violated by dataset asymmetry
 - **Branch:** `frieren/tta-vflip`
 - **Hypothesis:** y-mirror symmetric incompressible 2D flow → eval-time vflip + averaging halves variance of asymmetric error component. Predicted −1 to −3% on val_avg.
