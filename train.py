@@ -236,7 +236,7 @@ class Transolver(nn.Module):
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
 
-        self.fourier_pos = FourierPosEncoder(n_octaves=8)
+        self.fourier_pos = FourierPosEncoder(n_octaves=12)
         fourier_pos_dim = self.fourier_pos.out_dim
 
         if self.unified_pos:
