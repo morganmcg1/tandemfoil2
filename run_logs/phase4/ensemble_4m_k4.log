@@ -1,0 +1,13 @@
+Device: cuda
+Loaded models/snapshots/ll7xn8sp-checkpoint.pt  arch={'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 4, 'n_hidden': 128, 'n_layers': 5, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'slice_num': 64, 'space_dim': 2}
+Loaded models/snapshots/oat51afr-checkpoint.pt  arch={'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 4, 'n_hidden': 128, 'n_layers': 5, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'slice_num': 64, 'space_dim': 2}
+Loaded models/snapshots/mmzdsva3-checkpoint.pt  arch={'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 4, 'n_hidden': 128, 'n_layers': 5, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'slice_num': 64, 'space_dim': 2}
+Loaded models/snapshots/nlpe7zi8-checkpoint.pt  arch={'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 4, 'n_hidden': 128, 'n_layers': 5, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'slice_num': 64, 'space_dim': 2}
+Test: test_single_in_dist: 200, test_geom_camber_rc: 200, test_geom_camber_cruise: 200, test_re_rand: 200
+Using weights: [0.2525747425257474, 0.25507449255074494, 0.22287771222877711, 0.26947305269473054]
+
+  TEST  avg_surf_p=27.0024
+    test_single_in_dist        loss=0.8413  surf[p=28.0041 Ux=0.3406 Uy=0.2189]  vol[p=34.4269 Ux=1.6286 Uy=0.6118]
+    test_geom_camber_rc        loss=0.5102  surf[p=39.8867 Ux=0.6190 Uy=0.3360]  vol[p=43.3873 Ux=2.3147 Uy=1.0090]
+    test_geom_camber_cruise    loss=0.0788  surf[p=14.6483 Ux=0.2333 Uy=0.1366]  vol[p=16.6171 Ux=1.1583 Uy=0.3731]
+    test_re_rand               loss=0.2477  surf[p=25.4704 Ux=0.3696 Uy=0.2203]  vol[p=27.1992 Ux=1.5254 Uy=0.6013]
