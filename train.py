@@ -82,6 +82,28 @@ class MLP(nn.Module):
         return self.linear_post(x)
 
 
+class FiLMLayer(nn.Module):
+    """FiLM conditioning: maps scalar c -> (gamma, beta) in R^{dim}."""
+
+    def __init__(self, dim: int, hidden: int = 64):
+        super().__init__()
+        self.dim = dim
+        self.net = nn.Sequential(
+            nn.Linear(1, hidden), nn.SiLU(),
+            nn.Linear(hidden, dim * 2),
+        )
+        # Init: gamma=1, beta=0 (identity at start of training)
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.constant_(self.net[-1].bias[:dim], 1.0)
+        nn.init.constant_(self.net[-1].bias[dim:], 0.0)
+
+    def forward(self, fx: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
+        # fx: (B, N, dim)   c: (B, 1)  scalar conditioning per sample
+        out = self.net(c)
+        gamma, beta = out.chunk(2, dim=-1)
+        return fx * gamma.unsqueeze(1) + beta.unsqueeze(1)
+
+
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
@@ -183,6 +205,7 @@ class Transolver(nn.Module):
         else:
             self.preprocess = MLP(fun_dim + space_dim, n_hidden * 2, n_hidden,
                                   n_layers=0, res=False, act=act)
+        self.film = FiLMLayer(dim=n_hidden, hidden=64)
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
@@ -196,6 +219,11 @@ class Transolver(nn.Module):
         ])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
+        # Re-apply FiLM identity init (apply(_init_weights) above overwrites it):
+        # gamma=1, beta=0 so the modulation is identity at the start of training.
+        nn.init.zeros_(self.film.net[-1].weight)
+        nn.init.constant_(self.film.net[-1].bias[:n_hidden], 1.0)
+        nn.init.constant_(self.film.net[-1].bias[n_hidden:], 0.0)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -209,6 +237,10 @@ class Transolver(nn.Module):
     def forward(self, data, **kwargs):
         x = data["x"]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
+        # FiLM conditioning on log(Re). Re is global per sample (constant across nodes),
+        # so caller passes a single scalar per sample as data["log_re"] of shape (B, 1).
+        log_re = data["log_re"]
+        fx = self.film(fx, log_re)
         for block in self.blocks:
             fx = block(fx)
         return {"preds": fx}
@@ -239,7 +271,10 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            # log(Re) at feature dim 13 (natural log, un-normalized); same value for all
+            # nodes in a sample, so take the first (always non-padded since padding is appended).
+            log_re = x[:, 0:1, 13]
+            pred = model({"x": x_norm, "log_re": log_re})["preds"]
 
             abs_err = (pred - y_norm).abs()
             vol_mask = mask & ~is_surface
@@ -427,6 +462,9 @@ model_config = dict(
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
+# Architecture flag: FiLM conditioning on log(Re) is now hard-wired inside Transolver.
+# Recorded for downstream metric identification but not passed as a model kwarg.
+model_config_meta = {**model_config, "film_conditioning": True}
 
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
@@ -489,7 +527,7 @@ _write_jsonl({
     "git_commit": _git_commit_short(),
     "loss_kind": "mae",
     "config": asdict(cfg),
-    "model_config": model_config,
+    "model_config": model_config_meta,
     "n_params": n_params,
     "max_epochs": MAX_EPOCHS,
     "max_timeout_min": MAX_TIMEOUT_MIN,
@@ -518,7 +556,8 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
+        log_re = x[:, 0:1, 13]
+        pred = model({"x": x_norm, "log_re": log_re})["preds"]
         abs_err = (pred - y_norm).abs()
 
         vol_mask = mask & ~is_surface
@@ -662,6 +701,12 @@ if best_metrics:
         n_params=n_params,
         model_config=model_config,
     )
+
+    import shutil
+    metrics_copy_dir = Path("runs/film-logre-metrics")
+    metrics_copy_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy(str(metrics_path), str(metrics_copy_dir / "metrics.jsonl"))
+    print(f"Copied metrics to {metrics_copy_dir / 'metrics.jsonl'}")
 else:
     print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping artifact upload.")
 
