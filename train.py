@@ -190,12 +190,14 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 shared_film: bool = False):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
+        self.shared_film = shared_film
 
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
@@ -214,13 +216,20 @@ class Transolver(nn.Module):
             )
             for i in range(n_layers)
         ])
-        self.film_layers = nn.ModuleList([FiLMLayer(n_hidden) for _ in range(n_layers)])
+        if shared_film:
+            self.film_layer = FiLMLayer(n_hidden)
+        else:
+            self.film_layers = nn.ModuleList([FiLMLayer(n_hidden) for _ in range(n_layers)])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
         # Re-zero FiLM final layer after global _init_weights override.
-        for film in self.film_layers:
-            nn.init.zeros_(film.net[-1].weight)
-            nn.init.zeros_(film.net[-1].bias)
+        if shared_film:
+            nn.init.zeros_(self.film_layer.net[-1].weight)
+            nn.init.zeros_(self.film_layer.net[-1].bias)
+        else:
+            for film in self.film_layers:
+                nn.init.zeros_(film.net[-1].weight)
+                nn.init.zeros_(film.net[-1].bias)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -236,11 +245,19 @@ class Transolver(nn.Module):
         # log(Re) is broadcast-identical across nodes; pull from node 0 of each sample.
         log_re = x[:, 0, 13:14]  # [B, 1]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        for block, film in zip(self.blocks, self.film_layers):
-            gamma, beta = film(log_re)
-            # Pre-block FiLM: condition the input to attention/MLP, not the output.
-            fx = (1.0 + gamma.unsqueeze(1)) * fx + beta.unsqueeze(1)
-            fx = block(fx)
+        if self.shared_film:
+            gamma, beta = self.film_layer(log_re)
+            gamma_u = gamma.unsqueeze(1)
+            beta_u = beta.unsqueeze(1)
+            for block in self.blocks:
+                fx = (1.0 + gamma_u) * fx + beta_u
+                fx = block(fx)
+        else:
+            for block, film in zip(self.blocks, self.film_layers):
+                gamma, beta = film(log_re)
+                # Pre-block FiLM: condition the input to attention/MLP, not the output.
+                fx = (1.0 + gamma.unsqueeze(1)) * fx + beta.unsqueeze(1)
+                fx = block(fx)
         return {"preds": fx}
 
 
@@ -496,6 +513,7 @@ class Config:
     re_stratify: bool = True  # round-robin Re-quintile mini-batches (overrides domain-balanced sampler)
     n_re_quintiles: int = 5
     re_stratify_seed: int = 42
+    shared_film: bool = False  # share a single FiLM head across all blocks (rank-reduction probe)
 
 
 if __name__ == "__main__":
@@ -561,6 +579,7 @@ if __name__ == "__main__":
         mlp_ratio=2,
         output_fields=["Ux", "Uy", "p"],
         output_dims=[1, 1, 1],
+        shared_film=cfg.shared_film,
     )
 
     model = Transolver(**model_config).to(device)
