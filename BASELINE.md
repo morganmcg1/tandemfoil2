@@ -4,28 +4,50 @@
 
 | Metric | Value |
 |--------|-------|
-| `val_avg/mae_surf_p` | **49.0719** (PR #1191 — adamw_beta2=0.98 on full compound stack) |
-| `test_avg/mae_surf_p` | **42.8204** (PR #1191) |
+| `val_avg/mae_surf_p` | **48.0121** (PR #1194 — slice_num=8 + adamw_beta2=0.98 + epochs=32) |
+| `test_avg/mae_surf_p` | **41.6806** (PR #1194) |
 
-**Source:** PR #1191 — AdamW beta2=0.98 (LLaMA-style faster second moment adaptation), on top of PR #1149 compound (wd=5e-4 + warmup_epochs=3 + epochs=30).
-- Branch: `nezuko/adamw-betas-0.9-0.98`
-- Config: n_layers=2 (hardcoded), slice_num=16, n_hidden=256, n_head=8, loss=huber, huber_delta=0.1, ema_decay=0.999, grad_clip=1.0, per_sample_norm, warmup_epochs=3, epochs=30, lr=5e-4, batch_size=4, weight_decay=5e-4, adamw_beta2=0.98
-- Best epoch = 30/30 (final epoch, val curve still descending — training-budget-limited)
-- 1,141,299 params, Peak VRAM 22.22 GB, Run ID: 1ie79roq
+**Source:** PR #1194 — slice_num: 16→8 (throughput gain → 2 free epochs within 30-min budget), compounded with adamw_beta2=0.98 + epochs=32.
+- Branch: `tanjiro/slice-num-8-throughput`
+- Config: n_layers=2 (hardcoded), slice_num=8, n_hidden=256, n_head=8, loss=huber, huber_delta=0.1, ema_decay=0.999, grad_clip=1.0, per_sample_norm, warmup_epochs=3, epochs=32, lr=5e-4, batch_size=4, weight_decay=5e-4, adamw_beta2=0.98
+- Best epoch = 32/32 (final epoch, val curve still descending — training-budget-limited)
+- Peak VRAM: 20.97 GB, Wall-clock: 30.01 min, Run ID: 2itg2geu
 
-**Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper reference) — currently +4.6% above target (gap closed from 3.77 to 1.89 vs prior best).
+**Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper reference) — currently +1.83% above target (gap closed from 1.89 to **0.7506** vs prior best — 60% of remaining gap closed in one step).
 
-## Round r5 — Recommended Working Baseline (compound n_layers=2 + huber_delta=0.1 + weight_decay=5e-4 + warmup_epochs=3 + epochs=30 + adamw_beta2=0.98)
+## Round r5 — Recommended Working Baseline (compound n_layers=2 + huber_delta=0.1 + weight_decay=5e-4 + warmup_epochs=3 + epochs=32 + adamw_beta2=0.98 + slice_num=8)
 
 ```
-python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 30 \
+python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 32 \
   --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm --weight_decay 5e-4 --warmup_epochs 3 \
   --adamw_beta2 0.98
 ```
-*(Note: n_layers=2, slice_num=16 are hardcoded in model_config dict in train.py)*
-*(Note: warmup_epochs=3 activates SequentialLR: LinearLR 3 epochs ramp + CosineAnnealingLR over remaining 27 epochs)*
+*(Note: n_layers=2, slice_num=8 are hardcoded in model_config dict in train.py — slice_num was changed from 16→8 in PR #1194)*
+*(Note: warmup_epochs=3 activates SequentialLR: LinearLR 3 epochs ramp + CosineAnnealingLR over remaining 29 epochs)*
 
 ## Round r5 — Merged Winners
+
+### PR #1194 — slice_num=8 throughput gain + compound retest (adamw_beta2=0.98 + epochs=32) (2026-04-29)
+**Student:** charliepai2f5-tanjiro | **Branch:** tanjiro/slice-num-8-throughput
+
+| Metric | Value |
+|--------|-------|
+| `val_avg/mae_surf_p` | **48.0121** (epoch 32/32 — final epoch, val curve still descending) |
+| `test_avg/mae_surf_p` | **41.6806** |
+| `test_single_in_dist/mae_surf_p` | 46.2342 |
+| `test_geom_camber_rc/mae_surf_p` | 57.2466 |
+| `test_geom_camber_cruise/mae_surf_p` | 24.6087 |
+| `test_re_rand/mae_surf_p` | 38.6329 |
+
+**vs prior baseline (PR #1191):** val 48.0121 vs 49.0719 → **-2.16% val improvement**
+**Test improvement:** 41.6806 vs 42.8204 → **-2.66% test improvement**
+**Compete gap:** 0.7506 (was 1.89 — closed 60% of remaining gap in one compound step)
+**Mechanism:** slice_num: 16→8 reduces FLOPs per attention head, enabling ~6.5% faster epochs (56.26 s/epoch vs 60.2 s). With 30-min budget, this frees 2 extra epochs (32 vs 30). The throughput gain directly translates to more gradient steps at low LR in the cosine tail — where descending LR has maximum benefit. VRAM also drops from 22.22 GB to 20.97 GB.
+**Split analysis:** Biggest gains on re_rand (-4.41%), single_in_dist (-3.99%), geom_camber_cruise (-3.72%). geom_camber_rc essentially flat (+0.17% test) — this split may be a harder bottleneck.
+**Budget-limited:** is_best=True at final epoch 32, loss curve still descending — model still improving at termination.
+**Peak VRAM:** 20.97 GB | **Wall-clock:** 30.01 min | **Run ID:** 2itg2geu
+**Metrics JSONL:** `metrics/charliepai2f5-tanjiro-slice-num-8-adamw-beta2-0.98-epochs-32-2itg2geu.jsonl`
+**Reproduce:** `cd target/ && python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 32 --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm --weight_decay 5e-4 --warmup_epochs 3 --adamw_beta2 0.98` *(plus slice_num: 16→8 in model_config dict in train.py)*
 
 ### PR #1191 — AdamW betas=(0.9, 0.98): LLaMA-style faster second moment adaptation (2026-04-29)
 **Student:** charliepai2f5-nezuko | **Branch:** nezuko/adamw-betas-0.9-0.98
@@ -359,4 +381,5 @@ python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epoch
 - 2026-04-29: PR #1134 merged. epochs=26 cosine-aligned (n_layers=2 + huber_delta=0.1 compound): val_avg=55.4877 (-1.66%), test_avg=48.8156 (-1.62%).
 - 2026-04-29: PR #1136 merged. weight_decay=5e-4 (n_layers=2 + huber_delta=0.1 + epochs=30): val_avg=52.0698 (-6.16% vs PR #1134), test_avg=46.1497 (-5.46%). Compete gap: 5.22.
 - 2026-04-29: PR #1149 merged. warmup_epochs=3 (linear LR ramp + cosine): val_avg=51.0626 (-1.43%), test_avg=44.7020 (-1.47%). Compete gap: 3.77.
-- 2026-04-29: PR #1191 merged. adamw_beta2=0.98 (faster second moment adaptation): val_avg=49.0719 (-3.90%), test_avg=42.8204 (-4.21%) — **Current best.** Compete gap: 1.89.
+- 2026-04-29: PR #1191 merged. adamw_beta2=0.98 (faster second moment adaptation): val_avg=49.0719 (-3.90%), test_avg=42.8204 (-4.21%). Compete gap: 1.89.
+- 2026-04-29: PR #1194 merged. slice_num=8 (throughput) + adamw_beta2=0.98 + epochs=32 compound: val_avg=48.0121 (-2.16%), test_avg=41.6806 (-2.66%) — **Current best.** Compete gap: 0.7506 (60% of remaining gap closed in one step).
