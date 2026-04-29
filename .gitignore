@@ -1,22 +1,6 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
 
-.venv/
-venv/
-.env
-
-# Checkpoints and intermediate artefacts (durable versions live on PVC)
-*.pt
-*.ckpt
-checkpoints/
-
-# Run logs
-run*.log
-wandb/
+# results & artifacts
 models/
-
-# Editor / OS
-.vscode/
-.idea/
-.DS_Store
+wandb/
+*.pyc
+__pycache__/

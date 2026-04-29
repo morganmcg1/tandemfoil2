@@ -138,9 +138,11 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 grad_checkpoint=False):
         super().__init__()
         self.last_layer = last_layer
+        self.grad_checkpoint = grad_checkpoint
         self.ln_1 = nn.LayerNorm(hidden_dim)
         self.attn = PhysicsAttention(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
@@ -156,9 +158,20 @@ class TransolverBlock(nn.Module):
                 nn.Linear(hidden_dim, out_dim),
             )
 
+    def _attn_block(self, fx):
+        return self.attn(self.ln_1(fx)) + fx
+
+    def _mlp_block(self, fx):
+        return self.mlp(self.ln_2(fx)) + fx
+
     def forward(self, fx):
-        fx = self.attn(self.ln_1(fx)) + fx
-        fx = self.mlp(self.ln_2(fx)) + fx
+        if self.grad_checkpoint and self.training:
+            from torch.utils.checkpoint import checkpoint
+            fx = checkpoint(self._attn_block, fx, use_reentrant=False)
+            fx = checkpoint(self._mlp_block, fx, use_reentrant=False)
+        else:
+            fx = self._attn_block(fx)
+            fx = self._mlp_block(fx)
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
         return fx
@@ -168,6 +181,7 @@ class Transolver(nn.Module):
     def __init__(self, space_dim=1, n_layers=5, n_hidden=256, dropout=0.0,
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
+                 grad_checkpoint=False,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None):
         super().__init__()
@@ -190,6 +204,7 @@ class Transolver(nn.Module):
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                grad_checkpoint=grad_checkpoint,
             )
             for i in range(n_layers)
         ])
@@ -386,11 +401,30 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    # --- new architecture / training levers (additive; defaults match original) ---
+    n_hidden: int = 128
+    n_layers: int = 5
+    n_head: int = 4
+    slice_num: int = 64
+    mlp_ratio: int = 2
+    dropout: float = 0.0
+    unified_pos: bool = False
+    ref: int = 8
+    grad_checkpoint: bool = False
+    optimizer: str = "adamw"        # adam | adamw
+    scheduler: str = "cosine"       # cosine | onecycle | none
+    warmup_pct: float = 0.05        # for OneCycleLR (paper uses ~0.3 pct_start)
+    grad_clip: float = 0.0          # 0 disables; paper uses 1.0
+    seed: int = 0
 
 
 cfg = sp.parse(Config)
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
+
+# reproducibility
+torch.manual_seed(cfg.seed)
+torch.cuda.manual_seed_all(cfg.seed)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
@@ -418,11 +452,15 @@ model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
-    mlp_ratio=2,
+    n_hidden=cfg.n_hidden,
+    n_layers=cfg.n_layers,
+    n_head=cfg.n_head,
+    slice_num=cfg.slice_num,
+    mlp_ratio=cfg.mlp_ratio,
+    dropout=cfg.dropout,
+    unified_pos=cfg.unified_pos,
+    ref=cfg.ref,
+    grad_checkpoint=cfg.grad_checkpoint,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
@@ -431,8 +469,34 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+# Optimizer: Adam (paper-aligned) or AdamW (default)
+if cfg.optimizer == "adam":
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+elif cfg.optimizer == "adamw":
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+else:
+    raise ValueError(f"Unknown optimizer {cfg.optimizer!r}")
+
+_steps_per_epoch = max(len(train_loader), 1)
+# Scheduler: cosine (default) or OneCycleLR (paper-aligned)
+if cfg.scheduler == "cosine":
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+    _onecycle = False
+elif cfg.scheduler == "onecycle":
+    _onecycle = True
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=cfg.lr,
+        total_steps=_steps_per_epoch * MAX_EPOCHS,
+        pct_start=cfg.warmup_pct,
+        anneal_strategy="cos",
+        final_div_factor=1000.0,
+    )
+elif cfg.scheduler == "none":
+    scheduler = None
+    _onecycle = False
+else:
+    raise ValueError(f"Unknown scheduler {cfg.scheduler!r}")
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -497,7 +561,11 @@ for epoch in range(MAX_EPOCHS):
 
         optimizer.zero_grad()
         loss.backward()
+        if cfg.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
+        if _onecycle and scheduler is not None:
+            scheduler.step()
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
@@ -505,7 +573,8 @@ for epoch in range(MAX_EPOCHS):
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    scheduler.step()
+    if scheduler is not None and not _onecycle:
+        scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
@@ -520,11 +589,18 @@ for epoch in range(MAX_EPOCHS):
     val_loss_mean = sum(m["loss"] for m in split_metrics.values()) / len(split_metrics)
     dt = time.time() - t0
 
+    if scheduler is not None:
+        try:
+            current_lr = scheduler.get_last_lr()[0]
+        except Exception:
+            current_lr = optimizer.param_groups[0]["lr"]
+    else:
+        current_lr = optimizer.param_groups[0]["lr"]
     log_metrics = {
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
         "val/loss": val_loss_mean,
-        "lr": scheduler.get_last_lr()[0],
+        "lr": current_lr,
         "epoch_time_s": dt,
         "global_step": global_step,
     }
