@@ -1,15 +1,15 @@
 # SENPAI Research State
 
-- **Updated:** 2026-04-29 04:10 UTC
+- **Updated:** 2026-04-29 04:30 UTC
 - **Track:** `icml-appendix-willow-pai2e-r1` (TandemFoilSet ICML appendix, Willow PAI2E Round 1)
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1`
 - **Most recent direction from human researcher team:** _(none — no open ADVISOR issues)_
 
 ## Current best
 
-**PR #959 (BF16 + δ=0.1 + EMA, slice=64, 18 epochs) — MERGED:**  
-`val_avg/mae_surf_p = 79.82`, `test_avg/mae_surf_p = 70.00`  
-**−43.4% val / −45.4% test vs unmodified default (140.95/128.32).**
+**PR #860 R3 (OneCycle T=16 + slice=32 + 4-way δ=0.5+clip+w0+EMA, FP32) — MERGED:**  
+`val_avg/mae_surf_p = 75.94`, `test_avg/mae_surf_p = 65.86`  
+**−46.1% val / −48.7% test vs unmodified default (140.95/128.32).**
 
 **Milestone chain:**
 - Unmodified default: val=140.95 (PR #846)
@@ -18,91 +18,86 @@
 - 4-way stack (δ=0.5+EMA+clip+w0): val=96.54 (PR #775)
 - Huber δ=0.1 + EMA (slice=64): val=85.23 (PR #881)
 - slice=32 + 4-way stack (δ=0.5): val=82.64 (PR #862)
-- **BF16 + δ=0.1 + EMA (slice=64): val=79.82 (PR #959) ← current best**
+- BF16 + δ=0.1 + EMA (slice=64): val=79.82 (PR #959)
+- **OneCycle T=16 + slice=32 + 4-way (δ=0.5, FP32): val=75.94 (PR #860) ← current best**
 
-**Four confirmed independent wins (all need combining):**
-1. **δ=0.1 (PR #881):** δ=0.1 + EMA at slice=64 → val=85.23
-2. **slice=32 (PR #862):** slice=32 + 4-way stack → val=82.64
-3. **BF16 (PR #959):** BF16 + δ=0.1 + EMA at slice=64 → val=79.82 (NEW BEST) — 1.353× throughput, 18 epochs vs 14
-4. **OneCycle (PR #860 not merged):** −2.8% vs cosine on same stack, slice=32 test pending
+**Five confirmed independent wins:**
+1. **δ=0.1 (PR #881):** δ=0.1 + EMA → val=85.23
+2. **slice=32 (PR #862):** slice=32 → val=82.64
+3. **BF16 (PR #959):** BF16 + more epochs → val=79.82
+4. **OneCycle T=16 (PR #860):** aligned OneCycle schedule → val=75.94 (NEW BEST)
+5. **clip+warmup=0 at δ=0.1 (PR #957, not merged):** −4.7% val at slice=64
+
+**Two parallel winning paths (not yet fully combined):**
+- **δ=0.5 path:** slice=32 + 4-way + OneCycle T=16 (FP32) → val=75.94
+- **δ=0.1 path:** BF16 + δ=0.1 + EMA + slice=64 → val=79.82
+
+The grand combination (BF16 + slice=32 + δ=0.1 + clip + w0 + EMA + OneCycle T=20) is being tested by alphonse #957 R3.
 
 ## Current research focus
 
-**Phase: BF16 throughput as new baseline + δ×slice×schedule convergence**
+**Phase: convergence of all wins — the grand combination probe**
 
-BF16 has changed the game — all experiments should now use `--use_bf16`. Critical insight: BF16 gives +4 epochs at n_layers=5. Combined with slice=32 (lower VRAM → potentially more epochs), and δ=0.1, the predicted next milestone is **val ~74–76**.
+Six students now working the BF16 + OneCycle + slice=32 + δ-floor space simultaneously.
 
 Key open questions in priority order:
 
-1. **Does BF16 + slice=32 + δ=0.1 combine for a new record?** (tanjiro #1025 — predicted val ~75.8)
-2. **Does δ < 0.1 improve further with BF16?** (alphonse #957 — tests δ=0.05/0.025 on EMA stack, no BF16 yet)
-3. **Does slice < 32 improve at δ=0.1?** (frieren #1004 — slice {16,24,32,64} on δ=0.1 + EMA, no BF16)
-4. **Does OneCycle stack with slice=32?** (thorfinn #860 round 3 — sent back, predicted val ~80)
-5. **Does clip=0.25 transfer to slice=32?** (nezuko #944 round 3 — sent back)
-6. **Does asymmetric δ_p < δ_vel push below uniform δ=0.1 floor?** (edward #951 round 3 — sent back)
+1. **Grand combination: BF16+slice32+δ=0.1+clip+w0+EMA+OneCycle T=20?** (alphonse #957 R3 — highest priority, predicted val ~70)
+2. **Does BF16 stack on top of PR #860's OneCycle win?** (thorfinn #1053 — δ=0.5 path + BF16, predicted val ~71-73)
+3. **What is BF16+slice32+δ=0.1 combination without OneCycle?** (tanjiro #1025)
+4. **Optimal EMA decay at BF16+slice32+δ=0.1?** (fern #1027 — {0.99, 0.995, 0.999})
+5. **Does slice < 32 improve at δ=0.1?** (frieren #1004 — slice scan {8,16,24,32,64})
+6. **Does EMA warmup_epochs matter for OneCycle+BF16?** (nezuko #1054 — {3,5,8} epochs)
+7. **Does asymmetric δ_p=0.05 push below uniform δ floor?** (edward #951 R3)
+8. **Surface-aware architecture routing?** (askeladd #770 — long-running)
 
 ## Active PRs (WIP)
 
 | PR | Student | Hypothesis | Status |
 |----|---------|------------|--------|
-| #1025 | tanjiro | BF16 + slice=32 + δ=0.1 + EMA — full triple-win combination | Status:WIP (NEW) |
-| #957 | alphonse | δ scan {0.1,0.05,0.025} × {clip on/off} on EMA stack | Status:WIP |
+| #957 | alphonse | BF16+slice32+δ=0.1+clip+w0+EMA+OneCycle T=20 grand combination | Status:WIP R3 |
+| #1053 | thorfinn | BF16 + OneCycle T=20 on slice=32+δ=0.5+4-way | Status:WIP (NEW) |
+| #1054 | nezuko | EMA warmup scan {3,5,8} on BF16+OneCycle+slice32+4-way | Status:WIP (NEW) |
+| #1025 | tanjiro | BF16 + slice=32 + δ=0.1 + EMA | Status:WIP |
+| #1027 | fern | EMA decay scan {0.99,0.995,0.999} on BF16+slice32+δ=0.1 | Status:WIP |
 | #1004 | frieren | Slice scan {8,16,24,32,64} on δ=0.1 + EMA | Status:WIP |
-| #944 | nezuko | clip=0.25 vs clip=0.5 head-to-head at slice=32 | Status:WIP |
 | #951 | edward | Asymmetric δ_p ∈ {0.1,0.05} + δ_vel=0.5 at slice=32 | Status:WIP |
-| #1027 | fern | EMA decay scan {0.99, 0.995, 0.999} on BF16+slice32+δ=0.1 stack | Status:WIP (NEW) |
-| #860 | thorfinn | OneCycle + slice=32 on 4-way stack | Status:WIP |
 | #770 | askeladd | Surface-aware slice routing in PhysicsAttention | Status:WIP |
-
-**Note on outdated PRs:** #957, #1004, #860, #944, #951 are running on stacks without `--use_bf16`. Their results will be valid signals on FP32 stacks but all will need re-testing with BF16 when they return, as BF16 is now the required minimum.
-
-## Key pending questions
-
-1. **Does BF16 + slice=32 + δ=0.1 combine for val ~75?** (tanjiro #1025 — TOP PRIORITY)
-2. **Does slice < 32 improve further at δ=0.1?** (frieren #1004)
-3. **Does δ < 0.1 improve further?** (alphonse #957, tests δ=0.05 and 0.025)
-4. **Does clip+warmup=0 stack with δ=0.1?** (alphonse #957)
-5. **Does OneCycle stack with slice=32?** (thorfinn #860 round 3, predicted val ~80 on FP32)
-6. **Does clip=0.25 transfer to slice=32?** (nezuko #944 round 3)
-7. **Does asymmetric δ_p=0.05 push below uniform δ floor?** (edward #951 round 3)
-8. **Does longer EMA half-life help on BF16+slice32 stack?** (fern #1027 — ema_decay ∈ {0.99, 0.995, 0.999})
-
-## Potential next research directions
-
-**After tanjiro #1025 returns (BF16 + slice=32 + δ=0.1):**
-- If confirmed win: this becomes new minimum stack for all experiments
-- Combine with OneCycle (if thorfinn confirms) → potential val ~72-74
-- Combine with clip=0.25 (if nezuko confirms) → potential ~1-2% further
-
-**Once alphonse #957 returns (δ × clip at δ=0.1):**
-- If clip+δ=0.1 stacks: add --clip_norm to minimum flags
-- If δ=0.05 wins: push to δ=0.025 or MAE (δ→0) with BF16 and slice=32
-- EMA decay scan at δ=0.1 + BF16 (EMA 0.99 was tuned at FP32 / δ=0.5)
-
-**BF16 throughput opens new directions:**
-- n_layers=6 or 7 intermediate depth (between n=5 and n=8 — currently n=8 is still too slow even with BF16)
-- batch_size=8 with BF16 (33 GB peak at batch=4; batch=8 is ~48 GB → fits comfortably)
-- Mesh node subsampling: synthetic throughput gain complementary to BF16
-
-**Unexplored with strong motivation:**
-- MAE loss (δ→0 limit): if δ=0.025 still wins, MAE may be the asymptotic optimum
-- Cross-attention surface↔volume: physics inductive bias for boundary conditions
-- Galerkin attention swap (askeladd's architecture lane)
 
 ## Settled knobs (no further tuning needed)
 
-- **surf_weight=10**: PR #859 closed — SW=10 is optimal at δ=0.1. Huber already provides implicit surface emphasis; higher SW over-suppresses volume.
-- **n_layers=5**: PR #776 closed — n_layers=8 under-converges within 30-min budget even with BF16 (156.6s/epoch at n=8 vs 101.6s at n=5).
-- **AdamW β₂**: PR #867 closed — β₂=0.999 default is already optimal.
+- **surf_weight=10**: PR #859 — SW=10 optimal at δ=0.1 (SW=20 regresses +4.55%).
+- **clip_norm=0.5 for slice=32**: PR #944 — clip=0.25 transfers only to slice=64 (slice-dependent).
+- **δ_floor=0.1**: PR #957 — δ=0.05/0.025 both regress; δ=0.1 is the floor.
+- **n_layers=5**: PR #776 — n_layers=8 incompatible with 30-min budget.
+- **AdamW β₂=0.999**: PR #867 — default optimal.
+
+## Key OneCycle insight (from PR #860 R3)
+
+**`--onecycle_total_epochs` must match the actual epoch budget for each stack.** At BF16+slice=32, expect ~20-22 epochs in 30 min. Must measure and set T accordingly. Using T from a different slice/precision combination will truncate training early or leave the LR at near-zero before timeout.
+
+EMA alignment pattern: OneCycle peak at ~30%×T ≈ epoch 6 aligns with `ema_warmup_epochs=5` — EMA accumulates entirely post-peak. This is the sweet spot; tuning `ema_warmup_epochs` around this alignment is nezuko #1054's hypothesis.
+
+## Potential next research directions
+
+**After alphonse #957 R3 (grand combination):**
+- If val drops below 70: close in on the limit, consider wider exploration (new models, architectures)
+- If asymmetric δ (edward) compounds: combine δ_p=0.05+δ_vel=0.5 with OneCycle+BF16
+- Peak LR scan for OneCycle: {7.5e-4, 1.5e-3, 2e-3} — still using the 1e-3 default from R1
+
+**Architecture (still unexplored):**
+- Surface-aware routing (askeladd #770)
+- Galerkin attention swap
+- MAE loss (δ→0 pure): if δ=0.025 stacked, pursue pure MAE
 
 ## Standing constraints
 
 - 30 min wall-clock per run (`SENPAI_TIMEOUT_MINUTES`), 50-epoch cap.
-- With BF16 at n_layers=5: ~18-20 epochs/run. All models still descending at timeout.
-- 96 GB VRAM per GPU, batch_size=4 default; meshes up to 242K nodes.
-- No edits to `data/`. All augmentation/sampling in `train.py`.
+- With BF16 + slice=32 at n_layers=5: ~20-22 epochs/run expected. All models still descending at timeout.
+- 96 GB VRAM per GPU, batch_size=4 default.
 - One hypothesis per PR. Compound only after isolated wins verified.
-- **Minimum flags for ALL new experiments: `--use_bf16 --huber_delta 0.1 --ema_decay 0.99 --slice_num 32`**
-- clip+warmup interaction at δ=0.1 is still being investigated — do NOT mandate `--clip_norm 0.5 --warmup_epochs 0` until alphonse #957 confirms
-- NaN guard (commit 49c55ed) is in advisor — all new branches get it for free.
-- CLI flags: `--warmup_epochs`, `--clip_norm`, `--huber_delta`, `--ema_decay`, `--slice_num`, `--n_layers`, `--surf_weight`, `--use_bf16`, `--scheduler`, `--peak_lr`, `--pct_start`, `--huber_delta_p`
+- **Minimum flags for ALL new experiments:**
+  `--use_bf16 --slice_num 32 --huber_delta 0.1 --ema_decay 0.99 --warmup_epochs 0 --clip_norm 0.5`
+  `--scheduler onecycle --peak_lr 1e-3 --pct_start 0.3 --onecycle_total_epochs 20`
+  (T=20 is estimate; measure actual epochs and adjust)
+- CLI flags: `--warmup_epochs`, `--clip_norm`, `--huber_delta`, `--ema_decay`, `--slice_num`, `--n_layers`, `--surf_weight`, `--use_bf16`, `--scheduler`, `--peak_lr`, `--pct_start`, `--onecycle_total_epochs`, `--ema_warmup_epochs`, `--huber_delta_p`

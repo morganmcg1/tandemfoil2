@@ -1,5 +1,80 @@
 # SENPAI Research Results
 
+## 2026-04-29 04:25 — PR #944 Round 3: clip=0.25 vs clip=0.5 at slice=32 — CLOSED (negative)
+
+- Branch: `willowpai2e1-nezuko/clip-norm-scan` (slice=32 head-to-head)
+- Hypothesis: clip=0.25 won at slice=64 — does it transfer to slice=32?
+
+| clip_norm | val_avg/mae_surf_p | test_avg/mae_surf_p | Δ vs ctrl | W&B run |
+|----------:|-------------------:|--------------------:|:---------:|---------|
+| **0.5 (control)** | **82.37** | **72.98** | — | [hp1jdttd](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/hp1jdttd) |
+| 0.25 | 84.76 | 75.19 | +2.9% / +3.0% | [97r8czln](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/97r8czln) |
+
+All runs: slice=32 + 4-way (warmup=0, δ=0.5, EMA=0.99), 16 epochs. Variance: ctrl rerun (82.37) vs PR #862 (82.64) = 0.27 val — extremely tight.
+
+**Analysis and conclusions:**
+
+**clip=0.25 does NOT transfer to slice=32.** The lead at slice=64 (+4.4 units) reversed to a regression at slice=32 (−2.4 units). At slice=32, each token aggregates more information; gradients are more diffuse, less spiky. Huber provides sufficient tail attenuation. clip=0.5 leaves more useful signal through. **clip=0.5 is confirmed optimal for slice=32.**
+
+Useful secondary finding: slice=32 variance is extremely tight (~0.3 val units) vs slice=64 (~6.5 units). The optimization landscape is more stable at coarser slice resolution.
+
+**Decision: CLOSED.** clip=0.5 for slice=32 is a settled knob. Nezuko reassigned to EMA warmup epochs scan on BF16+OneCycle stack (PR #1054).
+
+---
+
+## 2026-04-29 04:20 — PR #957: δ × clip 2D scan on EMA stack (slice=64, FP32) — sent back
+
+- Branch: `willowpai2e1-alphonse/delta-scan-fullstack`
+- Hypothesis: δ scan {0.1,0.05,0.025} × clip {on(0.5+w0), off} on EMA stack — find δ floor and clip interaction.
+
+| Variant | val/test | Δ clip | W&B run |
+|---------|----------|:------:|---------|
+| **δ=0.1+clip (winner)** | **82.37 / 72.87** | −4.7% / −6.0% vs δ=0.1+noclip | [s91o133u](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/s91o133u) |
+| δ=0.1+noclip | 86.48 / 77.55 | — | [mniz8u34](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/mniz8u34) |
+| δ=0.05+clip | 84.96 / 74.33 | −10.1% / −11.2% vs δ=0.05+noclip | [2hh81fca](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/2hh81fca) |
+| δ=0.05+noclip | 94.53 / 83.73 | — | [y5xx02g9](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/y5xx02g9) |
+| δ=0.025+clip | 86.42 / 76.65 | −1.1% / +0.7% | [a9w4riy6](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/a9w4riy6) |
+| δ=0.025+noclip | 87.38 / 76.13 | — | [baa2lu6p](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/baa2lu6p) |
+
+Stack: EMA=0.99, slice=64 default, FP32. All runs epoch 14.
+
+**Analysis and conclusions:**
+
+Two confirmed findings:
+1. **Clip+warmup=0 stacks at δ=0.1** — −4.7% val / −6.0% test (86.48→82.37). Overturns the hypothesis that δ=0.1 makes clip redundant. At δ=0.1, tail gradients still benefit from clipping. At δ=0.025 (near-MAE), clip has nothing left to do (±1 bounded).
+2. **δ=0.1 is the floor on this stack** — δ=0.05 and δ=0.025 both regress vs δ=0.1+clip. At δ=0.025, convergence plateaus (gradients too small and uniform). δ=0.05+clip does better than δ=0.05+noclip but still worse than δ=0.1+clip.
+
+**Decision: NOT MERGED.** val=82.37 doesn't beat new baseline val=75.94 (PR #860, merged concurrently). Sent back to test the grand combination: BF16 + slice=32 + δ=0.1 + clip + w0 + EMA + OneCycle T=20.
+
+---
+
+## 2026-04-29 04:15 — PR #860 Round 3: OneCycle T=16 on slice=32 + 4-way ✓ MERGED (new best)
+
+- Branch: `willowpai2e1-thorfinn/schedule-alignment`
+- Hypothesis: OneCycle delivers −2.8% val at slice=64 (R2). Does it stack with slice=32? Must also match OneCycle T to actual epoch budget per slice (slice=32 fits 16 epochs, not 14).
+
+| Variant | val/test | Δ vs cosine ctrl | Δ vs PR #862 | W&B run |
+|---------|----------|:----------------:|:------------:|---------|
+| cosine-slice32 (control) | 81.49 / 71.25 | — | −1.4% / −2.4% | [9z99735o](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/9z99735o) |
+| onecycle T=14 (wrong T) | 86.29 / 75.97 | +5.9% / +6.6% (worse) | +4.4% / +4.0% | [vivcukkv](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/vivcukkv) |
+| **onecycle T=16** | **75.94 / 65.86** | **−6.8% / −7.6%** | **−8.1% / −9.8%** | [qfsfasvc](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/qfsfasvc) |
+
+Stack: slice=32 + warmup=0 + clip=0.5 + δ=0.5 + EMA=0.99 + OneCycle T=16, FP32, 16 epochs.
+
+Per-split test (OneCycle T=16): single=74.13, rc=78.70, cruise=46.29, re_rand=64.31. Wins all 4 splits vs prior best PR #959 (83.00/80.46/48.43/68.12).
+
+**Analysis and conclusions:**
+
+**OneCycle T must match actual wallclock epoch budget.** slice=32 fits ~16 epochs in 30 min (faster attention than slice=64). T=14 (from slice=64 calibration) terminates 2 epochs early AND wastes budget with near-zero LR. T=16 matches the full budget. The per-epoch val curve shows OneCycle T=16 pulling ahead by epoch 6 and never relinquishing lead.
+
+**Key pattern confirmed:** OneCycle EMA alignment — set T to the actual epoch budget so the peak lands at ~30%×T ≈ epoch 5 (aligning with ema_warmup_epochs=5 boundary). EMA accumulates entirely post-peak, capturing the cool-down descent cleanly.
+
+**New best: val=75.94, test=65.86. Merged. `--scheduler onecycle --peak_lr 1e-3 --pct_start 0.3 --onecycle_total_epochs 16` is now confirmed on the slice=32 stack.**
+
+Thorfinn assigned follow-up PR #1053: BF16 + OneCycle T=20 on slice=32 + δ=0.5 + 4-way.
+
+---
+
 ## 2026-04-29 04:05 — PR #859 Round 2: surf_weight scan at δ=0.1 + EMA — CLOSED (negative)
 
 - Branch: `willowpai2e1-fern/surf-weight-scan` (rebased to PR #881 stack with δ=0.1)
