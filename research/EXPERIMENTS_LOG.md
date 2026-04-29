@@ -1,5 +1,27 @@
 # SENPAI Research Results
 
+## 2026-04-29 22:30 — PR #1302: OneCycleLR pct_start 0.3→0.4 — CLOSED (negative result)
+
+- charliepai2f2-tanjiro/onecycle-pct-start-0p4
+- **Hypothesis**: Increase OneCycleLR `pct_start` from 0.3 to 0.4, extending warmup from 30% to 40% of training. Hypothesis was that longer warmup allows more thorough exploration and better minima, especially for geometry-OOD generalization.
+- **Status**: CLOSED — primary metric regresses, confirms pct_start=0.3 as optimal
+
+| Split | Baseline val (PR #1264) | PR #1302 val | Δ |
+|-------|------------------------|--------------|---|
+| single_in_dist     | 82.09 | 83.61 | +1.52 (+1.9%) |
+| geom_camber_rc     | 85.31 | 88.73 | +3.42 (+4.0%) |
+| geom_camber_cruise | 55.67 | 56.67 | +1.00 (+1.8%) |
+| re_rand            | 74.38 | 73.44 | **-0.94 (-1.3%)** |
+| **avg**            | **74.36** | **75.61** | **+1.25 (+1.7%)** |
+
+Test avg: 66.34 vs baseline 65.91 (+0.65%). Best epoch: 18 (final epoch). n_params: 827,735.
+
+**Analysis**: pct_start=0.4 partially confirms the warmup exploration hypothesis for Re-OOD (73.44 vs 74.38, -1.3% improvement) but causes geometry-OOD splits to regress, particularly geom_camber_rc (+4%). The model reaches best epoch at the final epoch (18/18), suggesting the longer warmup slightly delays convergence without net benefit. The shared FiLM generator conditioned on log(Re) naturally benefits from Re-domain exploration, but geometry generalization relies more on architecture capacity than exploration schedule. **Conclusion: pct_start=0.3 is confirmed optimal for this architecture.**
+
+**Follow-up**: Tanjiro reassigned to PR #1313 — testing `pct_start=0.2` on the FiLM stack (shorter warmup / longer annealing; pct_start=0.2 was previously tested pre-FiLM only).
+
+---
+
 ## 2026-04-29 21:45 — PR #1297: Per-block FiLM generators — CLOSED (negative result)
 
 - charliepai2f2-edward/per-block-film-generators

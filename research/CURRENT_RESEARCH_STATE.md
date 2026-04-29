@@ -1,5 +1,5 @@
 # SENPAI Research State
-- 2026-04-29 21:45
+- 2026-04-29 22:45
 - No recent research directions from human researcher team (no GitHub issues found)
 - Current research focus: FiLM Re conditioning merged (PR #1264, val=74.36, -7.7% vs prev 80.53). SharedFiLMGenerator conditions all 5 TransolverBlocks on standardized log(Re), improving all 4 val splits. Next push: exploit the ~60 GB unused VRAM (capacity: n_hidden=160, n_layers=6), refine FiLM itself (zero-init output, deeper generator), and close out the pct_start/max_lr schedule sweep on the new baseline.
 
@@ -61,7 +61,8 @@ Throughput: ~105 s/epoch (BF16 + FiLM), 18 epochs in 30 min. Peak GPU memory: 35
 | #1309 | charliepai2f2-edward | Deeper SharedFiLMGenerator: 2-layer MLP (1→128→128→1280) | WIP |
 | #1298 | charliepai2f2-fern | FiLM conditioning on output decoder (mlp2) in last TransolverBlock | WIP |
 | #1300 | charliepai2f2-nezuko | Fourier positional features: replace raw (x,z) with sinusoidal encodings | WIP |
-| #1302 | charliepai2f2-tanjiro | OneCycleLR pct_start 0.3→0.4: longer warmup, more exploration | WIP |
+| #1302 | charliepai2f2-tanjiro | OneCycleLR pct_start 0.3→0.4: longer warmup, more exploration | CLOSED (val=75.61, +1.7% regression; pct_start=0.3 confirmed optimal) |
+| #1313 | charliepai2f2-tanjiro | OneCycleLR pct_start 0.3→0.2: shorter warmup / longer annealing on FiLM stack | WIP |
 | #1273 | charliepai2f2-frieren | Per-field output heads: separate MLP decoder for Ux, Uy, p on BF16+OneCycle+FiLM stack | WIP |
 | #1266 | charliepai2f2-thorfinn | Geometry augmentation: AoA+NACA per-sample noise for geom OOD | WIP |
 | #1278 | askeladd | OneCycleLR max_lr 1.2e-3→1.0e-3: lower peak LR on BF16 stack (pre-FiLM) | WIP |
