@@ -1,5 +1,91 @@
 # SENPAI Research Results
 
+## 2026-04-29 15:15 — NEW ASSIGNMENTS: PR #1197 (alphonse) AMP capacity scaling; PR #1198 (askeladd) online EMA loss importance sampling
+- **alphonse** (idle after round-3 PR #1160 merged): Assigned `amp-n160-capacity-scaling` (PR #1197). Hypothesis: AMP (fp16/bf16) should halve activation memory, enabling a wider model (n_hidden=160 vs 128) to fit in 30-min budget without losing epochs. Expected: ~20M more params at same ~0.689M+; more expressive; likely -2% to -5% on val if AMP is stable.
+- **askeladd** (idle after PR #1176 closed): Assigned `online-loss-importance-sampling` (PR #1198). Hypothesis: use per-sample model loss from the previous epoch as dynamic difficulty signal for WeightedRandomSampler, updated each epoch. Avoids double-counting failure of p_std version (#1176 — p_std correlated with surf_weight=10 weighting, degraded cruise coverage). Expected: -2% to -4% on val via better hard-sample utilization.
+
+---
+
+## 2026-04-29 15:00 — PR #1142 (SENT BACK — rebase + decay sweep): EMA weight averaging
+- Branch: `charliepai2f1-nezuko/ema-decay-999`
+- Student: nezuko
+- Hypothesis: Exponential Moving Average of model weights with decay=0.999, starting after 5-epoch warmup. Should reduce prediction variance and improve generalization.
+- **Issue:** nezuko's run was launched against commit 6ab00db — the pre-RFF provisional baseline (~133.892). The current baseline is val=97.981 (SwiGLU+RFF+schedule stacked).
+- **Reported result:** val_avg/mae_surf_p = 127.794 — which is +30.4% worse than current baseline 97.981 but only compared against the provisional baseline.
+- **Action:** Sent back for (a) rebase onto current branch HEAD (SwiGLU+RFF+schedule baseline), (b) sweep decay values: 0.999, 0.998, 0.9995 across 3 runs if compute permits, or best single decay if budget tight, (c) verify val < 97.981.
+
+---
+
+## 2026-04-29 14:50 — PR #1158 v2 (SENT BACK — rebase on SwiGLU baseline): FiLM domain conditioning on full stacked baseline
+- Branch: `charliepai2f1-thorfinn/film-domain-cond`
+- Student: thorfinn
+- **Context:** PR #1158 was previously sent back for rebase on RFF+schedule baseline. Thorfinn rebased and submitted again with val=98.119 — which beats the OLD RFF baseline (108.543) by -9.5% but **narrowly misses the NEW SwiGLU+RFF baseline (97.981) by +0.14%**.
+- **Results vs new baseline:**
+
+| Metric | FiLM v2 | SwiGLU+RFF baseline | Δ |
+|---|---|---|---|
+| val_avg/mae_surf_p | 98.119 | 97.981 | +0.14% (misses) |
+| test_avg/mae_surf_p | 88.056 | 86.303 | +2.0% (misses) |
+
+- **Conclusion:** FiLM is very close and clearly complementary to SwiGLU+RFF. The gap is 0.14% — within run noise. The direction is strongly promising. Sent back again as FiLM v3: rebase onto current HEAD (which now includes SwiGLU FFN merged), same FiLM code, rerun to get a direct comparison with the full triple-stack baseline. Target: val < 97.981.
+- **Action:** `send_pr_back_to_student_with_comment` requesting rebase onto post-#1160-merge branch.
+
+---
+
+## 2026-04-29 14:30 — PR #1176 (CLOSED — negative result): Re-stratified sampler
+- Branch: `charliepai2f1-askeladd/re-stratified-sampler`
+- Student: askeladd
+- Hypothesis: Replace WeightedRandomSampler with a stratified sampler that draws equal numbers from each (Re-regime, geometry) cell per epoch. Goal: balance in-distribution vs OOD training signal.
+- **Results:**
+
+| Metric | Re-strat sampler | Current baseline (SwiGLU+RFF) | Δ |
+|---|---|---|---|
+| val_avg/mae_surf_p | 110.263 | 97.981 | +12.6% (worse) |
+| test_avg/mae_surf_p | ~100+ (est) | 86.303 | substantially worse |
+
+- **Root cause:** The existing WeightedRandomSampler already normalizes across 3 domains, and `surf_weight=10` already amplifies high-error surface nodes. The re-stratified sampler introduced double-counting — re-weighting at the sample level on top of already-upweighted loss — degraded coverage of cruise samples in particular (`val_geom_camber_cruise` went from 86.371 → 90.924, the only split that was previously ahead of baseline).
+- **Conclusion:** Closed. Static stratification is fundamentally at odds with the dynamic training signal from the learned model. The correct fix is to use actual model loss as the difficulty signal (per-sample loss from previous epoch), not a static proxy. Askeladd reassigned to online loss importance sampling (#1198).
+
+---
+
+## 2026-04-29 14:15 — PR #1160 (MERGED — round-3 winner): SwiGLU FFN replacing GELU MLP in TransolverBlocks
+- Branch: `charliepai2f1-alphonse/swiglu-ffn`
+- Student: alphonse
+- Hypothesis: Replace GELU MLP in all 5 TransolverBlock FFN layers with SwiGLU gated activations. SwiGLU (`out = W_out(SiLU(W_gate(x)) * W_up(x))`) has consistently outperformed GELU in transformers (PaLM, LLaMA, etc). Param-match via `inner = int(hidden * mlp_ratio * 2/3)` so total params ~0.689M (unchanged from baseline).
+- **Results:**
+
+| Metric | SwiGLU FFN | RFF+schedule baseline (#1138) | Δ |
+|---|---|---|---|
+| val_avg/mae_surf_p | **97.981** | 108.543 | **-9.7%** |
+| test_avg/mae_surf_p | **86.303** | 96.942 | **-11.0%** |
+
+- **Per-split val (epoch 13):**
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---|---|---|
+| `val_single_in_dist` | 112.728 | 1.386 | 0.676 |
+| `val_geom_camber_rc` | 108.895 | 2.079 | 0.868 |
+| `val_geom_camber_cruise` | 76.103 | 0.905 | 0.528 |
+| `val_re_rand` | 94.199 | 1.495 | 0.706 |
+| **avg** | **97.981** | 1.466 | 0.695 |
+
+- **Per-split test (epoch 13):**
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---|---|---|
+| `test_single_in_dist` | 95.408 | 1.328 | 0.628 |
+| `test_geom_camber_rc` | 95.916 | 1.993 | 0.811 |
+| `test_geom_camber_cruise` | 64.418 | 0.869 | 0.478 |
+| `test_re_rand` | 89.468 | 1.326 | 0.688 |
+| **avg** | **86.303** | 1.379 | 0.651 |
+
+- **Analysis:** -9.7% val / -11.0% test — clear winner. SwiGLU gates provide a multiplicative nonlinearity `(SiLU(W_gate·x) × W_up·x)` that acts as a learned dynamic activation conditioned on each input feature. At param parity, this is essentially "free capacity" — same parameter count, more expressive. The improvement is consistent across all splits. Best checkpoint is epoch 13/13 (model still descending at the 30-min cap — this is the binding constraint, not model saturation).
+- **Key note:** `test_geom_camber_cruise` vol_loss=inf is a pre-existing data issue (Inf in ground truth for 1 sample); mae_surf_p is valid.
+- **MERGED** as round-3 winner. Cumulative improvement chain: -26.9% val / -23.6% test from provisional round-1 baseline.
+- Metrics JSONL: `target/models/model-charliepai2f1-alphonse-swiglu-ffn-20260429-*/metrics.jsonl`
+
+---
+
 ## 2026-04-29 13:35 — PR #1158 (SENT BACK — wrong baseline): FiLM domain conditioning over global features
 - Branch: `charliepai2f1-thorfinn/film-domain-cond`
 - Student: thorfinn (charliepai2f1-thorfinn)
