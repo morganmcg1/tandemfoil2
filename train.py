@@ -435,6 +435,8 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    onecycle_total_epochs: int = 16  # cycle length for OneCycleLR (PR #947 default = Variant A)
+    onecycle_pct_start: float = 0.3  # warmup fraction for OneCycleLR (PR #947 default = Variant A)
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -491,15 +493,19 @@ ema = ModelEMA(model, decay=EMA_DECAY)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
-# 1-epoch linear warmup, then cosine to ~0 over T_max=15 epochs.
-WARMUP_EPOCHS = 1
-COSINE_T_MAX = 15  # tuned for SENPAI_TIMEOUT_MINUTES=30 wall-clock cap (~13-14 realized epochs)
-warmup = torch.optim.lr_scheduler.LinearLR(
-    optimizer, start_factor=0.1, end_factor=1.0, total_iters=WARMUP_EPOCHS
-)
-cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=COSINE_T_MAX, eta_min=1e-6)
-scheduler = torch.optim.lr_scheduler.SequentialLR(
-    optimizer, schedulers=[warmup, cosine], milestones=[WARMUP_EPOCHS]
+# OneCycleLR: confirmed winner pattern from PR #892. Cycle length set above
+# the realized ~13-14 epochs so training exits in the steep cosine descent.
+ONECYCLE_TOTAL_EPOCHS = cfg.onecycle_total_epochs
+steps_per_epoch = len(train_loader)
+scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    optimizer,
+    max_lr=1e-3,
+    epochs=ONECYCLE_TOTAL_EPOCHS,
+    steps_per_epoch=steps_per_epoch,
+    pct_start=cfg.onecycle_pct_start,
+    div_factor=20.0,            # start_lr = max_lr/20 = 5e-5
+    final_div_factor=50.0,      # end_lr = start_lr/50 = 1e-6
+    anneal_strategy="cos",
 )
 
 run = wandb.init(
@@ -608,6 +614,7 @@ for epoch in range(MAX_EPOCHS):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        scheduler.step()  # OneCycleLR steps per batch.
         ema.update(model)
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
@@ -616,7 +623,6 @@ for epoch in range(MAX_EPOCHS):
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
