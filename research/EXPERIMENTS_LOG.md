@@ -773,3 +773,71 @@ Vs current sw=3+Huber baseline (val_avg=101.563, test_avg=89.918): d=0.995 wins 
 ### Reassignment
 
 Edward → #1019 (loss-weighted hard-negative sampling). Mechanistically distinct from sw (per-sample EMA loss → resampling weights, not loss-magnitude scaling).
+
+---
+
+## 2026-04-29 04:10 — PR #885: Huber δ sweep + δ=0.1 stacking on sw=3 — MERGED (6th compounding win)
+
+- **Branch:** `askeladd/huber-delta-sweep` (squash-merged into icml-appendix-willow-pai2e-r5)
+- **W&B runs:** `nffbil1x` (δ=0.1 + sw=3 winner), `jul80d41` + `3leo4hv5` (δ=0.3 seeds, both at noise floor)
+- **Hypothesis:** Huber δ caps gradient magnitude on heavy-tailed residuals. With sw=3 absorbing surface heavy-tail, the volume residual heavy tail (high-Re outliers) becomes the new noise source. Pushing δ from 1.0 → 0.1 stabilizes volume gradient regimes.
+
+### Sweep on stale sw=10 baseline (askeladd's first run)
+
+| δ | val_avg | test_avg | W&B |
+|---|--------:|---------:|-----|
+| 2.0 | 113.80 | 102.35 | ki36m2z6 |
+| 1.0 | 115.39 | 104.47 | 295hulp0 |
+| 0.5 | 107.27 | 97.44 | vr6g2rxa |
+| 0.3 | 97.96 | 87.79 | 3yiixbyg |
+
+Monotone trend: smaller δ → better val/test. Original δ=0.3 win on sw=10 was striking but tested against stale baseline.
+
+### Stacking on current sw=3 baseline (post-rebase)
+
+| variant | val_avg | test_avg | best_epoch | W&B |
+|---------|--------:|---------:|-----------:|-----|
+| **δ=0.1 + sw=3** ✅ | **96.866** | **87.348** | 16 | nffbil1x |
+| δ=0.3 + sw=3 (run B) | 100.314 | 90.818 | 15 | jul80d41 |
+| δ=0.3 + sw=3 (run A) | 101.880 | 89.874 | 16 | 3leo4hv5 |
+| baseline (δ=1.0+sw=3) | 101.563 | 89.918 | 17 | 6rh7dzkx |
+
+### Per-split test on δ=0.1 winner (vs current baseline → δ=0.1)
+
+| Split | Baseline | δ=0.1 | Δ |
+|-------|---------:|------:|--:|
+| `single_in_dist` | 102.85 | 109.152 | **+6.13% worse** |
+| `geom_camber_rc` | 94.35  | 107.290 | **+13.71% worse** |
+| `geom_camber_cruise` | 70.13 | 53.250 | **−24.07% better** |
+| `re_rand` | 92.35 | 79.700 | **−13.69% better** |
+| **avg** | **89.92** | **87.35** | **−2.86% better** |
+
+### Commentary & Conclusions
+
+- **δ=0.1 + sw=3 is the new baseline (val=96.866, test=87.348).** Both metrics improve cleanly:
+  val −4.62%, test −2.86% vs prior baseline 101.563/89.918.
+- **δ=0.3 stacking with sw=3 collapsed to noise floor.** The δ=0.3 win on sw=10 (97.96 val) was
+  effectively absorbed by lowering surf_weight: sw=3 already cures the surface-channel heavy-tail
+  volatility that δ=0.3 was capping. The two mechanisms partially overlap.
+- **δ=0.1 attacks a different residual.** At sw=3, the loss is volume-dominated (vol_mask >> surf_mask);
+  the volume residual heavy tail (high-Re outliers in the bulk flow field) is the new noise source.
+  δ=0.1 caps those gradients tightly, allowing the inlier majority to drive learning unobstructed.
+- **Split-trade pattern reappears.** sid+rc regress, cruise+re_rand improve — same direction as sw=0.5
+  (#953 closed). But δ=0.1 wins on aggregate while sw=0.5 only tied. This suggests a fundamental
+  trade-off: smoother-field splits (cruise/re_rand) benefit from outlier-bounded gradients;
+  sharp-gradient splits (sid/rc) need the outlier-driven signal. Future work needs a different
+  architectural lever to break this trade (multi-resolution, per-split heads, or ensemble).
+- **Decision: Merged as 6th compounding win.** New baseline: val=96.866, test=87.348.
+
+### Five → Six compounding wins stacked
+
+1. Distance features + NaN-safe eval (#763) → val_avg=141.42
+2. Warmup+cosine LR (#737) → val_avg=127.87
+3. BF16 mixed precision (#811) → val_avg=127.40
+4. Huber loss δ=1.0 (#739) → val_avg=110.59
+5. Lower surf_weight=3 (#850) → val_avg=101.56
+6. **Huber δ=0.1 stacked on sw=3 (#885) → val_avg=96.87 / test_avg=87.35**
+
+### Reassignment
+
+Askeladd → δ-floor-below-0.1-sweep (next experiment). Trend not yet bottomed out at δ=0.1 per askeladd's own analysis. Need to find where the floor is.

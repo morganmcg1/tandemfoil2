@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r5
 
-- **Last updated:** 2026-04-29 03:45
+- **Last updated:** 2026-04-29 04:15
 - **Advisor branch:** `icml-appendix-willow-pai2e-r5`
 - **Track tag:** `willow-pai2e-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r5`
@@ -36,7 +36,7 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 | askeladd | #733 | Closed | val_avg=151.50; throughput cost decisive |
 | askeladd | #811 | **Merged** | val_avg=127.402; BF16 1.20× speedup |
 | askeladd | #848 | Closed | bs={8,10}: regressed; bs=12 OOM; `add_derived_features` loop bottleneck |
-| askeladd | #885 | **WIP (rebase)** | δ sweep done on sw=10: **δ=0.3 wins** (val=97.96, test=87.78 — beats current best 101.56/89.92 alone). PR conflicts with merged Huber #739 + sw=3 #850. Sent back for rebase + decisive δ=0.3+sw=3 stacking run + δ=0.1 trend test. |
+| askeladd | #885 | **Merged** | δ=0.1 + sw=3: **val_avg=96.866 (−4.62%), test_avg=87.348 (−2.86%)**. δ=0.3+sw=3 collapsed to noise (mechanism overlap with sw=3). δ=0.1 attacks volume residual heavy tail. Default huber_delta now 0.1. W&B: `nffbil1x`. |
 | edward | #734 | Closed | sw=10 wins; sw=50/100 regress |
 | edward | #850 | **Merged** | sw=3 + Huber: **val_avg=101.563 (−8.17%), test_avg=89.918 (−11.24%)**. All 4 splits improved. Default surf_weight changed to 3.0 in Config. W&B: `6rh7dzkx`. |
 | edward | #953 | **Closed** | sw=0.5 won val_avg=99.185 (-2.34%) but test essentially tied at 90.293 (+0.42%); sw=1, sw=2 much worse (non-monotone). Split-trade in test (sid+rc regress, cruise+re_rand improve). sw-tuning lever exhausted. |
@@ -54,37 +54,40 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 | thorfinn | #763 | **Merged** | val_avg=141.42; features + NaN-safe eval |
 | thorfinn | #810 | **WIP (rebase)** | EMA d=0.995: val_avg=89.872 (-18.7%), test_avg=79.254 (-21.8%) on stale sw=10. Sent back for rebase + decisive verify on sw=3 baseline (902-line PR with merge conflicts). |
 
-**Current best val_avg/mae_surf_p (merged):** 101.563 (edward #850, run `6rh7dzkx`).
-**Current best test_avg/mae_surf_p (merged):** 89.918 (edward #850, run `6rh7dzkx`).
+**Current best val_avg/mae_surf_p (merged):** 96.866 (askeladd #885, run `nffbil1x`).
+**Current best test_avg/mae_surf_p (merged):** 87.348 (askeladd #885, run `nffbil1x`).
 
-**Five compounding wins stacked:**
+**Six compounding wins stacked:**
 1. Distance features + NaN-safe eval (#763) → val_avg=141.42
 2. Warmup+cosine LR (#737) → val_avg=127.87
 3. BF16 mixed precision (#811) → val_avg=127.40
 4. Huber loss δ=1.0 (#739) → val_avg=110.594
-5. Lower surf_weight=3 (#850) → **val_avg=101.563, test_avg=89.918**
+5. Lower surf_weight=3 (#850) → val_avg=101.563
+6. **Huber δ=0.1 stacked on sw=3 (#885) → val_avg=96.866, test_avg=87.348**
 
 **[PENDING — REBASE FOR STACKING/VERIFICATION TEST]**
-- **Huber δ=0.3 (#885, askeladd)** — δ=0.3 alone won val=97.96 / test=87.78 (beats current
-  best 101.56/89.92 in absolute terms!), but on stale sw=10. Sent back for rebase + δ=0.3+sw=3
-  decisive stacking run. Candidate 6th compounding win.
 - **EMA post-warmup-init d=0.995 (#810, thorfinn)** — won val=89.87 / test=79.25 on stale sw=10
   baseline (-18.7% val, -21.8% test). Mechanism is orthogonal to surf_weight, so should still win
-  vs sw=3 baseline (101.56/89.92). Sent back for rebase + decisive d=0.995 verification on sw=3.
-  Strong candidate 6th compounding win — implementation is clean (deferred init after warmup,
+  vs new δ=0.1 baseline (96.87/87.35). Sent back for rebase + decisive d=0.995 verification.
+  Note: rebase target moved twice now (sw=3 → δ=0.1) — implementation must work with new defaults.
+  Strong candidate 7th compounding win — implementation is clean (deferred init after warmup,
   dual-flavor live/ema checkpointing).
+- **Per-channel surface loss (#943, frieren)** — anchored sweep with vel_surf=3 fixed, p_surf ∈ {3, 10, 20}
+  pending. Stale-baseline numbers showed promise on cruise/re_rand. Need to verify against new
+  baseline (96.87/87.35).
 
-**All 8 GPUs in use:** alphonse #980 (boundary-layer vol-loss sweep), askeladd #885 (δ=0.3
-rebase + stacking test), edward #1019 (loss-weighted hard-negative sampling — per-sample EMA
+**All 8 GPUs in use:** alphonse #980 (boundary-layer vol-loss sweep), askeladd → next experiment
+(δ-floor sweep below 0.1), edward #1019 (loss-weighted hard-negative sampling — per-sample EMA
 loss → resampling), fern #809 (schedule-budget), frieren #943 (per-channel rebase + anchored
 p_surf sweep with vel_surf=3), nezuko #986 (torch.compile A/B), tanjiro #745 (heads Option 3
-rebase), thorfinn #810 (EMA rebase + sw=3 verify).
+rebase), thorfinn #810 (EMA rebase + δ=0.1 verify).
 
 ## Current research themes
 
-1. **Loss-shape (Huber δ) is the strongest single lever found.** δ=0.3 alone (val=97.96) beats
-   current baseline (101.56) on stale sw=10. Askeladd's rebase + δ=0.3+sw=3 stacking run (#885)
-   is the highest-priority in-flight experiment. Potential 6th compounding win.
+1. **Loss-shape (Huber δ) is the strongest single lever found.** Now stacked: δ=0.1 + sw=3 wins
+   val=96.866, test=87.348 (#885 merged). Trend not yet bottomed out — askeladd's analysis suggests
+   δ=0.05 or lower may continue to improve. Note split-trade pattern: smaller δ helps cruise/re_rand
+   but hurts sid/rc — same pattern as sw=0.5 (#953). Suggests fundamental architectural trade.
 2. **Per-sample y-norm (alphonse) is exhausted as a standalone lever.** It's a substitute for
    Huber+sw=3 rather than a complement. Closed #896. Assigned #980 (boundary-layer vol-loss) —
    distinct mechanism using dist_to_surface feature to weight near-wall volume nodes more.
