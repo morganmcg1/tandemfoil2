@@ -156,12 +156,9 @@ class TransolverBlock(nn.Module):
                 nn.Linear(hidden_dim, out_dim),
             )
 
-    def forward(self, fx, gamma=None, beta=None):
+    def forward(self, fx):
         fx = self.attn(self.ln_1(fx)) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
-        # FiLM modulation on hidden state before output projection.
-        if gamma is not None:
-            fx = (1.0 + gamma.unsqueeze(1)) * fx + beta.unsqueeze(1)
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
         return fx
@@ -240,7 +237,9 @@ class Transolver(nn.Module):
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         for block, film in zip(self.blocks, self.film_layers):
             gamma, beta = film(log_re)
-            fx = block(fx, gamma, beta)
+            # Pre-block FiLM: condition the input to attention/MLP, not the output.
+            fx = (1.0 + gamma.unsqueeze(1)) * fx + beta.unsqueeze(1)
+            fx = block(fx)
         return {"preds": fx}
 
 
