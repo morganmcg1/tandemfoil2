@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import time
@@ -101,6 +102,30 @@ ACTIVATION = {
     "ELU": nn.ELU,
     "silu": nn.SiLU,
 }
+
+
+class MultiScaleRFF(nn.Module):
+    """Random Fourier Features at two spatial scales for spectral positional encoding.
+
+    Output: [..., 2 + 4*num_freq] — raw coords concatenated with cos/sin of two
+    frequency-projected basis matrices (scales sigma1, sigma2). With num_freq=64
+    and sigma1=1.0, sigma2=5.0, output dim is 258.
+    """
+
+    def __init__(self, num_freq=64, sigma1=1.0, sigma2=5.0):
+        super().__init__()
+        B1 = torch.randn(2, num_freq) * sigma1
+        B2 = torch.randn(2, num_freq) * sigma2
+        self.register_buffer("B1", B1)
+        self.register_buffer("B2", B2)
+
+    def forward(self, x_coord):
+        proj1 = 2 * math.pi * (x_coord @ self.B1)
+        proj2 = 2 * math.pi * (x_coord @ self.B2)
+        return torch.cat(
+            [x_coord, torch.cos(proj1), torch.sin(proj1), torch.cos(proj2), torch.sin(proj2)],
+            dim=-1,
+        )
 
 
 class MLP(nn.Module):
@@ -209,6 +234,7 @@ class Transolver(nn.Module):
     def __init__(self, space_dim=1, n_layers=5, n_hidden=256, dropout=0.0,
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
+                 num_freq=64, rff_sigma1=1.0, rff_sigma2=5.0,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None):
         super().__init__()
@@ -216,12 +242,17 @@ class Transolver(nn.Module):
         self.unified_pos = unified_pos
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
+        self.num_freq = num_freq
+
+        # RFF replaces the raw 2-D coords with 2 + 4*num_freq spectral features.
+        self.rff = MultiScaleRFF(num_freq=num_freq, sigma1=rff_sigma1, sigma2=rff_sigma2)
+        rff_dim = 2 + 4 * num_freq
 
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
                                   n_layers=0, res=False, act=act)
         else:
-            self.preprocess = MLP(fun_dim + space_dim, n_hidden * 2, n_hidden,
+            self.preprocess = MLP(fun_dim + rff_dim, n_hidden * 2, n_hidden,
                                   n_layers=0, res=False, act=act)
 
         self.n_hidden = n_hidden
@@ -248,7 +279,10 @@ class Transolver(nn.Module):
 
     def forward(self, data, **kwargs):
         x = data["x"]
-        fx = self.preprocess(x) + self.placeholder[None, None, :]
+        coords = x[..., :2]
+        rff_feat = self.rff(coords)
+        x_in = torch.cat([rff_feat, x[..., 2:]], dim=-1)
+        fx = self.preprocess(x_in) + self.placeholder[None, None, :]
         for block in self.blocks:
             fx = block(fx)
         return {"preds": fx}
@@ -478,6 +512,9 @@ model_config = dict(
     n_head=4,
     slice_num=64,
     mlp_ratio=2,
+    num_freq=64,
+    rff_sigma1=1.0,
+    rff_sigma2=5.0,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
