@@ -323,3 +323,48 @@ cd target/ && python train.py \
   --grad_clip 1.0
 # SharedFiLMGenerator post-norm FiLM; BF16 AMP; OneCycleLR max_lr=1.2e-3; surf_weight=25.0; DropPath(0→0.1)
 ```
+
+---
+
+## 2026-04-29 21:15 — PR #1300: Fourier positional features: replace raw (x,z) with sinusoidal encodings
+
+- **Student**: charliepai2f2-nezuko
+- **Branch**: charliepai2f2-nezuko/fourier-pos-features
+- **Change**: Add `FourierPosEncoder` (8 octaves → 32 features per point) replacing raw `(x,z)` coordinates in `Transolver.preprocess` MLP. Preprocess MLP input grows from `fun_dim+2` to `fun_dim+32`. FiLM Re-conditioning, BF16 AMP, OneCycleLR, DropPath, grad_clip=1.0, surf_weight=25 all preserved from PR #1264 baseline.
+
+### Best Validation Metrics (epoch 18/18, 30-min timeout)
+
+| Metric | Value | vs prior baseline (PR #1264) |
+|--------|-------|------------------------------|
+| **val_avg/mae_surf_p** (PRIMARY) | **71.80** | **-2.56 (-3.4%)** |
+| **test_avg/mae_surf_p** | **62.59** | **-3.32 (-5.0%)** |
+| val_avg/mae_surf_Ux | 1.0198 | — |
+| val_avg/mae_surf_Uy | 0.5444 | — |
+
+Per-split surface pressure MAE:
+
+| Split | val mae_surf_p | test mae_surf_p | val baseline | test baseline |
+|-------|---------------:|----------------:|-------------:|--------------:|
+| single_in_dist     | **72.78** | **63.89** | 82.09 | 71.62 |
+| geom_camber_rc     | **84.26** | **74.44** | 85.31 | 79.90 |
+| geom_camber_cruise | 56.03 | 47.11 | 55.67 | 46.22 |
+| re_rand            | **74.14** | **64.91** | 74.38 | 65.89 |
+| **avg**            | **71.80** | **62.59** | **74.36** | **65.91** |
+
+### Context
+- 18 epochs / 50 configured (hit SENPAI_TIMEOUT_MINUTES=30 at ~105s/epoch); best at epoch 18/18 (final)
+- BF16 AMP + OneCycleLR (max_lr=1.2e-3, pct_start=0.3) + DropPath(0→0.1) + grad_clip=1.0 + surf_weight=25 + FiLM Re-conditioning — full PR #1264 stack
+- Peak GPU memory: 35.83 GB (+0.4 GB vs baseline)
+- **Params: 835,415 (+7,680 vs 827,735 baseline)** — preprocess MLP first linear grew from `(fun_dim+2)*256=6144` to `(fun_dim+32)*256=13824`; `FourierPosEncoder` is parameter-free (buffers only)
+- Branch commit: 4499683
+- Metrics JSONL: `target/models/model-charliepai2f2-nezuko-fourier-pos-features-20260429-203437/metrics.jsonl`
+- Metrics YAML: `target/models/model-charliepai2f2-nezuko-fourier-pos-features-20260429-203437/metrics.yaml`
+
+### Reproduce
+```bash
+cd target/ && python train.py \
+  --agent charliepai2f2-nezuko \
+  --experiment_name "charliepai2f2-nezuko/fourier-pos-features" \
+  --grad_clip 1.0
+# FourierPosEncoder(n_octaves=8) replacing raw (x,z); FiLM Re-conditioning; BF16 AMP; OneCycleLR max_lr=1.2e-3; surf_weight=25.0; DropPath(0→0.1)
+```
