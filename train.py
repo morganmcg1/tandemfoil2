@@ -497,6 +497,9 @@ CKPT_AVG_K = 3
 ckpt_buffer: list[dict[str, torch.Tensor]] = []
 last_completed_epoch = 0
 
+# Relative-MAE surf-p loss: denominator stabilizer in original pressure units.
+P_EPS = 1.0
+
 for epoch in range(MAX_EPOCHS):
     if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
         print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
@@ -532,15 +535,30 @@ for epoch in range(MAX_EPOCHS):
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        # Per-sample vol/surf losses, summed over channels and averaged over valid nodes.
+        # Per-sample vol loss: normalized squared error across all 3 channels (unchanged).
         per_sample_vol_loss = (
             (sq_err * vol_mask.unsqueeze(-1)).sum(dim=(1, 2))
             / vol_mask.sum(dim=1).clamp(min=1).float()
         )  # [B]
-        per_sample_surf_loss = (
-            (sq_err * surf_mask.unsqueeze(-1)).sum(dim=(1, 2))
+
+        # Per-sample surf-p loss: relative MAE in original (denormalized) pressure units.
+        # |pred_p - y_p| / (|y_p| + P_EPS) auto-balances Re-regimes by sample magnitude.
+        y_p_orig = y_norm[:, :, 2] * stats["y_std"][2] + stats["y_mean"][2]   # [B, N]
+        pr_p_orig = pred[:, :, 2] * stats["y_std"][2] + stats["y_mean"][2]    # [B, N]
+        rel_abs_err_p = (pr_p_orig - y_p_orig).abs() / (y_p_orig.abs() + P_EPS)  # [B, N]
+        per_sample_surf_p_loss = (
+            (rel_abs_err_p * surf_mask).sum(dim=1)
             / surf_mask.sum(dim=1).clamp(min=1).float()
         )  # [B]
+
+        # Per-sample surf Ux/Uy loss: keep normalized squared error (avg over 2 channels).
+        sq_err_uxuy = sq_err[:, :, :2]  # [B, N, 2]
+        per_sample_surf_uxuy = (
+            (sq_err_uxuy * surf_mask.unsqueeze(-1)).sum(dim=(1, 2))
+            / (surf_mask.sum(dim=1).clamp(min=1).float() * 2)
+        )  # [B]
+
+        per_sample_surf_loss = per_sample_surf_p_loss + per_sample_surf_uxuy
         vol_loss = (per_sample_vol_loss * re_weight).sum()
         surf_loss = (per_sample_surf_loss * re_weight).sum()
         loss = vol_loss + cfg.surf_weight * surf_loss
