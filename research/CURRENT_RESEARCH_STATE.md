@@ -34,7 +34,7 @@ Per-split val baseline (epoch 12):
 | #1142 | nezuko | ema-decay-999 | EMA weight averaging (decay=0.999); rebased onto round-10 HEAD; prior round-9 best gave val=56.064 (-7.6%) |
 | #1225 | tanjiro | lion-optimizer | Lion (sign-based momentum); three-config sweep A/B/C around lion_lr=1.5e-4 wd=1.0 |
 | #1283 | thorfinn | wider-film-net-768-1024 | FiLMNet hidden 512→768 (Trial A) and 512→1024 (Trial B); zero per-epoch cost, 39 GB VRAM headroom |
-| #1270 | edward | n_head-8-attention | n_head=4→8 double attention heads; also n_head=8/slice_num=128 bonus variant |
+| #1305 | edward | n-layers-6-depth-probe | n_layers=5→6; n_layers=7 too slow (10 ep/30min), n_layers=6 is untested middle; est. ~11 epochs |
 | #1215 | fern | multi-scale-rff | SENT BACK 2026-04-29: v3 result (val=58.719) beat round-10 but not round-11 (58.332). Rebase onto round-11 HEAD and rerun, keep sigma={0.5, 2.0} n_freq=16 each |
 
 ## Current research focus
@@ -46,7 +46,7 @@ Eleven winners stacked on the baseline (val=58.332, test=51.802). Model still de
 3. **eta_min sweep.** alphonse (#1304) — now that T_max=12 cosine fully completes, tune the floor LR {1e-6, 5e-6, 2e-5, 1e-4}.
 4. **FiLMNet widening.** thorfinn (#1283) — hidden 512→768/1024; zero per-epoch cost.
 5. **Multi-scale RFF (rerun).** fern (#1215) — sent back for rerun on round-11 baseline.
-6. **n_head doubling.** edward (#1270) — n_head=4→8 doubles attention head count.
+6. **n_layers=6 depth probe.** edward (#1305) — n_layers=5 is current; n_layers=7 too slow (10 epochs); n_layers=6 is the untested middle point.
 7. **RFF capacity ceiling.** frieren (#1165) — n_freq=64 vs. merged n_freq=32.
 8. **Lion optimizer.** tanjiro (#1225) — sign-based momentum; orthogonal to Cautious AdamW.
 
@@ -82,6 +82,7 @@ Eleven winners stacked on the baseline (val=58.332, test=51.802). Model still de
 | #1235 | film-depth-3layers (3-layer residual FiLMNet) | closed dead end: +5.2% vs 61.114 | 64.298 |
 | #1260 | n-hidden-224-capacity-probe | closed dead end: +13.5% vs 59.321; only 11 epochs/30-min | ~67.3 |
 | #1100 | wider-bs8 (n_hidden=256+bs=8) | closed: superseded by merged #1197 | n/a |
+| #1270 | n-head-8-attention | closed dead end: +38.6% val regression; head_dim=24 too small at n_hidden=192 | 80.852 |
 
 ## Key learnings
 
@@ -97,6 +98,7 @@ Eleven winners stacked on the baseline (val=58.332, test=51.802). Model still de
 10. **FiLM conditioner: width > depth at 30-min budget.** #1235 (3-layer residual) regressed +5.2%.
 11. **n_hidden=224 width regression.** n_hidden=224 gets only 11 epochs/30-min; n_hidden=192 is the effective width ceiling.
 12. **Scheduler recalibration compounds with existing wins.** T_max=12 fix gave -1.3% with zero risk. Other scheduler params (eta_min, warm restarts) are natural follow-ups.
+13. **n_head=4 (head_dim=48) is near-optimal for n_hidden=192.** Doubling to n_head=8 (head_dim=24) caused +38.6% regression. The `slice_weights [B,H,N,slice_num]` tensor scales linearly with H — actual VRAM cost ~+12 GB vs estimated +1-2 GB. Any head increase requires compensating width increase to keep head_dim ≥ 32.
 
 ## Potential next research directions (post-round-11)
 

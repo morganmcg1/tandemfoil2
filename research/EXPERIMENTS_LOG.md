@@ -1,5 +1,24 @@
 # SENPAI Research Results
 
+## 2026-04-29 20:30 — PR #1270: n_head=4→8 attention head doubling (edward) — CLOSED (dead end)
+
+- charliepai2f1-edward/n-head-slice-sweep
+- Hypothesis: Double attention heads from n_head=4→8 (head_dim 48→24) to enable specialization across physical quantities/flow regimes. Bonus config: n_head=8 + slice_num=128.
+
+| Config | val_avg/mae_surf_p | Delta vs baseline | test_avg/mae_surf_p | Peak VRAM | s/epoch |
+|---|---|---|---|---|---|
+| Baseline (#1256) | **58.332** | — | **51.802** | 57 GB | ~150 |
+| Config 1 (n_head=8, slice=64) | 80.852 | **+22.520 (+38.6%)** | 69.984 | 69.4 GB | ~203 |
+| Config 2 (n_head=8, slice=128) | 95.750 | **+37.418 (+64.1%)** | 87.049 | 97.7 GB | ~287 |
+
+Per-split val Config 1 (best ep 9): in_dist=87.100, geom_rc=96.091, geom_cruise=60.060, re_rand=80.156.
+Per-split val Config 2 (best ep 7): in_dist=106.868, geom_rc=111.882, geom_cruise=71.808, re_rand=92.441.
+
+- Analysis: **CLOSED — clear dead end.** Root cause: at n_hidden=192, head_dim drops from 48→24 when doubling heads. Transolver's physics-aware slice-routing (`in_project_slice: dim_head → slice_num`) requires adequate per-head capacity — head_dim=24 falls below the effective threshold for this task. Config 2 added VRAM fragmentation issues (OOM on default allocator; needed `PYTORCH_ALLOC_CONF=expandable_segments:True`, reaching 97.7 GB / 96 GB). Per-epoch time also increased +35–90%, worsening the epoch budget tradeoff. Key takeaway: **n_head=4 (head_dim=48) appears near-optimal for n_hidden=192**. Any increase requires compensating width scaling (e.g. n_hidden=256 + n_head=8 → head_dim=32). The VRAM cost estimate of "+1-2 GB" was wrong; actual +12 GB for Config 1 because `slice_weights [B,H,N,slice_num]` scales linearly with H.
+- Metrics: `target/models/model-charliepai2f1-edward-n-head-8-*/metrics.jsonl`
+
+---
+
 ## 2026-04-29 20:15 — PR #1256: CosineAnnealingLR T_max=12 recalibration (alphonse) — MERGED (round-11 winner)
 
 - charliepai2f1-alphonse/cosine-schedule-recalibration-tmax12
