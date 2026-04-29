@@ -421,6 +421,13 @@ class Config:
     huber_delta: float = 0.0  # Huber loss transition point in normalized space; 0 → MSE
     eval_checkpoint: str | None = None  # if set, skip training; load checkpoint and run test eval only
     slice_num: int = 64  # PhysicsAttention slice token count per layer
+    scheduler: str = "cosine"  # cosine | onecycle
+    cosine_tmax: int = 0  # cosine: 0 → use MAX_EPOCHS; >0 → override T_max (e.g. 14 to align with 30-min budget)
+    onecycle_total_epochs: int = 14  # onecycle: epoch budget used to compute total_steps; aligned to ~30-min wallclock
+    peak_lr: float = 1e-3  # onecycle peak LR
+    pct_start: float = 0.3  # onecycle warmup fraction
+    div_factor: float = 25.0  # onecycle: start_lr = peak_lr / div_factor
+    final_div_factor: float = 1e4  # onecycle: end_lr = peak_lr / final_div_factor
 
 
 cfg = sp.parse(Config)
@@ -477,21 +484,51 @@ print(
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 warmup_epochs = max(0, min(cfg.warmup_epochs, MAX_EPOCHS - 1))
-if warmup_epochs > 0:
-    warmup = torch.optim.lr_scheduler.LinearLR(
-        optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_epochs,
+
+is_onecycle = cfg.scheduler == "onecycle"
+if is_onecycle:
+    if cfg.warmup_epochs > 0:
+        print(
+            f"WARNING: --warmup_epochs={cfg.warmup_epochs} is ignored when scheduler=onecycle "
+            f"(OneCycle has its own warmup via pct_start={cfg.pct_start})."
+        )
+    onecycle_horizon = cfg.onecycle_total_epochs if cfg.onecycle_total_epochs > 0 else MAX_EPOCHS
+    steps_per_epoch = len(train_loader)
+    total_steps = steps_per_epoch * onecycle_horizon
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=cfg.peak_lr,
+        total_steps=total_steps,
+        pct_start=cfg.pct_start,
+        anneal_strategy="cos",
+        div_factor=cfg.div_factor,
+        final_div_factor=cfg.final_div_factor,
     )
-    cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max(MAX_EPOCHS - warmup_epochs, 1),
-    )
-    scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs],
+    effective_max_epochs = onecycle_horizon
+    print(
+        f"Scheduler: OneCycleLR(max_lr={cfg.peak_lr}, total_steps={total_steps}, "
+        f"steps_per_epoch={steps_per_epoch}, horizon_epochs={onecycle_horizon}, "
+        f"pct_start={cfg.pct_start}, div_factor={cfg.div_factor}, final_div_factor={cfg.final_div_factor})"
     )
 else:
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+    cosine_tmax = cfg.cosine_tmax if cfg.cosine_tmax > 0 else MAX_EPOCHS
+    if warmup_epochs > 0:
+        warmup = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_epochs,
+        )
+        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max(cosine_tmax - warmup_epochs, 1),
+        )
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs],
+        )
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cosine_tmax)
+    effective_max_epochs = MAX_EPOCHS
+    print(f"Scheduler: CosineAnnealingLR(T_max={cosine_tmax})")
 print(
     f"Optim: AdamW lr={cfg.lr} wd={cfg.weight_decay}  "
-    f"warmup_epochs={warmup_epochs}  clip_norm={cfg.clip_norm}"
+    f"warmup_epochs={warmup_epochs}  clip_norm={cfg.clip_norm}  scheduler={cfg.scheduler}"
 )
 
 run = wandb.init(
@@ -565,7 +602,7 @@ if cfg.eval_checkpoint:
     wandb.finish()
     raise SystemExit(0)
 
-for epoch in range(MAX_EPOCHS):
+for epoch in range(effective_max_epochs):
     if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
         print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
         break
@@ -575,7 +612,7 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
 
-    for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
+    for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{effective_max_epochs}", leave=False):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
@@ -607,12 +644,15 @@ for epoch in range(MAX_EPOCHS):
         else:
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float("inf"))
         optimizer.step()
+        if is_onecycle:
+            scheduler.step()
         if epoch >= cfg.ema_warmup_epochs:
             ema_model.update_parameters(model)
         global_step += 1
         wandb.log({
             "train/loss": loss.item(),
             "train/grad_norm": grad_norm.item(),
+            "lr": scheduler.get_last_lr()[0],
             "global_step": global_step,
         })
 
@@ -620,7 +660,8 @@ for epoch in range(MAX_EPOCHS):
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    scheduler.step()
+    if not is_onecycle:
+        scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
