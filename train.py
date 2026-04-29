@@ -374,6 +374,15 @@ ONECYCLE_PCT_START = 0.3
 ONECYCLE_DIV_FACTOR = 25.0
 ONECYCLE_FINAL_DIV_FACTOR = 1e4
 
+# Geometry augmentation — training only, per-sample (broadcast over all nodes).
+# Perturb AoA and NACA params in normalized x space to smooth the geometry
+# response and improve held-out camber generalization (val_geom_camber_rc and
+# val_single_in_dist sit ~91 vs cruise's ~60 because M=6-8 is held out).
+GEOM_AUG_AOA_DIMS = (14, 18)            # AoA foil 1, AoA foil 2
+GEOM_AUG_NACA_DIMS = (15, 16, 17, 19, 20, 21)  # NACA foil 1 + foil 2 (camber, position, thickness)
+GEOM_AUG_AOA_STD = 0.03                 # normalized-space std for AoA dims
+GEOM_AUG_NACA_STD = 0.05                # normalized-space std for NACA dims
+
 
 @dataclass
 class Config:
@@ -496,6 +505,10 @@ append_metrics_jsonl(metrics_jsonl_path, {
     "steps_per_epoch": steps_per_epoch,
     "budgeted_epochs": budgeted_epochs_lr,
     "total_steps": total_steps,
+    "geom_aug_aoa_dims": list(GEOM_AUG_AOA_DIMS),
+    "geom_aug_naca_dims": list(GEOM_AUG_NACA_DIMS),
+    "geom_aug_aoa_std": GEOM_AUG_AOA_STD,
+    "geom_aug_naca_std": GEOM_AUG_NACA_STD,
 })
 
 best_avg_surf_p = float("inf")
@@ -519,6 +532,18 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
+        if model.training:
+            B = x_norm.size(0)
+            geom_noise = torch.zeros_like(x_norm)
+            for dim in GEOM_AUG_AOA_DIMS:
+                geom_noise[:, :, dim:dim+1] = torch.randn(
+                    B, 1, 1, device=x_norm.device, dtype=x_norm.dtype
+                ) * GEOM_AUG_AOA_STD
+            for dim in GEOM_AUG_NACA_DIMS:
+                geom_noise[:, :, dim:dim+1] = torch.randn(
+                    B, 1, 1, device=x_norm.device, dtype=x_norm.dtype
+                ) * GEOM_AUG_NACA_STD
+            x_norm = x_norm + geom_noise
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             pred = model({"x": x_norm})["preds"]
