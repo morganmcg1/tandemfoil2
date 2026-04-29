@@ -201,3 +201,30 @@ Note: All three runs WITHOUT `--fourier_pos_enc`. Current baseline is 44.4154 (P
 - Metrics path: (pre-rebase; re-run metrics will be committed post-rebase)
 
 - Commentary: **STRONG WINNER pending rebase** — 7.5% improvement vs current best (43.9575 → 40.6661, delta = −3.2914). Both FiLM and Fourier improvements are confirmed individually; stacking them yielded ~85% of the expected additive gain (FiLM alone was −11.2% vs old baseline; Fourier alone was −6.29% + −1.03%; combined is −7.5% vs post-Fourier baseline), indicating meaningful but not fully additive synergy. Key pattern: `val_geom_camber_rc` improved by only −0.3% vs the baseline's dominant error at 57.74 — the hardest OOD split is only barely responding to FiLM conditioning, suggesting this split needs a more targeted mechanism (domain-explicit conditioning, arc-length RPE, or data augmentation for OOD geometry). The model is NOT converged at epoch 50 — extended training (75 epochs) is expected to push further. Key implementation note: FiLM zero-init (`nn.Linear` final projections set to weight=0, bias=0) MUST be re-applied AFTER `self.apply(self._init_weights)` at lines 246–249 in train.py; otherwise kaiming_uniform_ re-initializes the projections to non-zero and the FiLM conditioning dominates at epoch 0, destabilizing training.
+
+## 2026-04-29 17:00 — PR #1175: LR warmup + cosine decay for Lion optimizer — SENT BACK (stale baseline)
+
+- Branch: charliepai2f3-thorfinn/lion-lr-warmup-cosine
+- Hypothesis: Lion optimizer's sign-based gradient update may benefit from a LinearLR warmup phase to avoid large early parameter updates, improving training stability and final convergence. LinearLR(start_factor=1/30, warmup_epochs) → CosineAnnealingLR(T_max=50-warmup_epochs) via PyTorch SequentialLR.
+- Results (tested against PR #1106 old baseline 44.4154 — NOT current best 39.9450):
+
+| Trial | warmup_epochs | val_avg/mae_surf_p | vs old baseline (44.4154) | best_epoch |
+|-------|---------------|-------------------|---------------------------|------------|
+| Warmup-10 | 10 | 42.4859 | −4.3% | ~50 |
+| Warmup-5 | 5 | 42.8797 | −3.6% | ~50 |
+
+- Commentary: **SENT BACK — tested against stale baseline (PR #1106, 44.4154).** Both warmup variants beat the Fourier-only baseline but are significantly above the current FiLM+Fourier best (39.9450, +6.4% and +7.4% respectively). The warmup signal is genuine — LinearLR to cosine reduces early instability and reaches better optima on the old baseline. The student was sent back with instructions to: (1) test warmup_epochs=10 and warmup_epochs=5 on the current best FiLM+Fourier config with same SequentialLR structure; (2) also try single-decay cosine (skip warmup, T_max=45) per student's own suggestion. LR warmup direction preserved for follow-up.
+
+## 2026-04-29 17:00 — PR #1170: Depth sweep n_layers in {2, 3} on Fourier pos enc baseline — CLOSED NEGATIVE
+
+- Branch: charliepai2f3-fern/depth-sweep-n-layers
+- Hypothesis: Stacking 2–3 Transolver layers may improve generalization, particularly to OOD geometry splits, by enabling deeper spatial reasoning over the physics-informed slice representations.
+- Results (current best = 39.9450):
+
+| n_layers | val_avg/mae_surf_p | best_epoch | Notes |
+|----------|--------------------|------------|-------|
+| 1 (baseline) | 39.9450 | 49/50 | Current best |
+| 2 | 45.3904 | ~42 | Timed out at 30 min, still descending |
+| 3 | 56.0444 | ~22 | Overtfit from ep 22, monotonically worse after |
+
+- Commentary: **CLOSED — DECISIVE NEGATIVE.** n_layers=3 is unambiguous: overfits at epoch 22 (training stable, validation diverges) on 1499 training samples. n_layers=2 hit the wall-clock timeout at best epoch ~42; even if fully converged, trajectory projects to ~44.0-45.0 — well above 39.9450 and no path to beating baseline. The TandemFoilSet-Balanced training set (1499 samples) does not support deeper Transolver stacking. The n_layers=1 model benefits more from capacity additions through width (FiLM adds 67k params as conditioning network, Fourier expands spatial input) than through depth. Fern reassigned to n_hidden=192 width scaling on FiLM+Fourier config (PR #1202).
