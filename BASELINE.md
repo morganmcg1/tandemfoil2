@@ -1,6 +1,6 @@
 # Baseline (icml-appendix-charlie-pai2f-r1)
 
-Nine winners merged into `train.py`:
+Ten winners merged into `train.py`:
 - **PR #1101 (thorfinn)** — regime-matched schedule (warmup=1, T_max=13, eta_min=lr/100)
 - **PR #1138 (frieren)** — Random Fourier Features on (x, z), n_freq=32, sigma=1.0
 - **PR #1160 (alphonse)** — SwiGLU FFN replacing GELU MLP in TransolverBlocks (param-matched, ~0.689M)
@@ -10,10 +10,48 @@ Nine winners merged into `train.py`:
 - **PR #1221 (thorfinn)** — Wider FiLMNet: Linear(11→512)→GELU→Linear(512→3200), 2.70M total params
 - **PR #1183 (edward)** — Cautious AdamW: sign-agreement mask on momentum updates, rescaled by 1/mask.mean() to preserve update norm
 - **PR #1244 (edward)** — n_hidden=160→192 capacity probe: +20% hidden width, 3.47M params (+28.5%), VRAM 57 GB (vs 42 GB), 12 epochs/30-min
+- **PR #1236 (askeladd)** — Sobolev-style surface gradient auxiliary loss: penalizes arc-length finite-difference pressure gradient errors along foil surface nodes; surf_grad_weight=10.0
 
 All subsequent experiments compare against this stacked baseline.
 
-## Current best (round-9 winner — merged 2026-04-29)
+## Current best (round-10 winner — merged 2026-04-29)
+
+| Metric | Value | PR | Notes |
+|---|---|---|---|
+| `val_avg/mae_surf_p` | **59.121** (epoch 12/12, still descending) | #1236 | Sobolev surface gradient loss, surf_grad_weight=10.0 |
+| `test_avg/mae_surf_p` | **51.170** (4 splits, all finite MAE) | #1236 | `test_geom_camber_cruise` vol_loss=inf but MAE valid |
+
+Per-split val (best epoch 12):
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---|---|---|
+| `val_single_in_dist` | 59.445 | 0.616 | 0.384 |
+| `val_geom_camber_rc` | 71.611 | 1.319 | 0.596 |
+| `val_geom_camber_cruise` | 45.249 | 0.484 | 0.318 |
+| `val_re_rand` | 60.178 | 0.885 | 0.447 |
+| **avg** | **59.121** | 0.826 | 0.436 |
+
+Per-split test (best epoch 12):
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---|---|---|
+| `test_single_in_dist` | 53.986 | 0.627 | 0.372 |
+| `test_geom_camber_rc` | 62.288 | 1.247 | 0.544 |
+| `test_geom_camber_cruise` | 37.042 | 0.441 | 0.282 |
+| `test_re_rand` | 51.364 | 0.752 | 0.405 |
+| **avg** | **51.170** | 0.767 | 0.401 |
+
+Notes:
+- Sobolev-style auxiliary loss penalizes arc-length finite-difference pressure gradient errors along foil surface nodes.
+- `surf_grad_loss = mean_b[MSE(pred_grad_b, gt_grad_b)]` where grad = first-difference along sorted surface points.
+- At surf_grad_weight=10.0 the gradient term contributes ~10% of total loss (~0.07 vs ~0.84 total), sufficient to influence the optimizer.
+- First trial at weight=1.0 had gradient term <1% of loss and regressed; weight=10.0 correctly scales to match surf_loss magnitude.
+- 3/4 val splits improved; all 4 test splits improved. `geom_camber_rc` was the only val regressor (+0.38).
+- Improvement vs round-9 baseline: -0.34% on val (59.121 vs 59.321), -1.43% on test (51.170 vs 51.915).
+- Metric summary: `models/model-charliepai2f1-askeladd-surf-grad-w10-r9-20260429-190044/metrics.yaml`
+- Reproduce: `cd target/ && python train.py --agent charliepai2f1-askeladd --experiment_name "charliepai2f1-askeladd/surf-grad-w10-r9"`
+
+## Previous best (round-9 winner — merged 2026-04-29)
 
 | Metric | Value | PR | Notes |
 |---|---|---|---|
@@ -232,11 +270,12 @@ Notes:
 | Round-6 winner: Online loss-weighted curriculum | 66.636 | 57.355 | #1198 ← merged |
 | Round-7 winner: Wider FiLMNet MLP 512 | 61.114 | 52.989 | #1221 ← merged |
 | Round-8 winner: Cautious AdamW | 60.685 | 52.498 | #1183 ← merged |
-| Round-9 winner: n_hidden=192 capacity probe | **59.321** | **51.915** | #1244 ← merged |
+| Round-9 winner: n_hidden=192 capacity probe | 59.321 | 51.915 | #1244 ← merged |
+| Round-10 winner: Sobolev surface gradient loss (w=10) | **59.121** | **51.170** | #1236 ← merged |
 
-Round-1→Round-9 cumulative improvement: **-55.7% on val, -60.7% on test**.
+Round-1→Round-10 cumulative improvement: **-55.9% on val, -61.3% on test**.
 
-## Default config (`train.py` at HEAD, post-merge of #1244)
+## Default config (`train.py` at HEAD, post-merge of #1236)
 
 | Setting | Value |
 |---|---|
@@ -244,6 +283,7 @@ Round-1→Round-9 cumulative improvement: **-55.7% on val, -60.7% on test**.
 | Scheduler | LinearLR warmup (1 ep, 5e-7 → 5e-4) + CosineAnnealingLR (T_max=13, eta_min=5e-6) |
 | Batch size | 4 |
 | Surf weight (loss) | 10.0 |
+| Surf grad weight | 10.0 (Sobolev surface gradient auxiliary loss) |
 | Epochs | 50 (capped by `SENPAI_TIMEOUT_MINUTES=30` ≈ 15 effective epochs with AMP) |
 | Sampler | WeightedRandomSampler (balanced across 3 domains) |
 | Loss | MSE on normalized targets, vol + surf_weight·surf; **online EMA per-sample curriculum weighting** (ema_alpha=0.3, temp=0.3, 3-ep warmup) |
