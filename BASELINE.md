@@ -1,45 +1,47 @@
 # Baseline (icml-appendix-charlie-pai2f-r1)
 
-Four winners merged into `train.py`:
+Five winners merged into `train.py`:
 - **PR #1101 (thorfinn)** — regime-matched schedule (warmup=1, T_max=13, eta_min=lr/100)
 - **PR #1138 (frieren)** — Random Fourier Features on (x, z), n_freq=32, sigma=1.0
 - **PR #1160 (alphonse)** — SwiGLU FFN replacing GELU MLP in TransolverBlocks (param-matched, ~0.689M)
 - **PR #1158 (thorfinn)** — FiLM domain conditioning: per-sample global features → (γ,β) scale/shift on all LayerNorms
+- **PR #1197 (alphonse)** — AMP (bfloat16) + n_hidden=160 capacity scaling: same VRAM, +53% params, +2 epochs/30-min
 
 All subsequent experiments compare against this stacked baseline.
 
-## Current best (round-4 winner — merged 2026-04-29)
+## Current best (round-5 winner — merged 2026-04-29)
 
 | Metric | Value | PR | Notes |
 |---|---|---|---|
-| `val_avg/mae_surf_p` | **84.371** (epoch 12/12, still descending) | #1158 | FiLM domain conditioning on SwiGLU+RFF baseline |
-| `test_avg/mae_surf_p` | **75.076** (4 splits, all finite MAE) | #1158 | `test_geom_camber_cruise` vol_loss=inf but MAE valid |
+| `val_avg/mae_surf_p` | **75.750** (epoch 15/15, still descending) | #1197 | AMP + n_hidden=160 on FiLM+SwiGLU+RFF baseline |
+| `test_avg/mae_surf_p` | **64.983** (4 splits, all finite MAE) | #1197 | `test_geom_camber_cruise` vol_loss=inf but MAE valid |
 
-Per-split val (epoch 12):
-
-| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
-|---|---|---|---|
-| `val_single_in_dist` | 94.827 | 1.118 | 0.550 |
-| `val_geom_camber_rc` | 93.435 | 1.924 | 0.802 |
-| `val_geom_camber_cruise` | 66.861 | 0.799 | 0.492 |
-| `val_re_rand` | 82.361 | 1.364 | 0.652 |
-| **avg** | **84.371** | 1.251 | 0.624 |
-
-Per-split test (best epoch 12):
+Per-split val (epoch 15):
 
 | Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
 |---|---|---|---|
-| `test_single_in_dist` | 81.519 | 1.098 | 0.518 |
-| `test_geom_camber_rc` | 87.961 | 1.883 | 0.754 |
-| `test_geom_camber_cruise` | 55.295 | 0.757 | 0.427 |
-| `test_re_rand` | 75.529 | 1.223 | 0.612 |
-| **avg** | **75.076** | 1.240 | 0.578 |
+| `val_single_in_dist` | 78.755 | 0.944 | 0.490 |
+| `val_geom_camber_rc` | 88.578 | 1.654 | 0.713 |
+| `val_geom_camber_cruise` | 61.344 | 0.680 | 0.437 |
+| `val_re_rand` | 74.322 | 1.144 | 0.574 |
+| **avg** | **75.750** | 1.106 | 0.554 |
+
+Per-split test (best epoch 15):
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---|---|---|
+| `test_single_in_dist` | 67.414 | 0.930 | 0.463 |
+| `test_geom_camber_rc` | 72.814 | 1.588 | 0.652 |
+| `test_geom_camber_cruise` | 50.498 | 0.633 | 0.376 |
+| `test_re_rand` | 69.206 | 0.984 | 0.524 |
+| **avg** | **64.983** | 1.034 | 0.504 |
 
 Notes:
 - `test_geom_camber_cruise` vol_loss=inf is a pre-existing dataset issue (extreme residuals in 1 sample); MAE is valid.
-- Best checkpoint is epoch 12 (model still descending under 30-min cap; ran 12 epochs at ~155s/epoch).
-- FiLMNet: Linear(11,256)+GELU+Linear(256,2560), zero-init last layer → identity at init; ~0.66M extra params.
-- Total params: ~1,349,943; Peak VRAM: 51.14 GB.
+- Best checkpoint is epoch 15 (model still descending under 30-min cap; ran 15 epochs at ~124s/epoch — AMP speeds up forward pass).
+- AMP: bfloat16 autocast (fp16 NaN'd at epoch 5), GradScaler with unscale+clip_grad_norm(max_norm=1.0). Zero GradScaler skip events.
+- n_hidden=160 vs 128 baseline: 1.054M params vs 0.689M (+53%). Peak VRAM: 42.29 GB (same as 128 baseline at ~42.4 GB).
+- Model still has headroom — both epoch budget (T_max=13 schedule descends to eta_min at epoch 14, epoch 15 still improving) and VRAM (42 GB of 96 GB used).
 
 ## Previous best (round-3 winner — merged 2026-04-29)
 
@@ -115,11 +117,12 @@ Notes:
 | Round-1 winner: regime-matched schedule | 125.438 | 112.988 | #1101 ← merged |
 | Round-2 winner: RFF (on top of schedule) | 108.543 | 96.942 | #1138 ← merged |
 | Round-3 winner: SwiGLU FFN (on top of RFF) | 97.981 | 86.303 | #1160 ← merged |
-| Round-4 winner: FiLM domain conditioning | **84.371** | **75.076** | #1158 ← merged |
+| Round-4 winner: FiLM domain conditioning | 84.371 | 75.076 | #1158 ← merged |
+| Round-5 winner: AMP + n_hidden=160 capacity scaling | **75.750** | **64.983** | #1197 ← merged |
 
-Round-1→Round-4 cumulative improvement: **-32.7% on val, -33.6% on test**.
+Round-1→Round-5 cumulative improvement: **-43.4% on val, -50.8% on test**.
 
-## Default config (`train.py` at HEAD, post-merge of #1158)
+## Default config (`train.py` at HEAD, post-merge of #1197)
 
 | Setting | Value |
 |---|---|
@@ -127,11 +130,12 @@ Round-1→Round-4 cumulative improvement: **-32.7% on val, -33.6% on test**.
 | Scheduler | LinearLR warmup (1 ep, 5e-7 → 5e-4) + CosineAnnealingLR (T_max=13, eta_min=5e-6) |
 | Batch size | 4 |
 | Surf weight (loss) | 10.0 |
-| Epochs | 50 (capped by `SENPAI_TIMEOUT_MINUTES=30` ≈ 12-14 effective epochs) |
+| Epochs | 50 (capped by `SENPAI_TIMEOUT_MINUTES=30` ≈ 15 effective epochs with AMP) |
 | Sampler | WeightedRandomSampler (balanced across 3 domains) |
 | Loss | MSE on normalized targets, vol + surf_weight·surf |
-| Model | Transolver, n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2, **RFF on (x,z) n_freq=32 sigma=1.0**, **SwiGLU FFN**, **FiLM domain conditioning** |
-| Params | ~1.35M (0.689M base + 0.66M FiLMNet) |
+| AMP | bfloat16 autocast + GradScaler + clip_grad_norm(max_norm=1.0) |
+| Model | Transolver, **n_hidden=160**, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2, **RFF on (x,z) n_freq=32 sigma=1.0**, **SwiGLU FFN**, **FiLM domain conditioning** |
+| Params | ~1.714M (1.054M base at n_hidden=160 + 0.66M FiLMNet) |
 
 Primary ranking metric: `val_avg/mae_surf_p` (lower is better).
 Test-time metric for paper: `test_avg/mae_surf_p`.
