@@ -461,9 +461,10 @@ class Config:
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
     huber_delta: float = 0.0  # 0 = MSE (default); >0 = Huber with this delta
-    loss_type: str = "mse"  # "mse" (default; uses huber_delta to switch MSE/Huber) or "relative_mae"
+    loss_type: str = "relative_mae"  # "mse" (uses huber_delta to switch MSE/Huber) or "relative_mae" (default — branch standard)
     rel_mae_eps: float = 1e-6  # additive epsilon in the relative MAE denominator
     compile: bool = True  # torch.compile(model) for extra throughput; pass --compile=false to disable
+    warmup_epochs: int = 5  # epochs of linear LR warmup (start_factor=0.05) before cosine decay; 0 disables
 
 
 cfg = sp.parse(Config)
@@ -516,7 +517,25 @@ if cfg.compile:
     print("torch.compile(model, dynamic=True) enabled")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+if cfg.warmup_epochs > 0:
+    _warmup = torch.optim.lr_scheduler.LinearLR(
+        optimizer,
+        start_factor=0.05,          # starts at 5% of cfg.lr (1e-4 for lr=2e-3)
+        end_factor=1.0,
+        total_iters=cfg.warmup_epochs,
+    )
+    _cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=max(MAX_EPOCHS - cfg.warmup_epochs, 1),
+        eta_min=1e-6,
+    )
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[_warmup, _cosine],
+        milestones=[cfg.warmup_epochs],
+    )
+else:
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
