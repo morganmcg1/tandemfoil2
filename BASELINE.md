@@ -4,28 +4,50 @@
 
 | Metric | Value |
 |--------|-------|
-| `val_avg/mae_surf_p` | **48.0121** (PR #1194 — slice_num=8 + adamw_beta2=0.98 + epochs=32) |
-| `test_avg/mae_surf_p` | **41.6806** (PR #1194) |
+| `val_avg/mae_surf_p` | **47.6501** (PR #1241 — adamw_beta2=0.985 fine-tune) |
+| `test_avg/mae_surf_p` | **41.4598** (PR #1241) |
 
-**Source:** PR #1194 — slice_num: 16→8 (throughput gain → 2 free epochs within 30-min budget), compounded with adamw_beta2=0.98 + epochs=32.
-- Branch: `tanjiro/slice-num-8-throughput`
-- Config: n_layers=2 (hardcoded), slice_num=8, n_hidden=256, n_head=8, loss=huber, huber_delta=0.1, ema_decay=0.999, grad_clip=1.0, per_sample_norm, warmup_epochs=3, epochs=32, lr=5e-4, batch_size=4, weight_decay=5e-4, adamw_beta2=0.98
+**Source:** PR #1241 — adamw_beta2: 0.98→0.985 (intermediate interpolation between 0.98 winner and 0.999 default; ~67-step effective memory window vs 50-step at 0.98).
+- Branch: `charliepai2f5-askeladd/adamw-beta2-0.985`
+- Config: n_layers=2 (hardcoded), slice_num=8, n_hidden=256, n_head=8, loss=huber, huber_delta=0.1, ema_decay=0.999, grad_clip=1.0, per_sample_norm, warmup_epochs=3, epochs=32, lr=5e-4, batch_size=4, weight_decay=5e-4, adamw_beta2=0.985
 - Best epoch = 32/32 (final epoch, val curve still descending — training-budget-limited)
-- Peak VRAM: 20.97 GB, Wall-clock: 30.01 min, Run ID: 2itg2geu
+- Peak VRAM: 20.98 GB, Wall-clock: 29.9 min, Run ID: gz5kow96
 
-**Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper reference) — currently +1.83% above target (gap closed from 1.89 to **0.7506** vs prior best — 60% of remaining gap closed in one step).
+**Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper reference) — currently +1.29% above target (gap closed from 0.7506 to **0.5298** vs prior best — compete gap narrowed further).
 
-## Round r5 — Recommended Working Baseline (compound n_layers=2 + huber_delta=0.1 + weight_decay=5e-4 + warmup_epochs=3 + epochs=32 + adamw_beta2=0.98 + slice_num=8)
+## Round r5 — Recommended Working Baseline (compound n_layers=2 + huber_delta=0.1 + weight_decay=5e-4 + warmup_epochs=3 + epochs=32 + adamw_beta2=0.985 + slice_num=8)
 
 ```
 python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 32 \
   --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm --weight_decay 5e-4 --warmup_epochs 3 \
-  --adamw_beta2 0.98
+  --adamw_beta2 0.985
 ```
 *(Note: n_layers=2, slice_num=8 are hardcoded in model_config dict in train.py — slice_num was changed from 16→8 in PR #1194)*
 *(Note: warmup_epochs=3 activates SequentialLR: LinearLR 3 epochs ramp + CosineAnnealingLR over remaining 29 epochs)*
 
 ## Round r5 — Merged Winners
+
+### PR #1241 — AdamW beta2=0.985 fine-tune (interpolation between 0.98 and 0.999) (2026-04-29)
+**Student:** charliepai2f5-askeladd | **Branch:** charliepai2f5-askeladd/adamw-beta2-0.985
+
+| Metric | Value |
+|--------|-------|
+| `val_avg/mae_surf_p` | **47.6501** (epoch 32/32 — final epoch, val curve still descending) |
+| `test_avg/mae_surf_p` | **41.4598** |
+| `test_single_in_dist/mae_surf_p` | 46.5426 |
+| `test_geom_camber_rc/mae_surf_p` | 55.7505 |
+| `test_geom_camber_cruise/mae_surf_p` | 24.1577 |
+| `test_re_rand/mae_surf_p` | 39.3885 |
+
+**vs prior baseline (PR #1194):** val 47.6501 vs 48.0121 → **-0.75% val improvement**
+**Test improvement:** 41.4598 vs 41.6806 → **-0.53% test improvement**
+**Compete gap:** 0.5298 (was 0.7506 — 29% of remaining gap closed)
+**Mechanism:** beta2=0.985 gives ~67-step effective second-moment memory window (vs ~50-step at 0.98). Slightly smoother adaptation helps in late cosine tail where LR is very small. OOD splits benefited most: geom_camber_rc -2.61%, geom_camber_cruise -1.83%.
+**Split analysis:** geom_camber_rc improved (-2.61% test) — this was the hardest-bottlenecked split. re_rand also improved (-1.89%). single_in_dist minimal change (-0.68%). geom_camber_cruise slight improvement (-1.83%).
+**Budget-limited:** is_best=True at final epoch 32, val curve still descending — model still improving at termination.
+**Peak VRAM:** 20.98 GB | **Wall-clock:** 29.9 min | **Run ID:** gz5kow96
+**Metrics JSONL:** `metrics/charliepai2f5-askeladd-adamw-beta2-0.985-gz5kow96.jsonl`
+**Reproduce:** `cd target/ && python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 32 --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm --weight_decay 5e-4 --warmup_epochs 3 --adamw_beta2 0.985`
 
 ### PR #1194 — slice_num=8 throughput gain + compound retest (adamw_beta2=0.98 + epochs=32) (2026-04-29)
 **Student:** charliepai2f5-tanjiro | **Branch:** tanjiro/slice-num-8-throughput
@@ -382,4 +404,5 @@ python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epoch
 - 2026-04-29: PR #1136 merged. weight_decay=5e-4 (n_layers=2 + huber_delta=0.1 + epochs=30): val_avg=52.0698 (-6.16% vs PR #1134), test_avg=46.1497 (-5.46%). Compete gap: 5.22.
 - 2026-04-29: PR #1149 merged. warmup_epochs=3 (linear LR ramp + cosine): val_avg=51.0626 (-1.43%), test_avg=44.7020 (-1.47%). Compete gap: 3.77.
 - 2026-04-29: PR #1191 merged. adamw_beta2=0.98 (faster second moment adaptation): val_avg=49.0719 (-3.90%), test_avg=42.8204 (-4.21%). Compete gap: 1.89.
-- 2026-04-29: PR #1194 merged. slice_num=8 (throughput) + adamw_beta2=0.98 + epochs=32 compound: val_avg=48.0121 (-2.16%), test_avg=41.6806 (-2.66%) — **Current best.** Compete gap: 0.7506 (60% of remaining gap closed in one step).
+- 2026-04-29: PR #1194 merged. slice_num=8 (throughput) + adamw_beta2=0.98 + epochs=32 compound: val_avg=48.0121 (-2.16%), test_avg=41.6806 (-2.66%). Compete gap: 0.7506 (60% of remaining gap closed in one step).
+- 2026-04-29: PR #1241 merged. adamw_beta2=0.985 fine-tune: val_avg=47.6501 (-0.75%), test_avg=41.4598 (-0.53%) — **Current best.** Compete gap: 0.5298 (29% of remaining gap closed).
