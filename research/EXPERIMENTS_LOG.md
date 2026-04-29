@@ -642,3 +642,38 @@ Follow-up idea (flagged for later): curriculum jitter starting at epoch 30+ once
 **PR closed** as a dead end.
 
 ---
+
+## 2026-04-29 05:57 — PR #1027: EMA decay scan {0.99, 0.995, 0.999} on BF16+slice32+δ=0.1 ✓ MERGED (NEW BEST)
+
+- Branch: `willowpai2e1-fern/ema-decay-scan-bf16`
+- Student: willowpai2e1-fern
+- Hypothesis: EMA decay=0.99 was calibrated for FP32 + ~14 epochs. BF16 + slice=32 + Huber δ=0.1 gives ~23 epochs per run. A longer EMA half-life (0.995 or 0.999) may better average the smooth late-training trajectory. Three-way scan: {0.99, 0.995, 0.999}.
+
+| EMA decay | val_avg/mae_surf_p | test_avg/mae_surf_p | best epoch | W&B run |
+|-----------|--------------------:|--------------------:|:----------:|---------|
+| 0.99 (control) | 71.30 | 62.31 | 23 | [oyps366y](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/oyps366y) |
+| **0.995 (winner)** | **68.99** | **60.52** | **23** | [9ajnunco](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/9ajnunco) |
+| 0.999 | 73.12 | 64.13 | 23 | [m9ishwmc](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/m9ishwmc) |
+
+Per-split test (decay=0.995 winner):
+| Split | test/mae_surf_p |
+|-------|----------------:|
+| test_single_in_dist | 68.52 |
+| test_geom_camber_rc | 73.11 |
+| test_geom_camber_cruise | 41.53 |
+| test_re_rand | 58.93 |
+
+**Analysis and conclusions:**
+
+decay=0.995 is the sweet spot for BF16+slice=32 at ~23 epochs. Half-life of ~200 steps (~0.53 epochs) denoises without averaging in early high-loss weights. decay=0.99 is too narrow (essentially live-model + light smoothing); decay=0.999 is too slow at this budget — EMA still has substantial weight from high-loss epochs 8-15.
+
+All three runs beat the previous baseline (PR #860, val=75.94): even the 0.99 control (val=71.30) represents a structural win, confirming that BF16+slice32+δ=0.1 is a better base stack than FP32+slice32+δ=0.5+OneCycle at this budget.
+
+Budget is binding: all runs hit 23 epochs exactly at the 30-min wall-clock cap, still descending. Best epoch = last epoch for all runs.
+
+**New best**: decay=0.995 → val=68.99 / test=60.52 (−51.1% val / −52.8% test vs unmodified default 140.95/128.32)
+
+All metrics confirmed against W&B. PR merged.
+
+---
+
