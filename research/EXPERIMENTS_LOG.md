@@ -7,9 +7,9 @@
 
 | PR | Student | Experiment | Status | Result |
 |----|---------|------------|--------|--------|
-| #1118 | edward | epochs=50 extended training | WIP | — |
+| #1118 | edward | epochs=50 extended training | CLOSED 04-29 | val=65.16 (+5.8% vs PR #1050) — T_max stretch wasted annealing |
 | #1119 | thorfinn | cosine eta_min=5e-5 | WIP | — |
-| #1120 | nezuko | n_layers=2 shallower model | WIP | — |
+| #1120 | nezuko | **n_layers=2 shallower model** | **MERGED 04-29** | **val=56.4257 (-3.51% vs PR #1121), test=49.6211 (-3.38%)** |
 | #1121 | fern | **huber_delta=0.1 tighter loss** | **MERGED 04-29** | **val=58.4790 (-5.04%), test=51.3554 (-5.52%)** |
 | #1122 | alphonse | lr=1e-3 higher LR | CLOSED 04-29 | val=70.23 (+14.0%) — early-phase noise |
 | #1123 | tanjiro | n_hidden=320 wider model | CLOSED 04-29 | val=68.83 (+11.8%) — compute-bound, only 18 epochs |
@@ -51,6 +51,33 @@
 - **Hypothesis:** +25% capacity per layer for tandem flow patterns. VRAM budget ample.
 - **Result:** val=68.8261 (+11.8%), test=60.4215 (+11.2%). Params 2.50M (1.56× baseline), VRAM 37.0 GB. Epoch time +31% slower → only 18/30 epochs in budget (vs 22/30 baseline). At cutoff, val still falling ~3.5%/epoch with LR=2.45e-4 (vs baseline's 8.27e-5).
 - **Analysis:** Capacity isn't the bottleneck under 30-min wall-clock timeout. Wider model is compute-dominated. Per-split regression uniform → undertrained, not overfit. **CLOSED.** Follow-ups: mlp_ratio=4 (cheaper capacity boost), slice_num=24 (attention capacity), or revisit wider with longer cosine T_max.
+
+### 2026-04-29 11:20 — PR #1120 (MERGED, NEW BASELINE): Shallower model n_layers=2
+- Student: charliepai2f5-nezuko | Branch: `charlie5-nezuko/n-layers-2`
+- **Hypothesis:** Shallower → faster epochs → more gradient steps and deeper-into-cosine annealing within 30-min budget. Capacity loss should be compensated by extra epochs.
+- **Result:**
+
+| Metric | Value | vs PR #1121 (n_layers=3, huber_delta=0.1) | vs PR #1050 (n_layers=3, huber_delta=1.0) |
+|---|---|---|---|
+| `val_avg/mae_surf_p` | 56.4257 | **-3.51%** | -8.4% |
+| `test_avg/mae_surf_p` | 49.6211 | **-3.38%** | -8.7% |
+| `val_single_in_dist/mae_surf_p` | 59.6760 | (n/a — different stack) | -12.6% |
+| `val_geom_camber_rc/mae_surf_p` | 70.4189 | | -3.1% |
+| `val_geom_camber_cruise/mae_surf_p` | 38.6126 | | -14.0% |
+| `val_re_rand/mae_surf_p` | 56.9952 | | -5.8% |
+| `test_avg/mae_surf_Ux` | 0.7912 | | -7.4% |
+| `test_avg/mae_surf_Uy` | 0.3831 | | -8.5% |
+
+- **Run config:** n_layers=2, but huber_delta=1.0 in this run (NOT 0.1) — student branched from PR #1050 era.
+- **Throughput:** 26/30 epochs in budget (vs 22 for n_layers=3); peak VRAM 22.22 GB (-27%); params 1,141,299 (-29%).
+- **Metrics JSONL:** `metrics/charliepai2f5-nezuko-n-layers-2-93bfb7ek.jsonl`
+- **Analysis:** Strong throughput-driven win. Cosine fully spent (final LR=2.16e-5, deeper than PR #1050's 8.27e-5) so the model entered the low-LR fine-tuning regime — exactly the regime PR #1118 (epochs=50) demonstrated was missing for that experiment. Val still falling at termination, so further headroom exists. **MERGED.** All four splits improved on both val and test, no regression. **CRITICAL COMPOUND OPPORTUNITY:** This run did not include huber_delta=0.1 (PR #1121's win). Combining n_layers=2 + huber_delta=0.1 should compound to even better numbers — recommended baseline command going forward.
+
+### 2026-04-29 11:20 — PR #1118 (CLOSED): Extend training budget epochs=50
+- Student: charliepai2f5-edward | Branch: `charlie5-edward/epochs-50`
+- **Hypothesis:** Longer T_max=50 keeps LR in useful range longer. Mitigates the timeout-truncation seen in PR #1050.
+- **Result:** val=65.1571 (+5.8% vs PR #1050), test=56.7468 (+4.4%). Hit 30-min timeout at epoch 22 — same as PR #1050. LR at termination 2.97e-4 vs PR #1050's 8.27e-5.
+- **Analysis:** Hypothesis cleanly disproved. T_max=50 stretches cosine so the run terminates at LR 3.6× higher than PR #1050 — the model never enters the low-LR fine-tuning regime. The gain in PR #1050 wasn't from more steps; it was from those steps happening at lower LR. Excellent diagnosis from student. **CLOSED.** Follow-up assigned to edward: `epochs=26` (T_max-aligned to actual budget under n_layers=2 throughput).
 
 ### 2026-04-29 11:00 — PR #1125 (CLOSED): Reduced surface weight surf_weight=5
 - Student: charliepai2f5-frieren | Branch: `charlie5-frieren/surf-weight-5`
