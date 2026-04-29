@@ -4,29 +4,54 @@
 
 | Metric | Value |
 |--------|-------|
-| `val_avg/mae_surf_p` | **61.5855** (PR #1050 — PSN + epochs=30, epoch 22/30) |
-| `test_avg/mae_surf_p` | **54.3573** (PR #1050) |
+| `val_avg/mae_surf_p` | **58.4790** (PR #1121 — huber_delta=0.1, epoch 22/30) |
+| `test_avg/mae_surf_p` | **51.3554** (PR #1121) |
 
-**Source:** PR #1050 — PSN + epochs=30 on compound stack
-- Branch: `charliepai2e1-edward/psn-plus-epochs-30`
-- Config: n_layers=3, slice_num=16, n_hidden=256, n_head=8, loss=huber, huber_delta=1.0, ema_decay=0.999, grad_clip=1.0, per_sample_norm, epochs=30, lr=5e-4, batch_size=4, surf_weight=10.0
-- Val still falling ~2.8%/epoch at epoch 22 when 30-min timeout hit (LR=8.27e-5)
+**Source:** PR #1121 — Tighter Huber loss (huber_delta=0.1) on compound PSN stack
+- Branch: `charlie5-fern/huber-delta-0.1`
+- Config: n_layers=3, slice_num=16, n_hidden=256, n_head=8, loss=huber, huber_delta=0.1, ema_decay=0.999, grad_clip=1.0, per_sample_norm, epochs=30, lr=5e-4, batch_size=4, surf_weight=10.0
+- Val still falling ~2.9%/epoch at epoch 22 when 30-min timeout hit (LR=8.27e-5)
 
 **Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper reference)
 
 ## Round r5 — Starting Point
 
-All students start from the compound charlie config (PR #1050):
+All students start from the compound charlie config with huber_delta=0.1 (PR #1121 winner):
 
 ```
-python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 1.0 --epochs 30 \
+python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 30 \
   --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm
 ```
 *(Note: n_layers=3, slice_num=16 are hardcoded in model_config dict in train.py)*
 
 ## Round r5 — Merged Winners
 
-*(None yet — round just started)*
+### PR #1121 — Tighter Huber loss: huber_delta=0.1 (2026-04-29)
+**Student:** charliepai2f5-fern | **Branch:** charlie5-fern/huber-delta-0.1
+
+| Metric | Value |
+|--------|-------|
+| `val_avg/mae_surf_p` | **58.4790** (epoch 22/30 — terminated by 30-min timeout) |
+| `val_single_in_dist/mae_surf_p` | 66.2861 |
+| `val_geom_camber_rc/mae_surf_p` | 71.2084 |
+| `val_geom_camber_cruise/mae_surf_p` | 39.3226 |
+| `val_re_rand/mae_surf_p` | 57.0991 |
+| `val_avg/mae_surf_Ux` | (per-channel improved -14.81% on test) |
+| `test_avg/mae_surf_p` | **51.3554** |
+| `test_single_in_dist/mae_surf_p` | 59.5717 |
+| `test_geom_camber_rc/mae_surf_p` | 64.9563 |
+| `test_geom_camber_cruise/mae_surf_p` | 32.3451 |
+| `test_re_rand/mae_surf_p` | 48.5484 |
+| `test_avg/mae_surf_Ux` | 0.7276 |
+| `test_avg/mae_surf_Uy` | 0.3657 |
+| `test_avg/mae_vol_p` | 56.5247 |
+
+**vs prior baseline (PR #1050):** 58.4790 vs 61.5855 → **-5.04% val improvement**
+**Test improvement:** 51.3554 vs 54.3573 → **-5.52% test improvement**
+**Model parameters:** 1,606,219 | **Peak VRAM:** 30.45 GB | **Train time:** 30.91 min (timeout)
+**Note:** Cruise (-14.4%) and re_rand (-9.4%) gained most — exactly the splits with extreme Re where tighter Huber clamp was predicted to help. geom_camber_rc test +1.05% (small regression on uniform high-Re split).
+**Metrics JSONL:** `metrics/charliepai2f5-fern-huber-delta-0.1-jzaml14l.jsonl`
+**Reproduce:** `python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 30 --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm`
 
 ## Prior Round Winners (History)
 
@@ -168,5 +193,6 @@ python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 1.0 --epoch
 - 2026-04-29: PR #1005 merged. n_layers=3, slice_num=16: val_avg=94.6541 (-8.31%).
 - 2026-04-29: PR #795 merged. PSN: val_avg=90.4014 (-4.50%).
 - 2026-04-28: PR #1015 merged. Epochs=24: val_avg=66.8085 (-26.1%).
-- 2026-04-29: PR #1050 merged. PSN+epochs=30: val_avg=61.5855 (-7.8%). **Current best.**
+- 2026-04-29: PR #1050 merged. PSN+epochs=30: val_avg=61.5855 (-7.8%).
 - 2026-04-29: Round r5 launched on icml-appendix-charlie-pai2f-r5.
+- 2026-04-29: PR #1121 merged. huber_delta=0.1: val_avg=58.4790 (-5.04%), test_avg=51.3554 (-5.52%). **Current best.**
