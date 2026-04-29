@@ -23,36 +23,39 @@ denormalized target space.
 
 | PR   | W&B run    | val_avg/mae_surf_p | test_avg/mae_surf_p | Notes                                |
 |------|------------|---------------------|---------------------|--------------------------------------|
-| **#769** | [hp87pun7](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/hp87pun7) | **102.86** | **94.83** | Huber δ=0.5, no EMA, epoch 14, **MERGED ✓** |
+| **#775** | [nezuko w0-clip0.5-ema0.99](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1) | **96.54** | **85.33** | warmup=0 + clip=0.5 + EMA=0.99 + Huber δ=0.5, epoch 14, **MERGED ✓** |
+| #769 | [hp87pun7](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/hp87pun7) | 102.86 | 94.83 | Huber δ=0.5, no clip, no EMA, **MERGED ✓** |
 | #773 | [5yzk5722](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/5yzk5722) | 119.35 | 108.79 | EMA decay=0.99, no Huber, **MERGED ✓** |
 | #846 (ref) | [bv3x1tp6](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/bv3x1tp6) | 140.95 | 128.32 | Unmodified default @ 14 ep — canonical reference |
 
-**Pending wins (not yet baseline):**
-- PR #775 (nezuko warmup5-clip0.5): val_avg=115.01, test_avg=101.64 — originally beat EMA-only baseline; re-running with --ema_decay 0.99 to compare against new Huber baseline.
-
 **Accumulated gains vs unmodified default (140.95/128.32):**
 - EMA alone (PR #773): −15.4% val / −15.3% test
-- Huber δ=0.5 alone (PR #769): **−27.0% val / −26.2% test** — *largest single win so far*
-- Huber + EMA stack: **untested — in progress** (alphonse PR in flight)
+- Huber δ=0.5 alone (PR #769): −27.0% val / −26.2% test
+- **clip=0.5 + warmup=0 + Huber δ=0.5 + EMA=0.99 (PR #775): −31.5% val / −33.5% test** — *new best*
+- Huber + EMA (no clip) stack: in progress (alphonse PR #881)
 
-## Per-split test metrics (current best — PR #769, Huber δ=0.5, no EMA)
+## Per-split test metrics (current best — PR #775, warmup=0 + clip=0.5 + Huber δ=0.5 + EMA=0.99)
 
 | Split                      | test/mae_surf_p |
 |----------------------------|----------------|
-| test_single_in_dist        | 109.68         |
-| test_geom_camber_rc        |  99.91         |
-| test_geom_camber_cruise    |  76.12         |
-| test_re_rand               |  93.62         |
+| test_single_in_dist        | ~100           |
+| test_geom_camber_rc        | ~88            |
+| test_geom_camber_cruise    | ~67            |
+| test_re_rand               | ~86            |
 
-Biggest gains vs EMA baseline: rc −17.8%, re_rand −14.7% — exactly the heavy-tailed OOD splits the Huber hypothesis targeted.
+*(Per-split breakdown from nezuko's results — see PR #775 comments for exact values.)*
 
 ## Reproduce best checkpoint
 
 ```bash
 cd target/
-python train.py --agent willowpai2e1-alphonse \
-    --wandb_group huber-delta-sweep-v2 --wandb_name huber-delta0.5-v2 \
-    --huber_delta 0.5
+python train.py --agent willowpai2e1-nezuko \
+    --wandb_group warmup-clip-ema-huber \
+    --warmup_epochs 0 --clip_norm 0.5 --huber_delta 0.5 --ema_decay 0.99
 ```
 
-**For future experiments: always include both `--huber_delta 0.5` and `--ema_decay 0.99`** (two independent merged wins that are expected to stack). Neither is default — both must be set explicitly.
+**Default flags for all future experiments:**
+```
+--huber_delta 0.5 --ema_decay 0.99 --warmup_epochs 0 --clip_norm 0.5
+```
+All four merged wins — must be set explicitly (none are defaults in train.py).
