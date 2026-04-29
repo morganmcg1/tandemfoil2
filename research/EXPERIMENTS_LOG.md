@@ -1,5 +1,66 @@
 # SENPAI Research Results
 
+## 2026-04-29 01:20 — PR #881: Huber δ-scan + EMA stack ✓ MERGED (new best — massive win)
+
+- Branch: `willowpai2e1-alphonse/huber-ema-stack`
+- Hypothesis: Huber + EMA operate on orthogonal aspects of training (per-sample loss vs weight trajectory) and should stack. δ scan ∈ {0.1, 0.25, 0.5} + EMA=0.99 to confirm stacking and find the δ floor.
+
+| Variant | best_epoch | val_avg/mae_surf_p | Δ vs Huber-alone | test_avg/mae_surf_p | W&B run |
+|---------|:----------:|-------------------:|:----------------:|--------------------:|---------|
+| **huber δ=0.1 + ema 0.99** | 14 | **85.23** | **−17.1%** | **76.64** | [jej4y8gt](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/jej4y8gt) |
+| huber δ=0.5 + ema 0.99 | 14 | 90.17 | −12.3% | 80.33 | [c55ye285](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/c55ye285) |
+| huber δ=0.25 + ema 0.99 | 14 | 90.42 | −12.1% | 80.42 | [ek98s7vq](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/ek98s7vq) |
+| MSE + ema 0.99 (control) | 13 | 119.73 | — | 107.09 | [14coc4pt](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/14coc4pt) |
+
+All runs: EMA=0.99, no clip, no warmup. Huber-alone baseline (PR #769): val=102.86, test=94.83.
+
+Per-split val (δ=0.1 + EMA): single=103.34, rc=96.44, cruise=64.23, re_rand=76.91
+
+Per-split test (δ=0.1 + EMA): **single=94.31, rc=86.19, cruise=53.08, re_rand=72.97**
+
+Stack confirmation: Huber+EMA nearly additive on log scale (Huber alone over MSE+EMA = −14.1%; EMA alone over Huber = −12.3%; combined vs MSE+EMA = −24.7% vs −27% expected if perfectly multiplicative).
+
+δ-curve with EMA on: δ=0.5 and δ=0.25 are tied; δ=0.1 breaks away by 5.5%. Monotonicity continues past δ=0.5; δ=0.1 still descending at epoch 14 (strong evidence floor not reached).
+
+**Analysis and conclusions:**
+
+The PR-881 Huber+EMA combination without clip yields val=85.23 — **beating the prior 4-way stack champion (PR #775, val=96.54)** by 11.7%. This means δ=0.1 is the dominant lever, larger than the clip+warmup combination tested in PR #775. The cruise split benefit is extraordinary: test_cruise=53.08 vs 76.12 (Huber-δ=0.5-alone) = −30.3%.
+
+Key implication: whether clip+warmup=0 still help at δ=0.1 is an open question. The 5-way stack (δ=0.1 + clip + warmup=0 + EMA) may push further into the low-70s or even high-60s range on val. Assigned to alphonse as follow-up (PR #957).
+
+Control reproduced within 0.3% of PR #773 baseline (119.73 vs 119.35). MSE+EMA comparison is clean.
+
+**New best: val=85.23, test=76.64. Merged. Minimum required flags: --huber_delta 0.1 --ema_decay 0.99**
+
+---
+
+## 2026-04-29 01:20 — PR #776: Deeper Transolver n_layers=8 ✗ CLOSED (budget-incompatible)
+
+- Branch: `willowpai2e1-tanjiro/deeper-model`
+- Hypothesis: n_layers=8 (vs default 5) provides more depth of reasoning for complex tandem-foil flow topology, particularly for cruise-split wake interaction.
+
+| Variant | n_layers | lr | Epochs | val_avg/mae_surf_p | test_avg/mae_surf_p | peak VRAM | W&B run |
+|---------|:--------:|:---:|:------:|-------------------:|--------------------:|:---------:|---------|
+| layers8-lr3e4 | 8 | 3e-4 | 9 | 112.39 | 101.46 | 64.5 GB | [ig4rsoc6](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/ig4rsoc6) |
+| layers8-lr5e4 | 8 | 5e-4 | 9 | 113.82 | 102.81 | 64.5 GB | [51pqcdny](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/51pqcdny) |
+| layers10-lr3e4 | 10 | 3e-4 | 7 | 122.84 | 110.72 | 79.5 GB | [a9dwqw4v](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/a9dwqw4v) |
+
+All runs: Huber δ=0.5 + EMA=0.99. Budget: n_layers=8 at 3.54 min/epoch → 9 epochs in 30 min; n_layers=10 at 4.34 min/epoch → 7 epochs.
+
+Test cruise (layers8-lr3e4): 71.30 — small improvement vs Huber-alone baseline's 76.12, but obliterated by PR #881's δ=0.1+EMA result (53.08).
+
+**Analysis and conclusions:**
+
+Hypothesis weakly supported but practically unrewarded: depth=8 is under-converged at 9 epochs (still descending), but the new PR #881 winner (val=85.23) at n_layers=5 already beats depth=8 by 27 val units. The cruise-split signal for depth (71 vs 76) is consistent with long-range-wake-coupling intuition but irrelevant against the new baseline.
+
+The binding constraint is **per-epoch compute cost**. At 1.65× per-epoch slowdown for depth=8, BF16 mixed precision would need to deliver ≥1.65× throughput to make depth=8 competitive. Assigned to tanjiro as follow-up (PR #959).
+
+Useful outcome: `--n_layers` CLI flag added to train.py; per-epoch timing profiling (2.14 min/ep at n=5, 3.54 at n=8, 4.34 at n=10) gives concrete data for budget planning.
+
+**Closed. Budget-binding; architectural direction deferred pending BF16 throughput confirmation.**
+
+---
+
 ## 2026-04-29 01:05 — PR #867: AdamW β₂ scan with EMA ✗ CLOSED (hypothesis rejected)
 
 - Branch: `willowpai2e1-edward/beta2-scan`
