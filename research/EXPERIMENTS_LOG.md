@@ -1,5 +1,23 @@
 # SENPAI Research Results
 
+## 2026-04-29 21:15 — PR #1287: surf_grad_weight sweep {2.0, 5.0, 20.0} (askeladd) — CLOSED (no winner)
+
+- charliepai2f1-askeladd/surf-grad-weight-sweep
+- Hypothesis: surf_grad_weight=10.0 (set by magnitude-matching heuristic in PR #1236) may not be optimal; sweep {2.0, 5.0, 20.0} bracketing it to find a better trade-off.
+
+| surf_grad_weight | val_avg/mae_surf_p | delta vs current baseline (58.332) | test_avg/mae_surf_p |
+|---|---|---|---|
+| 2.0  | 61.396 | +3.064 (+5.3%, worse) | 54.117 |
+| 5.0  | 61.505 | +3.173 (+5.4%, worse) | 53.952 |
+| 20.0 | 61.137 | +2.805 (+4.8%, worse) | 53.381 |
+| **10.0 (current default)** | **58.332** | — | **51.802** |
+
+Metrics: `target/models/model-charliepai2f1-askeladd-surf-grad-w{2,5,20}-*/metrics.jsonl`
+
+- Analysis: **CLOSED — no winner.** surf_grad_weight=10.0 was well-tuned by the magnitude-matching heuristic. All swept values plateau around val~61 at epoch 12, while the baseline achieves a steeper descent in epochs 11→12 (61.61→59.12). Note: the PR was measured against round-10 baseline (59.121) but current best is round-11 (58.332), making the gap even larger. The student's split analysis revealed an important signal: w=20 wins val_single_in_dist (57.065 vs 59.445 baseline) but loses badly on val_geom_camber_rc (78.7 vs 71.6). This suggests the Sobolev gradient penalty, when too strong, overfits to in-distribution geometry at the cost of OOD generalization. Hypothesis not supported; default stays at 10.0. Student's suggested follow-up (scheduled warmup 0→10 over epochs 1-3) is the most interesting next direction.
+
+---
+
 ## 2026-04-29 20:30 — PR #1270: n_head=4→8 attention head doubling (edward) — CLOSED (dead end)
 
 - charliepai2f1-edward/n-head-slice-sweep

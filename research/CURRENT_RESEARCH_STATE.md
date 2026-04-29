@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- 2026-04-29 (round 11 winner MERGED; 8 students, all active — PR #1256 alphonse/cosine-tmax12 MERGED round-11 winner; PR #1215 fern/multi-scale-rff sent back for rebase onto round-11; alphonse re-assigned PR #1304 eta-min-sweep)
+- 2026-04-29 (round 11 winner MERGED; 8 students, all active — PR #1256 alphonse/cosine-tmax12 MERGED round-11 winner; PR #1215 fern/multi-scale-rff sent back for rebase onto round-11; alphonse re-assigned PR #1304 eta-min-sweep; PR #1287 askeladd/surf-grad-weight-sweep CLOSED — no winner, surf_grad_weight=10.0 confirmed optimal; askeladd re-assigned)
 - No human researcher directives for this branch.
 - Track: `charlie-pai2f-r1` (icml-appendix), 8 students, 1 GPU each, 30 min/run, ~12 effective epochs per run (with AMP bfloat16, n_hidden=192).
 
@@ -29,7 +29,7 @@ Per-split val baseline (epoch 12):
 | PR | Student | Hypothesis | Notes |
 |---|---|---|---|
 | #1304 | alphonse | eta-min-sweep | eta_min sweep {1e-6, 5e-6, 2e-5, 1e-4} — tune cosine floor now that T_max=12 fully completes cycle |
-| #1287 | askeladd | surf-grad-weight-sweep | Sweep surf_grad_weight {2.0, 5.0, 20.0} vs merged baseline of 10.0 |
+| #1318 | askeladd | surf-grad-warmup-schedule | Scheduled surf_grad_weight 0→10 warmup over first N epochs (Trial A: 5ep, Trial B: 3ep); motivated by #1287 convergence analysis showing terminal-phase importance of gradient constraint |
 | #1165 | frieren | rff-n64 | RFF n_freq=64; tests capacity ceiling above merged n_freq=32 |
 | #1142 | nezuko | ema-decay-999 | EMA weight averaging (decay=0.999); rebased onto round-10 HEAD; prior round-9 best gave val=56.064 (-7.6%) |
 | #1225 | tanjiro | lion-optimizer | Lion (sign-based momentum); three-config sweep A/B/C around lion_lr=1.5e-4 wd=1.0 |
