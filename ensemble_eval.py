@@ -36,6 +36,8 @@ def main():
     ap.add_argument('--splits_dir', default='/mnt/new-pvc/datasets/tandemfoil/splits_v2')
     ap.add_argument('--batch_size', type=int, default=4)
     ap.add_argument('--surf_weight', type=float, default=10.0)
+    ap.add_argument('--weights', nargs='*', type=float, default=None,
+                    help='Optional weights for each checkpoint. Default = uniform.')
     args = ap.parse_args()
 
     cfg_paths = args.config_yamls
@@ -79,6 +81,14 @@ def main():
         for name, ds in test_datasets.items()
     }
 
+    weights = None
+    if args.weights:
+        if len(args.weights) != len(models):
+            raise SystemExit(f'--weights count ({len(args.weights)}) != n models ({len(models)})')
+        s = sum(args.weights)
+        weights = [w / s for w in args.weights]
+        print(f'Using weights: {weights}')
+
     test_metrics = {}
     for name, loader in test_loaders.items():
         mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
@@ -99,13 +109,16 @@ def main():
                 x_norm = (x - stats['x_mean']) / stats['x_std']
                 y_norm = (y_safe - stats['y_mean']) / stats['y_std']
 
-                # Average predictions
+                # (Weighted) average predictions
                 preds = []
                 for m in models:
                     p = m({'x': x_norm})['preds']
                     p = torch.where(torch.isfinite(p), p, torch.zeros_like(p))
                     preds.append(p)
-                pred = sum(preds) / len(preds)
+                if weights is None:
+                    pred = sum(preds) / len(preds)
+                else:
+                    pred = sum(w * p for w, p in zip(weights, preds))
 
                 sq_err = (pred - y_norm) ** 2
                 sample_keep = y_finite_per_sample.view(-1, 1).expand(-1, mask.shape[-1])

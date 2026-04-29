@@ -10,12 +10,12 @@
 
 | Metric | Value | Source |
 |---|---|---|
-| **Best single-model `val_avg/mae_surf_p`** | **35.59** | `p3-warmup5-lr3e4-150ep` (snapshot @ ep 138) |
+| **Best single-model `val_avg/mae_surf_p`** | **35.59** | `p3-warmup5-lr3e4-150ep` (ep 138) |
 | **Best single-model `test_avg/mae_surf_p`** | **31.05** | `p3-warmup3-clip-150ep-seed7` (ep 143) |
-| **Best ensembled `test_avg/mae_surf_p`** | **27.07** | 5-model ensemble (see below) |
+| **Best ensembled `test_avg/mae_surf_p`** | **26.97** | 5-model val-weighted ensemble |
 | Phase-1 baseline `val_avg/mae_surf_p` (default × 30 ep cosine) | 94.59 | `p1-baseline` |
 | **Single-model improvement over Phase-1 baseline (val)** | **62.4 %** | — |
-| **Ensemble improvement over best single model (test)** | **12.8 %** | — |
+| **Ensemble improvement over best single model (test)** | **13.1 %** | — |
 
 The single-model winners (test 31.05 and 31.18) use the **unchanged** Transolver
 architecture (`n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2`)
@@ -23,28 +23,35 @@ trained with **3-epoch linear warmup + gradient-norm clip 1.0** under a cosine
 schedule that fully anneals inside the wall-clock budget. The single best test
 score is from seed 7 of the warmup/clip recipe.
 
-**Ensembling the four default-arch top runs plus the `h=256` run** (simple
-average of normalized predictions, then denormalize-and-score) drops
-`test_avg/mae_surf_p` from 31.05 → 27.07 with no extra training compute —
-a 12.8 % improvement on the metric the paper reports.
+**Ensembling the four default-arch top runs plus the `h=256` run** (average
+of normalized predictions, then denormalize-and-score) drops
+`test_avg/mae_surf_p` from 31.05 → 26.97 with no extra training compute — a
+13.1 % improvement on the paper-facing metric.
 
 | Ensemble | `test_avg/mae_surf_p` |
 |---|---:|
 | Single best (`p3-warmup3-clip-150ep-seed7`) | 31.05 |
-| 2-model (warmup3-clip-seed7 + amp-bs4-warm-clip-180) | 28.28 |
-| 3-model (+ warmup3-clip default seed) | 27.64 |
-| 4-model (+ warmup5-lr3e4) | 27.11 |
-| **5-model (+ h256-warm-clip)** | **27.07** |
+| 2-model uniform (warmup3-clip-seed7 + amp-bs4-warm-clip-180) | 28.28 |
+| 3-model uniform (+ warmup3-clip default seed) | 27.64 |
+| 4-model uniform (+ warmup5-lr3e4) | 27.11 |
+| 5-model uniform (+ h256-warm-clip) | 26.99 |
+| **5-model val-weighted (`w_i ∝ 1/val_i`)** | **26.97** |
+| 8-model uniform (all Phase-3 candidates) | 28.21 |
 
-Per-split test surface-pressure MAE for the **5-model ensemble** (winning final):
+Two takeaways from the ablation: adding more *good* models monotonically
+helps, but adding *weak* models (the 8-model row includes the under-trained
+`h=192/l=6` variants and `n_layers=8`) pulls the average back up. Inverse-val
+weighting nudges the ensemble another 0.02 MAE.
+
+Per-split test surface-pressure MAE for the **5-model val-weighted ensemble** (winning final):
 
 | Test split | MAE (surf p) | MAE (surf Ux) | MAE (surf Uy) |
 |---|---:|---:|---:|
-| `test_single_in_dist` | 28.03 | 0.34 | 0.22 |
-| `test_geom_camber_rc` | 39.89 | 0.61 | 0.34 |
-| `test_geom_camber_cruise` | 14.71 | 0.23 | 0.14 |
-| `test_re_rand` | 25.66 | 0.37 | 0.22 |
-| **`test_avg`** | **27.07** | 0.39 | 0.23 |
+| `test_single_in_dist` | 27.93 | 0.34 | 0.22 |
+| `test_geom_camber_rc` | 39.76 | 0.61 | 0.33 |
+| `test_geom_camber_cruise` | 14.66 | 0.23 | 0.14 |
+| `test_re_rand` | 25.54 | 0.37 | 0.22 |
+| **`test_avg`** | **26.97** | 0.38 | 0.23 |
 
 Per-split test surface-pressure MAE for the best **single-model** checkpoint
 (`p3-warmup3-clip-150ep-seed7`):
@@ -216,12 +223,13 @@ CUDA_VISIBLE_DEVICES=$GPU python -u test_eval.py \
   --batch_size 4
 ```
 
-### Ensemble the 5 winning checkpoints (final 27.07 number)
+### Ensemble the 5 winning checkpoints, val-weighted (final 26.97 number)
 
 ```bash
+# Weights are inverse-val (1/best_val_avg_mae_surf_p) for the 5 checkpoints.
 CUDA_VISIBLE_DEVICES=$GPU python -u ensemble_eval.py \
   --checkpoints \
-    models/snapshots/ll7xn8sp-checkpoint-final.pt \
+    models/snapshots/ll7xn8sp-checkpoint.pt \
     models/snapshots/oat51afr-checkpoint.pt \
     models/snapshots/mmzdsva3-checkpoint.pt \
     models/snapshots/nlpe7zi8-checkpoint.pt \
@@ -232,6 +240,7 @@ CUDA_VISIBLE_DEVICES=$GPU python -u ensemble_eval.py \
     models/snapshots/mmzdsva3-config.yaml \
     models/snapshots/nlpe7zi8-config.yaml \
     models/snapshots/wgd8zkqm-config.yaml \
+  --weights 0.0277 0.0277 0.0268 0.0281 0.0256 \
   --batch_size 4
 ```
 
