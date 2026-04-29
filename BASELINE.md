@@ -4,8 +4,8 @@
 
 | Metric | Value |
 |--------|-------|
-| `val_avg/mae_surf_p` | **104.1120** (PR #808 — bf16 + n_hidden=256 + n_head=8 + Huber + epochs=12, epoch 10) |
-| `test_avg/mae_surf_p` | **40.927** (prior competition best) |
+| `val_avg/mae_surf_p` | **103.2182** (PR #882 — EMA(decay=0.999) + bf16 + n_hidden=256 + n_head=8 + Huber + epochs=12, epoch 10) |
+| `test_avg/mae_surf_p` | **92.4867** (PR #882) |
 
 **Source:** README.md prior competition results — PR #32 (morganmcg1/tandemfoil2): "Single-head nl3/sn16 triple compound"
 - W&B run: [ip8hn4tx](https://wandb.ai/wandb-applied-ai-team/senpai-kagent-v-students/runs/ip8hn4tx)
@@ -17,6 +17,26 @@
 **Config (best known):** n_layers=3, slice_num=16, n_hidden tuned
 
 ## Round 1 — Merged Winners
+
+### PR #882 — EMA model weights (decay=0.999) on compound baseline (2026-04-29)
+**Student:** charliepai2e1-nezuko | **Branch:** charliepai2e1-nezuko/ema-model-weights
+
+| Metric | Value |
+|--------|-------|
+| `val_avg/mae_surf_p` | **103.2182** (epoch 10/12) |
+| `val_single_in_dist/mae_surf_p` | 125.0237 |
+| `val_geom_camber_rc/mae_surf_p` | 117.0167 |
+| `val_geom_camber_cruise/mae_surf_p` | 78.0963 |
+| `val_re_rand/mae_surf_p` | 92.6361 |
+| `test_avg/mae_surf_p` | 92.4867 |
+| `test_single_in_dist/mae_surf_p` | 112.5660 |
+| `test_geom_camber_rc/mae_surf_p` | 105.3162 |
+| `test_geom_camber_cruise/mae_surf_p` | 61.7016 |
+| `test_re_rand/mae_surf_p` | 90.3631 |
+
+**vs prior baseline (PR #808):** 103.22 vs 104.11 → **-0.86% improvement**
+**Metric summary:** `target/metrics/charliepai2e1-nezuko-ema-rebased-i2fjdqe3.jsonl`
+**Reproduce:** `cd target/ && python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 1.0 --epochs 12 --grad_clip 1.0 --ema_decay 0.999`
 
 ### PR #808 — bf16 mixed precision + wider model (n_hidden=256, n_head=8) + Huber + epochs=12 (2026-04-28)
 **Student:** charliepai2e1-fern | **Branch:** charliepai2e1-fern/bf16-wider-model
@@ -81,12 +101,15 @@
 
 | PR | Student | Hypothesis | Decision | Notes |
 |----|---------|------------|----------|-------|
+| #795 R3 | thorfinn | Huber + per-sample loss norm combined | **Rebase needed** | Winner: 93.3991 (-9.5% vs PR #808). Merge conflict after PR #882. Rebase onto advisor branch + re-run. |
 | #795 R2 | thorfinn | Huber + per-sample loss norm combined | **Rebase needed** | Winner: 104.2271 (-9.9% vs Huber baseline). Merge conflict after PR #788. Rebase onto advisor branch + re-run. |
 | #795 R1 | thorfinn | Per-sample loss normalization (MSE) | Revision requested | -11.5% vs MSE but above Huber baseline 115.65. Re-run with Huber+norm combined (done, see R2). |
 | #794 | tanjiro | LR warmup 5 epochs + cosine | Revision requested | -4.87% vs no-warmup but above Huber baseline. Shorten warmup to 2 epochs + stack on Huber. |
-| #792 | frieren | Deeper Transolver: n_layers=6, lr=3e-4 | Sent back | Depth inconclusive at budget (n=5: 109.62, n=6: 113.83 at equal wall-clock). Resubmit as Huber + grad_clip 1.0 (n=5 default). |
+| #792 R4 | frieren | Huber + grad_clip 1.0 on rebased compound (post-#808) | **Rebase needed** | **Winner: val_avg=90.7796 (-12.0% vs PR #882)**. Wins all 4 val + 4 test splits (test_avg=81.12). Merge conflict on advisor branch (post-#882). Rebase + re-run on full compound w/ EMA. |
+| #792 R2 | frieren | Deeper Transolver: n_layers=6, lr=3e-4 | Sent back | Depth inconclusive at budget. Hidden gem: n=5 + grad_clip 109.62. Redirected to Huber+grad_clip. |
 | #789 | askeladd | Gradient clipping (max_norm=1.0) | **Rebase needed** | Winner: 114.3451. Merge conflict on advisor branch. Rebase + re-run. |
-| #808 | fern | bf16 mixed precision + wider model (n_hidden=256, n_head=8) | **MERGED** | val=104.1120 (PR #808 Round 3 with Huber+epochs=12). New best. |
+| #808 | fern | bf16 mixed precision + wider model (n_hidden=256, n_head=8) | **MERGED** | val=104.1120 (PR #808 Round 3 with Huber+epochs=12). |
+| #882 | nezuko | EMA model weights (decay=0.999) on compound | **MERGED** | val=103.2182. Current best baseline. |
 
 ## Round 1 — Closed
 
@@ -98,11 +121,14 @@
 
 | PR | Student | Hypothesis | Notes |
 |----|---------|------------|-------|
-| #882 | nezuko | EMA model weights (decay=0.999) on Huber baseline | Running (first time) |
-| #794 | tanjiro | LR warmup (2 epochs) + Huber | Revision in progress |
-| #795 | thorfinn | Huber + per-sample norm — rebase + re-run | Awaiting rebase |
-| #827 | alphonse | surf_weight sweep (20/30/50) on Huber baseline | **MERGED** — surf=30 wins (109.5716) |
-| #828 | edward | AdamW weight_decay sweep (1e-4/1e-3/1e-2) on Huber baseline | Running (first time) |
+| #960 | alphonse | surf_weight sweep (20/30/50) on compound + grad_clip baseline | Running (new assignment, replaces unfilled #954) |
+| #942 | nezuko | EMA decay sweep: 0.99/0.995 vs 0.999 on compound | Running |
+| #904 | fern | Huber delta sweep: 0.25/0.5/1.0/2.0 on wider-model baseline | Running |
+| #828 | edward | AdamW weight_decay sweep (1e-4/1e-3/1e-2) on Huber baseline | Running |
+| #794 | tanjiro | LR warmup + Huber | Revision in progress |
+| #795 | thorfinn | Huber + per-sample norm — rebase + re-run | Awaiting rebase (R3 winner 93.40) |
+| #792 | frieren | Huber + grad_clip 1.0 on rebased compound | Awaiting rebase (R4 winner 90.78) |
+| #789 | askeladd | Gradient clipping (max_norm=1.0) | Awaiting rebase (winner 114.35) |
 
 ### Key Infrastructure Fix (PR #792 Round 2)
 - `--grad_clip 1.0` + upstream pred/GT sanitization in `evaluate_split` resolves NaN propagation on `test_geom_camber_cruise`.
@@ -126,3 +152,7 @@
 - 2026-04-28 23:30: PR #792 R2 reviewed — depth hypothesis inconclusive; hidden gem: n=5 + grad_clip achieves 109.62 (below Huber baseline); sent back for Huber+grad_clip focused retest. NaN fix infrastructure confirmed working.
 - 2026-04-28 22:57: PR #827 merged. Huber+surf_weight=30 sets new best val_avg/mae_surf_p = 109.5716 (-5.26% vs Huber baseline 115.6496). New compound baseline: --loss huber --huber_delta 1.0 --surf_weight 30.
 - 2026-04-28: PR #808 merged. bf16 + n_hidden=256 + n_head=8 + Huber + epochs=12 sets new best val_avg/mae_surf_p = 104.1120 (-4.97% vs PR #827 baseline 109.5716). New compound baseline: --n_hidden 256 --n_head 8 --loss huber --huber_delta 1.0 --epochs 12.
+- 2026-04-29: PR #882 merged. EMA decay=0.999 on compound sets new best val_avg/mae_surf_p = 103.2182 (-0.86% vs PR #808). Current baseline.
+- 2026-04-29: PR #792 R4 reviewed — outstanding result (val_avg=90.7796, -12.0% vs #882, wins on every val+test split) but merge-conflicted; sent back for rebase onto post-#882 advisor branch.
+- 2026-04-29: PR #954 (alphonse, surf_weight=30 on compound) prematurely closed without running results; re-assigned as PR #960 (surf_weight 20/30/50 sweep on compound + grad_clip).
+- 2026-04-29: Fixed label mismatch on PR #942 (`student:nezuko` → `student:charliepai2e1-nezuko`).
