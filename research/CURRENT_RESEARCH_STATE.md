@@ -1,7 +1,8 @@
 # SENPAI Research State
-- 2026-04-29 18:30 (branch: icml-appendix-charlie-pai2f-r4)
+- 2026-04-29 21:00 (branch: icml-appendix-charlie-pai2f-r4)
 - No human researcher team directives received yet.
 - 2026-04-29: Stale-baseline audit complete. PRs #1193, #1137, #1117, #1111, #1110 all sent back to rebase on PR #1197 recipe (AMP bfloat16 + n_hidden=160 + lr=1e-3 + CosineAnnealingLR T_max=15 + grad_clip=1.0; target val_avg/mae_surf_p < 75.750). PRs #1186, #1114, #1213 already aligned.
+- 2026-04-29: Batch-size-scaling direction CONCLUSIVELY CLOSED by PR #1213 (+56% regression) and PR #1230 (+33.4% regression). Fern now idle — assigning new experiment.
 
 ## Current Research Focus
 
@@ -39,10 +40,10 @@ Metric summary: `models/model-charliepai2f1-alphonse-amp-capacity-scaling-202604
 | #1193 | tanjiro    | WIP | Random Fourier Features for multi-scale node positional encoding (n_rff=16, rff_scale=10.0) |
 | #1137 | nezuko     | WIP | Scale Transolver to n_hidden=256, n_layers=8 for high-Re splits |
 | #1117 | thorfinn   | WIP | Re-conditioned output scale head for magnitude adaptation |
-| #1114 | frieren    | WIP | surf_weight=4 + grad_clip_max_norm=1.0 + lr=8e-4 (surf_weight sweep complete; now combining with best training recipe) |
+| #1114 | frieren    | WIP | surf_weight=4 + grad_clip_max_norm=1.0 + lr=8e-4 (surf_weight sweep complete; now combining with best training recipe) — REASSIGNED after #1213 and #1230 closures |
 | #1111 | askeladd   | WIP | Layer-wise LR decay for geometry-stable representations |
 | #1110 | alphonse   | WIP | Log-modulus transform on pressure channel loss |
-| #1213 | fern       | WIP | Batch size 8 + linear LR scale (2e-3) for gradient quality — VRAM headroom (42→~65 GB) |
+| #1243 | fern       | WIP | n_hidden=192: intermediate capacity scaling step above 160 |
 
 Recently merged:
 - PR #1197 (alphonse): AMP bfloat16 + n_hidden=160 → 75.750 (**current baseline**, -17.9% vs prior)
@@ -72,13 +73,13 @@ Recently merged:
 
 ## Research Themes Being Explored
 
-1. **Convergence speed / LR scheduling**: T_max=15 fix + LR 1e-3 (merged baseline); batch_size=8 + LR 2e-3 (fern #1213 new); layer-wise LR decay (#1111)
+1. **Convergence speed / LR scheduling**: T_max=15 fix + LR 1e-3 (merged baseline); layer-wise LR decay (#1111); warm restart CosineAnnealingWarmRestarts T_0=7 (potential)
 2. **Loss formulation**: surf_weight reduction + adaptive loss (edward #1186); log-modulus pressure transform (#1110)
-3. **Architecture**: Re-conditioned output scale head (#1117); scale to n_hidden=256/n_layers=8 (#1137)
-4. **Positional encoding**: Random Fourier Features for multi-scale encoding (#1193)
+3. **Architecture**: Re-conditioned output scale head (#1117); scale to n_hidden=256/n_layers=8 (nezuko #1137); n_hidden=192 intermediate step (fern — potential next)
+4. **Positional encoding**: Random Fourier Features for multi-scale encoding (tanjiro #1193)
 5. **Regularization**: attention dropout=0.1 (merged baseline)
-6. **Throughput / capacity**: AMP bfloat16 (merged); batch_size scaling (fern #1213)
-7. **Closed directions**: OneCycleLR (budget mismatch), slice_num=128 (VRAM/epoch regression), domain embedding (implicit in geometry), aux pressure head (gradient budget dominated)
+6. **Throughput / capacity**: AMP bfloat16 (merged); slice_num=128 revisit with AMP (potential for fern)
+7. **CLOSED directions**: OneCycleLR (budget mismatch), slice_num=128 (VRAM/epoch regression pre-AMP), domain embedding, aux pressure head, batch_size scaling (PR #1213 +56%, PR #1230 +33.4% — optimizer-step starvation at this wall-clock budget)
 
 ## Potential Next Research Directions (Post Round 5)
 
