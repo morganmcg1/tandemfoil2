@@ -10,6 +10,7 @@
 | #1118 | edward | epochs=50 extended training | CLOSED 04-29 | val=65.16 (+5.8% vs PR #1050) — T_max stretch wasted annealing |
 | #1119 | thorfinn | cosine eta_min=5e-5 | WIP | — |
 | #1120 | nezuko | **n_layers=2 shallower model** | **MERGED 04-29** | **val=56.4257 (-3.51% vs PR #1121), test=49.6211 (-3.38%)** |
+| #1124 | askeladd | weight_decay=0 no L2 | CLOSED 04-29 | val=63.12 (+2.5% vs PR #1050) — OOD-heavy regression confirms wd helps |
 | #1121 | fern | **huber_delta=0.1 tighter loss** | **MERGED 04-29** | **val=58.4790 (-5.04%), test=51.3554 (-5.52%)** |
 | #1122 | alphonse | lr=1e-3 higher LR | CLOSED 04-29 | val=70.23 (+14.0%) — early-phase noise |
 | #1123 | tanjiro | n_hidden=320 wider model | CLOSED 04-29 | val=68.83 (+11.8%) — compute-bound, only 18 epochs |
@@ -72,6 +73,13 @@
 - **Throughput:** 26/30 epochs in budget (vs 22 for n_layers=3); peak VRAM 22.22 GB (-27%); params 1,141,299 (-29%).
 - **Metrics JSONL:** `metrics/charliepai2f5-nezuko-n-layers-2-93bfb7ek.jsonl`
 - **Analysis:** Strong throughput-driven win. Cosine fully spent (final LR=2.16e-5, deeper than PR #1050's 8.27e-5) so the model entered the low-LR fine-tuning regime — exactly the regime PR #1118 (epochs=50) demonstrated was missing for that experiment. Val still falling at termination, so further headroom exists. **MERGED.** All four splits improved on both val and test, no regression. **CRITICAL COMPOUND OPPORTUNITY:** This run did not include huber_delta=0.1 (PR #1121's win). Combining n_layers=2 + huber_delta=0.1 should compound to even better numbers — recommended baseline command going forward.
+
+### 2026-04-29 11:30 — PR #1124 (CLOSED): Remove L2 regularization (weight_decay=0)
+- Student: charliepai2f5-askeladd | Branch: `charlie5-askeladd/weight-decay-0`
+- **Hypothesis:** Default wd=1e-4 may be over-regularizing; removing L2 lets the model fit better.
+- **Result:** val=63.1196 (+2.5% vs PR #1050; +11.9% vs PR #1120), test=55.0130 (+1.2% vs PR #1050). Both seeds confirm. Train loss got smaller; val/test got worse → mild overfitting that wd was suppressing.
+- **Per-split:** OOD-heavy regression. `geom_camber_rc` test +3.14 (+4.5%, the largest single delta) — exactly where mild L2 helps generalization.
+- **Analysis:** Excellent diagnosis from student. The compound stack (PSN + EMA + grad_clip + huber) absorbed enough variance that removing wd just adds noise instead of freeing capacity. Confirms wd=1e-4 is right-sized or slightly under-regularizing. **CLOSED.** Follow-up assigned to askeladd (PR #1136): wd=5e-4 (sweep upward) on the new compound baseline.
 
 ### 2026-04-29 11:20 — PR #1118 (CLOSED): Extend training budget epochs=50
 - Student: charliepai2f5-edward | Branch: `charlie5-edward/epochs-50`

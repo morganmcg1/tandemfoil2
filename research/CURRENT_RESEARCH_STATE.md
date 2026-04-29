@@ -1,8 +1,8 @@
 # SENPAI Research State
 
-- 2026-04-29 11:30
+- 2026-04-29 11:35
 - Most recent research direction from human researcher team: None (no open GitHub Issues)
-- Current research focus: Compounding wins. Round-r5 reviews so far: **2 winners** (PR #1121 huber_delta=0.1, PR #1120 n_layers=2) and **4 closes** (#1118 epochs=50, #1122 lr=1e-3, #1123 n_hidden=320, #1125 surf_weight=5). New baseline (PR #1120): val=56.4257, test=49.6211. Wave-2 hypotheses (PRs #1130-#1133, #1134) probe further: tighter Huber, wider MLP, higher surf_weight, more attention slices, cosine-aligned epochs.
+- Current research focus: Compounding wins. Round-r5 reviews so far: **2 winners** (PR #1121 huber_delta=0.1, PR #1120 n_layers=2) and **5 closes** (#1118 epochs=50, #1122 lr=1e-3, #1123 n_hidden=320, #1124 weight_decay=0, #1125 surf_weight=5). New baseline (PR #1120): val=56.4257, test=49.6211. All 8 students assigned (PRs #1119, #1130-#1136).
 
 ## Current Research Focus and Themes
 
@@ -46,6 +46,7 @@ TandemFoilSet CFD surrogate: predict Ux, Uy, pressure at every mesh node given g
 - `n_hidden=320` (PR #1123): +12% regression. Compute-bound — only 18/30 epochs in budget.
 - `surf_weight=5` (PR #1125): +0.7% regression. Volume-p improved -8% but didn't transfer to surface — Pareto trade.
 - `epochs=50` (PR #1118): +5.8% regression. T_max=50 stretches cosine; run terminates at LR=2.97e-4 (3.6× higher than baseline). Confirms that "match T_max to budget" is the right principle.
+- `weight_decay=0` (PR #1124): +2.5% regression. OOD-heavy (geom_camber_rc test +4.5%). Confirms wd=1e-4 is right-sized — going UP may help (askeladd reassigned to wd=5e-4).
 
 ### Round 5 Experiments In-Flight (2026-04-29 11:30)
 
@@ -57,16 +58,17 @@ TandemFoilSet CFD surrogate: predict Ux, Uy, pressure at every mesh node given g
 | #1132 | frieren | surf_weight=20 (other direction) | -1 to -3% |
 | #1133 | tanjiro | slice_num=24 (attention capacity) | -1 to -3% |
 
-**Wave 3 (newly assigned on PR #1120 baseline):**
+**Wave 3 (newly assigned on PR #1120 + huber_delta=0.1 compound baseline):**
 | PR | Student | Experiment | Predicted Δ vs PR #1120 |
 |----|---------|------------|--------------------------|
 | #1134 | edward | epochs=26 (cosine-aligned to budget) | -1 to -3% |
+| #1135 | nezuko | batch_size=8 (use freed VRAM) | -1 to -3% |
+| #1136 | askeladd | weight_decay=5e-4 (sweep up — OOD focus) | -1 to -2% |
 
 **Wave 1 still running (predates PR #1120):**
 | PR | Student | Experiment | Notes |
 |----|---------|------------|-------|
 | #1119 | thorfinn | cosine eta_min=5e-5 | LR floor — n_layers=3 stack |
-| #1124 | askeladd | weight_decay=0 | No L2 — n_layers=3 stack |
 
 **Important — comparison frame for wave-2 results:** All wave-2 PRs were branched before PR #1120 merged, so they run with `n_layers=3` and measure against PR #1121's val=58.4790 / test=51.3554. **A wave-2 result needs to beat val=56.4257 (current PR #1120 baseline) to merge directly.** Otherwise it's informative but we'd compound it with n_layers=2 in a fresh PR.
 
