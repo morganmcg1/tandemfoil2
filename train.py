@@ -393,6 +393,10 @@ cfg = sp.parse(Config)
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
+# Gradient accumulation: accumulate gradients over N mini-batches before each optimizer step.
+# Effective batch size = batch_size * GRAD_ACCUM_STEPS without extra memory cost.
+GRAD_ACCUM_STEPS = 4
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
 
@@ -447,6 +451,8 @@ run = wandb.init(
         "n_params": n_params,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
+        "grad_accum_steps": GRAD_ACCUM_STEPS,
+        "effective_batch_size": cfg.batch_size * GRAD_ACCUM_STEPS,
     },
     mode=os.environ.get("WANDB_MODE", "online"),
 )
@@ -482,6 +488,8 @@ with open(metrics_dir / "config.json", "w") as f:
         "cfg": asdict(cfg),
         "max_epochs": MAX_EPOCHS,
         "max_timeout_min": MAX_TIMEOUT_MIN,
+        "grad_accum_steps": GRAD_ACCUM_STEPS,
+        "effective_batch_size": cfg.batch_size * GRAD_ACCUM_STEPS,
         "git_commit": _git_commit_short(),
     }, f, indent=2)
 train_metrics_fp = open(train_metrics_path, "w")
@@ -511,8 +519,13 @@ for epoch in range(MAX_EPOCHS):
     epoch_re_weight_max_sum = 0.0
     epoch_re_weight_ratio_max = 0.0
     n_batches = 0
+    n_update_steps = 0
 
-    for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
+    optimizer.zero_grad()
+    n_train_batches = len(train_loader)
+    for batch_idx, (x, y, is_surface, mask) in enumerate(
+        tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False)
+    ):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
@@ -545,35 +558,52 @@ for epoch in range(MAX_EPOCHS):
         surf_loss = (per_sample_surf_loss * re_weight).sum()
         loss = vol_loss + cfg.surf_weight * surf_loss
 
-        optimizer.zero_grad()
-        loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-        optimizer.step()
+        # Scale loss by accumulation factor before backward to keep effective gradient magnitudes
+        # comparable to non-accumulated training (since grads accumulate in .grad over N mini-batches).
+        (loss / GRAD_ACCUM_STEPS).backward()
+
         global_step += 1
         rw_min = re_weight.min().item()
         rw_max = re_weight.max().item()
         rw_ratio = rw_max / max(rw_min, 1e-12)
-        wandb.log({"train/loss": loss.item(),
-                   "train/grad_norm": grad_norm.item(),
-                   "train/re_weight_min": rw_min,
-                   "train/re_weight_max": rw_max,
-                   "train/re_weight_ratio": rw_ratio,
-                   "global_step": global_step})
-        train_metrics_fp.write(json.dumps({
-            "global_step": global_step,
-            "epoch": epoch + 1,
+
+        # Update step every GRAD_ACCUM_STEPS batches, or at the final batch of the epoch
+        # (so leftover gradients aren't dropped if n_train_batches isn't a multiple of GRAD_ACCUM_STEPS).
+        is_update_step = ((batch_idx + 1) % GRAD_ACCUM_STEPS == 0) or (batch_idx + 1 == n_train_batches)
+
+        log_dict = {
             "train/loss": loss.item(),
-            "train/grad_norm": grad_norm.item(),
             "train/re_weight_min": rw_min,
             "train/re_weight_max": rw_max,
             "train/re_weight_ratio": rw_ratio,
-        }) + "\n")
+            "global_step": global_step,
+        }
+        train_record = {
+            "global_step": global_step,
+            "epoch": epoch + 1,
+            "train/loss": loss.item(),
+            "train/re_weight_min": rw_min,
+            "train/re_weight_max": rw_max,
+            "train/re_weight_ratio": rw_ratio,
+            "is_update_step": is_update_step,
+        }
+
+        if is_update_step:
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+            optimizer.step()
+            optimizer.zero_grad()
+            n_update_steps += 1
+            epoch_grad_norm_sum += grad_norm.item()
+            epoch_grad_norm_max = max(epoch_grad_norm_max, grad_norm.item())
+            log_dict["train/grad_norm"] = grad_norm.item()
+            train_record["train/grad_norm"] = grad_norm.item()
+
+        wandb.log(log_dict)
+        train_metrics_fp.write(json.dumps(train_record) + "\n")
         train_metrics_fp.flush()
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
-        epoch_grad_norm_sum += grad_norm.item()
-        epoch_grad_norm_max = max(epoch_grad_norm_max, grad_norm.item())
         epoch_re_weight_min_sum += rw_min
         epoch_re_weight_max_sum += rw_max
         epoch_re_weight_ratio_max = max(epoch_re_weight_ratio_max, rw_ratio)
@@ -582,7 +612,7 @@ for epoch in range(MAX_EPOCHS):
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
-    epoch_grad_norm_mean = epoch_grad_norm_sum / max(n_batches, 1)
+    epoch_grad_norm_mean = epoch_grad_norm_sum / max(n_update_steps, 1)
     epoch_re_weight_min_mean = epoch_re_weight_min_sum / max(n_batches, 1)
     epoch_re_weight_max_mean = epoch_re_weight_max_sum / max(n_batches, 1)
 
@@ -605,6 +635,7 @@ for epoch in range(MAX_EPOCHS):
         "train/re_weight_min_epoch_mean": epoch_re_weight_min_mean,
         "train/re_weight_max_epoch_mean": epoch_re_weight_max_mean,
         "train/re_weight_ratio_epoch_max": epoch_re_weight_ratio_max,
+        "train/n_update_steps_epoch": n_update_steps,
         "val/loss": val_loss_mean,
         "lr": scheduler.get_last_lr()[0],
         "epoch_time_s": dt,
@@ -622,6 +653,9 @@ for epoch in range(MAX_EPOCHS):
         "global_step": global_step,
         "lr": scheduler.get_last_lr()[0],
         "epoch_time_s": dt,
+        "n_batches": n_batches,
+        "n_update_steps": n_update_steps,
+        "grad_accum_steps": GRAD_ACCUM_STEPS,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
         "train/grad_norm_epoch_mean": epoch_grad_norm_mean,
