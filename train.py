@@ -195,6 +195,9 @@ class Transolver(nn.Module):
             for i in range(n_layers)
         ])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
+        # Learnable per-channel output affine (initialized to identity).
+        self.out_scale = nn.Parameter(torch.ones(out_dim))
+        self.out_bias = nn.Parameter(torch.zeros(out_dim))
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -211,6 +214,7 @@ class Transolver(nn.Module):
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         for block in self.blocks:
             fx = block(fx)
+        fx = fx * self.out_scale + self.out_bias
         return {"preds": fx}
 
 
@@ -236,6 +240,19 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             y = y.to(device, non_blocking=True)
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
+
+            # Per-sample skip for non-finite ground truth: defensive workaround
+            # so the normalized-space sq_err loss does not see NaN. The
+            # organizer-side accumulator was patched in scoring.py, but
+            # sq_err = (pred - y_norm)**2 here would still propagate NaN.
+            y_finite = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)
+            if not y_finite.all():
+                if not y_finite.any():
+                    continue
+                x = x[y_finite]
+                y = y[y_finite]
+                is_surface = is_surface[y_finite]
+                mask = mask[y_finite]
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
@@ -713,6 +730,24 @@ if best_metrics:
 
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
+
+    # Log learned per-channel output affine values from the best checkpoint.
+    out_scale_vals = model.out_scale.detach().cpu().tolist()
+    out_bias_vals = model.out_bias.detach().cpu().tolist()
+    print(f"Learned out_scale: {out_scale_vals}")
+    print(f"Learned out_bias:  {out_bias_vals}")
+    with open(metrics_dir / "best_affine.json", "w") as f:
+        json.dump({
+            "best_epoch": best_metrics["epoch"],
+            "best_val_avg/mae_surf_p": best_avg_surf_p,
+            "out_channels": list(model_config.get("output_fields", ["Ux", "Uy", "p"])),
+            "out_scale": out_scale_vals,
+            "out_bias": out_bias_vals,
+        }, f, indent=2)
+    wandb.summary.update({
+        **{f"best_affine/out_scale_{c}": v for c, v in zip(["Ux", "Uy", "p"], out_scale_vals)},
+        **{f"best_affine/out_bias_{c}": v for c, v in zip(["Ux", "Uy", "p"], out_bias_vals)},
+    })
 
     test_metrics = None
     test_avg = None
