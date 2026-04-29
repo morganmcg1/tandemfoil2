@@ -236,9 +236,24 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Skip samples whose GT contains non-finite values. scoring.py's
+            # mask-based filter is defeated by IEEE 754 (0 * NaN = NaN, Inf * 0
+            # = NaN), so we filter the batch before any err computation.
+            B = y.shape[0]
+            y_finite_sample = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            if not y_finite_sample.all():
+                if not y_finite_sample.any():
+                    continue
+                keep = torch.where(y_finite_sample)[0]
+                x = x[keep]
+                y = y[keep]
+                is_surface = is_surface[keep]
+                mask = mask[keep]
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+            pred = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -348,7 +363,7 @@ DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 
 @dataclass
 class Config:
-    lr: float = 5e-4
+    lr: float = 3e-4
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 10.0
@@ -391,7 +406,7 @@ model_config = dict(
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
-    n_layers=5,
+    n_layers=8,
     n_head=4,
     slice_num=64,
     mlp_ratio=2,
