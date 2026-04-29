@@ -1,96 +1,78 @@
 # Current Baseline — `icml-appendix-willow-pai2e-r4`
 
-## Two ranking quantities (post-#863 seed determinism merge)
+## Current best (post-#963 T_max=13 schedule fix)
 
-After PR #863 (askeladd, canonical bit-perfect determinism), there are now
-**two distinct ranking quantities** for evaluating future PRs:
-
-1. **`val_avg/mae_surf_p` @ `--seed 0` = 85.14** (seeded canonical, run `j1r5y758`)
-   — Used to compare future PR ablations PR-to-PR. All round-3+ PRs should
-   set `--seed 0` and beat this number to demonstrate reproducible improvement.
-2. **`val_avg/mae_surf_p` unseeded best = 81.81** (`2akpdg9t`, post-#914)
-   — Retained as best-known reference; will be replaced by a 3-seed mean
-   (`--seed {0, 1, 2}`) once that experiment lands.
-
-The seeded canonical (85.14) is +4.07% above the unseeded best (81.81); this
-gap is one tail of the seed-noise distribution, consistent with the ~10%
-seed-to-seed variance observed across 3 trees (pre-#820: 100.80, post-#820:
-97.92, post-#914: 85.14).
-
-**Borderline-ablation contract:** PRs claiming <2% absolute val_avg
-improvement must run `--seed {0, 1, 2}` and report mean ± std until the
-3-seed mean baseline lands. ≥2% effects can stay single-seed for now.
-
-## Best metrics — unseeded best (paper-facing, until 3-seed mean replaces)
+**⚠️ All future PRs must pass `--t_max 13` and beat val_avg = 64.91.**
 
 | Metric | Value | Run | PR |
 |--------|-------|-----|----|
-| `val_avg/mae_surf_p` | **81.8075** | `2akpdg9t` | #914 |
-| `test_avg/mae_surf_p` | **73.04** (4-split, finite) | `2akpdg9t` | #914 |
-| 3-split test mean (excl. cruise) | **81.28** | `2akpdg9t` | #914 |
-| Best epoch | 12 / 13 (timeout) | | |
+| `val_avg/mae_surf_p` | **64.9148** | `j8yi780z` | #963 |
+| `test_avg/mae_surf_p` | **57.2466** (4-split, finite) | `j8yi780z` | #963 |
+| Best epoch | 13 / 13 (timeout — plateau forming, Δ=−0.70 at ep13) | | |
 | Wall time | 30.6 min | | |
-| Params | 661,735 (−4,720 vs prior; SwiGLU 2/3 trick) | | |
+| Params | 661,735 (0 change — scheduler-only) | | |
 
-**`test_avg/mae_surf_p` is now finite (73.04)** — NaN guards + SwiGLU run
-on the merged branch confirms cruise sample 000020 is correctly filtered
-by #797.
+**Key insight (#963):** The −20.66% val gain was free — zero params, zero
+wall-clock cost. Every prior gain (Fourier PE, channel weights, SwiGLU) was
+real but was measured under T_max=50 under-training. The cosine annealing tail
+(LR→0, epochs 35–50) was unreachable under the 30-min budget; effective LR
+was stuck at ~85% of peak. With T_max=13, the full decay fits the budget.
 
-## Seeded canonical (`--seed 0` reproducible PR-to-PR ranking)
+## Per-split val — current best (epoch 13, run `j8yi780z`, PR #963)
 
-| Metric | Value | Run | PR |
-|--------|-------|-----|----|
-| `val_avg/mae_surf_p` | **85.1370** | `j1r5y758` | #863 |
-| `test_avg/mae_surf_p` | **78.9686** (4-split, finite) | `j1r5y758` | #863 |
-| 3-split test mean (excl. cruise) | **86.78** | `j1r5y758` | #863 |
-| Best epoch | 13 / 13 (timeout — still descending) | | |
-| Wall time | 30.7 min | | |
-| Params | 661,735 (unchanged; seed PR was infra-only) | | |
+| Split | mae_surf_p | Δ vs prior best |
+|-------|-----------|----------------|
+| `val_single_in_dist` | **71.86** | −26.3% |
+| `val_geom_camber_rc` | **76.45** | −18.8% |
+| `val_geom_camber_cruise` | **46.54** | −21.4% |
+| `val_re_rand` | **64.81** | −15.1% |
+| **val_avg** | **64.91** | **−20.7%** |
 
-### Per-split val @ `--seed 0` (epoch 13, run `j1r5y758`)
+## Per-split test — current best (epoch 13, run `j8yi780z`, PR #963)
 
 | Split | mae_surf_p |
 |-------|-----------|
-| `val_single_in_dist` | 109.20 |
-| `val_geom_camber_rc` | 91.50 |
-| `val_geom_camber_cruise` | 65.09 |
-| `val_re_rand` | 74.77 |
-| **val_avg** | **85.14** |
+| `test_single_in_dist` | **64.75** |
+| `test_geom_camber_rc` | **69.21** |
+| `test_geom_camber_cruise` | **39.29** |
+| `test_re_rand` | **55.74** |
+| **test_avg** | **57.25** |
 
-### A/B determinism proof — bit-exact (0.0000 abs diff)
+## Seeded canonical history
+
+| Baseline state | val_avg @ `--seed 0` | Run | PR | T_max |
+|---|---:|---|---|---:|
+| post-#914 (Fourier + SwiGLU) | 85.14 | `j1r5y758` | #863 | 50 (under-trained) |
+| post-#963 (T_max=13) | **TBD** (T_max sweep in-flight) | — | — | 13 |
+
+Note: `j1r5y758` (val=85.14) used T_max=50 under the 30-min budget and is
+no longer a valid seeded canonical for T_max=13 comparisons. The T_max sweep
+(frieren, in-flight) will produce the new seeded canonical at T_max=13.
+Until then, use `--seed 0 --t_max 13` and compare vs this unseeded 64.91.
+
+### A/B determinism proof — bit-exact (0.0000 abs diff, T_max=50 era)
 
 | Tree | Run A | Run B | val_avg @ seed 0 | |Δ| |
 |---|---|---|---:|---:|
 | pre-#820 (no Fourier, no SwiGLU) | `sk040lf3` | `gkqoo0v4` | 100.80 | 0.0000 |
 | post-#820 (Fourier only) | `0zx4mdxs` | `u58qtuye` (4 ep) | 97.92 | 0.0000 |
-| post-#914 (Fourier + SwiGLU) | `j1r5y758` | (no A/B) | 85.14 | (carry) |
+| post-#914 (Fourier + SwiGLU, T_max=50) | `j1r5y758` | (no A/B) | 85.14 | (carry) |
 
-Bit-exactness without `cudnn.deterministic`: Transolver has no convolutions,
-no AMP, fixed reduction order in `torch.matmul` at single-GPU scale. Future
-PRs that add dropout, AMP, or scatter-based aggregation will need a fresh
-A/B sanity check.
+Bit-exactness holds for non-conv, non-AMP, single-GPU runs.
 
-## Per-split val (epoch 12, run `2akpdg9t`)
+**Borderline-ablation contract:** PRs claiming <2% absolute val_avg
+improvement must run `--seed {0, 1, 2}` and report mean ± std. ≥2% effects
+can stay single-seed for now.
 
-| Split | mae_surf_p |
-|-------|-----------|
-| `val_single_in_dist` | 97.53 |
-| `val_geom_camber_rc` | 94.17 |
-| `val_geom_camber_cruise` | **59.18** |
-| `val_re_rand` | 76.36 |
-| **val_avg** | **81.8075** |
+## Prior best metrics — unseeded (pre-#963)
 
-## Per-split test (epoch 12, run `2akpdg9t`)
+| Metric | Value | Run | PR |
+|--------|-------|-----|----|
+| `val_avg/mae_surf_p` | 81.8075 | `2akpdg9t` | #914 |
+| `test_avg/mae_surf_p` | 73.04 | `2akpdg9t` | #914 |
+| 3-split test mean (excl. cruise) | 81.28 | `2akpdg9t` | #914 |
 
-| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy | mae_vol_p |
-|-------|-----------|------------|------------|----------|
-| `test_single_in_dist` | 86.73 | 1.354 | 0.500 | 88.08 |
-| `test_geom_camber_rc` | 85.54 | 1.640 | 0.679 | 83.16 |
-| `test_geom_camber_cruise` | 48.32 | 0.919 | 0.356 | 44.53 |
-| `test_re_rand` | 71.57 | 1.192 | 0.525 | 65.67 |
-| **test_avg** | **73.04** | **1.276** | **0.515** | **70.36** |
-
-## Configuration (post-#914)
+## Configuration (post-#963)
 
 | Knob | Value |
 |------|-------|
@@ -104,7 +86,7 @@ A/B sanity check.
 | Optimizer | AdamW |
 | `lr` | 5e-4 |
 | `weight_decay` | 1e-4 |
-| Schedule | CosineAnnealingLR, T_max=epochs |
+| Schedule | CosineAnnealingLR, **`--t_max 13`** (budget-matched; `t_max=0` default uses epochs=50) |
 | `batch_size` | 4 |
 | `surf_weight` | 10.0 |
 | `channel_weights` | [1.0, 1.0, 3.0] for [Ux, Uy, p] |
@@ -117,48 +99,49 @@ A/B sanity check.
 | **Seed** | **`--seed 0` default (#863)** — bit-perfect determinism on single-GPU; pass `generator=g` to sampler+DataLoader |
 | Params | **661,735** (−4,720 vs prior; SwiGLU 2/3 dim trick saves ~792 params/block) |
 
+**⚠️ `--t_max 13` is NOT the default** (default is 0 = T_max=epochs=50). All
+future experiments must pass `--t_max 13` explicitly or they will compare
+against a different schedule regime.
+
 ## Delta history
 
-| Metric | L1-only (#752) | +ch=[1,1,3] (#754) | +Fourier PE K=4 (#820) | +SwiGLU MLP (#914) |
-|---|---:|---:|---:|---:|
-| `val_avg/mae_surf_p` | 101.93 | 99.23 | 89.71 | **81.81** |
-| `test_avg/mae_surf_p` | 100.83† | 99.34† | NaN† | **73.04** |
-| Δ vs prior | — | −2.65% | −9.59% | **−8.81%** |
-| Cumul. Δ vs L1-only | — | −2.65% | −12.0% | **−19.7%** |
+| Metric | L1-only (#752) | +ch=[1,1,3] (#754) | +Fourier PE K=4 (#820) | +SwiGLU MLP (#914) | +T_max=13 (#963) |
+|---|---:|---:|---:|---:|---:|
+| `val_avg/mae_surf_p` | 101.93 | 99.23 | 89.71 | 81.81 | **64.91** |
+| `test_avg/mae_surf_p` | 100.83† | 99.34† | NaN† | 73.04 | **57.25** |
+| Δ vs prior | — | −2.65% | −9.59% | −8.81% | **−20.66%** |
+| Cumul. Δ vs L1-only | — | −2.65% | −12.0% | −19.7% | **−36.3%** |
 
 †3-split test mean (excl. cruise) for pre-#914 runs; #914 is first with
 finite `test_avg` across all 4 splits.
 
-SwiGLU's per-feature gating is load-bearing on CFD inputs because feature
-scales are heterogeneous (pressure dominates Ux/Uy by 10–100×) — the gate
-learns to allocate capacity to pressure features, which is exactly what
-ch=[1,1,3] pays for in the loss. Also: at mlp_ratio=2 the FFN is bottlenecked,
-so gating's information-routing effect matters more than in wide NLP FFNs.
+All gains prior to #963 were measured under T_max=50 (under-trained). They
+remain valid relative improvements — each added real capacity — but their
+*absolute magnitudes* were understated. #963 retroactively clarifies that
+the prior improvements stacked correctly but the optimizer was never given
+a proper convergence tail to exploit them. The −20.66% from #963 is not
+a model improvement; it is collecting on the debt accumulated by a mismatched
+LR schedule across every prior run.
 
-Key observation: converged at epoch 12 vs baseline epoch 14 — SwiGLU reaches a
-better minimum *faster*, suggesting the inductive bias matches the CFD task
-well. Timeout cut the run at epoch 13 — there may be additional headroom.
-
-## Reproduce
+## Reproduce (current best — post-#963)
 
 ```bash
 cd target/
-python train.py --use_swiglu \
-  --agent willowpai2e4-tanjiro \
-  --wandb_name "willowpai2e4-tanjiro/swiglu-mlp"
+python train.py --t_max 13 --use_swiglu --fourier_bands 4 \
+  --agent <your-agent-name> \
+  --wandb_name "<your-run-name>"
 ```
 
-(All other hyperparameters are now defaults in `Config`: lr=5e-4, surf_weight=10,
-channel_weights=[1,1,3], batch_size=4, fourier_bands=4, CosineAnnealingLR.)
+(W&B run: `j8yi780z`. All other hyperparameters are defaults in `Config`.)
 
 ## Open issues
 
-- **Run-to-run val variance:** Seed PR #863 merged; canonical seeded
-  baseline now `--seed 0 = 85.14`. 3-seed mean (`--seed {0,1,2}`)
-  follow-up assigned to askeladd to replace single-seed noise.
-- **Best epoch cliff at 12/13:** The best epoch was epoch 12; epoch 13 slightly
-  bounced (85.75). With more epochs / longer LR schedule, SwiGLU may have
-  additional headroom — frieren #963 (`T_max=13`) is testing this directly.
+- **T_max seeded canonical pending:** Current best (64.91) is unseeded. A
+  seeded T_max sweep at `--seed 0` with `--t_max {10, 12, 13, 16}` (frieren,
+  in-flight) will produce the post-#963 seeded canonical.
+- **Prior closed PRs may be worth retesting at T_max=13:** n_layers=6 (#939)
+  was closed as "under-trained" — exactly the regime fixed by #963. High-
+  priority round-3 retest candidate.
 - **Cruise-test `-Inf` GT (workaround active):** `test_geom_camber_cruise/000020.pt`
   has 761 `-Inf` values in the `p` channel. The per-sample `y_finite` guard
   in `evaluate_split` (#797) filters this sample. Dataset is read-only.
