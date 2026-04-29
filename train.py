@@ -239,6 +239,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+            pred = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -353,6 +354,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 25.0
     epochs: int = 50
+    cosine_t_max: int = 14  # ~14 epochs fit in 30-min timeout at baseline speed
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
@@ -404,7 +406,9 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer, T_max=cfg.cosine_t_max, eta_min=1e-6
+)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -460,6 +464,7 @@ for epoch in range(MAX_EPOCHS):
         epoch_surf += surf_loss.item()
         n_batches += 1
 
+    epoch_lr = optimizer.param_groups[0]["lr"]
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
@@ -491,6 +496,7 @@ for epoch in range(MAX_EPOCHS):
         "epoch": epoch + 1,
         "seconds": dt,
         "peak_memory_gb": peak_gb,
+        "lr": epoch_lr,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
         "val_avg/mae_surf_p": avg_surf_p,
@@ -498,7 +504,7 @@ for epoch in range(MAX_EPOCHS):
         "is_best": tag == " *",
     })
     print(
-        f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
+        f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB] lr={epoch_lr:.2e}  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
     )
