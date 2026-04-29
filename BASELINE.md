@@ -120,3 +120,34 @@ Primary metric: `val_avg/mae_surf_p` (lower is better)
 - Architecture unchanged: `n_hidden=128`, `n_layers=5`, `n_head=4`, `slice_num=64`, `mlp_ratio=2`.
 - Optimizer: AdamW, `lr=5e-4`, `weight_decay=1e-4`, `surf_weight=20.0`, cosine T_max=14.
 - `test_geom_camber_cruise` p NaN is pre-existing scoring pipeline issue (same as PRs #738, #747).
+
+---
+
+## 2026-04-29 00:22 — PR #868: Combine per-sample norm loss with lr=2e-4 for additive gain
+
+- **Branch:** edward/per-sample-norm-plus-lr-2e-4
+- **Best epoch:** 14 of 14 (final epoch best — model still improving through full cosine anneal)
+- **Surface MAE (val, best ckpt):** Ux=1.5446, Uy=0.7109, **p=102.9421**
+- **Volume MAE (val, best ckpt):** Ux=4.8035, Uy=2.2793, p=117.7792
+- **val_avg/mae_surf_p: 102.9421** ← current best (was 105.9649, **−2.85%**)
+- **Metric summary:** `metrics/charliepai2e4-edward-per-sample-norm-plus-lr-2e-4-c37s8dpo.jsonl`
+- **Reproduce:** `cd target/ && python train.py --surf_weight 20.0 --lr 2e-4 --loss_kind per_sample_norm_mse --epochs 14`
+
+### Per-split breakdown
+
+| Split | surf Ux | surf Uy | surf p | vol Ux | vol Uy | vol p |
+|---|---:|---:|---:|---:|---:|---:|
+| val_single_in_dist     | 1.4580 | 0.6938 | 129.4600 | 5.4347 | 2.4817 | 158.3350 |
+| val_geom_camber_rc     | 2.2424 | 0.9548 | 111.1449 | 5.7793 | 3.0469 | 123.6362 |
+| val_geom_camber_cruise | 0.9653 | 0.4930 |  78.0567 | 3.6348 | 1.4672 |  87.6694 |
+| val_re_rand            | 1.5129 | 0.7020 |  93.1066 | 4.3652 | 2.1212 | 101.4761 |
+| **avg**                | **1.5446** | **0.7109** | **102.9421** | **4.8035** | **2.2793** | **117.7792** |
+
+### Notes
+- Confirms per-sample norm + lr=2e-4 + T_max=14 compose constructively over PR #845.
+- Gain was modest (−2.85%) not the hypothesised 6–10%, indicating the two optimizations share some gradient-magnitude-reduction mechanism and are not fully orthogonal.
+- `val_single_in_dist` remains the dominant bottleneck at 129.46 — ~31% of the average.
+- Best epoch = last epoch: model still improving, suggests more epochs could push lower within the timeout budget.
+- Architecture unchanged: `n_hidden=128`, `n_layers=5`, `n_head=4`, `slice_num=64`, `mlp_ratio=2`, 0.66M params.
+- Optimizer: AdamW, `lr=2e-4`, `weight_decay=1e-4`, `surf_weight=20.0`, cosine T_max=14.
+- `test_geom_camber_cruise` p NaN is pre-existing scoring pipeline issue.
