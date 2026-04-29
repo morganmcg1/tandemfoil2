@@ -240,7 +240,11 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device, fourier_bands: int = 0) -> dict[str, float]:
+def evaluate_split(
+    model, loader, stats, surf_weight, device, fourier_bands: int = 0,
+    relative_loss: bool = False, relative_loss_eps: float = 1e-4,
+    rel_loss_alpha: float = 1.0,
+) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -285,17 +289,58 @@ def evaluate_split(model, loader, stats, surf_weight, device, fourier_bands: int
             # surf_loss. nan_to_num sanitizes y_norm itself; the AND into
             # vol_mask / surf_mask zeroes the contributing nodes.
             y_finite_mask = torch.isfinite(y_norm).all(dim=-1)  # [B, N]
-            abs_err = (pred - torch.nan_to_num(y_norm)).abs() * channel_weights[None, None, :]
+            y_norm_clean = torch.nan_to_num(y_norm)
+            abs_err = (pred - y_norm_clean).abs() * channel_weights[None, None, :]
             vol_mask = mask & ~is_surface & y_finite_mask
             surf_mask = mask & is_surface & y_finite_mask
-            vol_loss_sum += (
+            # Absolute path is always computed; relative path replaces or
+            # blends with it when relative_loss is set.
+            vol_loss_abs = (
                 (abs_err * vol_mask.unsqueeze(-1)).sum()
                 / vol_mask.sum().clamp(min=1)
-            ).item()
-            surf_loss_sum += (
+            )
+            surf_loss_abs = (
                 (abs_err * surf_mask.unsqueeze(-1)).sum()
                 / surf_mask.sum().clamp(min=1)
-            ).item()
+            )
+            if relative_loss:
+                # Per-sample target RMS over valid (mask & finite) nodes,
+                # using sanitized y_norm so NaN GT can't poison the sum.
+                valid_mask = mask & y_finite_mask
+                y_sq_per_sample = (
+                    (y_norm_clean ** 2) * valid_mask.unsqueeze(-1)
+                ).sum(dim=(1, 2), keepdim=True)
+                n_valid_per_sample = (
+                    valid_mask.sum(dim=1, keepdim=True).unsqueeze(-1).clamp(min=1)
+                    * y_norm.shape[-1]
+                )
+                y_rms_per_sample = (
+                    (y_sq_per_sample / n_valid_per_sample)
+                    .clamp(min=relative_loss_eps)
+                    .sqrt()
+                )
+                abs_err_rel = abs_err / y_rms_per_sample
+                vol_loss_rel = (
+                    (abs_err_rel * vol_mask.unsqueeze(-1)).sum()
+                    / vol_mask.sum().clamp(min=1)
+                )
+                surf_loss_rel = (
+                    (abs_err_rel * surf_mask.unsqueeze(-1)).sum()
+                    / surf_mask.sum().clamp(min=1)
+                )
+                vol_loss_used = (
+                    rel_loss_alpha * vol_loss_rel
+                    + (1.0 - rel_loss_alpha) * vol_loss_abs
+                )
+                surf_loss_used = (
+                    rel_loss_alpha * surf_loss_rel
+                    + (1.0 - rel_loss_alpha) * surf_loss_abs
+                )
+            else:
+                vol_loss_used = vol_loss_abs
+                surf_loss_used = surf_loss_abs
+            vol_loss_sum += vol_loss_used.item()
+            surf_loss_sum += surf_loss_used.item()
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
@@ -458,6 +503,11 @@ class Config:
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
     fourier_bands: int = 0  # 0 = disabled, baseline behavior
+    relative_loss: bool = False
+    relative_loss_eps: float = 1e-4
+    # Blend weight for relative-loss path (1.0 = pure relative, 0.0 = pure
+    # absolute). Only takes effect when --relative_loss is set.
+    rel_loss_alpha: float = 1.0
 
 
 cfg = sp.parse(Config)
@@ -582,15 +632,57 @@ for epoch in range(MAX_EPOCHS):
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (abs_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (abs_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+
+        step_log = {}
+
+        # Absolute path is always computed; the relative path replaces or
+        # blends with it when --relative_loss is set (alpha=1.0 = pure
+        # relative, alpha=0.0 = pure absolute = baseline).
+        vol_loss_abs = (abs_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+        surf_loss_abs = (abs_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+
+        if cfg.relative_loss:
+            y_sq_per_sample = (
+                (y_norm ** 2) * mask.unsqueeze(-1)
+            ).sum(dim=(1, 2), keepdim=True)
+            n_valid_per_sample = (
+                mask.sum(dim=1, keepdim=True).unsqueeze(-1).clamp(min=1)
+                * y_norm.shape[-1]
+            )
+            y_rms_per_sample = (
+                (y_sq_per_sample / n_valid_per_sample)
+                .clamp(min=cfg.relative_loss_eps)
+                .sqrt()
+            )
+            abs_err_rel = abs_err / y_rms_per_sample
+            vol_loss_rel = (abs_err_rel * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+            surf_loss_rel = (abs_err_rel * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            alpha = cfg.rel_loss_alpha
+            vol_loss = alpha * vol_loss_rel + (1.0 - alpha) * vol_loss_abs
+            surf_loss = alpha * surf_loss_rel + (1.0 - alpha) * surf_loss_abs
+            with torch.no_grad():
+                yrms_flat = y_rms_per_sample.flatten()
+                step_log["train/y_rms_per_sample_mean"] = yrms_flat.mean().item()
+                step_log["train/y_rms_per_sample_std"] = yrms_flat.std().item() if yrms_flat.numel() > 1 else 0.0
+                step_log["train/y_rms_per_sample_min"] = yrms_flat.min().item()
+                step_log["train/y_rms_per_sample_max"] = yrms_flat.max().item()
+                step_log["train/vol_loss_rel"] = vol_loss_rel.item()
+                step_log["train/surf_loss_rel"] = surf_loss_rel.item()
+                step_log["train/vol_loss_abs"] = vol_loss_abs.item()
+                step_log["train/surf_loss_abs"] = surf_loss_abs.item()
+        else:
+            vol_loss = vol_loss_abs
+            surf_loss = surf_loss_abs
+
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         global_step += 1
-        wandb.log({"train/loss": loss.item(), "global_step": global_step})
+        step_log["train/loss"] = loss.item()
+        step_log["global_step"] = global_step
+        wandb.log(step_log)
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
@@ -603,7 +695,12 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device, cfg.fourier_bands)
+        name: evaluate_split(
+            model, loader, stats, cfg.surf_weight, device, cfg.fourier_bands,
+            relative_loss=cfg.relative_loss,
+            relative_loss_eps=cfg.relative_loss_eps,
+            rel_loss_alpha=cfg.rel_loss_alpha,
+        )
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -671,7 +768,12 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, cfg.fourier_bands)
+            name: evaluate_split(
+                model, loader, stats, cfg.surf_weight, device, cfg.fourier_bands,
+                relative_loss=cfg.relative_loss,
+                relative_loss_eps=cfg.relative_loss_eps,
+                rel_loss_alpha=cfg.rel_loss_alpha,
+            )
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
