@@ -6,6 +6,72 @@ SPDX-PackageName: senpai
 
 # Baseline Metrics — TandemFoilSet (pai2e-r5)
 
+## 2026-04-29 04:43 — PR #1013: n_layers=2 + n_layers=1 depth floor sweep (NEW BEST)
+
+- **Surface MAE (n_layers=1):** val_avg/mae_surf_p = **47.7385** (best checkpoint epoch 50, final epoch)
+- **Surface MAE (n_layers=2):** val_avg/mae_surf_p = **47.9717** (best checkpoint epoch 41, hit timeout)
+- **val_avg/mae_surf_p (n_layers=1):** 47.7385 — **−24.3% vs previous best (63.0588)**
+- **Metric summary:** `metrics/charliepai2e5-tanjiro-n-layers-1-bf16-k2glbsqy.jsonl` (n_layers=1), `metrics/charliepai2e5-tanjiro-n-layers-2-bf16-a3ikk3qi.jsonl` (n_layers=2)
+- **Reproduce (n_layers=1):** `cd target/ && python train.py --n_layers 1 --bf16 --surf_weight 28.0 --lr 3e-4 --weight_decay 1e-2 --batch_size 4`
+- **Reproduce (n_layers=2):** `cd target/ && python train.py --n_layers 2 --bf16 --surf_weight 28.0 --lr 3e-4 --weight_decay 1e-2 --batch_size 4`
+  *(Note: `--optimizer lion --loss l1 --scheduler cosine --T_max 15 --clip_grad_norm 1.0 --n_hidden 128 --n_head 4 --slice_num 64 --mlp_ratio 2` are train.py defaults)*
+
+### Per-split validation — n_layers=1 (best checkpoint, epoch 50)
+
+| Split | surf Ux | surf Uy | surf p | vol Ux | vol Uy | vol p |
+|-------|--------:|--------:|-------:|-------:|-------:|------:|
+| val_single_in_dist     | — | — |  49.6805 | — | — | — |
+| val_geom_camber_rc     | — | — |  60.8209 | — | — | — |
+| val_geom_camber_cruise | — | — |  30.5543 | — | — | — |
+| val_re_rand            | — | — |  49.8983 | — | — | — |
+| **avg**                | — | — | **47.7385** | — | — | — |
+
+### Per-split validation — n_layers=2 (best checkpoint, epoch 41)
+
+| Split | surf Ux | surf Uy | surf p |
+|-------|--------:|--------:|-------:|
+| val_single_in_dist     | — | — | 49.4117 |
+| val_geom_camber_rc     | — | — | 64.3695 |
+| val_geom_camber_cruise | — | — | 29.4214 |
+| val_re_rand            | — | — | 48.6844 |
+| **avg**                | — | — | **47.9717** |
+
+### Model configuration (n_layers=1 winner)
+
+| Parameter | Value |
+|-----------|-------|
+| **n_layers** | **1** (was 3 — key change; depth floor) |
+| n_hidden | 128 |
+| n_head | 4 |
+| slice_num | 64 |
+| mlp_ratio | 2 |
+| optimizer | Lion |
+| lr | 3e-4 |
+| weight_decay | 1e-2 |
+| surf_weight | 28.0 |
+| batch_size | 4 |
+| loss | L1 (vol + surf_weight * surf) |
+| scheduler | CosineAnnealingLR T_max=15 (cycles 3× over 50 epochs — misaligned, fix in #1014) |
+| gradient clipping | clip_grad_norm max_norm=1.0 |
+| EMA | decay=0.995 |
+| bf16 | True |
+| epochs run | 50 (9.0 GB VRAM peak — model so small it fits easily) |
+
+**Improvement over previous baseline (PR #913):** 63.0588 → 47.7385 (−24.3%)
+
+### Depth-shallowing full trajectory
+
+| n_layers | val_avg/mae_surf_p |
+|----------|-----------------:|
+| 6 (old)  | ~70.x |
+| 5        | 67.25 (PR #926) |
+| 4        | 65.37 (PR #913) |
+| 3        | 63.06 (PR #913) |
+| 2        | 47.97 (PR #1013) |
+| **1**    | **47.74 (PR #1013)** ⭐ |
+
+---
+
 ## 2026-04-29 04:00 — PR #913: n_layers=3 + bf16 autocast on Lion+L1+clip+T_max=15+EMA+sw=28 baseline (NEW BEST)
 
 - **Surface MAE:** Ux=0.8735, Uy=0.4147, p=**63.0588** (val_avg, best checkpoint epoch 29)
