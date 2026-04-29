@@ -80,7 +80,7 @@
 | thorfinn | #1076 | **Coordinate-frame canonicalization (rotate (x,y) by -AoA1) — physics-informed inductive bias targeting camber OOD** | WIP — new 2026-04-29 (replaced #1057 NACA_M FiLM which CLOSED) |
 | nezuko | #1021 | **slice_num sweep {32, 64, 96, 128} — physics-attention spatial resolution ablation** | **SENT BACK 2026-04-29** — sn=32 wins decisively on SwiGLU stack (val=59.57, −5.0%); monotonic trend; cruise −10.3%; needs RMSNorm paired A/B + optional sn=16 |
 | fern | #1029 | **Surface quantile-reweight (top10/α=2 wins −2.6% val on SwiGLU stack, cruise −7.7%; qr_e_top_over_rest=4.14× confirms heavy-tail mechanism)** | **SENT BACK 2026-04-29** — needs RMSNorm canonical paired A/B; predicted compound ~56.5 val (potential new best) |
-| edward | #1061 | **NACA_M1-stratified batch sampling — camber-axis gradient equalization targeting geom_camber_rc** | WIP — new 2026-04-29 (replaced #975 DropPath which closed) |
+| edward | #1080 | **Polynomial cross-features for conditioning vars — explicit nonlinear physics priors (log_Re×NACA_M1, AoA1×NACA_M1, etc.)** | WIP — new 2026-04-29 (replaced #1061 NACA_M-stratify which CLOSED) |
 | frieren | #1016 | **bf16 mixed precision training — wall-clock unlock + cosine recovery** | **SENT BACK 2nd time 2026-04-29** — original v1 (val=58.49) was on OLD canonical (ratio=2 + LayerNorm); +0.94% vs new RMSNorm 57.95 — needs canonical+bf16 compound run |
 | tanjiro | #1056 | **LR sweep (lr=2e-4, 5e-4 ref, 1e-3) — optimizer axis not touched since round 1; RMSNorm+SwiGLU change loss landscape** | WIP — new 2026-04-29 |
 
@@ -133,6 +133,7 @@
 - ~~**NACA_M FiLM (geometry-aware multi-variable conditioning)**~~ — **Closed (PR #1057 2026-04-29): val_avg +4.7%; γ-norm cosine-similarity diagnostic shows NACA absorbed onto Re-axis in deep blocks (cos→0.997); linear FiLM projection cannot extrapolate to held-out M values.** Multi-variable FiLM with held-out geometric axes declared closed.
 
 ### Closed directions (this round)
+- ~~**NACA_M1-stratified sampling**~~ — **Closed (PR #1061 2026-04-29): val_avg +6.3%, both camber OOD splits worsen (rc +2.7%, cruise +12.1%).** Mechanism failure: NACA_M is not a FiLM input (gradient equalization on raw features ≠ equalization of conditioning signal); more importantly, held-out M values aren't in training distribution — stratification within seen distribution doesn't expose model to held-out OOD region. Distribution shift ≠ distribution skew. Both data-side (this) and model-side (#1057 FiLM) interventions on NACA_M-stratify axis now closed for held-out-camber OOD. **Follow-up: edward → PR #1080 (polynomial cross-features — input-side nonlinearity for held-out-M extrapolation).**
 - ~~**SwiGLU MLP**~~ — **MERGED (PR #961, val=62.20 −21.8%). New canonical.** Paper ablation **MERGED (PR #983, ratio=1 canonical).** Gating mechanism is primary driver (~97% of gain).
 - ~~**RMSNorm**~~ — **MERGED (PR #999, val=57.9550 −6.8%). New canonical normalization.** Two seeds, std=0.34.
 - ~~**Per-channel volume L1 (vol_w_p=2.0)**~~ — **Closed (PR #927 v2): mechanism absorbed by SwiGLU** (+4.77% surf_p; vol_p gain shrunk −9.0% → −4.2%). Volume-loss-shape direction closed at this architecture.

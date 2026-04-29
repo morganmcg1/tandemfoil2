@@ -101,6 +101,26 @@ Note: run on OLD canonical (pre-SwiGLU, pre-RMSNorm) stack.
 
 ---
 
+## 2026-04-29 — PR #1061 (CLOSED): NACA_M1-stratified sampling — held-out M values not in training; sampling-side interventions bounded by training support
+- **Branch:** `willowpai2e3-edward/naca-m-stratify`
+- **Hypothesis:** NACA_M1-stratified batch sampling equalizes gradient across M-quintiles (mirrors Re-stratify PR #910 mechanism) — targets `geom_camber_rc` (M=6-8 held out) and `geom_camber_cruise` (M=2-4 held out).
+
+| Run | val_avg/mae_surf_p | Δ vs canonical | test_avg | W&B |
+|---|---|---|---|---|
+| v1 naca_m_only (no re_stratify) | 61.6249 | **+6.3%** ❌ | 54.54 | `ulmmhp12` |
+| RMSNorm canonical | 57.9550 | — | 51.17 | `6krvx540` |
+
+Per-split: single_in_dist +5.6%, geom_camber_rc **+2.7%** ❌, **geom_camber_cruise +12.1%** ❌, re_rand +7.6%. Both OOD targets worsen.
+
+- **Sampler diagnostic:** bucket_sizes=[312, 485, 187, 249, 266] — 2.6× max/min ratio; M distribution IS skewed (bucket 1 = 32% of training). Stratification did real work but produced harm.
+- **Mechanism (edward's analysis):** Three reasons: (1) removing Re-stratify is dominant (PR #910 −2.5% removed); (2) NACA_M is not a FiLM input — gradient equalization on raw features does not shape any learned modulation; (3) **held-out M values aren't in training distribution** — sampling rebalances within seen support, cannot expose model to held-out M region. Distribution shift ≠ distribution skew.
+
+### Decision: CLOSED — mechanism doesn't transfer; held-out-M extrapolation is a distribution-shift problem, not a sampling-skew problem. Paper-quality negative result paragraph: "even with effective M-stratification, OOD splits worsen — confirming distribution shift not skew as the bottleneck."
+- **Cumulative closure:** Together with #1057, both data-side (sampling) and model-side (FiLM) gradient interventions on NACA_M axis are closed for held-out-camber generalization.
+- **Follow-up:** edward → PR #1080 (polynomial cross-features for conditioning variables — explicit nonlinear physics priors `log_Re×NACA_M1`, `AoA1×NACA_M1`, etc.; input-side nonlinearity that helps held-out-M extrapolation without FiLM-extrapolation or sampling-distribution pathologies).
+
+---
+
 ## 2026-04-29 — Assignments: PR #1056 (tanjiro LR sweep), PR #1057 (thorfinn NACA_M FiLM), PR #1061 (edward NACA_M stratify)
 - **PR #1056** (`tanjiro/lr-sweep`): Three-run sweep lr ∈ {2e-4, 5e-4 (reference), 1e-3} with wd=1e-4 on canonical stack (SwiGLU+ratio=1+RMSNorm+FiLM-pre+L1+Re-stratify). Optimizer axis never re-tuned since founding baseline; SwiGLU bilinear gating + RMSNorm change loss landscape curvature, optimal LR may have shifted.
 - **PR #1057** (`thorfinn/naca-film`): Extend FiLM input from 1-d (log_Re) to 2-d (log_Re, NACA_M1 — front foil camber magnitude, dim 15). Directly targets `geom_camber_rc` (M=6-8 held out) and `geom_camber_cruise` (M=2-4 held out) — the hardest OOD splits. NACA_M is literally the held-out variable. Complementary to askeladd's AoA-FiLM (flow conditions vs geometry conditioning). γ-norm diagnostics protocol per thorfinn's RMSNorm gold standard.
