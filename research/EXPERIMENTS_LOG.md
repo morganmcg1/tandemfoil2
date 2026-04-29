@@ -1,5 +1,63 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-29 08:30 — PR #949 (v2): LayerScale γ_init=1e-4 retest at T_max=13 — **CLOSED — regime-flip negative; soft-start competes with cosine annealing**
+
+- Branch: `willowpai2e4-fern/layerscale-1e-4` (retest run)
+- Student: willowpai2e4-fern
+- W&B run: [`w4khx3l9`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/w4khx3l9)
+- Status: **CLOSED**
+
+**Hypothesis.** LayerScale (γ_init=1e-4) sent back for retest under T_max=13 after PR #963 dropped baseline to 64.91. Original T_max=50 run showed −4.58% val (81.81 → 78.06). Predicted: gain holds or expands with proper convergence.
+
+**Results vs T_max=13 baseline 64.91 (run `j8yi780z`):**
+
+| Metric | LayerScale T_max=13 | Baseline (#963) | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | **71.1236** | 64.9148 | **+9.6%** ✗ |
+| `test_avg/mae_surf_p` | **61.2364** | 57.2466 | **+7.0%** ✗ |
+| Best epoch | 12/13 (timeout-cut) | 13/13 | — |
+| Params | 663,015 | 661,735 | +1,280 |
+
+**Per-split val (epoch 12):**
+
+| Split | LayerScale T_max=13 | Baseline | Δ |
+|---|---:|---:|---:|
+| `val_single_in_dist` | 80.91 | 71.86 | **+12.6%** ✗ |
+| `val_geom_camber_rc` | 82.95 | 76.45 | **+8.5%** ✗ |
+| `val_geom_camber_cruise` | 51.78 | 46.54 | **+11.3%** ✗ |
+| `val_re_rand` | 68.86 | 64.81 | **+6.2%** ✗ |
+
+All four splits regress — uniform pattern of harm, in direct contrast to the T_max=50 run where 3/4 splits improved.
+
+**The regime-flip in context:**
+
+| Regime | Run | val_avg | vs baseline | Direction |
+|---|---|---:|---:|---|
+| T_max=50 | `qb4jaqe1` (v1) | 78.06 | −4.58% vs 81.81 | **win** |
+| T_max=13 | `w4khx3l9` (v2) | 71.12 | **+9.56% vs 64.91** | **lose** |
+
+**Mechanistic analysis (fern's excellent per-block γ trajectory comparison):**
+
+At T_max=13, γ_attn depth-grading **dissolves** — the monotone-with-depth pattern (0.14→0.27 at T_max=50) becomes flat-and-noisy (0.20, 0.18, 0.12, 0.13, 0.15). γ_mlp is regime-robust in both (uniform across blocks, ≈0.45 ± 0.03 in both schedules).
+
+**Key structural finding (carries forward to paper):**
+- **MLP γ is regime-robust and uniform across blocks.** Same ~0.45 calibration regardless of T_max. Per-block FFN load is balanced in both regimes.
+- **Attn γ depth-grading requires a long lukewarm-LR phase.** Under T_max=50, optimizer has ~35 epochs >50% peak LR to differentiate per-block γ_attn. Under T_max=13, LR is <50% peak by epoch 4 — not enough time.
+- **Soft-start competes with cosine annealing.** γ_init=1e-4 (near-identity init) + T_max=13 (tight cosine) = double-damped early epochs. The model can't allocate gradient budget to both "grow γ from zero" and "fit the data" in 13 epochs.
+
+**Why the gain was real under T_max=50:** LayerScale stabilizes under-trained models by preventing early-epoch block-collapse. Under T_max=50, the model was structurally under-trained (LR never reached 0) — LayerScale's near-identity soft-start reduced early oscillation and improved the terminal basin. Under T_max=13, the cosine tail itself acts as the implicit curriculum that LayerScale was approximating. They're competing priors.
+
+**What this rules out:**
+- LayerScale γ_init=1e-4 at T_max=13 — dead.
+- "Soft-start regularization" lever family at T_max=13 — any prior that disables/dampens early-epoch updates competes with cosine tail's natural dampening.
+- DropPath (budget-binding) + LayerScale (schedule-competing) → both forms of early-training regularization fail under T_max=13.
+
+**Note on best epoch 12/13:** Per-epoch time slightly slower (~150s vs 142s baseline) due to elementwise γ multiply. Timeout cut at epoch 12; epoch 13 would have been the final near-zero LR fine-tune. Gap to baseline (Δ=+6.21) too large to close in one epoch — not a "needs more time" problem.
+
+**Decision: CLOSED.** SOFT-START-REGULARIZATION lever family settled negative at T_max=13. Fern reassigned to n_head sweep at T_max=13 (#1026).
+
+---
+
 ## 2026-04-29 08:00 — PR #1006: n_layers=6 retest at T_max=11 — **CLOSED — clean negative; depth=6 doesn't fit 30-min budget**
 
 - Branch: `willowpai2e4-thorfinn/nlayers6-tmax11-retest`

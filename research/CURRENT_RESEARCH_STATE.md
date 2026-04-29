@@ -1,11 +1,11 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-29 ~08:00
+- **As of:** 2026-04-29 ~08:30
 - **#963 MERGED** — T_max=13 schedule fix: val 81.81 → **64.91** (−20.66%), test 73.04 → **57.25** (−21.62%); largest single-PR win; run `j8yi780z`
 - **#1006 CLOSED** — n_layers=6 retest at T_max=11 clean negative (+9.16% val, +8.26% test); 30-min budget binds depth choice
 - **#972 CLOSED** — 3-seed mean at T_max=50 methodology valid but obsolete regime; seed=2 beats unseeded best 4.3%; askeladd→#1022 retest at T_max=13
+- **#949 CLOSED** — LayerScale γ_init=1e-4 regime-flip: −4.58% val at T_max=50 → **+9.56% val at T_max=13**; soft-start competes with cosine annealing; SOFT-START-REGULARIZATION exhausted; fern→#1026 n_head sweep
 - **#929 CLOSED** — DropPath@0.1 clean negative (+9.5–19.6% val regression, budget-binding, 3 seeds)
-- **#949 SENT BACK** — LayerScale −4.58% gain was under T_max=50; retest required at T_max=13 (new baseline 64.91)
 - **Most recent human direction:** none
 - **Branch:** `icml-appendix-willow-pai2e-r4`
 - **Current best (unseeded):** `val_avg = 64.91`, `test_avg = 57.25` (run `j8yi780z`, PR #963, T_max=13)
@@ -70,7 +70,7 @@ on L1-only baseline). The compounding mechanism is well-understood.
 | #938 | tanjiro | RFF σ sweep {2,5,10} | +2.4–7.3% actual | **CLOSED — RFF-as-replacement settled negative; tanjiro→#1007 hybrid concat** |
 | #939 | frieren | n_layers=6 | +4.7% actual | **CLOSED — under-trained; thorfinn→#1006 retest at T_max=11** |
 | #883 | thorfinn | Fourier bands sweep K∈{3,6,8} | K=4 settled | **CLOSED** |
-| #949 | fern | LayerScale γ_init=1e-4 (CaiT) | −4.58% under T_max=50 | **SENT BACK — retest at T_max=13 required; new baseline 64.91** |
+| #949 | fern | LayerScale γ_init=1e-4 (CaiT) | +9.56% actual at T_max=13 | **CLOSED — regime-flip; soft-start competes with cosine annealing; fern→#1026** |
 | #955 | thorfinn | Per-channel output heads (Ux/Uy/p) | +2.7% actual | **CLOSED — cross-channel coupling load-bearing; DECODER-DECOUPLING exhausted** |
 | #963 | frieren | Schedule-to-budget T_max=13 | **−20.66% val / −21.62% test** | **MERGED — new baseline 64.91** |
 | #979 | thorfinn | Pressure-only head (decouple only p) | +0.61% val (seed noise); −2.45% 3-split test | **CLOSED — new baseline supersedes; DECODER-DECOUPLING exhausted; thorfinn→#1006** |
@@ -82,6 +82,7 @@ on L1-only baseline). The compounding mechanism is well-understood.
 | #1007 | tanjiro | RFF hybrid: axis-aligned + σ=10 RFF concat at T_max=13 | 0 to −3% | **WIP** |
 | #1022 | askeladd | 3-seed mean at T_max=13 (paper-facing canonical, current regime) | std ↓ vs T_max=50 | **WIP (just assigned)** |
 | #1023 | thorfinn | Peak LR sweep at T_max=13: lr ∈ {3e-4, 5e-4, 7.5e-4, 1e-3} | 0 to −7% | **WIP (just assigned)** |
+| #1026 | fern | n_head sweep at T_max=13: n_head ∈ {2, 4, 8} | 0 to −3% | **WIP (just assigned)** |
 
 **Round 3 candidates (queued):**
 
@@ -109,8 +110,17 @@ on L1-only baseline). The compounding mechanism is well-understood.
   priority architectural stack candidate.**
 - **FiLM × T_max=13** (#816 needs rebase onto post-#963). Bar is 64.91.
 - **EMA + FiLM + T_max=13 triple stack** — if both land, combine.
-- **LayerScale × T_max=13** — IN FLIGHT as fern #949 retest. Sent back with
-  `--t_max 13 --seed 0` instructions.
+- **LayerScale × T_max=13** — **CLOSED #949 +9.56% val.** Regime-flip: won
+  under T_max=50 (−4.58%) but soft-start γ_init=1e-4 competes with cosine
+  annealing under T_max=13 (double-dampened early epochs). SOFT-START-
+  REGULARIZATION lever family exhausted. Key finding: γ_mlp is regime-robust
+  and uniform across blocks; γ_attn depth-grading dissolves without long
+  lukewarm-LR runway. Fern reassigned to n_head sweep (#1026).
+- **n_head sweep at T_max=13** — **IN FLIGHT as fern #1026.** n_head ∈ {2, 4, 8}
+  at seed=0, T_max=13. Zero param change. Tests "fewer wider vs more narrower
+  heads" under post-#963 schedule. n_head=4 baseline sanity-check included.
+  Predicted: ±0-3% on val_avg. Orthogonal to thorfinn #1023 (LR sweep) and
+  frieren #1000 (T_max sweep).
 - **DropPath@0.05 × T_max=13** — CLOSED (#1002, +2.0% regression). Lever family DROPPATH-AT-N-LAYERS-5 exhausted. n_layers=6 retest also closed (#1006), so no headroom to revisit.
 - **Channel-weight re-tune at T_max=13** — IN FLIGHT as nezuko #1017. ch=[1,1,3] was tuned under T_max=50; p-weight sweep {2,4,6} at T_max=13 re-validates.
 - **RFF hybrid concat (axis-aligned + σ=10 RFF)** — IN FLIGHT as tanjiro #1007. σ=10 won cruise (−6.6%) and re_rand in replacement mode; concat mode lets axis-aligned hold structured backbone.
