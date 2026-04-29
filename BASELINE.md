@@ -23,7 +23,8 @@ denormalized target space.
 
 | PR   | W&B run    | val_avg/mae_surf_p | test_avg/mae_surf_p | Notes                                |
 |------|------------|---------------------|---------------------|--------------------------------------|
-| **#862** | [jsat9zk5](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/jsat9zk5) | **82.64** | **73.02** | slice=32 + 4-way stack (δ=0.5+EMA+clip+w0), epoch 16, **MERGED ✓** |
+| **#959** | [j7zko7ml](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/j7zko7ml) | **79.82** | **70.00** | BF16 + δ=0.1 + EMA=0.99 (slice=64), epoch 18, **MERGED ✓** |
+| #862 | [jsat9zk5](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/jsat9zk5) | 82.64 | 73.02 | slice=32 + 4-way stack (δ=0.5+EMA+clip+w0), epoch 16, **MERGED ✓** |
 | #881 | [jej4y8gt](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/jej4y8gt) | 85.23 | 76.64 | Huber δ=0.1 + EMA=0.99, no clip/warmup, **MERGED ✓** |
 | #775 | [h22uwyy3](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/h22uwyy3) | 96.54 | 85.33 | warmup=0 + clip=0.5 + Huber δ=0.5 + EMA=0.99, **MERGED ✓** |
 | #769 | [hp87pun7](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/hp87pun7) | 102.86 | 94.83 | Huber δ=0.5, no clip, no EMA, **MERGED ✓** |
@@ -35,39 +36,38 @@ denormalized target space.
 - Huber δ=0.5 alone (PR #769): −27.0% val / −26.2% test
 - clip=0.5 + warmup=0 + Huber δ=0.5 + EMA=0.99 (PR #775): −31.5% val / −33.5% test
 - Huber δ=0.1 + EMA=0.99 (PR #881): −39.5% val / −40.3% test
-- **slice=32 + 4-way stack (PR #862): −41.4% val / −43.1% test** — *new best*
+- slice=32 + 4-way stack (PR #862): −41.4% val / −43.1% test
+- **BF16 + δ=0.1 + EMA=0.99 (PR #959): −43.4% val / −45.4% test** — *new best*
 
-**Note on parallel branches:** PR #862 (val=82.64) is on δ=0.5 + clip + EMA + slice=32. PR #881 (val=85.23) is on δ=0.1 + EMA only (no clip, no slice change). The slice=32 + δ=0.1 combination is untested — frieren's follow-up will probe it.
+**Critical note on stacks:** PR #959 (val=79.82) used slice=64 + δ=0.1 + EMA + BF16 (18 epochs). PR #862 (val=82.64) used slice=32 + δ=0.5 + clip + warmup=0 + EMA (no BF16, 16 epochs). These are on different stacks — the combination (BF16 + slice=32 + δ=0.1 + ...) is untested. BF16 adds +4 epochs at n_layers=5, making throughput the new binding constraint for all experiments.
 
-## Per-split test metrics (current best — PR #862, slice=32 + 4-way stack)
+## Per-split test metrics (current best — PR #959, BF16 + δ=0.1 + EMA=0.99)
 
 | Split                      | test/mae_surf_p |
 |----------------------------|----------------|
-| test_single_in_dist        | 87.34          |
-| test_geom_camber_rc        | 83.28          |
-| test_geom_camber_cruise    | **50.90**      |
-| test_re_rand               | 70.56          |
+| test_single_in_dist        | 83.00          |
+| test_geom_camber_rc        | 80.46          |
+| test_geom_camber_cruise    | **48.43**      |
+| test_re_rand               | 68.12          |
 
-Biggest gain: cruise 50.90 (vs 53.08 PR #881, vs 76.12 Huber-δ=0.5-alone).
+Biggest gain vs PR #862: cruise 48.43 (vs 50.90), rc 80.46 (vs 83.28), single 83.00 (vs 87.34).
 
 ## Reproduce best checkpoint
 
 ```bash
 cd target/
-python train.py --agent willowpai2e1-frieren \
-    --wandb_group slice-scan-v2 --wandb_name slice32-fullstack \
-    --warmup_epochs 0 --clip_norm 0.5 --huber_delta 0.5 --ema_decay 0.99 \
-    --slice_num 32
+python train.py --agent willowpai2e1-tanjiro \
+    --wandb_group bf16-throughput --wandb_name bf16-baseline \
+    --huber_delta 0.1 --ema_decay 0.99 --use_bf16
 ```
 
-**Minimum required flags for all future experiments:**
+**Minimum required flags for ALL future experiments (updated after PR #959 merge):**
 ```
---huber_delta 0.1 --ema_decay 0.99    (or --huber_delta 0.5 --clip_norm 0.5 --warmup_epochs 0 --ema_decay 0.99 if slice=32)
---slice_num 32                        (clear architectural win on full stack)
+--use_bf16                            (1.353× throughput, 21% less VRAM, no precision issues)
+--huber_delta 0.1 --ema_decay 0.99   (confirmed wins from PRs #881 + #959)
+--slice_num 32                        (confirmed architectural win from PR #862)
 ```
 
-**Two parallel best stacks:**
-1. **PR #862:** slice=32 + δ=0.5 + clip=0.5 + warmup=0 + EMA=0.99 → val=82.64 / test=73.02
-2. **PR #881:** slice=64 + δ=0.1 + EMA=0.99 (no clip/warmup) → val=85.23 / test=76.64
+**Important:** clip+warmup interaction at δ=0.1 is still being investigated (alphonse #957). Do NOT mandate `--clip_norm 0.5 --warmup_epochs 0` until that returns.
 
-The fully-merged combination (slice=32 + δ=0.1 + ...) is being tested next.
+**Next combination to test:** BF16 + slice=32 + δ=0.1 + EMA. Predicted val ~74–77 (combining throughput with architectural win).
