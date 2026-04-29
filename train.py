@@ -506,6 +506,7 @@ class Config:
     fourier_bands: int = 0  # 0 = disabled, baseline behavior
     use_swiglu: bool = False  # True = swap per-block MLP from GELU to SwiGLU
     seed: int = 0  # global seed for torch / numpy / random / sampler / DataLoader
+    t_max: int = 0  # 0 = use cfg.epochs; >0 = override CosineAnnealing T_max (e.g., 13 for budget-matched)
 
 
 cfg = sp.parse(Config)
@@ -562,7 +563,8 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+t_max = cfg.t_max if cfg.t_max > 0 else MAX_EPOCHS
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=t_max)
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -587,6 +589,15 @@ wandb.define_metric("val/*", step_metric="global_step")
 for _name in VAL_SPLIT_NAMES:
     wandb.define_metric(f"{_name}/*", step_metric="global_step")
 wandb.define_metric("lr", step_metric="global_step")
+
+wandb.summary["scheduler/t_max"] = t_max
+wandb.summary["scheduler/max_epochs_configured"] = MAX_EPOCHS
+wandb.summary["scheduler/budget_matched"] = cfg.t_max > 0
+wandb.log({
+    "scheduler/t_max": t_max,
+    "scheduler/max_epochs_configured": MAX_EPOCHS,
+    "scheduler/budget_matched": int(cfg.t_max > 0),
+})
 
 model_dir = Path(f"models/model-{run.id}")
 model_dir.mkdir(parents=True, exist_ok=True)
