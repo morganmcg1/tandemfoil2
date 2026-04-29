@@ -363,11 +363,12 @@ DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 # OneCycleLR superconvergence: peak then aggressive cosine anneal across the
 # full wall-clock budget. We pick total_steps from a conservative per-epoch
 # estimate so it is always >= the actual number of optimizer steps taken
-# (else OneCycleLR raises "Tried to step too many times"). With baseline
-# ~135s/epoch and a 30-min timeout, ~14 epochs fit; 125s estimate budgets
-# 15 epochs (one-epoch headroom) so the schedule anneals to ~93% — close to
-# min_lr while leaving margin if epochs run slightly faster than expected.
-ONECYCLE_PER_EPOCH_SEC_ESTIMATE = 125.0
+# (else OneCycleLR raises "Tried to step too many times"). With BF16 AMP
+# active the per-epoch time is ~98.5s on H100, so a 100s estimate plus the
+# +1 epoch headroom budgets 19 epochs in a 30-min timeout — matching the
+# observed BF16 training duration and letting the schedule anneal to min_lr
+# right as training ends.
+ONECYCLE_PER_EPOCH_SEC_ESTIMATE = 100.0
 ONECYCLE_MAX_LR = 1.2e-3
 ONECYCLE_PCT_START = 0.3
 ONECYCLE_DIV_FACTOR = 25.0
@@ -535,7 +536,11 @@ for epoch in range(MAX_EPOCHS):
         if cfg.grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
-        scheduler.step()
+        try:
+            scheduler.step()
+        except ValueError:
+            # OneCycleLR raises if stepped past total_steps; clamp at min_lr
+            pass
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
