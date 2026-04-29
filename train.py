@@ -215,10 +215,16 @@ class Transolver(nn.Module):
             for i in range(n_layers)
         ])
         self.film_layers = nn.ModuleList([FiLMLayer(n_hidden) for _ in range(n_layers)])
+        # Post-block FiLM heads pair with pre-block; the last block projects to
+        # out_dim so its post-FiLM slot is unused (skipped in forward).
+        self.film_post_layers = nn.ModuleList([FiLMLayer(n_hidden) for _ in range(n_layers)])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
         # Re-zero FiLM final layer after global _init_weights override.
         for film in self.film_layers:
+            nn.init.zeros_(film.net[-1].weight)
+            nn.init.zeros_(film.net[-1].bias)
+        for film in self.film_post_layers:
             nn.init.zeros_(film.net[-1].weight)
             nn.init.zeros_(film.net[-1].bias)
 
@@ -236,11 +242,19 @@ class Transolver(nn.Module):
         # log(Re) is broadcast-identical across nodes; pull from node 0 of each sample.
         log_re = x[:, 0, 13:14]  # [B, 1]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        for block, film in zip(self.blocks, self.film_layers):
-            gamma, beta = film(log_re)
-            # Pre-block FiLM: condition the input to attention/MLP, not the output.
-            fx = (1.0 + gamma.unsqueeze(1)) * fx + beta.unsqueeze(1)
+        for block, film_pre, film_post in zip(
+            self.blocks, self.film_layers, self.film_post_layers,
+        ):
+            # Pre-block FiLM: condition the input to attention/MLP.
+            gamma_pre, beta_pre = film_pre(log_re)
+            fx = (1.0 + gamma_pre.unsqueeze(1)) * fx + beta_pre.unsqueeze(1)
             fx = block(fx)
+            # Post-block FiLM: condition hidden output before next block. Skip on
+            # the last block — it already projects to out_dim, modulating that
+            # would mix Re into the prediction directly.
+            if not block.last_layer:
+                gamma_post, beta_post = film_post(log_re)
+                fx = (1.0 + gamma_post.unsqueeze(1)) * fx + beta_post.unsqueeze(1)
         return {"preds": fx}
 
 
