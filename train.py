@@ -81,6 +81,19 @@ class MLP(nn.Module):
         return self.linear_post(x)
 
 
+class SwiGLU(nn.Module):
+    """SwiGLU FFN: SiLU(gate) * value, then project down (Shazeer 2020)."""
+
+    def __init__(self, in_dim, hidden_dim, out_dim):
+        super().__init__()
+        self.gate_proj = nn.Linear(in_dim, hidden_dim * 2, bias=False)
+        self.down_proj = nn.Linear(hidden_dim, out_dim, bias=False)
+
+    def forward(self, x):
+        gate, val = self.gate_proj(x).chunk(2, dim=-1)
+        return self.down_proj(F.silu(gate) * val)
+
+
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
@@ -147,8 +160,7 @@ class TransolverBlock(nn.Module):
             dropout=dropout, slice_num=slice_num,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
-        self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
-                       n_layers=0, res=False, act=act)
+        self.mlp = SwiGLU(hidden_dim, hidden_dim * mlp_ratio, hidden_dim)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
