@@ -202,7 +202,8 @@ class PhysicsAttention(nn.Module):
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
                  mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
-                 use_swiglu: bool = False):
+                 use_swiglu: bool = False,
+                 use_pressure_only_head: bool = False):
         super().__init__()
         self.last_layer = last_layer
         self.ln_1 = nn.LayerNorm(hidden_dim)
@@ -218,16 +219,33 @@ class TransolverBlock(nn.Module):
                            n_layers=0, res=False, act=act)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
-            self.mlp2 = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim), nn.GELU(),
-                nn.Linear(hidden_dim, out_dim),
-            )
+            self.use_pressure_only_head = use_pressure_only_head
+            if use_pressure_only_head:
+                # Channel order [Ux, Uy, p] preserved via cat order in forward.
+                self.head_uxy = nn.Sequential(
+                    nn.Linear(hidden_dim, hidden_dim), nn.GELU(),
+                    nn.Linear(hidden_dim, 2),
+                )
+                self.head_p = nn.Sequential(
+                    nn.Linear(hidden_dim, hidden_dim), nn.GELU(),
+                    nn.Linear(hidden_dim, 1),
+                )
+            else:
+                self.mlp2 = nn.Sequential(
+                    nn.Linear(hidden_dim, hidden_dim), nn.GELU(),
+                    nn.Linear(hidden_dim, out_dim),
+                )
 
     def forward(self, fx):
         fx = self.attn(self.ln_1(fx)) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
-            return self.mlp2(self.ln_3(fx))
+            out = self.ln_3(fx)
+            if self.use_pressure_only_head:
+                uxy = self.head_uxy(out)
+                p = self.head_p(out)
+                return torch.cat([uxy, p], dim=-1)
+            return self.mlp2(out)
         return fx
 
 
@@ -237,7 +255,8 @@ class Transolver(nn.Module):
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None,
-                 use_swiglu: bool = False):
+                 use_swiglu: bool = False,
+                 use_pressure_only_head: bool = False):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -259,6 +278,7 @@ class Transolver(nn.Module):
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
                 use_swiglu=use_swiglu,
+                use_pressure_only_head=use_pressure_only_head,
             )
             for i in range(n_layers)
         ])
@@ -505,6 +525,7 @@ class Config:
     skip_test: bool = False  # skip end-of-run test evaluation
     fourier_bands: int = 0  # 0 = disabled, baseline behavior
     use_swiglu: bool = False  # True = swap per-block MLP from GELU to SwiGLU
+    use_pressure_only_head: bool = False  # True = decouple p head, keep Ux+Uy shared
     seed: int = 0  # global seed for torch / numpy / random / sampler / DataLoader
 
 
@@ -555,6 +576,7 @@ model_config = dict(
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
     use_swiglu=cfg.use_swiglu,
+    use_pressure_only_head=cfg.use_pressure_only_head,
 )
 
 model = Transolver(**model_config).to(device)
@@ -593,6 +615,24 @@ model_dir.mkdir(parents=True, exist_ok=True)
 model_path = model_dir / "checkpoint.pt"
 with open(model_dir / "config.yaml", "w") as f:
     yaml.dump(model_config, f)
+
+
+def _pressure_head_norms(model: nn.Module, phase: str) -> dict:
+    """Frobenius norms of the decoupled p / uxy head linears, for ×N specialization tracking."""
+    last = model.blocks[-1]
+    return {
+        f"pressure_head/{phase}/uxy_linear_0_norm": last.head_uxy[0].weight.norm().item(),
+        f"pressure_head/{phase}/uxy_linear_2_norm": last.head_uxy[2].weight.norm().item(),
+        f"pressure_head/{phase}/p_linear_0_norm": last.head_p[0].weight.norm().item(),
+        f"pressure_head/{phase}/p_linear_2_norm": last.head_p[2].weight.norm().item(),
+    }
+
+
+if cfg.use_pressure_only_head:
+    init_stats = _pressure_head_norms(model, "init")
+    wandb.log(init_stats)
+    wandb.summary.update(init_stats)
+    print("[pressure-only-head] init norms: " + ", ".join(f"{k.split('/')[-1]}={v:.4f}" for k, v in init_stats.items()))
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
@@ -715,6 +755,12 @@ if best_metrics:
 
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
+
+    if cfg.use_pressure_only_head:
+        final_stats = _pressure_head_norms(model, "final")
+        wandb.log(final_stats)
+        wandb.summary.update(final_stats)
+        print("[pressure-only-head] final norms: " + ", ".join(f"{k.split('/')[-1]}={v:.4f}" for k, v in final_stats.items()))
 
     test_metrics = None
     test_avg = None
