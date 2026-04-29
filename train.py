@@ -152,6 +152,9 @@ class TransolverBlock(nn.Module):
         self.ln_2 = nn.LayerNorm(hidden_dim)
         self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
                        n_layers=0, res=False, act=act)
+        # Dropout on the MLP/FFN path; the attention path already gets dropout
+        # via PhysicsAttention.to_out and SDPA dropout_p.
+        self.mlp_dropout = nn.Dropout(dropout)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
@@ -161,7 +164,7 @@ class TransolverBlock(nn.Module):
 
     def forward(self, fx):
         fx = self.attn(self.ln_1(fx)) + fx
-        fx = self.mlp(self.ln_2(fx)) + fx
+        fx = self.mlp_dropout(self.mlp(self.ln_2(fx))) + fx
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
         return fx
@@ -425,6 +428,7 @@ class Config:
     per_sample_norm: bool = False  # divide each sample's loss by its per-sample y_norm std
     warmup_epochs: int = 0  # linear LR warmup epochs before cosine decay (0 disables warmup)
     adamw_beta2: float = 0.999  # AdamW beta2 (second moment decay). Default 0.999 (PyTorch default).
+    dropout: float = 0.0  # Dropout probability applied in attention output + after MLP in each Transolver block.
 
 
 cfg = sp.parse(Config)
@@ -464,6 +468,7 @@ model_config = dict(
     n_head=cfg.n_head,
     slice_num=8,
     mlp_ratio=2,
+    dropout=cfg.dropout,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
