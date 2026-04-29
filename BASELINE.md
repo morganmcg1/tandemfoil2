@@ -4,15 +4,46 @@ Lower `val_avg/mae_surf_p` is better.
 
 ---
 
+## 2026-04-29 06:20 — PR #986: torch.compile(dynamic=True) — 7th compounding win, throughput unlocks +71% epochs
+
+- **val_avg/mae_surf_p:** 68.646 ← **current best**
+- **val per-split surf p MAE:**
+  - `val_single_in_dist`: 83.200
+  - `val_geom_camber_rc`: 80.069
+  - `val_geom_camber_cruise`: 46.472
+  - `val_re_rand`: 64.841
+- **test_avg/mae_surf_p:** 62.526 ← **best clean 4-split test**
+- **test per-split surf p MAE:**
+  - `test_single_in_dist`: 78.964
+  - `test_geom_camber_rc`: 72.753
+  - `test_geom_camber_cruise`: 40.413
+  - `test_re_rand`: 57.976
+- **Best epoch:** 29 of 50 (30.4-min timeout; val still descending at cutoff: epochs 22→29 went 80.84→92.64→98.21→79.25→79.73→70.54→72.62→68.65)
+- **Throughput:** 61.9 s/epoch steady-state (vs 109.5 s eager) — **1.77× speedup, +71% epochs in budget, peak VRAM 23.9 GB (vs 33.1, −28%)**
+- **Model:** `n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2` (663K params + distance features)
+- **Training:** `lr=1e-3 (peak), warmup_epochs=5, warmup_start_lr=1e-4, eta_min=1e-6, weight_decay=1e-4, batch_size=4, surf_weight=3.0, epochs=50, amp=True, amp_dtype=bf16, huber_delta=0.1, use_compile=True, compile_mode="default"`
+- **Changes vs prior:** `torch.compile(model, dynamic=True, mode="default")` with `torch._dynamo.config.cache_size_limit=64` and `assume_static_by_default=False`. Variable-N batches (74K-242K nodes) handled via dynamic-shape symbolic tracing; CUDA Graph Trees explicitly avoided per PyTorch issue #128424. Zero compile fallbacks/recompiles.
+- **Mechanism:** Throughput-only, orthogonal to all loss-shape and architecture levers. Larger budget (29 vs 17 epochs) lets the model further descend the still-active val curve. Improvement is uniform across all 4 splits on both val and test (−24% to −32%) — not a one-split artifact, breaks the previous split-trade pattern by letting both groups benefit from extra training.
+- **W&B run:** `up4t33m5`
+- **Reproduce:**
+  ```bash
+  cd target/ && python train.py --agent willowpai2e5-nezuko \
+    --amp --amp_dtype bf16 --use_compile \
+    --wandb_name "willowpai2e5-nezuko/compile-on-d0.1-verify" \
+    --wandb_group torch-compile-d0.1-verify
+  ```
+
+---
+
 ## 2026-04-29 04:10 — PR #885: Huber δ=1.0 → 0.1 stacked on sw=3+BF16
 
-- **val_avg/mae_surf_p:** 96.866 ← **current best**
+- **val_avg/mae_surf_p:** 96.866
 - **val per-split surf p MAE:**
   - `val_single_in_dist`: 119.405
   - `val_geom_camber_rc`: 116.812
   - `val_geom_camber_cruise`: 65.983
   - `val_re_rand`: 85.265
-- **test_avg/mae_surf_p:** 87.348 ← **best clean 4-split test**
+- **test_avg/mae_surf_p:** 87.348
 - **test per-split surf p MAE:**
   - `test_single_in_dist`: 109.152
   - `test_geom_camber_rc`: 107.290
