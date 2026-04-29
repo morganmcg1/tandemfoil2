@@ -1,5 +1,30 @@
 # SENPAI Research Results — willow-pai2e-r3
 
+## 2026-04-29 — PR #999 (PENDING REBASE → MERGE): RMSNorm — strong win, two seeds, val_avg=58.30 mean (best 57.95)
+- **Branch:** `thorfinn/rmsnorm`
+- **Hypothesis:** RMSNorm (scale-only, no mean-centering) is the canonical normalization pairing for SwiGLU. Removing the mean-centering preserves scale (the bilinear-gate-relevant statistic), reduces activation coupling, and gives back ~2 epochs of wall-clock margin inside the 30-min budget.
+- **Runs:** W&B `6krvx540` (v2, best) and `82kvdhbn` (v3), both 14/14 epochs, 32.3 min, 54.6 GB peak, group `rmsnorm`
+
+| Split | val v2 (`6krvx540`) | val v3 (`82kvdhbn`) | val mean | val SwiGLU baseline | Δ mean | test v2 | test v3 | test mean | test baseline | Δ test |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `single_in_dist` | 61.93 | 62.24 | 62.09 | 74.96 | **−17.2%** | 55.77 | 56.09 | 55.93 | 65.07 | **−14.1%** |
+| `geom_camber_rc` | 72.84 | 72.34 | 72.59 | 73.39 | −1.1% | 66.36 | 66.61 | 66.48 | 67.47 | −1.5% |
+| `geom_camber_cruise` | 40.39 | 40.77 | 40.58 | 42.66 | −4.9% | 32.88 | 34.10 | 33.49 | 35.67 | −6.1% |
+| `re_rand` | 56.66 | 59.20 | 57.93 | 57.81 | +0.2% | 49.69 | 50.56 | 50.12 | 51.93 | −3.5% |
+| **avg** | **57.9550** | **58.6360** | **58.30** | **62.20** | **−6.3%** | **51.1735** | **51.8385** | **51.51** | **55.04** | **−6.4%** |
+
+Two-seed std (range/2): val_avg=0.34, test_avg=0.33 — well inside noise band.
+
+### Decision: PENDING REBASE → MERGE — strong win (val < 60 threshold cleared); merge conflict on squash-merge due to branch updates since submission
+- **Both seeds beat val < 60 strong-win threshold** (57.95, 58.64). Mean 58.30 vs baseline 62.20 = −6.3% val / −6.4% test.
+- **`single_in_dist` biggest winner (−17.2% val)** — opposite of prediction that Re-targeted splits would benefit most. Interpretation: SwiGLU's bilinear-gate gain had already captured most Re-extrapolation headroom; RMSNorm's gain comes from cleaner gradient flow on in-distribution variation (scale preservation on the gate input). `geom_camber_rc` minimal (−1.1%); `re_rand` essentially flat on val (+0.2%) but meaningful on test (−3.5%).
+- **Pareto win on simplicity:** −1,408 params (remove β terms from 11 LayerNorms), fewer FLOPs, simpler definition. Even a flat result would merge as a Pareto improvement.
+- **Thorfinn's implementation used `F.rms_norm()` (PyTorch ≥2.4 fused CUDA kernel)** — numerically equivalent to manual, slightly faster (one kernel launch).
+- **Sent back for mechanical rebase** — advisor branch was updated after submission (PR #927 close, #976 sendback, doc commits). No re-run needed; rebase + push + resubmit is sufficient.
+- **New canonical config post-merge:** `--rms_norm` added to all future baselines. Beat-threshold updates to val_avg < 57.9550.
+
+---
+
 ## 2026-04-29 — PR #976 (SENT BACK): AoA-FiLM v1 — strong mechanism win on pre-SwiGLU stack; rebase onto SwiGLU+ratio=1 HEAD required
 - **Branch:** `askeladd/aoa-film`
 - **Hypothesis:** Extending FiLM input from 1-d (log_Re) to 3-d (log_Re, AoA1, AoA2) tests whether multi-variable conditioning compounds. AoA is a primary flow parameter modulating stagnation point, lift coefficient, wake interaction.

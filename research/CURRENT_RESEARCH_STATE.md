@@ -10,8 +10,11 @@
 - **val_avg/mae_surf_p = 62.20** (W&B run `sv9ktfk3`, alphonse SwiGLU MLP, merged PR #961, 2026-04-29)
 - **test_avg/mae_surf_p = 55.04**
 - Per-split val: single_in_dist=74.96, geom_camber_rc=73.39, geom_camber_cruise=42.66, re_rand=57.81
-- Beat-threshold for new PRs: **val_avg < 62.20**
-- **Note:** PR #983 (alphonse, merged 2026-04-29) switched canonical config to mlp_ratio=1 (0.62M params, 14/14 epochs). All pre-SwiGLU WIP branches (#869, #927, #975, #976) — if any shows improvement over old baseline (79.54) but not new (62.20), it will be sent back to rebase onto SwiGLU+ratio=1 HEAD and re-run. Post-SwiGLU assignments (#999, #1016, #1020, #1021) build directly on current HEAD (ratio=1). Beat-threshold: val_avg < 62.20 (leaderboard low from PR #961 snapshot).
+- Beat-threshold for new PRs: **val_avg < 62.20** (will drop to < 57.96 once PR #999 RMSNorm merges after rebase)
+- **Note:** PR #983 (alphonse, merged 2026-04-29) switched canonical config to mlp_ratio=1 (0.62M params, 14/14 epochs). All pre-SwiGLU WIP branches (#869, #975, #976) — if any shows improvement over old baseline (79.54) but not new (62.20), it will be sent back to rebase onto SwiGLU+ratio=1 HEAD and re-run. Post-SwiGLU assignments (#999, #1016, #1020, #1021) build directly on current HEAD (ratio=1). Beat-threshold: val_avg < 62.20 (leaderboard low from PR #961 snapshot; pending PR #999 RMSNorm merge will drop this to 57.96).
+
+### Pending merge
+- **PR #999 RMSNorm (strong win, pending rebase):** val_avg=57.95 (best), 58.30 (mean 2 seeds), test_avg=51.17/51.51 — sent back for mechanical rebase only; no re-run needed. Once merged, this becomes the new canonical config and beat-threshold.
 
 ### Prior bests (for reference)
 - val_avg/mae_surf_p = 79.54 (nezuko Re-stratified batch sampling, merged PR #910) — superseded by SwiGLU
@@ -60,6 +63,7 @@
 | #969 | Vertical-flip data augmentation (training-time, domain-gated) | Closed — NACA M not flipped → mesh-vs-metadata contradictions; sign-reversed per-split signal (cruise +18.8% worst, not best); two independent y-symmetry falsifications | 86.68 |
 | #927 v2 | Per-channel volume L1 (vol_w_p=2.0) v2 rebased onto SwiGLU | Closed — mechanism absorbed by SwiGLU; vol_p gain shrunk −9.0% → −4.2%; surf_p flipped neutral → +4.77% regression; volume-loss-shape direction declared closed at this architecture | 65.59 |
 | #983 | SwiGLU mlp_ratio ablation (ratio=1 vs ratio=2) | **MERGED** — canonical config switched to mlp_ratio=1; gating-mechanism is primary driver (~97% of gain), capacity contribution ~3%; 0.62M params, 14/14 epochs | 62.74 (paired; test=55.04) |
+| **#999** | **RMSNorm replacing LayerNorm (canonical SwiGLU pairing)** | **PENDING REBASE → MERGE** — strong win val_avg=57.95 best / 58.30 mean (2 seeds), −6.3% val / −6.4% test; Pareto win on params+FLOPs+simplicity | **57.95** (pending) |
 | **#961** | **SwiGLU MLP — replace GELU MLP with Swish-gated linear unit** | **MERGED — leaderboard low-water-mark** | **62.20** |
 
 ## Active WIP PRs
@@ -68,7 +72,7 @@
 |---------|-----|-----------|--------|
 | alphonse | #1020 | **Ultra-thin SwiGLU (mlp_ratio=2/3, intermediate=85, 0.51M params) — paper-efficiency extension** | WIP — new 2026-04-29 (post-SwiGLU) |
 | askeladd | #976 | AoA-FiLM: extend FiLM input from 1-d log_Re to 3-d (log_Re, AoA1, AoA2) | **SENT BACK 2026-04-29** — pre-SwiGLU mechanism win (val=78.58 < 79.54 old; cruise −7.5%, γ-norms growing); rebase onto SwiGLU+ratio=1 HEAD, paired v2-aoa vs v2-baseline |
-| thorfinn | #999 | **RMSNorm replacing LayerNorm — canonical SwiGLU pairing (LLaMA/Mistral-style normalization)** | WIP — new 2026-04-29 (post-SwiGLU) |
+| thorfinn | #999 | **RMSNorm replacing LayerNorm — canonical SwiGLU pairing (LLaMA/Mistral-style normalization)** | **PENDING REBASE → MERGE 2026-04-29** — strong win val_avg=57.95 (best), 58.30 (mean 2 seeds), −6.3% val −6.4% test; sent back for mechanical rebase only |
 | nezuko | #1021 | **slice_num sweep {32, 64, 96, 128} — physics-attention spatial resolution ablation** | WIP — new 2026-04-29 (post-SwiGLU) |
 | fern | #1029 | **Surface loss reweighting by per-node pressure quantile (within-sample, target-value-gated; sweep top10/α=2, top20/α=2, top10/α=3)** | WIP — new 2026-04-29 (post-SwiGLU) |
 | edward | #975 | DropPath rate sweep {0.05, 0.10, 0.15} on FiLM+L1+Re-stratify | WIP — new 2026-04-29 |
