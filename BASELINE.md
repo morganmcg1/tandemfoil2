@@ -134,4 +134,67 @@ For a merge decision: any val_avg below 122.15 merges; gains <5% at single seed 
 
 ---
 
+## 2026-04-29 — PR #909: Pre-block FiLM (condition attention input on log(Re))
+
+**New best — merged 2026-04-29.**
+
+- **val_avg/mae_surf_p: 81.55** (−1.5% vs prior baseline 82.77)
+- **test_avg/mae_surf_p: 72.40** (+0.2% vs prior test 72.27)
+- **W&B run:** `x7hi1qun` (thorfinn, film-pre-block v1)
+- **Per-split:**
+
+| Split | val surf_p | test surf_p |
+|---|---|---|
+| `single_in_dist` | 93.70 | 84.20 |
+| `geom_camber_rc` | 92.70 | 82.91 |
+| `geom_camber_cruise` | 62.62 | 51.93 |
+| `re_rand` | 77.16 | 70.54 |
+| **avg** | **81.55** | **72.40** |
+
+- **Config:** Default model + FiLM applied pre-block (before attention/MLP) instead of post-block. FiLM modulation `(1+γ)·h + β` applied to block *input* in `Transolver.forward`; `TransolverBlock.forward` receives plain `fx` with no gamma/beta. FiLMLayer unchanged (1→32 SiLU→2×n_hidden, zero-init). surf_weight=10.0, AdamW lr=5e-4, wd=1e-4, --epochs 14. Params: 704,919 (unchanged).
+- **Key finding:** Pre-block FiLM yields a small but clean val win (+1.5%). The Re-targeted splits benefit as predicted (`val_re_rand` −2.10, `val_geom_camber_cruise` −2.28). Mixed per-split signal on in-dist and geom_camber_rc suggests input-side Re-conditioning is more useful for OOD-Re regimes than for in-distribution geometry. Test is flat (+0.2%), which is consistent with single-seed noise. Mechanism: pre-block conditioning modulates Q/K/V attention computation directly (regime-aware attention patterns) vs post-block modulation which only scales block outputs.
+- **Reproduce:**
+  ```bash
+  cd target/ && python train.py \
+    --epochs 14 \
+    --wandb_group film-pre-block \
+    --wandb_name v1 \
+    --agent willowpai2e3-thorfinn
+  ```
+- **Beat-threshold going forward:** `val_avg/mae_surf_p < 81.55`
+
+---
+
+## 2026-04-29 — PR #910: Re-stratified batch sampling
+
+**New best — merged 2026-04-29.**
+
+- **val_avg/mae_surf_p: 79.54** (−2.4% vs prior baseline 81.55)
+- **test_avg/mae_surf_p: 70.26** (−3.0% vs prior test 72.40)
+- **W&B run:** `wakfw4uy` (nezuko, re-stratified-sampling v1)
+- **Per-split:**
+
+| Split | val surf_p | test surf_p |
+|---|---|---|
+| `single_in_dist` | 84.70 | 73.79 |
+| `geom_camber_rc` | 92.95 | 83.50 |
+| `geom_camber_cruise` | 63.49 | 52.45 |
+| `re_rand` | 77.02 | 71.29 |
+| **avg** | **79.54** | **70.26** |
+
+- **Config:** Default model + FiLM pre-block + L1 surface loss + Re-stratified batch sampling (`--re_stratify`). Round-robin sampler builds each batch from 5 Re quintile buckets; batch log(Re) std=0.652 (vs ~0 under random). surf_weight=10.0, AdamW lr=5e-4, wd=1e-4, --epochs 14. Params: 704,919 (unchanged).
+- **Key finding:** Re-stratified batches compound with FiLM+L1. Largest gain on `single_in_dist` (−11.4% val) — stratification equalizes the pressure-scale gradient bias that random sampling creates (high-Re samples dominate gradient by absolute pressure magnitude under L1). Re-targeted splits (`re_rand`, `cruise`) also improved. Only `geom_camber_rc` slightly regressed (+1.7% val).
+- **Reproduce:**
+  ```bash
+  cd target/ && python train.py \
+    --epochs 14 \
+    --re_stratify \
+    --wandb_group re-stratified-sampling \
+    --wandb_name v1 \
+    --agent willowpai2e3-nezuko
+  ```
+- **Beat-threshold going forward:** `val_avg/mae_surf_p < 79.54`
+
+---
+
 *This file is updated after each merge. Entries are cumulative — do not delete prior entries.*

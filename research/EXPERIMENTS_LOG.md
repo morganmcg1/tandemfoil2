@@ -1,5 +1,79 @@
 # SENPAI Research Results — willow-pai2e-r3
 
+## 2026-04-29 — PR #910 (MERGED): Re-stratified batch sampling
+- **Branch:** `willowpai2e3-nezuko/re-stratified-sampling`
+- **Hypothesis:** Partition training set into Re quintiles; ensure every mini-batch contains samples from each quintile (round-robin). Gives FiLM conditioning consistent Re-diverse training signal; also equalizes the high-Re gradient dominance under L1 loss.
+- **Run:** W&B `wakfw4uy`, 14 epochs, 31.5 min, group `re-stratified-sampling`, params 704,919 (unchanged)
+
+| Split | val baseline (pre-block FiLM) | val Re-strat | Δ val | test baseline | test Re-strat | Δ test |
+|---|---|---|---|---|---|---|
+| `single_in_dist` | 93.70 | **84.70** | **−9.6%** | 84.20 | **73.79** | **−12.4%** |
+| `geom_camber_rc` | 92.70 | 92.95 | +0.3% | 82.91 | 83.50 | +0.7% |
+| `geom_camber_cruise` | 62.62 | **63.49** | +1.4% | 51.93 | **52.45** | +1.0% |
+| `re_rand` | 77.16 | **77.02** | −0.2% | 70.54 | **71.29** | +1.1% |
+| **avg** | 81.55 | **79.54** | **−2.5%** | 72.40 | **70.26** | **−3.0%** |
+
+### Decision: MERGED — new best, Re-stratification compounds with FiLM+L1 stack
+- **−2.5% val, −3.0% test** vs pre-block FiLM baseline. Clean improvement.
+- Mechanism surprise: largest gain from `single_in_dist` (−9.6% val / −12.4% test), not `re_rand` as predicted. Interpretation: uniform random batching was biasing gradient toward high-Re cluster (which dominates by absolute pressure magnitude under L1); stratification equalizes per-Re gradient even within in-distribution samples.
+- `geom_camber_rc` is now the hardest split (92.95 val), marginally plateauing across all interventions.
+- Val curve still falling at epoch 14 — `--re_stratify` now defaults to True in all subsequent experiments.
+- **New beat-threshold: val_avg/mae_surf_p < 79.54**
+
+---
+
+## 2026-04-29 — PR #743 (CLOSED): Per-channel surface loss — channel weighting v3
+- **Branch:** `willowpai2e3-alphonse/channel-weighted-surface-loss`
+- **Hypothesis:** Per-channel weights [1.0, 0.5, 2.0] (Ux, Uy, p) on L1 surface loss aligns gradient with pressure-dominated metric. Had stacked with Huber (−3.8%). Tested on FiLM+L1 stack (v3).
+- **Run:** W&B `n5e2f61d`, 14 epochs, 32.1 min, group `channel-weighted-surface-loss v3-l1-base`
+
+| Split | val FiLM+L1 baseline | val chan-weighted v3 | Δ val |
+|---|---|---|---|
+| `single_in_dist` | 95.54 | 97.01 | +1.5% |
+| `geom_camber_rc` | 91.38 | 95.25 | +4.2% |
+| `geom_camber_cruise` | 64.90 | 64.25 | −1.0% |
+| `re_rand` | 79.26 | 78.24 | −1.3% |
+| **avg** | 82.77 | **83.69** | **+1.1% (WORSE)** |
+
+### Decision: CLOSED — mechanism falsified on FiLM+L1 stack
+- Channel weighting doesn't stack with FiLM+L1: +1.1% worse than FiLM+L1 baseline, +2.6% worse than current best (79.54).
+- FiLM's per-block `(1+γ)·h + β` conditioning already implicitly adapts effective per-channel contributions via regime-aware hidden state modulation. Adding explicit channel weights at loss level is redundant.
+- Per-split pattern confirms mechanism overlap: only splits where FiLM is weakest (cruise/re_rand) saw marginal improvement; FiLM-strong splits (single_in_dist, rc) regressed.
+- **Conclusion:** Per-channel gradient lever is saturated architecturally by FiLM. Channel weighting was genuine at Huber stage (−3.8%) but FiLM now captures that benefit more efficiently.
+
+---
+
+## 2026-04-29 — PR #756 (SENT BACK): Fourier Re-encoding v2-rebased
+- **Branch:** `willowpai2e3-frieren/fourier-re-encoding`
+- **Run (v2-rebased):** W&B `zyyswd05`, 13 epochs (timeout at 30.1 min), group `fourier-re-encoding v2-rebased`
+- val_avg=88.671 — does not beat current best 79.54
+- **Status:** Sent back for v3 rebase onto full FiLM+pre-block+Re-stratify stack. Fourier encoding hypothesis still live — 27.4% improvement from founding baseline, and `val_re_rand=84.87` is the strongest per-split evidence for cross-Re encoding benefit. Needs retesting on current HEAD.
+
+---
+
+## 2026-04-29 — PR #909 (MERGED): Pre-block FiLM conditioning
+- **Branch:** `willowpai2e3-thorfinn/film-pre-block`
+- **Hypothesis:** Move FiLM modulation from post-block (after attention+MLP residuals) to pre-block (block input). Pre-block conditioning lets Q/K/V compute attention scores on Re-conditioned features, giving regime-aware attention patterns rather than just output rescaling.
+- **Run:** W&B `x7hi1qun`, 14 epochs, 32.3 min, group `film-pre-block`, params 704,919 (unchanged from post-block baseline)
+
+| Split | val baseline (post-block) | val pre-block | Δ val | test baseline | test pre-block | Δ test |
+|---|---|---|---|---|---|---|
+| `single_in_dist` | 95.54 | 93.70 | −1.84 | 81.63 | 84.20 | +2.57 |
+| `geom_camber_rc` | 91.38 | 92.70 | +1.32 | 82.02 | 82.91 | +0.89 |
+| `geom_camber_cruise` | 64.90 | **62.62** | **−2.28** | 53.62 | **51.93** | −1.69 |
+| `re_rand` | 79.26 | **77.16** | **−2.10** | 71.82 | **70.54** | −1.28 |
+| **avg** | 82.77 | **81.55** | **−1.22 (−1.5%)** | 72.27 | 72.40 | +0.13 |
+
+### Decision: MERGED — small but mechanistically interpretable win
+- **−1.5% val vs FiLM+L1 post-block baseline** (82.77 → 81.55). Meets merge criterion.
+- **Test flat (+0.2%)** — single-seed noise territory; not a regression.
+- Mechanism confirmed: Re-targeted splits (re_rand −2.10 val/−1.28 test, cruise −2.28/−1.69) improved as predicted by the "regime-aware attention pattern" hypothesis. Pre-block conditioning changes *which* features are attended to, not just how attended features are scaled.
+- Mixed signal: `val_geom_camber_rc` +1.32 and `test_single_in_dist` +2.57 regressions. Interpretation: early-block features for in-dist geometry don't need Re-modulation; applying FiLM to all 5 blocks may over-condition the early representation.
+- Val curve still falling at epoch 14 (ep13→ep14: −0.56, steep drop ep12→13 of −5.3). Indicates more headroom with either longer training or architectural refinement.
+- **New beat-threshold: val_avg/mae_surf_p < 81.55**
+
+---
+
 ## 2026-04-28 22:20 — PR #761 (MERGED): L1 surface MAE loss
 - **Branch:** `willowpai2e3-tanjiro/l1-surface-mae-loss`
 - **Hypothesis:** Replace surface MSE (then Huber) with pure L1 (MAE) to align training objective directly with `mae_surf_p` metric and exploit pressure's heavy-tailed residual distribution. Predicted −5 to −12% gain.
