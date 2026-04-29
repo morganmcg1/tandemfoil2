@@ -140,6 +140,52 @@ cd target/ && python train.py --agent charliepai2f2-tanjiro --experiment_name "c
 
 ---
 
+## 2026-04-29 15:15 — PR #1184: BF16 AMP on current best stack: more epochs within 30-min budget
+
+- **Student**: charliepai2f2-askeladd
+- **Branch**: charliepai2f2-askeladd/bf16-amp-on-current-stack
+- **Change**: BF16 mixed-precision (`torch.autocast` + `dtype=torch.bfloat16`) on top of PR #1098 best config (lr=1e-3 + grad_clip=1.0 + DropPath 0→0.1 + budget-aware CosineAnnealingLR + surf_weight=25). No GradScaler. 27% per-epoch speedup: 135s/ep → 98.5s/ep, enabling 19 epochs within the 30-min budget vs 14.
+
+### Best Validation Metrics (epoch 19/50, 30-min timeout)
+
+| Metric | Value | vs prior baseline (PR #1098) |
+|--------|-------|------------------------------|
+| **val_avg/mae_surf_p** (PRIMARY) | **89.00** | **-11.41 (-11.4%)** |
+| val_avg/mae_vol_p | ~103.4 (per-split avg) | — |
+| val_avg/mae_surf_Ux | ~1.276 | — |
+| val_avg/mae_surf_Uy | ~0.649 | — |
+
+Per-split surface pressure MAE:
+
+| Split | val mae_surf_p | test mae_surf_p |
+|-------|----------------|-----------------|
+| single_in_dist | 105.41 | 89.40 |
+| geom_camber_rc | 101.20 | 89.89 |
+| geom_camber_cruise | 65.37 | 54.72 |
+| re_rand | 84.04 | 76.37 |
+| **avg** | **89.00** | **77.59** |
+
+### Context
+- 19 epochs / 50 configured (hit SENPAI_TIMEOUT_MINUTES=30 at ~98.5s/epoch); best at epoch 19
+- BF16 autocast in train + eval forward passes; loss computed in FP32 (.float() cast after forward)
+- Budget-aware CosineAnnealingLR re-estimated T_max=16 from BF16 epoch time → cosine fully anneals to eta_min=1e-6 by epoch 19
+- Peak GPU memory: 32.95 GB (RTX PRO 6000 Blackwell, 96 GB total)
+- Params: 662,359
+- Metrics JSONL (run 1): `target/models/model-charliepai2f2-askeladd-bf16-amp-on-current-stack-20260429-134807/metrics.jsonl`
+- Metrics YAML (run 1): `target/models/model-charliepai2f2-askeladd-bf16-amp-on-current-stack-20260429-134807/metrics.yaml`
+- Model config: n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2
+
+### Reproduce
+```bash
+cd target/ && python train.py \
+  --agent charliepai2f2-askeladd \
+  --experiment_name "charliepai2f2-askeladd/bf16-amp-on-current-stack" \
+  --grad_clip 1.0
+# BF16 autocast in train.py; lr=1e-3, surf_weight=25.0, DropPath(0→0.1), budget-aware cosine, NaN guard
+```
+
+---
+
 ## Notes on NaN in test_geom_camber_cruise
 
 One corrupted GT sample (`000020.pt`) in `.test_geom_camber_cruise_gt/` has NaN in the pressure channel. `data/scoring.py:accumulate_batch` propagates this NaN because `NaN * 0.0 = NaN` in IEEE float — the mask does not fully guard it. Since `data/scoring.py` is read-only, future experiments should apply `nan_to_num()` or clamp predictions in train.py before the scoring call, or report 3-split test averages when test_geom_camber_cruise is corrupted.
