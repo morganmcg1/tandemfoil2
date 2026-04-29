@@ -414,6 +414,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     surf_huber_delta: float = 1.0  # delta for Huber surface loss (in normalized space)
+    re_input_noise: float = 0.0  # std of Gaussian noise on normalized log_re at training (0 = off)
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -467,6 +468,17 @@ if __name__ == "__main__":
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
+    raw_re_sigma = 0.0
+    re_pct_perturbation = 0.0
+    if cfg.re_input_noise > 0:
+        import math
+        raw_re_sigma = cfg.re_input_noise * stats["x_std"][13].item()
+        re_pct_perturbation = (math.exp(raw_re_sigma) - 1) * 100.0
+        print(
+            f"Re-input noise: σ_normalized={cfg.re_input_noise} | "
+            f"σ_raw_log_Re={raw_re_sigma:.4f} | ~{re_pct_perturbation:.2f}% perturbation of Re"
+        )
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
@@ -482,6 +494,8 @@ if __name__ == "__main__":
             "n_params": n_params,
             "train_samples": len(train_ds),
             "val_samples": {k: len(v) for k, v in val_splits.items()},
+            "re_input_noise_raw_log_re_sigma": raw_re_sigma,
+            "re_input_noise_pct_perturbation": re_pct_perturbation,
         },
         mode=os.environ.get("WANDB_MODE", "online"),
     )
@@ -521,6 +535,12 @@ if __name__ == "__main__":
             mask = mask.to(device, non_blocking=True)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            if cfg.re_input_noise > 0:
+                # Per-sample noise (broadcast across nodes) preserves FiLM's
+                # broadcast-identical log_re assumption; noise is in normalized units.
+                noise = torch.randn(x_norm.shape[0], 1, 1, device=x_norm.device, dtype=x_norm.dtype) * cfg.re_input_noise
+                x_norm = x_norm.clone()
+                x_norm[:, :, 13:14] = x_norm[:, :, 13:14] + noise
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
             sq_err = (pred - y_norm) ** 2
