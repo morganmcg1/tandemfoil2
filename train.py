@@ -18,12 +18,14 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import numpy as np
 import simple_parsing as sp
 import torch
 import torch.nn as nn
@@ -32,7 +34,7 @@ import wandb
 import yaml
 from einops import rearrange
 from timm.layers import trunc_normal_
-from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 from tqdm import tqdm
 
 from data import (
@@ -405,10 +407,46 @@ loader_kwargs = dict(collate_fn=pad_collate, num_workers=4, pin_memory=True,
 if cfg.debug:
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
                               shuffle=True, **loader_kwargs)
+    stage_loaders = None
+    stage_n_samples = None
 else:
-    sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_ds), replacement=True)
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
-                              sampler=sampler, **loader_kwargs)
+    # Curriculum by Re-regime: sort training samples by log(Re) ascending and
+    # cache one weighted-sampler loader per stage. Stage 1 = bottom 33%,
+    # Stage 2 = bottom 67%, Stage 3 = full dataset. The per-stage WeightedRandomSampler
+    # preserves the existing balanced-domain sampling within each stage subset.
+    log_re_vals = np.zeros(len(train_ds), dtype=np.float64)
+    for i in range(len(train_ds)):
+        x_i, _, _ = train_ds[i]
+        log_re_vals[i] = float(x_i[0, 13])
+    sorted_indices = np.argsort(log_re_vals)
+    n_train = len(train_ds)
+    stage_boundaries = [n_train // 3, 2 * n_train // 3, n_train]
+    print(f"Curriculum: n_train={n_train}, stage boundaries at {stage_boundaries}")
+    for s, end in enumerate(stage_boundaries, start=1):
+        re_lo = math.exp(log_re_vals[sorted_indices[0]])
+        re_hi = math.exp(log_re_vals[sorted_indices[end - 1]])
+        print(f"  Stage {s} ({end} samples) Re range: [{re_lo:.0f}, {re_hi:.0f}]")
+
+    sample_weights_np = sample_weights.numpy()
+    stage_loaders = {}
+    stage_n_samples = {}
+    for stage_num, end in [(1, stage_boundaries[0]),
+                           (2, stage_boundaries[1]),
+                           (3, stage_boundaries[2])]:
+        stage_idx = sorted_indices[:end]
+        stage_w = torch.tensor(sample_weights_np[stage_idx], dtype=torch.float64)
+        stage_sampler = WeightedRandomSampler(
+            stage_w, num_samples=len(stage_idx), replacement=True
+        )
+        stage_subset = Subset(train_ds, stage_idx.tolist())
+        stage_loaders[stage_num] = DataLoader(
+            stage_subset,
+            batch_size=cfg.batch_size,
+            sampler=stage_sampler,
+            **loader_kwargs,
+        )
+        stage_n_samples[stage_num] = len(stage_idx)
+    train_loader = stage_loaders[1]
 
 val_loaders = {
     name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
@@ -501,6 +539,20 @@ for epoch in range(MAX_EPOCHS):
     if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
         print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
         break
+
+    if stage_loaders is not None:
+        epoch_1based = epoch + 1
+        if epoch_1based <= 5:
+            curriculum_stage = 1
+        elif epoch_1based <= 10:
+            curriculum_stage = 2
+        else:
+            curriculum_stage = 3
+        train_loader = stage_loaders[curriculum_stage]
+        curriculum_n_samples = stage_n_samples[curriculum_stage]
+    else:
+        curriculum_stage = 0
+        curriculum_n_samples = len(train_ds)
 
     t0 = time.time()
     model.train()
@@ -605,6 +657,8 @@ for epoch in range(MAX_EPOCHS):
         "train/re_weight_min_epoch_mean": epoch_re_weight_min_mean,
         "train/re_weight_max_epoch_mean": epoch_re_weight_max_mean,
         "train/re_weight_ratio_epoch_max": epoch_re_weight_ratio_max,
+        "train/curriculum_stage": curriculum_stage,
+        "train/curriculum_n_samples": curriculum_n_samples,
         "val/loss": val_loss_mean,
         "lr": scheduler.get_last_lr()[0],
         "epoch_time_s": dt,
@@ -629,6 +683,8 @@ for epoch in range(MAX_EPOCHS):
         "train/re_weight_min_epoch_mean": epoch_re_weight_min_mean,
         "train/re_weight_max_epoch_mean": epoch_re_weight_max_mean,
         "train/re_weight_ratio_epoch_max": epoch_re_weight_ratio_max,
+        "train/curriculum_stage": curriculum_stage,
+        "train/curriculum_n_samples": curriculum_n_samples,
         "val/loss": val_loss_mean,
         "val_avg/mae_surf_p": val_avg["avg/mae_surf_p"],
     }
@@ -654,6 +710,7 @@ for epoch in range(MAX_EPOCHS):
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
+        f"stage={curriculum_stage}(n={curriculum_n_samples})  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
         f"re_w[min={epoch_re_weight_min_mean:.4f} max={epoch_re_weight_max_mean:.4f} "
         f"max_ratio={epoch_re_weight_ratio_max:.2f}]  "
