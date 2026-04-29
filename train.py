@@ -96,6 +96,23 @@ class SwiGLU(nn.Module):
         return self.w_down(F.silu(self.w_gate(x)) * self.w_up(x))
 
 
+class RMSNorm(nn.Module):
+    """Root mean square norm (LLaMA/Mistral-style). LayerNorm without mean-centering.
+
+    Uses torch.nn.functional.rms_norm under the hood — a fused CUDA kernel.
+    Equivalent to: weight * x * rsqrt(mean(x^2) + eps).
+    """
+
+    def __init__(self, hidden_dim, eps=1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_dim))
+        self.eps = eps
+        self.normalized_shape = (hidden_dim,)
+
+    def forward(self, x):
+        return F.rms_norm(x, self.normalized_shape, self.weight, self.eps)
+
+
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
@@ -153,18 +170,20 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 rms_norm=False):
         super().__init__()
         self.last_layer = last_layer
-        self.ln_1 = nn.LayerNorm(hidden_dim)
+        norm_cls = RMSNorm if rms_norm else nn.LayerNorm
+        self.ln_1 = norm_cls(hidden_dim)
         self.attn = PhysicsAttention(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
             dropout=dropout, slice_num=slice_num,
         )
-        self.ln_2 = nn.LayerNorm(hidden_dim)
+        self.ln_2 = norm_cls(hidden_dim)
         self.mlp = SwiGLU(hidden_dim, mlp_ratio=mlp_ratio)
         if self.last_layer:
-            self.ln_3 = nn.LayerNorm(hidden_dim)
+            self.ln_3 = norm_cls(hidden_dim)
             self.mlp2 = nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim), nn.GELU(),
                 nn.Linear(hidden_dim, out_dim),
@@ -203,7 +222,8 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 rms_norm=False):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -224,6 +244,7 @@ class Transolver(nn.Module):
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                rms_norm=rms_norm,
             )
             for i in range(n_layers)
         ])
@@ -242,6 +263,8 @@ class Transolver(nn.Module):
                 nn.init.constant_(m.bias, 0)
         elif isinstance(m, (nn.LayerNorm, nn.BatchNorm1d)):
             nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        elif isinstance(m, RMSNorm):
             nn.init.constant_(m.weight, 1.0)
 
     def forward(self, data, **kwargs):
@@ -510,6 +533,7 @@ class Config:
     n_re_quintiles: int = 5
     re_stratify_seed: int = 42
     swiglu_ratio: int = 2  # mlp_ratio for SwiGLU intermediate dim (2 = current merged baseline; 1 = parameter-matched ablation)
+    rms_norm: bool = False  # use RMSNorm instead of LayerNorm in TransolverBlock
 
 
 if __name__ == "__main__":
@@ -575,6 +599,7 @@ if __name__ == "__main__":
         mlp_ratio=cfg.swiglu_ratio,
         output_fields=["Ux", "Uy", "p"],
         output_dims=[1, 1, 1],
+        rms_norm=cfg.rms_norm,
     )
 
     model = Transolver(**model_config).to(device)
