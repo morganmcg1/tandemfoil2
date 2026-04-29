@@ -237,17 +237,24 @@ def per_sample_norm_mse(pred: torch.Tensor, target: torch.Tensor, mask: torch.Te
     return torch.stack(losses).mean()
 
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device, output_clamp: float = 0.0) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
     ``score.py`` (float64, non-finite samples skipped).
+
+    If ``output_clamp > 0``, predictions are clamped in normalized space to
+    ``[-output_clamp, +output_clamp]`` before denormalization. The fraction of
+    valid (masked) prediction elements actually clamped is returned as
+    ``clamp_frac``.
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
     n_surf = n_vol = n_batches = 0
+    clamp_count = 0
+    clamp_total = 0
 
     with torch.no_grad():
         for x, y, is_surface, mask in loader:
@@ -259,6 +266,12 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+
+            if output_clamp > 0:
+                m3 = mask.unsqueeze(-1).expand_as(pred)
+                clamp_count += ((pred.abs() > output_clamp) & m3).sum().item()
+                clamp_total += m3.sum().item()
+                pred = pred.clamp(-output_clamp, output_clamp)
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -281,7 +294,8 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     vol_loss = vol_loss_sum / max(n_batches, 1)
     surf_loss = surf_loss_sum / max(n_batches, 1)
     out = {"vol_loss": vol_loss, "surf_loss": surf_loss,
-           "loss": vol_loss + surf_weight * surf_loss}
+           "loss": vol_loss + surf_weight * surf_loss,
+           "clamp_frac": (clamp_count / clamp_total) if clamp_total > 0 else 0.0}
     out.update(finalize_split(mae_surf, mae_vol, n_surf, n_vol))
     return out
 
@@ -400,6 +414,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     grad_clip: float = 1.0  # 0.0 disables clipping
+    output_clamp: float = 0.0  # 0 = disabled; >0 clamps pred to [-clamp, +clamp] in normalized space
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
@@ -524,6 +539,8 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol = epoch_surf = 0.0
     epoch_grad_norm_sum = 0.0
     epoch_grad_clip_count = 0
+    epoch_clamp_count = 0
+    epoch_clamp_total = 0
     n_batches = 0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
@@ -535,6 +552,12 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
+
+        if cfg.output_clamp > 0:
+            m3 = mask.unsqueeze(-1).expand_as(pred)
+            epoch_clamp_count += ((pred.detach().abs() > cfg.output_clamp) & m3).sum().item()
+            epoch_clamp_total += m3.sum().item()
+            pred = pred.clamp(-cfg.output_clamp, cfg.output_clamp)
 
         # Per-sample normalized MSE: divides each sample's MSE by its own
         # target std^2 so high-Re (large-y) and low-Re (small-y) samples
@@ -571,11 +594,12 @@ for epoch in range(MAX_EPOCHS):
     epoch_surf /= max(n_batches, 1)
     epoch_grad_norm_mean = epoch_grad_norm_sum / max(n_batches, 1)
     epoch_grad_clip_frac = epoch_grad_clip_count / max(n_batches, 1)
+    epoch_clamp_frac = (epoch_clamp_count / epoch_clamp_total) if epoch_clamp_total > 0 else 0.0
 
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device, cfg.output_clamp)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -588,6 +612,7 @@ for epoch in range(MAX_EPOCHS):
         "train/surf_loss": epoch_surf,
         "train/grad_norm_mean": epoch_grad_norm_mean,
         "train/grad_clip_frac": epoch_grad_clip_frac,
+        "train/clamp_frac": epoch_clamp_frac,
         "val/loss": val_loss_mean,
         "lr": scheduler.get_last_lr()[0],
         "epoch_time_s": dt,
@@ -610,6 +635,7 @@ for epoch in range(MAX_EPOCHS):
             "surf_loss": epoch_surf,
             "grad_norm_mean": epoch_grad_norm_mean,
             "grad_clip_frac": epoch_grad_clip_frac,
+            "clamp_frac": epoch_clamp_frac,
         },
         "val_avg": val_avg,
         "val_splits": split_metrics,
@@ -627,9 +653,10 @@ for epoch in range(MAX_EPOCHS):
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+    clamp_str = f" clamp_frac={epoch_clamp_frac:.5f}" if cfg.output_clamp > 0 else ""
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
-        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
+        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]{clamp_str}  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
     )
     for name in VAL_SPLIT_NAMES:
@@ -660,7 +687,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, cfg.output_clamp)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
