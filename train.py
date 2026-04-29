@@ -357,6 +357,72 @@ def evaluate_split(model, loader, stats, surf_weight, device, rff_encoder) -> di
     return out
 
 
+def evaluate_split_with_nan_workaround(model, loader, stats, surf_weight, device, rff_encoder) -> dict[str, float]:
+    """Same as evaluate_split but accumulates one finite sample at a time so a single
+    non-finite-y sample in a batch cannot poison the accumulator via NaN * 0.0 = NaN
+    inside ``accumulate_batch``."""
+    vol_loss_sum = surf_loss_sum = 0.0
+    mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
+    mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
+    n_surf = n_vol = n_batches = 0
+    n_skipped_samples = 0
+
+    with torch.no_grad():
+        for x, y, is_surface, mask in loader:
+            x = x.to(device, non_blocking=True)
+            y = y.to(device, non_blocking=True)
+            is_surface = is_surface.to(device, non_blocking=True)
+            mask = mask.to(device, non_blocking=True)
+
+            x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            y_norm = (y - stats["y_mean"]) / stats["y_std"]
+            rff_feats = rff_encoder(x_norm[..., :2])
+            x_rff = torch.cat([rff_feats, x_norm[..., 2:]], dim=-1)
+            pred = model({"x": x_rff})["preds"]
+
+            B = y.shape[0]
+            y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+
+            abs_err = (pred - y_norm).abs()
+            keep = y_finite.unsqueeze(-1).expand(-1, mask.shape[-1])
+            vol_keep = (mask & ~is_surface) & keep
+            surf_keep = (mask & is_surface) & keep
+            abs_err_safe = torch.nan_to_num(abs_err, nan=0.0, posinf=0.0, neginf=0.0)
+            vol_loss_sum += (
+                (abs_err_safe * vol_keep.unsqueeze(-1)).sum()
+                / vol_keep.sum().clamp(min=1)
+            ).item()
+            surf_loss_sum += (
+                (abs_err_safe * surf_keep.unsqueeze(-1)).sum()
+                / surf_keep.sum().clamp(min=1)
+            ).item()
+            n_batches += 1
+
+            pred_orig = pred * stats["y_std"] + stats["y_mean"]
+            for i in range(B):
+                if not bool(y_finite[i]):
+                    n_skipped_samples += 1
+                    continue
+                ds, dv = accumulate_batch(
+                    pred_orig[i:i + 1], y[i:i + 1],
+                    is_surface[i:i + 1], mask[i:i + 1],
+                    mae_surf, mae_vol,
+                )
+                n_surf += ds
+                n_vol += dv
+
+    vol_loss = vol_loss_sum / max(n_batches, 1)
+    surf_loss = surf_loss_sum / max(n_batches, 1)
+    out = {
+        "vol_loss": vol_loss,
+        "surf_loss": surf_loss,
+        "loss": vol_loss + surf_weight * surf_loss,
+        "n_skipped_samples": float(n_skipped_samples),
+    }
+    out.update(finalize_split(mae_surf, mae_vol, n_surf, n_vol))
+    return out
+
+
 def _sanitize_artifact_token(s: str) -> str:
     """wandb artifact names allow alnum, '-', '_', '.' — replace everything else."""
     out = "".join(c if c.isalnum() or c in "-_." else "-" for c in s)
@@ -542,15 +608,18 @@ ema = ModelEMA(model, decay=EMA_DECAY)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
-# 1-epoch linear warmup, then cosine to ~0 over T_max=15 epochs.
-WARMUP_EPOCHS = 1
-COSINE_T_MAX = 15  # tuned for SENPAI_TIMEOUT_MINUTES=30 wall-clock cap (~13-14 realized epochs)
-warmup = torch.optim.lr_scheduler.LinearLR(
-    optimizer, start_factor=0.1, end_factor=1.0, total_iters=WARMUP_EPOCHS
-)
-cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=COSINE_T_MAX, eta_min=1e-6)
-scheduler = torch.optim.lr_scheduler.SequentialLR(
-    optimizer, schedulers=[warmup, cosine], milestones=[WARMUP_EPOCHS]
+# OneCycleLR — peak lr=1e-3, full schedule fits in 15 epochs (matches 30-min cap).
+ONECYCLE_TOTAL_EPOCHS = 15
+steps_per_epoch = len(train_loader)
+scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    optimizer,
+    max_lr=1e-3,
+    total_steps=ONECYCLE_TOTAL_EPOCHS * steps_per_epoch,
+    pct_start=0.3,
+    div_factor=10.0,            # initial lr = max_lr/10 = 1e-4
+    final_div_factor=1e3,       # final lr = max_lr/1000 = 1e-6
+    anneal_strategy="cos",
+    cycle_momentum=False,        # AdamW has no momentum
 )
 
 run = wandb.init(
@@ -662,14 +731,17 @@ for epoch in range(MAX_EPOCHS):
         loss.backward()
         optimizer.step()
         ema.update(model)
+        try:
+            scheduler.step()
+        except ValueError:
+            pass  # OneCycleLR done; LR stays at final value
         global_step += 1
-        wandb.log({"train/loss": loss.item(), "global_step": global_step})
+        wandb.log({"train/loss": loss.item(), "lr": scheduler.get_last_lr()[0], "global_step": global_step})
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
@@ -783,6 +855,32 @@ if best_metrics:
             test_log[f"test_{k}"] = v
         wandb.log(test_log)
         wandb.summary.update(test_log)
+
+        print("\nRe-evaluating test splits with NaN-sample-skipped workaround...")
+        test_metrics_clean = {
+            name: evaluate_split_with_nan_workaround(model, loader, stats, cfg.surf_weight, device, rff_encoder)
+            for name, loader in test_loaders.items()
+        }
+        test_avg_clean = aggregate_splits(test_metrics_clean)
+        print(f"  CLEAN avg_surf_p={test_avg_clean['avg/mae_surf_p']:.4f}")
+        for name in TEST_SPLIT_NAMES:
+            print_split_metrics(name, test_metrics_clean[name])
+
+        test_log_clean: dict[str, float] = {}
+        for split_name, m in test_metrics_clean.items():
+            for k, v in m.items():
+                test_log_clean[f"test_clean/{split_name}/{k}"] = v
+        for k, v in test_avg_clean.items():
+            test_log_clean[f"test_clean_{k}"] = v
+        wandb.log(test_log_clean)
+        wandb.summary.update(test_log_clean)
+
+        _write_jsonl({
+            "type": "test_clean_with_workaround",
+            "note": "Test eval with workaround for scoring.py NaN-poisoning bug. Skips per-sample contributions when y has non-finite values.",
+            "test": {name: {k: float(v) for k, v in m.items()} for name, m in test_metrics_clean.items()},
+            "test_avg": dict(test_avg_clean),
+        })
 
     _write_jsonl({
         "type": "run_summary",
