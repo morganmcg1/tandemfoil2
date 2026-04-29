@@ -97,6 +97,29 @@ class RFFEncoder(nn.Module):
         return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
 
 
+class SwiGLU(nn.Module):
+    """SwiGLU FFN: gated FFN as in LLaMA / PaLM (Shazeer 2020, arxiv:2002.05202).
+
+    out = W_down(SiLU(W_gate(x)) * W_up(x))
+
+    Inner dim sized to match the parameter count of a vanilla 2-matmul FFN at
+    the same ``mlp_ratio``: inner = int(hidden * mlp_ratio * 2 / 3), rounded
+    up to a multiple of 8 for kernel efficiency.
+    """
+
+    def __init__(self, hidden_dim: int, mlp_ratio: int = 2):
+        super().__init__()
+        inner = int(hidden_dim * mlp_ratio * 2 / 3)
+        inner = ((inner + 7) // 8) * 8
+        self.w_gate = nn.Linear(hidden_dim, inner, bias=True)
+        self.w_up = nn.Linear(hidden_dim, inner, bias=True)
+        self.w_down = nn.Linear(inner, hidden_dim, bias=True)
+        self.act = nn.SiLU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.w_down(self.act(self.w_gate(x)) * self.w_up(x))
+
+
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
@@ -163,8 +186,7 @@ class TransolverBlock(nn.Module):
             dropout=dropout, slice_num=slice_num,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
-        self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
-                       n_layers=0, res=False, act=act)
+        self.mlp = SwiGLU(hidden_dim, mlp_ratio=mlp_ratio)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
