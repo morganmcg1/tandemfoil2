@@ -83,12 +83,17 @@ class MLP(nn.Module):
 
 
 class SharedFiLMGenerator(nn.Module):
-    """Single shared FiLM generator: scalar log(Re) → (gamma, beta) for all layers."""
+    """Shared FiLM generator: scalar log(Re) → (gamma, beta) for all layers.
+
+    2-layer MLP: 1 → n_hidden → n_hidden → n_hidden * 2 * n_layers.
+    """
 
     def __init__(self, n_hidden: int, n_layers: int):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(1, n_hidden),
+            nn.GELU(),
+            nn.Linear(n_hidden, n_hidden),
             nn.GELU(),
             nn.Linear(n_hidden, n_hidden * 2 * n_layers),
         )
