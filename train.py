@@ -109,11 +109,16 @@ class SharedFiLMGenerator(nn.Module):
 
 
 class FourierPosEncoder(nn.Module):
-    """Sinusoidal Fourier positional encoding for 2D (x,z) node coordinates."""
+    """Sinusoidal Fourier positional encoding for 2D (x,z) node coordinates.
 
-    def __init__(self, n_octaves: int = 8):
+    Normalizes coords by ``coord_scale`` so the highest octave reaches its
+    Nyquist at the boundary instead of aliasing at ~130x past it.
+    """
+
+    def __init__(self, n_octaves: int = 8, coord_scale: float = 3.0):
         super().__init__()
         self.n_octaves = n_octaves
+        self.coord_scale = coord_scale
         freqs = torch.pow(2.0, torch.arange(n_octaves).float()) * torch.pi
         self.register_buffer("freqs", freqs)
 
@@ -122,7 +127,8 @@ class FourierPosEncoder(nn.Module):
         return self.n_octaves * 4
 
     def forward(self, xy: torch.Tensor) -> torch.Tensor:
-        args = xy.unsqueeze(-1) * self.freqs
+        xy_unit = xy / self.coord_scale
+        args = xy_unit.unsqueeze(-1) * self.freqs
         sins = torch.sin(args)
         coss = torch.cos(args)
         out = torch.stack([sins, coss], dim=-1)
@@ -237,7 +243,7 @@ class Transolver(nn.Module):
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
                                   n_layers=0, res=False, act=act)
         else:
-            self.preprocess = MLP(fun_dim + fourier_pos_dim, n_hidden * 2, n_hidden,
+            self.preprocess = MLP(fun_dim + space_dim + fourier_pos_dim, n_hidden * 2, n_hidden,
                                   n_layers=0, res=False, act=act)
 
         self.n_hidden = n_hidden
@@ -272,7 +278,7 @@ class Transolver(nn.Module):
         film_pairs = self.film_generator(log_re_sample)
         xy = x[:, :, :2]
         fourier_feats = self.fourier_pos(xy)
-        x_aug = torch.cat([fourier_feats, x[:, :, 2:]], dim=-1)
+        x_aug = torch.cat([xy, fourier_feats, x[:, :, 2:]], dim=-1)
         fx = self.preprocess(x_aug) + self.placeholder[None, None, :]
         for i, block in enumerate(self.blocks):
             fx = block(fx, film=film_pairs[i])
