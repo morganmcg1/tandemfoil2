@@ -357,7 +357,8 @@ def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
 # ---------------------------------------------------------------------------
 
 DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
-WARMUP_EPOCHS = 2  # warm-up epochs used to estimate the timeout-aware cosine budget
+SGDR_T_0 = 5         # epochs in the first warm-restart cycle
+SGDR_T_MULT = 1      # cycle-length multiplier (1 = same length each restart)
 LR_ETA_MIN = 1e-6
 
 
@@ -420,9 +421,11 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-# Cosine scheduler is initialized after WARMUP_EPOCHS once we have a wall-clock
-# estimate, so the cosine decay actually finishes within the timeout budget.
-scheduler: torch.optim.lr_scheduler.CosineAnnealingLR | None = None
+# SGDR (Loshchilov & Hutter 2017): periodic warm restarts let the optimizer
+# escape sharp minima and converge to flatter ones that generalize better.
+scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    optimizer, T_0=SGDR_T_0, T_mult=SGDR_T_MULT, eta_min=LR_ETA_MIN,
+)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -480,8 +483,7 @@ for epoch in range(MAX_EPOCHS):
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    if scheduler is not None:
-        scheduler.step()
+    scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
@@ -527,32 +529,6 @@ for epoch in range(MAX_EPOCHS):
     )
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
-
-    # After warm-up, build a cosine scheduler whose decay window matches the
-    # remaining wall-clock budget so the LR actually anneals to eta_min before
-    # the timeout fires.
-    if scheduler is None and (epoch + 1) >= WARMUP_EPOCHS:
-        elapsed_secs = time.time() - train_start
-        per_epoch_secs = elapsed_secs / (epoch + 1)
-        remaining_secs = max(MAX_TIMEOUT_MIN * 60.0 - elapsed_secs, 0.0)
-        remaining_epochs = max(int(remaining_secs // per_epoch_secs), 1)
-        remaining_epochs = min(remaining_epochs, MAX_EPOCHS - (epoch + 1))
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=remaining_epochs, eta_min=LR_ETA_MIN,
-        )
-        print(
-            f"  -> Cosine schedule: T_max={remaining_epochs}, eta_min={LR_ETA_MIN:g} "
-            f"(per_epoch={per_epoch_secs:.1f}s, remaining_budget={remaining_secs:.0f}s)"
-        )
-        append_metrics_jsonl(metrics_jsonl_path, {
-            "event": "schedule_init",
-            "after_epoch": epoch + 1,
-            "warmup_epochs": WARMUP_EPOCHS,
-            "per_epoch_seconds": per_epoch_secs,
-            "remaining_seconds": remaining_secs,
-            "cosine_T_max": remaining_epochs,
-            "eta_min": LR_ETA_MIN,
-        })
 
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
