@@ -1,5 +1,35 @@
 # SENPAI Research Results
 
+## 2026-04-29 02:55 — PR #860 Round 2: OneCycle vs cosine on 4-way stack (slice=64) — sent back
+
+- Branch: `willowpai2e1-thorfinn/schedule-alignment` (rebased onto post-Huber+clip+warmup advisor)
+- Hypothesis: Schedule alignment to actual 30-min budget. OneCycle (peak_lr=1e-3, pct_start=0.3) and cosine T_max=14 vs default cosine T_max=50 on full 4-way stack (warmup=0 + clip=0.5 + Huber δ=0.5 + EMA=0.99). Slice=64 default (PR was assigned before slice=32 was merged).
+
+| Variant | val_avg/mae_surf_p | test_avg/mae_surf_p | Δ vs cosine ctrl | W&B run |
+|---------|-------------------:|--------------------:|:----------------:|---------|
+| **onecycle-peak1e3-fullstack** | **83.76** | **73.37** | **−2.8% / −4.1%** | [f4efd5li](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/f4efd5li) |
+| cosine-fullstack (control) | 86.19 | 76.48 | — | [mqmr2a8o](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/mqmr2a8o) |
+| cosine-t14-fullstack | 90.47 | 79.85 | +5.0% / +4.4% | [jxt9zfma](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/jxt9zfma) |
+
+All three runs: 14 epochs at 30-min timeout, 42.1 GB peak VRAM. OneCycle wins on **all 4 test splits** vs cosine control.
+
+Per-split test (onecycle-peak1e3-fullstack): single=84.57, rc=84.69, cruise=52.43, re_rand=71.79
+
+**Analysis and conclusions:**
+
+OneCycle adds a clean, independent fifth win on top of the 4-way stack: −2.8% val / −4.1% test vs cosine on the same slice=64 stack. Cosine T_max=14 actively hurts (+5.0%/+4.4%) — schedule alignment alone (round-1 result) does NOT transfer to the new stack. The improvement is structural, not budget alignment:
+- 2× peak LR (1e-3 vs cosine's 5e-4): Huber+clip stabilization tolerates the higher peak
+- Slow warmup via pct_start=0.3 avoids early-epoch noisy-gradient-into-high-LR regime
+- Sharp cool-down to ≈1e-7 by timeout: EMA captures full descent through cool-down
+
+Critical timing match: OneCycle peak hits at the EMA warmup boundary (epoch 5→6), so EMA averages the entire post-peak cool-down. Lucky alignment between OneCycle profile and existing 5-epoch EMA warmup.
+
+**Decision: NOT MERGED.** val=83.76 doesn't beat current baseline val=82.64 (PR #862 slice=32 + 4-way). Sent back to thorfinn to test OneCycle on the slice=32 stack — predicted val ~80 if the −2.8% gain transfers to slice=32. Implementation is clean and opt-in (`--scheduler` flag, default still cosine), so will merge with the slice=32 winner.
+
+Important: do NOT preempt alphonse #957 (δ scan) or frieren #1004 (slice + δ=0.1) — keep this PR's hypothesis clean as "OneCycle stacks with slice=32 + 4-way (δ=0.5)".
+
+---
+
 ## 2026-04-29 01:35 — PR #862 Round 2: Slice scan downward {32,48,64} + 4-way stack ✓ MERGED (new best)
 
 - Branch: `willowpai2e1-frieren/slice-scan` (rebased onto post-Huber+clip+warmup advisor)
