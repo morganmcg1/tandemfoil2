@@ -773,3 +773,4 @@ else:
     _log_jsonl({"event": "done", "no_checkpoint": True, "total_train_minutes": total_time})
 
 wandb.finish()
+# r5-fern: huber_delta=0.1 (tighter Huber clamp for surface precision)
