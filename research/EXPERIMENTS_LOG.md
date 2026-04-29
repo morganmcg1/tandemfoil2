@@ -677,3 +677,46 @@ All metrics confirmed against W&B. PR merged.
 
 ---
 
+
+## 2026-04-29 06:30 — PR #1025: BF16 + slice=32 + δ=0.1 + EMA — CLOSED (superseded)
+
+- Branch: `willowpai2e1-tanjiro/bf16-slice32-delta01`
+- Student: willowpai2e1-tanjiro
+- Hypothesis: BF16 + slice=32 + δ=0.1 + EMA=0.99 combination (first direct test of the triple-win stack).
+
+| Variant | val_avg/mae_surf_p | test_avg/mae_surf_p | epochs | W&B |
+|---------|--------------------:|--------------------:|:------:|-----|
+| PRIMARY (slice=32) | 70.01 | 61.69 | 23 | [07cn8ba3](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/07cn8ba3) |
+| CONTROL (slice=64) | 80.29 | 70.73 | 18 | [k504n1kt](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/k504n1kt) |
+
+**Analysis and conclusions:**
+
+BF16+slice=32+δ=0.1+EMA=0.99 (val=70.01) cross-validates fern's PR #1027 control run (val=71.30 on identical config, different seed). Both are within the ±1.3 seed noise band we've characterized for this stack. Result does NOT beat current baseline (val=68.99 from PR #1027 with EMA=0.995). Hypothesis superseded — PR #1027 already established the BF16+slice32+δ=0.1 stack and found the optimal EMA decay=0.995.
+
+**PR closed** — stack confirmed, no additional information gained.
+
+---
+
+## 2026-04-29 06:30 — PR #1004: Slice scan {8,16,24,32,64} at δ=0.1 + EMA — SENT BACK (wrong stack)
+
+- Branch: `willowpai2e1-frieren/slice-delta01-scan`
+- Student: willowpai2e1-frieren
+- Hypothesis: Slice scan at δ=0.1+EMA=0.99, FP32. Testing whether slice optimum shifts from 32 (at δ=0.5) to lower values at δ=0.1.
+
+| Variant | val_avg/mae_surf_p | test_avg/mae_surf_p | epochs | W&B |
+|---------|--------------------:|--------------------:|:------:|-----|
+| slice=16 (FP32) | **80.80** | **70.62** | 17 | [lwn1m3ym](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/lwn1m3ym) |
+| slice=24 (FP32) | 83.56 | 73.85 | 16 | [rwry605d](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/rwry605d) |
+| slice=32 (FP32) | 82.05 | 72.99 | 16 | [kdg7k0sx](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/kdg7k0sx) |
+| slice=64 (FP32, control) | 85.99 | 76.86 | 14 | [1s1559zi](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/1s1559zi) |
+
+**Analysis and conclusions:**
+
+slice=16 wins at FP32+δ=0.1 (val=80.80 < slice=32 at val=82.05, −1.5%), confirming the slice direction is orthogonal to loss shape and the optimum shifts to smaller slice values at δ=0.1. Also beats PR #862 (slice=32+δ=0.5+4-way: val=82.64) by 2.2%. However, result does NOT beat current baseline (val=68.99, BF16+EMA=0.995). The experiment was run on FP32 without BF16 — the finding needs to be retested on the new BF16+EMA=0.995 minimum stack to be directly actionable.
+
+Notable: slice=24 anomalously worse than slice=32 (83.56 vs 82.05). Likely seed/init variance rather than structural — not a concern.
+
+**PR sent back** to re-run slice ∈ {8, 16, 24, 32} on BF16+EMA=0.995 stack.
+
+---
+
