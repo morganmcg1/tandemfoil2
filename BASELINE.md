@@ -114,16 +114,18 @@
 | PR | Student | Hypothesis | Decision | Notes |
 |----|---------|------------|----------|-------|
 | #792 | frieren | Deeper Transolver n_layers=8, grad_clip (5 rounds) | Closed | R5 rebase produced 107.54 — above current baseline (103.22). Core contribution (grad_clip) was already absorbed into compound baseline via PR #882. Train-loss NaN guard never fires with grad_clip active. Branch deleted. |
+| #960 | alphonse | surf_weight sweep (20/30/50) on compound + grad_clip baseline | Closed | Clean monotone degradation: sw=20 (105.89, +2.59%), sw=30 (108.43, +5.04%), sw=50 (108.69, +5.30%) — all worse than default sw=10. Re-assigned as PR #1011 to explore sub-10. |
 | #790 | edward | surf_weight 10→30/50 (MSE) | Closed | Best 128.98 — 11.5% above Huber baseline. Re-assigned: surf_weight on Huber (PR #827). |
 
 ## Round 1 — Active WIPs (Running)
 
 | PR | Student | Hypothesis | Notes |
 |----|---------|------------|-------|
-| #960 | alphonse | surf_weight sweep (20/30/50) on compound + grad_clip baseline | Running (new assignment, replaces unfilled #954) |
+| #998 | frieren | slice_num 64→128 on compound baseline (n_hidden=256, wider PhysicsAttn) | New assignment |
+| #1011 | alphonse | surf_weight sub-10 sweep (1/3/5/7) on compound baseline | New assignment (follow-up to PR #960 monotone signal) |
 | #942 | nezuko | EMA decay sweep: 0.99/0.995 vs 0.999 on compound | Running |
 | #904 | fern | Huber delta sweep: 0.25/0.5/1.0/2.0 on wider-model baseline | Running |
-| #828 | edward | AdamW weight_decay sweep (1e-4/1e-3/1e-2) on Huber baseline | Running |
+| #1005 | edward | n_layers=3, slice_num=16 stacked on compound baseline (reference arch) | New assignment |
 | #794 | tanjiro | LR warmup + Huber | Revision in progress |
 | #795 | thorfinn | Huber + per-sample norm — rebase + re-run | Awaiting rebase (R3 winner 93.40) |
 | #789 | askeladd | Gradient clipping (max_norm=1.0) | Awaiting rebase (winner 114.35) |
@@ -155,3 +157,4 @@
 - 2026-04-29: PR #954 (alphonse, surf_weight=30 on compound) prematurely closed without running results; re-assigned as PR #960 (surf_weight 20/30/50 sweep on compound + grad_clip).
 - 2026-04-29: Fixed label mismatch on PR #942 (`student:nezuko` → `student:charliepai2e1-nezuko`).
 - 2026-04-29: PR #792 closed after 5 rounds. R5 rebase run produced val_avg=107.54 — above current baseline (103.22). grad_clip already in compound baseline via #882; unique delta (train-loss NaN guard) provides no measurable gain with grad_clip active.
+- 2026-04-29: PR #960 (alphonse, surf_weight sweep 20/30/50) closed — clean monotone degradation: sw=20 (+2.59%), sw=30 (+5.04%), sw=50 (+5.30%). Optimal surf_weight has shifted below default 10 on compound stack. Re-assigned as PR #1011 (sub-10 sweep: sw=1/3/5/7).
