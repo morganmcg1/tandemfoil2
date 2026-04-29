@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r5
 
-- **Last updated:** 2026-04-29 02:05
+- **Last updated:** 2026-04-29 02:30
 - **Advisor branch:** `icml-appendix-willow-pai2e-r5`
 - **Track tag:** `willow-pai2e-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r5`
@@ -35,7 +35,7 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 | askeladd | #733 | Closed | val_avg=151.50; throughput cost decisive |
 | askeladd | #811 | **Merged** | val_avg=127.402; BF16 1.20× speedup |
 | askeladd | #848 | Closed | bs={8,10}: regressed; bs=12 OOM; `add_derived_features` loop bottleneck |
-| askeladd | #885 | **WIP** | Huber delta sweep ∈ {0.3, 0.5, 1.0, 2.0} on BF16 baseline |
+| askeladd | #885 | **WIP (rebase)** | δ sweep done on sw=10: **δ=0.3 wins** (val=97.96, test=87.78 — beats current best 101.56/89.92 alone). PR conflicts with merged Huber #739 + sw=3 #850. Sent back for rebase + decisive δ=0.3+sw=3 stacking run + δ=0.1 trend test. |
 | edward | #734 | Closed | sw=10 wins; sw=50/100 regress |
 | edward | #850 | **Merged** | sw=3 + Huber: **val_avg=101.563 (−8.17%), test_avg=89.918 (−11.24%)**. All 4 splits improved. Default surf_weight changed to 3.0 in Config. W&B: `6rh7dzkx`. |
 | edward | #953 | **WIP** | Sweep surf_weight ∈ {0.5, 1.0, 2.0} — find floor below sw=3. Val still descending at timeout in #850; lower sw may continue trend. |
@@ -61,31 +61,39 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 4. Huber loss δ=1.0 (#739) → val_avg=110.594
 5. Lower surf_weight=3 (#850) → **val_avg=101.563, test_avg=89.918**
 
-**[PENDING MERGE]** Per-sample y-norm (#896, alphonse) — val=105.45 on MSE (pre-sw=3) baseline;
-needs rebase onto current (Huber + sw=3) + rerun to confirm stacking.
+**[PENDING — REBASE FOR STACKING TEST]**
+- **Per-sample y-norm (#896, alphonse)** — val=105.45 on MSE+sw=10 baseline; needs rebase
+  onto current (Huber+sw=3) + rerun to confirm stacking.
+- **Huber δ=0.3 (#885, askeladd)** — δ=0.3 alone won val=97.96 / test=87.78 (beats current
+  best 101.56/89.92 in absolute terms!), but on stale sw=10. Sent back for rebase + δ=0.3+sw=3
+  decisive stacking run. If δ=0.3+sw=3 wins → merge as 6th compounding win.
 
-**All 8 GPUs in use:** alphonse #896 (per-sample-y-norm rebase on sw=3+Huber), askeladd #885
-(Huber-δ sweep), edward #953 (sw-below-3 sweep), fern #809 (schedule-budget), frieren #943
+**All 8 GPUs in use:** alphonse #896 (per-sample-y-norm rebase), askeladd #885 (δ=0.3 rebase
++ stacking test), edward #953 (sw-below-3 sweep), fern #809 (schedule-budget), frieren #943
 (per-channel-surf-weight), nezuko #923 (vectorize data prep), tanjiro #745 (heads Option 3 rebase),
 thorfinn #810 (EMA rebase).
 
 ## Current research themes
 
-1. **Loss-balance is a major lever — floor not yet found.** sw=3 (#850, merged) gives −8.2% val /
-   −11.2% test and the val curve was still descending at the 30-min timeout. Edward #953 sweeps
-   sw ∈ {0.5, 1.0, 2.0} to find where volume-driven inference bottoms out.
-2. **Re-imbalance attacks need to catch up with new sw=3 baseline.** Per-sample y-norm (#896,
-   alphonse) won on MSE+sw=10 baseline but needs rebase onto sw=3+Huber. The gain may shrink
-   (sw=3 already helps OOD via volume signal) or grow (different levers). Huber-δ sweep (#885,
-   askeladd) likewise needs context on whether optimal δ shifts with sw=3.
-3. **Per-channel surface loss weighting (#943, frieren)** — now starting from sw=3 baseline.
-   Run 1 (p_surf=3, vel_surf=10) is interesting: sw=3 already treats all channels equally at w=3,
-   so frieren's run is *raising* velocity weight vs the new baseline. If it wins, the insight is
-   that velocity surface supervision at w=10 was the bottleneck, not pressure. Run 2 (p=20, vel=10)
-   would boost pressure back above sw=3 level.
-4. **Throughput unblock (#923, nezuko)** — vectorizing `add_derived_features` still in-flight.
+1. **Loss-shape (Huber δ) is the strongest single lever found yet.** Askeladd #885 sweep on
+   sw=10 showed δ=0.3 alone gives val=97.96 — already better than the merged sw=3+δ=1.0
+   baseline (101.56). Sent back for δ=0.3+sw=3 stacking test. If they stack: **6th compounding win**.
+2. **Loss-balance (sw) lever — floor not yet found.** sw=3 (#850, merged) gives −8.2% val /
+   −11.2% test and the val curve was still descending at timeout. Edward #953 sweeps
+   sw ∈ {0.5, 1.0, 2.0} to find where volume-driven inference bottoms out. May saturate or
+   continue trend.
+3. **Three-lever interaction map taking shape:**
+   - δ=0.3 (loss-shape, gradient magnitude cap) — askeladd
+   - sw=3 (loss-balance, surface vs volume weight) — edward
+   - Per-channel surf weighting (channel-balance within surface) — frieren #943
+   - Per-sample y-norm (target-scale equalization) — alphonse #896 rebasing
+   These mechanisms are partially orthogonal; full stacking gain unknown.
+4. **Per-channel surface loss weighting (#943, frieren)** — now starting from sw=3 baseline.
+   Run 1 (p_surf=3, vel_surf=10) effectively *raises* velocity weight above the sw=3 default.
+   Tests whether velocity surface supervision at w=10 is the hidden bottleneck.
+5. **Throughput unblock (#923, nezuko)** — vectorizing `add_derived_features` still in-flight.
    Once landed, enables batch-size scaling experiments (linearly-scaled LR + bs=8).
-5. **PhysicsAttention padding mask (Wave 3):** soft learnable gate (sigmoid(MLP)) rather than
+6. **PhysicsAttention padding mask (Wave 3):** soft learnable gate (sigmoid(MLP)) rather than
    binary mask — captures cruise benefit without rc regression. Pending other wins first.
 
 ## Open questions

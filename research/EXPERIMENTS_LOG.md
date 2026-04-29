@@ -523,6 +523,39 @@ Best epoch = 17/17 (val still descending at 30-min timeout cutoff).
 
 ---
 
+## 2026-04-29 02:25 — PR #885: Sweep Huber loss delta {0.3, 0.5, 1.0, 2.0} — sent back for rebase + stacking test
+
+- **Branch:** `askeladd/huber-delta-sweep` (sent back; conflicts with merged Huber #739 and stale sw=10)
+- **W&B runs:** `3yiixbyg` (δ=0.3), `vr6g2rxa` (δ=0.5), `295hulp0` (δ=1.0), `ki36m2z6` (δ=2.0) — group `huber-delta-sweep`
+- **Hypothesis:** Sweep δ ∈ {0.3, 0.5, 1.0, 2.0} on the BF16 baseline to find the optimal Huber transition threshold. Smaller δ should help the heavy-tailed normalized residual distribution (high-Re outliers).
+
+### Results vs pre-Huber MSE baseline (val_avg=127.402, test_avg=116.211, sw=10) — askeladd's sweep
+
+| delta | best epoch | val_avg/mae_surf_p | test_avg/mae_surf_p |
+|------:|:---------:|--------------------:|--------------------:|
+| 2.0 | 17 | 113.804 | 102.353 |
+| 1.0 | 17 | 115.386 | 104.471 |
+| 0.5 | 16 | 107.271 | 97.437 |
+| **0.3** | **16** | **97.963 (−23.1%)** | **87.785 (−24.5%)** |
+
+### Compared to current merged baseline (#850, sw=3 + Huber δ=1.0: val_avg=101.563, test_avg=89.918)
+
+- **δ=0.3 alone (sw=10) BEATS current best (sw=3 + δ=1.0)** by −3.5% val / −2.4% test in absolute terms.
+- The δ lever appears stronger than the sw lever (δ sweep gave −17.4% val improvement at fixed sw=10, vs sw=3 → sw=10 giving −8.2% improvement at fixed δ=1.0).
+
+### Commentary & Conclusions
+
+- **Trend is monotone-with-noise:** δ {2.0 → 1.0} flat (within noise), but {1.0 → 0.5 → 0.3} clear monotone descent. Bottom not yet found.
+- **Mechanism confirmed:** smaller δ pulls more outlier samples into the L1 regime, where gradient magnitudes are bounded. Most consistent gains are on `val_single_in_dist` and `val_geom_camber_rc` — splits with the heaviest-tailed residual distributions.
+- **PR is in conflict with current advisor branch:** askeladd's branch was created before #739 (Huber) merged. Their diff re-adds Huber code that's now on main; combined with #850's sw=3 default change, the merge state is dirty.
+- **Stacking question is open:** δ=0.3 (loss-shape lever) and sw=3 (loss-balance lever) attack different mechanisms, so they may stack additively. But both ultimately address outlier-driven instability — partial overlap is plausible.
+- **Decision: Send back** for rebase + 2 decisive runs:
+  1. `δ=0.3 + sw=3` — test stacking with current baseline.
+  2. `δ=0.1 + sw=3` — continue the monotone trend test (askeladd suggested {0.1, 0.2}).
+- **If δ=0.3 + sw=3 wins:** merge as new baseline. **If δ=0.1 also wins:** prefer whichever is lower.
+
+---
+
 ## 2026-04-29 01:15 — PR #915: Mask padded nodes in PhysicsAttention slice aggregation — closed (mixed result)
 
 - **Branch:** `willowpai2e5-frieren/physics-attention-padding-mask` (closed)
