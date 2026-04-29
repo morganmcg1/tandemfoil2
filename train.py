@@ -461,7 +461,7 @@ model_config = dict(
     n_layers=3,
     n_head=cfg.n_head,
     slice_num=16,
-    mlp_ratio=2,
+    mlp_ratio=4,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
