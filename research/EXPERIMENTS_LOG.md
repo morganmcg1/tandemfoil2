@@ -73,6 +73,52 @@ Fern noted `test_geom_camber_cruise/vol_loss = Infinity` even with #807's torch.
 
 ---
 
+## 2026-04-29 00:00 — PR #869 v1: surf_weight sweep (sw=3, sw=5) on L1 baseline
+- **Branch:** `willowpai2e3-tanjiro/surf-weight-sweep`
+- **Hypothesis:** Reduce `surf_weight` from 10.0 → 3.0 (and 5.0 bracket) to rebalance surface/volume gradient ratio. Predicted: −1 to −4% val_avg; volume-side gain larger.
+- **Runs:** W&B `bffsf626` (sw=5) and `4q4b5kzs` (sw=3), 14/14 epochs both, ran on L1 baseline (pre-FiLM merge).
+
+| metric | sw=10 baseline | **sw=5** | sw=3 |
+|---|---|---|---|
+| val_avg/mae_surf_p | 92.63 | **91.16** (−1.6%) | 95.55 (+3.2%) |
+| test_avg/mae_surf_p | 82.83 | **81.36** (−1.8%) | 84.32 (+1.8%) |
+| val_avg/mae_vol_p | 103.16 | **92.49** (−10.4%) | 94.57 (−8.3%) |
+
+### Decision: SEND BACK FOR REBASE (onto FiLM+L1)
+- **Mechanism directionally confirmed:** lowering surf_weight frees gradient budget → volume features develop more fully (val_vol_p −10.4%) → surface predictions also benefit (−1.6%) via shared trunk. Volume gain dominates by 7×, exactly as predicted.
+- sw=5 wins on L1 baseline; sw=3 over-corrects on surface side (still in surface-dominant regime).
+- BUT: PR #815 FiLM+L1 just merged at 82.77. sw=5 result of 91.16 is +10.1% above current best.
+- Mechanism may stack with FiLM (different mechanisms: hidden-state Re modulation vs loss balance) OR overlap (FiLM strengthens volume features, reducing rebalancing benefit). Empirical answer matters.
+- **Sent back:** rebase onto FiLM+L1 advisor; re-run sw=5 primary + optional sw=7 bracket (in case FiLM shifts the optimum toward sw=10).
+- New beat-threshold for v2: **val_avg < 82.77**.
+- **Round-3 follow-ups queued:** per-channel surface weighting (Ux/Uy/p within surface loss), longer LR schedule.
+
+---
+
+## 2026-04-29 00:00 — PR #750 v2-rebased (CLOSED): LR warmup + cosine on FiLM+L1
+- **Branch:** `willowpai2e3-edward/lr-warmup-cosine`
+- **Hypothesis history:** v1 (lr=1e-3, 50ep schedule, timeout-cut at 14ep) — pre-rebase: −19.6% on weak baseline mean. v2 (lr=2e-3, 14ep matched schedule) — pre-rebase: 111.12 (−9.0% vs founding). v2-rebased on FiLM+L1: see below.
+- **Run (v2-rebased):** W&B `gqc006f6`, **14/14 epochs (clean finish)**, peak 99.13 GB on 96 GB card.
+
+| Split | FiLM+L1 baseline | v2-rebased | Δ |
+|---|---|---|---|
+| `val_single_in_dist` | 95.54 | 97.09 | +1.6% |
+| `val_geom_camber_rc` | 91.38 | **98.56** | **+7.9%** |
+| `val_geom_camber_cruise` | 64.90 | 64.94 | +0.1% |
+| `val_re_rand` | 79.26 | 79.69 | +0.5% |
+| **val_avg** | **82.77** | **85.07** | **+2.78%** |
+| **test_avg** | **72.27** | **74.33** | **+2.85%** |
+
+### Decision: CLOSE — schedule mechanism baked into baseline
+- **+2.78% val regression** (within single-seed noise but worse than baseline).
+- **`val_geom_camber_rc` regresses +7.9%** — highest LR (lr=2e-3) interacts poorly with FiLM's per-block γ/β modulation in the OOD-camber regime. The schedule and conditioning mechanism are touching the same training dynamics.
+- Student's honest analysis: pre-rebase 19.6% gain came from fixing schedule mismatch (cosine over 50ep but timeout at 14ep). Once `--epochs 14` became standard for all assignments (after PR #761), that gain was folded into baseline.
+- The schedule-budget alignment principle survives the close: it's now the convention for every assignment in this branch (use `--epochs 14` so cosine actually anneals).
+- Iterating on lower LR (lr=1e-3 or 7.5e-4) is low-EV at this point — would land within ~2-5% of baseline at most, not a mechanistic test.
+- **Closed 2026-04-29. Next assignment: #924 per-channel output heads** (decouple Ux/Uy/p decoder pathways).
+
+---
+
 ## 2026-04-28 23:50 — PR #884 (CLOSED): RevIN — per-sample y normalization for surface loss
 - **Branch:** `willowpai2e3-askeladd/revin-output-norm`
 - **Hypothesis:** Per-sample, per-channel target-stat normalization of pred and y before computing surface L1 loss. Goal: equalize per-Re-sample gradient contribution; predicted −3 to −10% with biggest gains on `val_re_rand`.

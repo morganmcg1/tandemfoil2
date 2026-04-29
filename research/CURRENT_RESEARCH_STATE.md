@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- **Date:** 2026-04-28
+- **Date:** 2026-04-29
 - **Advisor branch:** `icml-appendix-willow-pai2e-r3`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r3`
 - **Most recent human researcher direction:** *(none — issue queue empty)*
@@ -38,6 +38,7 @@
 | #751 v2 | Dropout 0.05 + drop_path 0.05 on L1 | Closed — within noise (+0.6%, 93.16) | 93.16 |
 | #858 | Focal surface loss gamma=0.5/1.0 on L1 | Closed — γ=0.5 within noise, γ=1.0 +13.4% worse | 92.13 |
 | #884 | RevIN — per-sample y normalization (surface loss) | Closed — structural mismatch with absolute-MAE metric (+65%) | 152.64 |
+| #750 v2-rebased | LR warmup + cosine on FiLM+L1 (lr=2e-3) | Closed — schedule mechanism baked into baseline (+2.78%) | 85.07 |
 | #743 | Channel-weighted L1 (v3, rebase pending) | WIP | 99.21 (v2 ref) |
 | #750 | LR warmup + cosine v2 (rebase pending) | WIP | 111.12 (v1 ref) |
 | #756 | Fourier Re-encoding v2 (rebase pending) | WIP | 120.22 (v1 ref) |
@@ -50,10 +51,10 @@
 | thorfinn | #909 | Pre-block FiLM: condition attention input rather than output | WIP — new assignment 2026-04-28 |
 | nezuko | #910 | Re-stratified batch sampling: Re-diverse mini-batches for FiLM+L1 | WIP — new assignment 2026-04-28 |
 | fern | #902 | Volume L1 (mirror surface L1 success on volume side) | WIP |
-| edward | #750 | LR warmup + cosine v2 (rebase pending onto FiLM+L1) | WIP |
+| edward | #924 | Per-channel output heads (Ux/Uy/p) — decouple decoder pathways | WIP — new assignment 2026-04-29 |
 | frieren | #756 | Fourier Re-encoding v2 (rebase pending onto FiLM+L1) | WIP |
 | alphonse | #743 | Channel-weighted L1 v3 (rebase onto post-#761; now needs rebase onto FiLM+L1 too) | WIP |
-| tanjiro | #869 | surf_weight sweep (3.0 and 5.0) | WIP |
+| tanjiro | #869 | surf_weight sweep (sw=5 wins on L1 base −1.6%, vol_p −10.4%); v2 rebase onto FiLM+L1 pending | WIP |
 
 ## Cross-cutting findings
 
@@ -63,6 +64,8 @@
 - **FiLM stacks cleanly with L1** (PR #815 v2-on-l1: −10.6% on top of L1). Orthogonal mechanisms confirmed: loss shape (L1) ⊥ hidden-state Re modulation (FiLM). All 4 val splits improved. FiLM gains biggest on Re-stratified and widest-Re-range splits (re_rand −9.2%, cruise −10.3%).
 - **Focal loss falsified on L1 base** (PR #858): high-error surface nodes are convergence-bottlenecked, not gradient-bottlenecked. Focal amplification slows convergence at this budget.
 - **RevIN structurally mismatched** (PR #884): per-sample loss normalization decouples gradient from absolute-MAE metric (which is high-Re-dominated by Re² scaling). Falsifies the "amplitude rebalancing helps Re generalization" hypothesis at the loss level. The Re-axis lever is captured architecturally via FiLM, not via loss normalization.
+- **LR warmup mechanism baked into baseline** (PR #750): pre-rebase 19.6% gain came from fixing schedule mismatch (cosine over 50ep but timeout at 14ep). Now that `--epochs 14` is standard, the gain is gone. Higher peak LR (lr=2e-3) interacts poorly with FiLM's modulation, especially on `val_geom_camber_rc` (+7.9%). The schedule-budget alignment principle survives as a convention.
+- **surf_weight=5 on L1 base** (PR #869 v1): rebalancing thesis directionally confirmed — vol_p −10.4%, surf_p −1.6%. Need v2 rebase onto FiLM+L1 to test whether mechanism stacks (different) or overlaps (FiLM also strengthens volume features).
 - **Channel weighting stacks with Huber** (alphonse #743 v2: −3.8% on top of Huber). Pending whether it also stacks with FiLM+L1 (v3 in progress).
 - **Surface dominates volume ~7:1 at L1 convergence** (tanjiro diagnosis). surf_weight=3.0 (#869) tests whether rebalancing frees volume capacity.
 - **Boundary-layer features falsified.** log(Re·|saf|) is redundant; volume-node saf mismatch hurts in-dist.
@@ -76,6 +79,7 @@
 4. **Volume L1** — mirror surface L1 mechanism on the volume loss (currently MSE). **Assigned → fern PR #902.**
 5. **surf_weight rebalancing** — rebalance surface/volume gradient ratio after FiLM merge. **Assigned → tanjiro PR #869.** May need re-sweep against new FiLM+L1 baseline.
 6. **Capacity scaling on FiLM+L1 base** — the model uses only 44.6GB of 96GB. 2× hidden size on the new best baseline is a fresh, high-EV direction.
-7. **Per-channel L1 on p only, MSE on Ux/Uy** — tanjiro follow-up; assign after #869 result.
-8. **Low-rank slice attention (LRSA)** — replace S×S slice-token self-attention with rank-16 factored. High EV, higher complexity.
-9. **Compound: FiLM + channel weighting + RevIN + Re-stratify** — if any 3+ win independently, round-4 stack.
+7. **Per-channel output heads** — decouple Ux/Uy/p decoder pathways; targets the per-channel statistics imbalance (pressure ~10²-10⁴ vs velocity ~1-10²). **Assigned → edward PR #924.**
+8. **Per-channel L1 on p only, MSE on Ux/Uy** — tanjiro follow-up; assign after #869 v2 result.
+9. **Low-rank slice attention (LRSA)** — replace S×S slice-token self-attention with rank-16 factored. High EV, higher complexity.
+10. **Compound: FiLM + channel weighting + Re-stratify + Re-input noise + per-channel head** — if any 3+ win independently, round-4 stack.
