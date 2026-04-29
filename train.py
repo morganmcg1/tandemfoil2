@@ -198,12 +198,17 @@ class TransolverBlock(nn.Module):
 
 
 class FiLMLayer(nn.Module):
-    """Per-block FiLM head: log(Re) -> (gamma, beta) for hidden modulation."""
+    """Per-block FiLM head: cond -> (gamma, beta) for hidden modulation.
 
-    def __init__(self, n_hidden):
+    cond_dim=1 conditions on log(Re) only (canonical); cond_dim=2 conditions on
+    (log_Re, NACA_M1) — geometry-aware modulation targeting camber OOD splits.
+    """
+
+    def __init__(self, n_hidden, cond_dim=1):
         super().__init__()
+        self.cond_dim = cond_dim
         self.net = nn.Sequential(
-            nn.Linear(1, 32),
+            nn.Linear(cond_dim, 32),
             nn.SiLU(),
             nn.Linear(32, 2 * n_hidden),
         )
@@ -211,8 +216,8 @@ class FiLMLayer(nn.Module):
         nn.init.zeros_(self.net[-1].weight)
         nn.init.zeros_(self.net[-1].bias)
 
-    def forward(self, log_re):
-        out = self.net(log_re)
+    def forward(self, cond):
+        out = self.net(cond)
         gamma, beta = out.chunk(2, dim=-1)
         return gamma, beta
 
@@ -223,12 +228,13 @@ class Transolver(nn.Module):
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None,
-                 rms_norm=False):
+                 rms_norm=False, cond_dim=1):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
+        self.cond_dim = cond_dim
 
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
@@ -248,7 +254,9 @@ class Transolver(nn.Module):
             )
             for i in range(n_layers)
         ])
-        self.film_layers = nn.ModuleList([FiLMLayer(n_hidden) for _ in range(n_layers)])
+        self.film_layers = nn.ModuleList(
+            [FiLMLayer(n_hidden, cond_dim=cond_dim) for _ in range(n_layers)]
+        )
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
         # Re-zero FiLM final layer after global _init_weights override.
@@ -269,15 +277,62 @@ class Transolver(nn.Module):
 
     def forward(self, data, **kwargs):
         x = data["x"]
-        # log(Re) is broadcast-identical across nodes; pull from node 0 of each sample.
-        log_re = x[:, 0, 13:14]  # [B, 1]
+        # log(Re) (and NACA_M1, when cond_dim==2) is broadcast-identical across
+        # nodes; pull from node 0 of each sample. Inputs are already normalized
+        # at the model boundary, so cond is on a ~N(0,1) scale per axis.
+        if self.cond_dim == 2:
+            cond = x[:, 0, [13, 15]]  # [B, 2]: log_Re, NACA_M1 (front-foil camber)
+        else:
+            cond = x[:, 0, 13:14]     # [B, 1]: log_Re only (canonical)
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         for block, film in zip(self.blocks, self.film_layers):
-            gamma, beta = film(log_re)
+            gamma, beta = film(cond)
             # Pre-block FiLM: condition the input to attention/MLP, not the output.
             fx = (1.0 + gamma.unsqueeze(1)) * fx + beta.unsqueeze(1)
             fx = block(fx)
         return {"preds": fx}
+
+
+# ---------------------------------------------------------------------------
+# FiLM diagnostics
+# ---------------------------------------------------------------------------
+
+@torch.no_grad()
+def film_gamma_diagnostics(model, device) -> dict[str, float]:
+    """Per-block γ L2 norms under axis-isolated FiLM probes.
+
+    Inputs to the FiLM head are ~N(0, 1) post-normalization. The probes use unit
+    activations on a single axis at a time so the resulting ||γ|| reflects the
+    per-axis sensitivity of each block.
+
+    cond_dim==1 (canonical): Re-only probe.
+    cond_dim==2 (naca_film):
+      - Re-only:     cond=[1, 0]   — should reproduce baseline-FiLM γ-norms
+      - NACA-only:   cond=[0, 1]   — growing magnitude == camber being learnt
+      - Cosine sim:  γ([1,-1]) vs γ([1,+1]) — sensitivity to NACA_M sign
+    """
+    cond_dim = model.cond_dim
+    out: dict[str, float] = {}
+    if cond_dim == 1:
+        cond_re = torch.tensor([[1.0]], device=device)
+        for i, film in enumerate(model.film_layers):
+            gamma, _ = film(cond_re)
+            out[f"film_diag/block{i}_gamma_norm_re_only"] = gamma.norm().item()
+        return out
+    cond_re = torch.tensor([[1.0, 0.0]], device=device)
+    cond_naca = torch.tensor([[0.0, 1.0]], device=device)
+    cond_low = torch.tensor([[1.0, -1.0]], device=device)
+    cond_high = torch.tensor([[1.0, 1.0]], device=device)
+    for i, film in enumerate(model.film_layers):
+        gamma_re, _ = film(cond_re)
+        gamma_naca, _ = film(cond_naca)
+        gamma_low, _ = film(cond_low)
+        gamma_high, _ = film(cond_high)
+        out[f"film_diag/block{i}_gamma_norm_re_only"] = gamma_re.norm().item()
+        out[f"film_diag/block{i}_gamma_norm_naca_only"] = gamma_naca.norm().item()
+        cos = F.cosine_similarity(gamma_low, gamma_high, dim=-1).item()
+        out[f"film_diag/block{i}_gamma_cos_lowM_vs_highM"] = cos
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +589,7 @@ class Config:
     re_stratify_seed: int = 42
     swiglu_ratio: int = 2  # mlp_ratio for SwiGLU intermediate dim (2 = current merged baseline; 1 = parameter-matched ablation)
     rms_norm: bool = False  # use RMSNorm instead of LayerNorm in TransolverBlock
+    naca_film: bool = False  # condition FiLM on (log_Re, NACA_M1) — geometry-aware modulation targeting camber OOD splits
 
 
 if __name__ == "__main__":
@@ -600,6 +656,7 @@ if __name__ == "__main__":
         output_fields=["Ux", "Uy", "p"],
         output_dims=[1, 1, 1],
         rms_norm=cfg.rms_norm,
+        cond_dim=2 if cfg.naca_film else 1,
     )
 
     model = Transolver(**model_config).to(device)
@@ -643,6 +700,7 @@ if __name__ == "__main__":
     best_metrics: dict = {}
     global_step = 0
     train_start = time.time()
+    sanity_printed = False
 
     for epoch in range(MAX_EPOCHS):
         if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
@@ -662,6 +720,14 @@ if __name__ == "__main__":
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
+            if not sanity_printed:
+                raw = x[0, 0, [13, 15]].tolist()
+                norm = x_norm[0, 0, [13, 15]].tolist()
+                print(
+                    f"FiLM cond sanity (sample 0): raw[log_Re, NACA_M1]={raw}, "
+                    f"normalized={norm} (cond_dim={model.cond_dim})"
+                )
+                sanity_printed = True
             pred = model({"x": x_norm})["preds"]
             sq_err = (pred - y_norm) ** 2
             abs_err = (pred - y_norm).abs()
@@ -720,6 +786,7 @@ if __name__ == "__main__":
                 log_metrics[f"{split_name}/{k}"] = v
         for k, v in val_avg.items():
             log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
+        log_metrics.update(film_gamma_diagnostics(model, device))
         wandb.log(log_metrics)
 
         tag = ""
