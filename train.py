@@ -31,6 +31,7 @@ import torch.nn.functional as F
 import yaml
 from einops import rearrange
 from timm.layers import trunc_normal_, DropPath
+from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
@@ -359,8 +360,18 @@ def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
 # ---------------------------------------------------------------------------
 
 DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
-WARMUP_EPOCHS = 2  # warm-up epochs used to estimate the timeout-aware cosine budget
-LR_ETA_MIN = 1e-6
+# OneCycleLR superconvergence: peak then aggressive cosine anneal across the
+# full wall-clock budget. We pick total_steps from a conservative per-epoch
+# estimate so it is always >= the actual number of optimizer steps taken
+# (else OneCycleLR raises "Tried to step too many times"). With baseline
+# ~135s/epoch and a 30-min timeout, ~14 epochs fit; 125s estimate budgets
+# 15 epochs (one-epoch headroom) so the schedule anneals to ~93% — close to
+# min_lr while leaving margin if epochs run slightly faster than expected.
+ONECYCLE_PER_EPOCH_SEC_ESTIMATE = 125.0
+ONECYCLE_MAX_LR = 1.2e-3
+ONECYCLE_PCT_START = 0.3
+ONECYCLE_DIV_FACTOR = 25.0
+ONECYCLE_FINAL_DIV_FACTOR = 1e4
 
 
 @dataclass
@@ -422,9 +433,39 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-# Cosine scheduler is initialized after WARMUP_EPOCHS once we have a wall-clock
-# estimate, so the cosine decay actually finishes within the timeout budget.
-scheduler: torch.optim.lr_scheduler.CosineAnnealingLR | None = None
+
+# OneCycleLR schedule fitted to the wall-clock budget. We size total_steps
+# off a conservative per-epoch estimate so total_steps >= actual steps taken
+# (avoids ValueError if epochs run faster than expected). cycle_momentum is
+# disabled because AdamW's beta1 is not the same param-group key SGD's
+# momentum is — leaving it on would either silently no-op or crash.
+budgeted_epochs_lr = min(
+    MAX_EPOCHS,
+    max(2, int(MAX_TIMEOUT_MIN * 60.0 / ONECYCLE_PER_EPOCH_SEC_ESTIMATE) + 1),
+)
+steps_per_epoch = len(train_loader)
+total_steps = steps_per_epoch * budgeted_epochs_lr
+scheduler = OneCycleLR(
+    optimizer,
+    max_lr=ONECYCLE_MAX_LR,
+    total_steps=total_steps,
+    pct_start=ONECYCLE_PCT_START,
+    anneal_strategy="cos",
+    div_factor=ONECYCLE_DIV_FACTOR,
+    final_div_factor=ONECYCLE_FINAL_DIV_FACTOR,
+    three_phase=False,
+    cycle_momentum=False,
+)
+print(
+    f"OneCycleLR: max_lr={ONECYCLE_MAX_LR:g}, total_steps={total_steps} "
+    f"(steps_per_epoch={steps_per_epoch} x budgeted_epochs={budgeted_epochs_lr}), "
+    f"pct_start={ONECYCLE_PCT_START}, div_factor={ONECYCLE_DIV_FACTOR}, "
+    f"final_div_factor={ONECYCLE_FINAL_DIV_FACTOR:g} | "
+    f"initial_lr={ONECYCLE_MAX_LR/ONECYCLE_DIV_FACTOR:.2e}, "
+    f"min_lr={ONECYCLE_MAX_LR/(ONECYCLE_DIV_FACTOR*ONECYCLE_FINAL_DIV_FACTOR):.2e}, "
+    f"peak at step {int(total_steps * ONECYCLE_PCT_START)} "
+    f"(epoch ~{budgeted_epochs_lr * ONECYCLE_PCT_START:.1f})"
+)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -440,6 +481,21 @@ with open(model_dir / "config.yaml", "w") as f:
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
     }, f, sort_keys=True)
+
+append_metrics_jsonl(metrics_jsonl_path, {
+    "event": "schedule_init",
+    "scheduler": "OneCycleLR",
+    "max_lr": ONECYCLE_MAX_LR,
+    "pct_start": ONECYCLE_PCT_START,
+    "div_factor": ONECYCLE_DIV_FACTOR,
+    "final_div_factor": ONECYCLE_FINAL_DIV_FACTOR,
+    "anneal_strategy": "cos",
+    "three_phase": False,
+    "cycle_momentum": False,
+    "steps_per_epoch": steps_per_epoch,
+    "budgeted_epochs": budgeted_epochs_lr,
+    "total_steps": total_steps,
+})
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
@@ -479,13 +535,12 @@ for epoch in range(MAX_EPOCHS):
         if cfg.grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
+        scheduler.step()
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    if scheduler is not None:
-        scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
@@ -531,32 +586,6 @@ for epoch in range(MAX_EPOCHS):
     )
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
-
-    # After warm-up, build a cosine scheduler whose decay window matches the
-    # remaining wall-clock budget so the LR actually anneals to eta_min before
-    # the timeout fires.
-    if scheduler is None and (epoch + 1) >= WARMUP_EPOCHS:
-        elapsed_secs = time.time() - train_start
-        per_epoch_secs = elapsed_secs / (epoch + 1)
-        remaining_secs = max(MAX_TIMEOUT_MIN * 60.0 - elapsed_secs, 0.0)
-        remaining_epochs = max(int(remaining_secs // per_epoch_secs), 1)
-        remaining_epochs = min(remaining_epochs, MAX_EPOCHS - (epoch + 1))
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=remaining_epochs, eta_min=LR_ETA_MIN,
-        )
-        print(
-            f"  -> Cosine schedule: T_max={remaining_epochs}, eta_min={LR_ETA_MIN:g} "
-            f"(per_epoch={per_epoch_secs:.1f}s, remaining_budget={remaining_secs:.0f}s)"
-        )
-        append_metrics_jsonl(metrics_jsonl_path, {
-            "event": "schedule_init",
-            "after_epoch": epoch + 1,
-            "warmup_epochs": WARMUP_EPOCHS,
-            "per_epoch_seconds": per_epoch_secs,
-            "remaining_seconds": remaining_secs,
-            "cosine_T_max": remaining_epochs,
-            "eta_min": LR_ETA_MIN,
-        })
 
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
