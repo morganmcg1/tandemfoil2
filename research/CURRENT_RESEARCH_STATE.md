@@ -1,5 +1,5 @@
 # SENPAI Research State
-- 2026-04-29 21:00 (branch: icml-appendix-charlie-pai2f-r4)
+- 2026-04-29 21:30 (branch: icml-appendix-charlie-pai2f-r4)
 - No human researcher team directives received yet.
 - 2026-04-29: Stale-baseline audit complete. PRs #1193, #1137, #1117, #1111, #1110 all sent back to rebase on PR #1197 recipe (AMP bfloat16 + n_hidden=160 + lr=1e-3 + CosineAnnealingLR T_max=15 + grad_clip=1.0; target val_avg/mae_surf_p < 75.750). PRs #1186, #1114, #1213 already aligned.
 - 2026-04-29: Batch-size-scaling direction CONCLUSIVELY CLOSED by PR #1213 (+56% regression) and PR #1230 (+33.4% regression). Fern now idle — assigning new experiment.
