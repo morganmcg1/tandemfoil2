@@ -1,5 +1,40 @@
 # SENPAI Research Results
 
+## 2026-04-29 13:15 — PR #1159 (CLOSED — negative result): AoA sign-flip augmentation
+- Branch: `charliepai2f1-askeladd/aoa-flip-aug`
+- Student: askeladd (charliepai2f1-askeladd)
+- Hypothesis: Exploit the mirror-plane symmetry of 2D incompressible aerodynamics — flipping the angle of attack (AoA → -AoA) should produce a physically valid mirrored sample, doubling effective training data for free. Predicted -1% to -4%.
+- Reality: **+20.3% regression on val_avg, +22.1% on test_avg** — worst result to date. Root cause identified: NACA camber M parameter in x[..., 15:18] and x[..., 19:22] was NOT flipped, making the symmetry transformation geometry-contradictory for all cambered foils (the vast majority of the dataset).
+
+### Results
+
+| Metric | Value |
+|---|---|
+| best `val_avg/mae_surf_p` | **150.886** (+20.3% vs baseline 125.438) |
+| `test_avg/mae_surf_p` | **138.005** (+22.1% vs baseline 112.988) |
+| vs current stacked baseline (post-RFF merge) | 108.543 → 150.886 (+39.0% regressed) |
+| vol_loss vs baseline | ~2-3× higher throughout training |
+
+### Per-split val
+
+| Split | mae_surf_p | Δ vs baseline |
+|---|---|---|
+| `val_single_in_dist` | 160.961 | +28.0% |
+| `val_geom_camber_rc` | 141.542 | +23.5% |
+| `val_geom_camber_cruise` | 98.275 | +13.7% |
+| `val_re_rand` | 120.765 | +12.4% |
+
+### Analysis & conclusions
+
+- The AoA flip was applied to node features x: indices {1 (pos_z), 3 (saf_z), 14 (AoA0_rad), 18 (AoA1_rad), 23 (stagger)} and y index {1 (Uy)}.
+- Critical flaw: the NACA camber M parameter (x[..., 15:18] for foil 0, x[..., 19:22] for foil 1) encodes signed camber direction. Flipping AoA without also flipping the sign of M creates a contradictory feature vector: the model sees a geometry that says "positive camber" but node positions that say "negative camber." This is a training signal inconsistency for every non-zero-camber foil.
+- The 8-dim dsdf (distance signed directional field) descriptor also contains bilateral-asymmetric components that were not adjusted, compounding the inconsistency.
+- vol_loss persistently ~2-3× above baseline confirms gradient conflicts — the model is trying to reconcile contradictory geometry representations.
+- **Decision: Closed.** AoA sign-flip should NOT be revisited until (a) NACA M sign can be extended cleanly, (b) all per-node geometric features with bilateral asymmetry (pos_z, saf_z, dsdf components, stagger) can be consistently transformed, AND (c) the cambered foil majority of the dataset is specifically validated. The augmentation is geometrically sound in principle; the implementation was insufficiently thorough.
+- Metrics file: `target/models/model-charliepai2f1-askeladd-aoa-flip-aug-20260429-123230/metrics.jsonl`
+
+---
+
 ## 2026-04-29 12:42 — PR #1138 (MERGED — round-2 winner): Random Fourier Features on (x, z), n_freq=32, sigma=1.0
 - Branch: `charliepai2f1-frieren/rff-32` (merged into `icml-appendix-charlie-pai2f-r1`)
 - Hypothesis: Replace raw `(x, z)` node positions with `[sin(2π·B·pos), cos(2π·B·pos)]` (random Fourier features) to mitigate spectral bias of MLPs and let the network represent high-frequency surface-pressure variations directly. Predicted -3% to -8%.

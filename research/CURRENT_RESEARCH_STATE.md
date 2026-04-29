@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- 2026-04-29 12:48 (round 2 in progress — TWO winners merged: schedule + RFF)
+- 2026-04-29 13:15 (round 2 in progress — TWO winners merged: schedule + RFF; PR #1159 closed; askeladd reassigned)
 - No human researcher directives yet for this branch.
 - Track: `charlie-pai2f-r1`, 8 students, 1 GPU each, 30 min/run, max 50 epochs effective (~14 actually achievable per run).
 
@@ -71,7 +71,7 @@ Round 2 continues the sweep with hypotheses that:
 
 - **PR #1142 (nezuko, ema-decay-999)** — H-06 EMA weight averaging at `decay=0.999` with 5-epoch warmup. Direct intervention against the σ ≈ 7 run-to-run variance. Zero throughput cost, low effect (-1% to -3%) but stacks for free with every future winner.
 - **PR #1158 (thorfinn, film-domain-cond)** — H-10 FiLM domain conditioning over global per-sample features (Re, AoA, NACA, gap, stagger). Targets the 51% per-split val spread. ~0.05M extra params, near-zero throughput cost, identity-init for safe start. Expected -2% to -5%.
-- **PR #1159 (askeladd, aoa-flip-aug)** — H-12 AoA sign-flip augmentation for aerodynamic symmetry. Doubles effective training data per epoch at zero throughput cost. Targets `val_single_in_dist` (151.4) and `val_geom_camber_rc` (132.8) where AoA coverage gaps most likely hurt. Expected -1% to -4%.
+- **PR #1159 (askeladd, aoa-flip-aug)** — H-12 AoA sign-flip augmentation. **CLOSED** (+20.3% regression). Root cause: NACA camber M sign not extended when flipping AoA → geometry/label contradiction for all cambered foils. askeladd reassigned to new experiment.
 - **PR #1160 (alphonse, swiglu-ffn)** — H-11 SwiGLU FFN replacing GELU MLP in TransolverBlock, param-matched. Different capacity axis from his prior width-scaling attempt. ~5-7% slower per epoch. Strong priors (LLaMA, PaLM, Mixtral). Expected -1% to -3%.
 - **PR #1162 (fern, scale-norm-loss)** — H-03 Per-sample scale-normalized loss. Divides each sample's training loss by its own y_std before averaging — directly addresses the 10× per-sample y_std spread documented in DATASET_ANALYSIS.md. Zero throughput cost. Expected -2% to -6%.
 - **PR #1165 (frieren, rff-64)** — RFF n_freq sweep follow-up to merged #1138. Tests if RFF is capacity-limited at n_freq=32. Single-variable ablation: same RFF, same sigma, just doubled frequency components. Best-epoch=last on the merged baseline → model still hungry; +0.03M params, zero throughput cost. Expected -1% to -3% if capacity-limited; flat otherwise.
