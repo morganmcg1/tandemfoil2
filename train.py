@@ -31,7 +31,7 @@ import wandb
 import yaml
 from einops import rearrange
 from timm.layers import trunc_normal_
-from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from tqdm import tqdm
 
 from data import (
@@ -50,6 +50,33 @@ from data import (
 # X_DIM in data/ is the on-disk feature count and stays at 24; AUG_X_DIM is what
 # the model sees after add_derived_features().
 AUG_X_DIM = X_DIM + 3
+
+
+class IndexedDataset(Dataset):
+    """Wrap a SplitDataset so each batch element carries its original index.
+
+    Used by hard-negative sampling to map per-batch samples back to a
+    persistent per-sample EMA loss tensor across epochs. ``data/loader.py`` is
+    read-only, so the dataset wrapper and a paired collate live here.
+    """
+
+    def __init__(self, base):
+        self.base = base
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, i):
+        x, y, s = self.base[i]
+        return x, y, s, i
+
+
+def indexed_pad_collate(batch):
+    """``pad_collate`` + a per-sample index tensor (B,)."""
+    base_batch = [(b[0], b[1], b[2]) for b in batch]
+    indices = torch.tensor([b[3] for b in batch], dtype=torch.long)
+    x, y, surf, mask = pad_collate(base_batch)
+    return x, y, surf, mask, indices
 
 
 def add_derived_features(
@@ -513,6 +540,14 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    # Loss-weighted hard-negative sampling: per-sample EMA of training loss is
+    # used to re-weight a fresh WeightedRandomSampler each epoch (after warmup),
+    # blended with the original domain-balanced sample_weights via floor.
+    hard_neg_sampling: bool = False
+    hard_neg_alpha: float = 0.5         # power on EMA loss (0=uniform, 1=linear)
+    hard_neg_ema: float = 0.9           # EMA decay for per-sample loss
+    hard_neg_floor: float = 0.1         # uniform/domain-balanced fraction
+    hard_neg_warmup_epochs: int = 5     # epochs before switching sampler
 
 
 cfg = sp.parse(Config)
@@ -528,16 +563,30 @@ print(f"AMP: enabled={cfg.amp}, dtype={cfg.amp_dtype}")
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
 
+n_train = len(train_ds)
+# Per-sample EMA training loss + a "seen at least once" mask. Allocated even
+# when hard_neg_sampling is off so subsequent code paths can reference them
+# safely; cost is ~12 KB for 1500 samples.
+sample_loss_ema = torch.zeros(n_train, dtype=torch.float64)
+sample_loss_seen = torch.zeros(n_train, dtype=torch.bool)
+
 loader_kwargs = dict(collate_fn=pad_collate, num_workers=4, pin_memory=True,
                      persistent_workers=True, prefetch_factor=2)
 
-if cfg.debug:
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
-                              shuffle=True, **loader_kwargs)
+if cfg.hard_neg_sampling:
+    train_ds_for_loop = IndexedDataset(train_ds)
+    train_loader_kwargs = {**loader_kwargs, "collate_fn": indexed_pad_collate}
 else:
-    sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_ds), replacement=True)
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
-                              sampler=sampler, **loader_kwargs)
+    train_ds_for_loop = train_ds
+    train_loader_kwargs = loader_kwargs
+
+if cfg.debug:
+    train_loader = DataLoader(train_ds_for_loop, batch_size=cfg.batch_size,
+                              shuffle=True, **train_loader_kwargs)
+else:
+    sampler = WeightedRandomSampler(sample_weights, num_samples=n_train, replacement=True)
+    train_loader = DataLoader(train_ds_for_loop, batch_size=cfg.batch_size,
+                              sampler=sampler, **train_loader_kwargs)
 
 val_loaders = {
     name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
@@ -635,13 +684,53 @@ for epoch in range(MAX_EPOCHS):
         print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
         break
 
+    # After warmup, replace the domain-balanced sampler with a loss-weighted
+    # one. Mix with original sample_weights via floor so domain balance is
+    # preserved at the floor fraction. The DataLoader is recreated rather
+    # than mutated because WeightedRandomSampler is captured at __iter__
+    # time and persistent_workers caches sampler state.
+    if (
+        cfg.hard_neg_sampling
+        and epoch >= cfg.hard_neg_warmup_epochs
+        and bool(sample_loss_seen.any())
+    ):
+        loss_w = sample_loss_ema.clone()
+        seen_mean = loss_w[sample_loss_seen].mean().item()
+        loss_w[~sample_loss_seen] = seen_mean
+        loss_w = loss_w.clamp(min=1e-8) ** cfg.hard_neg_alpha
+        loss_w = loss_w / loss_w.mean()
+        # Both ingredients normalized to mean=1 so floor truly represents the
+        # domain-balanced fraction. Raw sample_weights = 1/group_size has mean
+        # ~1/N (~0.002), which would make floor=0.1 effectively zero.
+        sample_w_norm = sample_weights / sample_weights.mean()
+        final_w = (1.0 - cfg.hard_neg_floor) * loss_w + cfg.hard_neg_floor * sample_w_norm
+        new_sampler = WeightedRandomSampler(final_w.double(), num_samples=n_train, replacement=True)
+        train_loader = DataLoader(train_ds_for_loop, batch_size=cfg.batch_size,
+                                  sampler=new_sampler, **train_loader_kwargs)
+        wandb.log({
+            "sampler/loss_ema_mean": sample_loss_ema[sample_loss_seen].mean().item(),
+            "sampler/loss_ema_max": sample_loss_ema.max().item(),
+            "sampler/loss_ema_p95": torch.quantile(
+                sample_loss_ema[sample_loss_seen], 0.95
+            ).item(),
+            "sampler/n_seen": int(sample_loss_seen.sum().item()),
+            "sampler/final_w_max": final_w.max().item(),
+            "sampler/final_w_p95": torch.quantile(final_w, 0.95).item(),
+            "sampler/final_w_min": final_w.min().item(),
+            "global_step": global_step,
+        })
+
     t0 = time.time()
     model.train()
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
 
     nan_inf_events = 0
-    for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
+    for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
+        if cfg.hard_neg_sampling:
+            x, y, is_surface, mask, batch_idx = batch
+        else:
+            x, y, is_surface, mask = batch
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
@@ -659,6 +748,27 @@ for epoch in range(MAX_EPOCHS):
             vol_loss = (huber_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
             surf_loss = (huber_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
             loss = vol_loss + cfg.surf_weight * surf_loss
+
+        if cfg.hard_neg_sampling:
+            with torch.no_grad():
+                # Per-sample mean Huber across all valid (node, channel) pairs
+                # — uniform across surf+vol, channel-equal. Cast to fp32 to
+                # avoid bf16 reduction loss across O(100K) nodes per sample.
+                err_f = huber_err.float() * mask.unsqueeze(-1).float()
+                per_sample_huber = err_f.sum(dim=(1, 2)) / (
+                    mask.sum(dim=1).clamp(min=1).float() * 3.0
+                )
+                per_sample_vals = per_sample_huber.detach().cpu().tolist()
+            for b_pos, sample_idx in enumerate(batch_idx.tolist()):
+                new_val = per_sample_vals[b_pos]
+                if sample_loss_seen[sample_idx]:
+                    sample_loss_ema[sample_idx] = (
+                        cfg.hard_neg_ema * sample_loss_ema[sample_idx]
+                        + (1.0 - cfg.hard_neg_ema) * new_val
+                    )
+                else:
+                    sample_loss_ema[sample_idx] = new_val
+                    sample_loss_seen[sample_idx] = True
 
         optimizer.zero_grad()
         loss.backward()                # bf16 gradients flow back; no GradScaler needed for bf16
