@@ -236,6 +236,17 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Match scoring contract: skip samples with non-finite GT. The
+            # downstream `err * mask` propagates inf/nan via `inf * 0 = nan`,
+            # so we must zero them out *and* drop the sample from the mask.
+            B = y.shape[0]
+            y_finite_per_sample = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            if not y_finite_per_sample.any():
+                continue
+            sample_valid = y_finite_per_sample.unsqueeze(-1).expand(-1, mask.shape[-1])
+            mask = mask & sample_valid
+            y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
@@ -404,7 +415,16 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+warmup_epochs = 5
+warmup = torch.optim.lr_scheduler.LinearLR(
+    optimizer, start_factor=1e-3, end_factor=1.0, total_iters=warmup_epochs
+)
+cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer, T_max=max(1, MAX_EPOCHS - warmup_epochs)
+)
+scheduler = torch.optim.lr_scheduler.SequentialLR(
+    optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs]
+)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -486,11 +506,13 @@ for epoch in range(MAX_EPOCHS):
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+    current_lr = optimizer.param_groups[0]["lr"]
     append_metrics_jsonl(metrics_jsonl_path, {
         "event": "epoch",
         "epoch": epoch + 1,
         "seconds": dt,
         "peak_memory_gb": peak_gb,
+        "lr": current_lr,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
         "val_avg/mae_surf_p": avg_surf_p,
