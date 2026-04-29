@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r5
 
-- **Last updated:** 2026-04-29 02:50
+- **Last updated:** 2026-04-29 03:05
 - **Advisor branch:** `icml-appendix-willow-pai2e-r5`
 - **Track tag:** `willow-pai2e-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r5`
@@ -47,7 +47,8 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 | frieren | #943 | **WIP** | Per-channel surface loss weights: p_surf_weight ∈ {3, 20} vs vel_surf_weight=10 |
 | nezuko | #742 | Closed | dropout=0.1 regresses 12.4%; undertrained model has no overfitting to regularize |
 | nezuko | #878 | Closed | DropPath p=0.1 neutral on val_avg (+0.32, within seed noise) and +3% per-step overhead |
-| nezuko | #923 | **WIP** | Vectorize `add_derived_features` — remove per-sample Python loop + `.item()` CPU sync; throughput unblock |
+| nezuko | #923 | **Merged** | Vectorized data prep: bit-exact, neutral throughput (−1.6% noise). Hypothesis refuted: CPU syncs are not the bottleneck. Model forward+backward = 91% of epoch time. Bottleneck map established. |
+| nezuko | #986 | **WIP** | torch.compile(dynamic=True) on model forward — targets 1.2-1.5× speedup on the actual bottleneck (model FLOPs). A/B with control; mode="reduce-overhead". |
 | tanjiro | #745 | **WIP (rebase)** | Sent back for Option 3 capacity-matched heads on rebased baseline |
 | thorfinn | #763 | **Merged** | val_avg=141.42; features + NaN-safe eval |
 | thorfinn | #810 | **WIP (rebase)** | EMA post-warmup-init + decay sweep on BF16 baseline |
@@ -69,7 +70,7 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 
 **All 8 GPUs in use:** alphonse #980 (boundary-layer vol-loss sweep), askeladd #885 (δ=0.3
 rebase + stacking test), edward #953 (sw-below-3 sweep), fern #809 (schedule-budget), frieren
-#943 (per-channel-surf-weight), nezuko #923 (vectorize data prep), tanjiro #745 (heads Option 3
+#943 (per-channel-surf-weight), nezuko #986 (torch.compile A/B), tanjiro #745 (heads Option 3
 rebase), thorfinn #810 (EMA rebase).
 
 ## Current research themes
@@ -85,8 +86,9 @@ rebase), thorfinn #810 (EMA rebase).
 4. **Per-channel surface loss weighting (#943, frieren)** — tests whether splitting surface loss
    into channel-specific terms (p vs velocity) improves over uniform sw=3. Run 1 (p=3, vel=10)
    effectively raises velocity supervision above baseline; Run 2 (p=20, vel=10) boosts pressure.
-5. **Throughput unblock (#923, nezuko)** — vectorizing `add_derived_features`. Once landed,
-   enables batch-size scaling (bs=8, lr=2e-3 linear scaling rule).
+5. **Throughput: model FLOPs = actual bottleneck.** #923 (merged) established the cost map:
+   model forward+backward = 91% of epoch time, data prep = 9%. torch.compile is the correct lever
+   (#986, nezuko). Expected: 19-22 effective epochs in budget (vs 17 today) if 1.2-1.5× speedup lands.
 6. **PhysicsAttention padding mask (Wave 3):** soft learnable gate — pending other wins first.
 
 ## Open questions

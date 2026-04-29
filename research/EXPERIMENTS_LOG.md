@@ -583,6 +583,34 @@ Best epoch = 17/17 (val still descending at 30-min timeout cutoff).
 
 ---
 
+## 2026-04-29 03:00 — PR #923: Vectorize `add_derived_features` — merged (neutral throughput, clean code)
+
+- **Branch:** `willowpai2e5-nezuko/vectorize-add-derived-features` (merged)
+- **W&B runs:** A/B runs under group `vectorize-data-prep`; also tested literal B×N×N proposal
+- **Hypothesis:** Per-sample CPU `.item()` syncs in `add_derived_features` are the throughput bottleneck. Removing them should give 5-15% wall-clock improvement and unblock batch-size scaling.
+
+### Results
+
+| Metric | A: per-sample loop | B: vectorized | Δ |
+|---|---|---|---|
+| `epoch_data_prep_ms_mean` | 26.20 ms | 25.78 ms | −1.6% (noise) |
+| `epoch_time_s` | 109.53 s | 110.04 s | +0.5% (noise) |
+| Total epochs in 30-min budget | 16 | 17 | +1 (likely noise) |
+| Max abs numerical diff | — | 0.0 | exact |
+
+Also tested literal B×N×N batched approach: **1.75× slower** (46 ms vs 26 ms per step) due to 50× more pairwise distance computations (N=242K vs s_b≈5K surface nodes).
+
+### Commentary & Conclusions
+
+- **Hypothesis refuted.** GPU pairwise compute dominates (≈22ms/26ms = 85%), not CPU syncs (≈4ms).
+- **Full elimination of data_prep would save only ~1.4% of epoch_time** — within measurement noise.
+- **Actual bottleneck: model forward+backward = ~91% of epoch time** (~100s/110s).
+- **Merged for architectural cleanliness:** bit-exact implementation, removes `.item()` CPU syncs, cleaner code even if not faster currently. Future torch.compile benefits from sync-free data prep.
+- **Bottleneck map: model FLOPs dominate.** torch.compile is the correct next throughput attack.
+- **Follow-up assigned: #986 (nezuko)** — torch.compile(dynamic=True) targeting 1.2-1.5× model speedup.
+
+---
+
 ## 2026-04-29 01:15 — PR #915: Mask padded nodes in PhysicsAttention slice aggregation — closed (mixed result)
 
 - **Branch:** `willowpai2e5-frieren/physics-attention-padding-mask` (closed)
