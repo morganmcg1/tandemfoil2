@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r5
 
-- **Last updated:** 2026-04-29 03:05
+- **Last updated:** 2026-04-29 03:15
 - **Advisor branch:** `icml-appendix-willow-pai2e-r5`
 - **Track tag:** `willow-pai2e-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r5`
@@ -51,7 +51,7 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 | nezuko | #986 | **WIP** | torch.compile(dynamic=True) on model forward — targets 1.2-1.5× speedup on the actual bottleneck (model FLOPs). A/B with control; mode="reduce-overhead". |
 | tanjiro | #745 | **WIP (rebase)** | Sent back for Option 3 capacity-matched heads on rebased baseline |
 | thorfinn | #763 | **Merged** | val_avg=141.42; features + NaN-safe eval |
-| thorfinn | #810 | **WIP (rebase)** | EMA post-warmup-init + decay sweep on BF16 baseline |
+| thorfinn | #810 | **WIP (rebase)** | EMA d=0.995: val_avg=89.872 (-18.7%), test_avg=79.254 (-21.8%) on stale sw=10. Sent back for rebase + decisive verify on sw=3 baseline (902-line PR with merge conflicts). |
 
 **Current best val_avg/mae_surf_p (merged):** 101.563 (edward #850, run `6rh7dzkx`).
 **Current best test_avg/mae_surf_p (merged):** 89.918 (edward #850, run `6rh7dzkx`).
@@ -63,15 +63,20 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 4. Huber loss δ=1.0 (#739) → val_avg=110.594
 5. Lower surf_weight=3 (#850) → **val_avg=101.563, test_avg=89.918**
 
-**[PENDING — REBASE FOR STACKING TEST]**
+**[PENDING — REBASE FOR STACKING/VERIFICATION TEST]**
 - **Huber δ=0.3 (#885, askeladd)** — δ=0.3 alone won val=97.96 / test=87.78 (beats current
   best 101.56/89.92 in absolute terms!), but on stale sw=10. Sent back for rebase + δ=0.3+sw=3
-  decisive stacking run. If δ=0.3+sw=3 wins → merge as 6th compounding win.
+  decisive stacking run. Candidate 6th compounding win.
+- **EMA post-warmup-init d=0.995 (#810, thorfinn)** — won val=89.87 / test=79.25 on stale sw=10
+  baseline (-18.7% val, -21.8% test). Mechanism is orthogonal to surf_weight, so should still win
+  vs sw=3 baseline (101.56/89.92). Sent back for rebase + decisive d=0.995 verification on sw=3.
+  Strong candidate 6th compounding win — implementation is clean (deferred init after warmup,
+  dual-flavor live/ema checkpointing).
 
 **All 8 GPUs in use:** alphonse #980 (boundary-layer vol-loss sweep), askeladd #885 (δ=0.3
 rebase + stacking test), edward #953 (sw-below-3 sweep), fern #809 (schedule-budget), frieren
 #943 (per-channel-surf-weight), nezuko #986 (torch.compile A/B), tanjiro #745 (heads Option 3
-rebase), thorfinn #810 (EMA rebase).
+rebase), thorfinn #810 (EMA rebase + sw=3 verify).
 
 ## Current research themes
 
@@ -103,7 +108,10 @@ rebase), thorfinn #810 (EMA rebase).
 - Does frieren's per-channel split (#943) reveal that velocity surface supervision (now at w=3)
   was the hidden bottleneck? Run 1 (p=3, vel=10) effectively raises velocity weight above sw=3
   baseline — if it wins, velocity surface weight was too low.
-- Does EMA (#810) still win on the new sw=3 baseline?
+- Does EMA (#810, d=0.995) still win on the new sw=3 baseline? Stale-baseline numbers were
+  exceptional (val −18.7%, test −21.8%). EMA mechanism (logit averaging across last ~2k steps
+  with d=0.995) should be orthogonal to loss-weighting, so the gain should hold. Verification run
+  pending after rebase.
 
 ## Potential next research directions (Wave 3+)
 

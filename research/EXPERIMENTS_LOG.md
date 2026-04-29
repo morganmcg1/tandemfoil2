@@ -673,3 +673,31 @@ Note: alphonse's PR compared against the pre-Huber #811 baseline (127.402), not 
 - **Important:** ran WITHOUT Huber loss (huber_delta=None). The per-sample-norm mechanism supersedes Huber for Re-imbalance but may stack with it. Merge conflict with Huber code (different edit points in the loss computation) — sent back for rebase.
 - **Grad_clip=1.0** added by student (undocumented in original PR instructions) — correct decision for stability with large per-sample weight variation.
 - **Decision: Sent back for rebase on Huber baseline.** When rebased, instruct alphonse to stack both: the sq_err normalization by sigma_per should be applied to the huber_err tensor (not a raw sq_err) — i.e., compute `huber_err = F.huber_loss(pred, y_norm, reduction="none", delta=cfg.huber_delta)` then divide by `sigma_per.unsqueeze(1)` before weighting by surf/vol masks.
+
+---
+
+## 2026-04-29 03:15 — PR #810: EMA post-warmup-init + decay sweep — sent back for rebase + verification on sw=3 baseline
+
+- **Branch:** `willowpai2e5-thorfinn/ema-model-checkpoint` (sent back, merge state DIRTY)
+- **W&B runs:** `n1rv11qt` (d=0.995 winner), `a9v9qwbi` (d=0.999)
+- **Hypothesis:** EMA over model weights with deferred init (after warmup_epochs=5 / 1875 steps) reduces checkpoint variance on noisy small-dataset training, with bigger gains on the OOD splits. Dual-flavor checkpointing tracks both live and ema; selects best by val_avg over the ema model after init.
+
+### Results vs sw=10 stale baseline (val_avg=110.594, test_avg=101.299)
+
+| Split | sw=10+Huber baseline | EMA d=0.995 (winner) | EMA d=0.999 |
+|-------|---------------------:|---------------------:|------------:|
+| `val_single_in_dist`     | 130.87 | **104.52** (-20.1%) | 110.43 |
+| `val_geom_camber_rc`     | 115.14 | **97.02** (-15.7%) | 102.17 |
+| `val_geom_camber_cruise` | 92.61  | **75.18** (-18.8%) | 80.43 |
+| `val_re_rand`            | 103.76 | **82.77** (-19.8%) | 88.79 |
+| **val_avg**              | **110.594** | **89.872 (-18.7%)** | **95.457** |
+| **test_avg**             | **101.299** | **79.254 (-21.8%)** | **85.851** |
+
+Vs current sw=3+Huber baseline (val_avg=101.563, test_avg=89.918): d=0.995 wins by **−11.5% val / −11.9% test** on stale code. All 4 splits improved.
+
+### Commentary & Conclusions
+
+- **Strong winner on stale baseline.** d=0.995 beats every split. d=0.999 also wins but by less — the higher decay's effective memory window (~10k steps) overshoots the post-warmup descent regime. d=0.995's effective window (~2k steps) tracks the steepest improvement phase.
+- **Clean implementation per prior advisor feedback:** deferred init after warmup, dual-flavor checkpointing, best_flavor=ema selected from epoch 6 onward.
+- **PR is in CONFLICTING state.** 902 additions / 99 deletions across 4 files. Created before #850 (sw=3 default) and #923 (vectorized data prep) merged. Merge conflicts in train.py loss block + Config + add_derived_features.
+- **Decision: Sent back for rebase + decisive verification run on sw=3 baseline.** EMA mechanism is orthogonal to surf_weight, so the gain should hold — but a 902-line PR is too valuable to merge with conflicts. Asked thorfinn to rerun d=0.995 only on rebased code (skip d=0.999 to save GPU time). If rebased d=0.995 lands within ~1% of stale-baseline winning numbers (val ≈ 90, test ≈ 79), this becomes the **6th compounding win**.
