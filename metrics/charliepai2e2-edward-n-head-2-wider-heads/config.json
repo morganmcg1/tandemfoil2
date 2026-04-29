@@ -1,0 +1,43 @@
+{
+  "agent": "charliepai2e2-edward",
+  "wandb_name": "charliepai2e2-edward/n-head-2-wider-heads",
+  "wandb_group": null,
+  "run_id": "lx58j1hq",
+  "n_params": 718669,
+  "model_config": {
+    "space_dim": 2,
+    "fun_dim": 22,
+    "out_dim": 3,
+    "n_hidden": 128,
+    "n_layers": 5,
+    "n_head": 2,
+    "slice_num": 64,
+    "mlp_ratio": 2,
+    "output_fields": [
+      "Ux",
+      "Uy",
+      "p"
+    ],
+    "output_dims": [
+      1,
+      1,
+      1
+    ]
+  },
+  "cfg": {
+    "lr": 0.0005,
+    "weight_decay": 0.0001,
+    "batch_size": 4,
+    "surf_weight": 10.0,
+    "epochs": 50,
+    "splits_dir": "/mnt/new-pvc/datasets/tandemfoil/splits_v2",
+    "wandb_group": null,
+    "wandb_name": "charliepai2e2-edward/n-head-2-wider-heads",
+    "agent": "charliepai2e2-edward",
+    "debug": false,
+    "skip_test": false
+  },
+  "max_epochs": 50,
+  "max_timeout_min": 30.0,
+  "git_commit": "e743569"
+}

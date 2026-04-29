@@ -7,6 +7,55 @@ Primary metric: `val_avg/mae_surf_p` (lower is better).
 
 ---
 
+## 2026-04-29 03:00 — PR #965: Relative MAE surf-p loss (auto Re-regime normalization) [CLOSED — DEAD END]
+
+- **Branch:** `charliepai2e2-edward/relative-mae-surf-p-loss`
+- **Hypothesis:** Replace absolute squared-error loss for the surface pressure channel with relative MAE (`|pred_p - y_p| / (|y_p| + ε)`) in original (denormalized) space. Motivation: pressure values vary enormously across Re regimes; relative loss auto-normalizes each sample's contribution by its own pressure magnitude, providing intrinsic Re-regime balance without explicit sample weights.
+- **Outcome:** DEAD END — `val_avg/mae_surf_p = 178.14` vs baseline 94.78; +87.9% regression. All splits degraded sharply. Dominant failure mode: gradient explosion.
+
+### Results Table (best epoch 14)
+
+| Split | Baseline (PR #931) | This run (best epoch 14) | Delta |
+|-------|-------------------:|-------------------------:|------:|
+| `val_single_in_dist` | 104.91 | 228.51 | +117.8% |
+| `val_geom_camber_rc` | 105.49 | 185.92 | +76.2% |
+| `val_geom_camber_cruise` | 77.32 | 145.60 | +88.3% |
+| `val_re_rand` | 91.41 | 152.54 | +66.9% |
+| **`val_avg/mae_surf_p`** | **94.78** | **178.14** | **+87.9%** |
+| `test_avg/mae_surf_p` | 85.22 | 166.34 | +95.2% |
+
+Note: `test_geom_camber_cruise` surf_loss / vol_loss produced NaN/Inf — extreme outputs in normalized space on some cruise samples.
+
+### Gradient Explosion Analysis
+
+| Metric | This run | Baseline |
+|--------|----------:|---------:|
+| epoch grad_norm_mean | 630–1530 | 30–85 |
+| epoch grad_norm_max | 7,900–14,900 | 370–1,000 |
+| effective clip ratio (mean / max_norm=5) | ~150–300x | ~6–17x |
+
+Relative MAE produces gradients ~15–25× larger than squared-error baseline. Every single batch was aggressively clipped, severely impairing optimizer ability to follow loss geometry.
+
+### Why the Hypothesis Failed
+
+1. **Pressure crosses zero.** At surface points where `y_p ≈ 0`, denominator collapses to `P_EPS=1.0`, making relative loss effectively unbounded MAE in original units. These near-zero spatial points dominate the gradient — a point with raw pressure error of 100 contributes a gradient term ~4500× larger than under normalized squared error.
+2. **Within-sample imbalance is inverted.** Relative loss amplifies low-magnitude spots (near stagnation lines) and damps high-magnitude spots (leading-edge suction peaks — the aerodynamically important ones). The per-sample Re-weighting from PR #931 already handles cross-sample balance fine; spatial reweighting inverts the priority structure.
+3. **`P_EPS = 1.0` is too small** relative to typical |y_p| of order 100–1000. A larger P_EPS (e.g. ~y_std_p/10 ≈ 68) would cap gradients at low-pressure points but partially defeats the auto-normalization motivation.
+
+- Wall clock: 30.8 min (14/50 epochs)
+- Peak GPU memory: 42.1 GB
+- Metrics: `metrics/charliepai2e2-edward-relative-mae-surf-p-loss/` (on student branch)
+
+### Conclusions
+
+Relative MAE on a quantity that crosses zero with O(thousand)-magnitude tails is a poor fit for SGD-style training. Gradient dynamics are dominated by the wrong spatial points. Abandon this loss formulation.
+
+Student's best suggested follow-up: **Huber/SmoothL1 loss on denormalized pressure** — bounded gradients at large errors, quadratic near zero, can't blow up at any spatial location. Worth testing in a future PR.
+
+**Decision:** CLOSED — clear dead end.
+
+---
+
 ## 2026-04-28 20:15 — PR #764: Larger model capacity: n_hidden 128→256
 
 - **Branch:** `charliepai2e2-alphonse/larger-model-capacity`
@@ -252,3 +301,38 @@ Student suggestions for follow-up: (1) sweep max_norm 1.0–5.0, (2) max_norm=5.
 
 **Decision:** CLOSED. max_norm=1.0 is the correct setting. Askeladd now idle — reassigned to T_max sweep experiment.
 
+
+## 2026-04-28 — PR #974: n_head=4→8 (head_dim=32→16), all else fixed
+- Branch: `charliepai2e2-nezuko/n-head-8-attention` (CLOSED)
+- Hypothesis: Doubling attention heads (4→8) at fixed n_hidden=128 (head_dim 32→16) is "architecturally free" — same parameter count, more attention diversity, expected to help OOD splits.
+- Results (ckpt_avg epochs 9-10-11; only 11 epochs completed in timeout):
+
+| Metric | n_head=8 (#974) | Baseline (#931) | Delta |
+|--------|----------------:|----------------:|------:|
+| **val_avg/mae_surf_p** | **109.18** | **94.78** | **+14.40 (+15.2% worse)** |
+| val_single_in_dist | 129.81 | 104.91 | +24.90 (+23.7%) |
+| val_geom_camber_rc | 122.32 | 105.49 | +16.83 (+16.0%) |
+| val_geom_camber_cruise | 84.59 | 77.32 | +7.27 (+9.4%) |
+| val_re_rand | 100.00 | 91.41 | +8.59 (+9.4%) |
+| **test_avg/mae_surf_p** | **97.65** | **85.22** | **+12.43 (+14.6% worse)** |
+
+- Notes: n_head=8 ran ~36% slower per epoch (170s vs 125s), so only 11 epochs fit in the 30-min timeout vs 14 for baseline — cosine tail never executed. Two compounding negatives: head_dim=16 too narrow (uniform regression across all splits) AND truncated schedule.
+- Analysis: Clear dead end. head_dim=32 appears near a sweet spot for this problem at n_hidden=128. Orthogonal direction: n_head=2 / head_dim=64 (assigned to edward, PR #1001).
+- Status: CLOSED — clear negative result, +15.2% val regression.
+
+## 2026-04-28 — PR #978: T_max=15→20 on cosine schedule, all else fixed
+- Branch: `charliepai2e2-askeladd/tmax20-on-compound` (SENT BACK with T_max=18 follow-up)
+- Hypothesis: T_max=15 → LR ~5.5e-6 at epoch 14. T_max=20 raises floor to ~1.0e-4 at epoch 14.
+- Results (ckpt_avg epochs 12-13-14):
+
+| Metric | T_max=20 (#978) | Baseline T_max=15 (#931) | Delta |
+|--------|----------------:|-------------------------:|------:|
+| **val_avg/mae_surf_p** | **95.84** | **94.78** | **+1.05 (close-but-no-cigar)** |
+| val_single_in_dist | 110.13 | 104.91 | +5.22 |
+| val_geom_camber_rc | 106.19 | 105.49 | +0.70 |
+| val_geom_camber_cruise | 75.48 | 77.32 | -1.84 (better) |
+| val_re_rand | 91.54 | 91.41 | +0.13 (near-neutral) |
+| test_avg/mae_surf_p | 85.71 | 85.22 | +0.49 |
+
+- Analysis: ckpt_avg K=3 and in-flight LR motion anti-correlated. At T_max=15, final-3-epoch LR is frozen (~1.6e-5→5.5e-6); at T_max=20 it spans 1.7e-4→1.0e-4 (>10× spread), diluting best single checkpoint.
+- Status: SENT BACK — try T_max=18 (midpoint: ~1.5e-5 LR floor, ~3× spread across ckpt_avg window).
