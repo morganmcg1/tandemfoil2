@@ -48,6 +48,30 @@ from data import (
 )
 
 # ---------------------------------------------------------------------------
+# Signed-log target transform for the pressure channel only (PR #905).
+# Applied per-channel — only y[..., 2] (kinematic pressure) is transformed;
+# Ux/Uy are left untouched. The model trains and predicts in log-then-norm
+# space; evaluate_split inverts the log before MAE so reported metrics stay
+# in physical units, apples-to-apples with the baseline.
+# ---------------------------------------------------------------------------
+
+def signed_log_p(y: torch.Tensor) -> torch.Tensor:
+    out = y.clone()
+    out[..., 2] = torch.sign(y[..., 2]) * torch.log1p(y[..., 2].abs())
+    return out
+
+
+_SIGNED_LOG_P_CLAMP = 30.0  # expm1(30) ≈ 1.07e13, well within float32; physical |p| caps near ~3e4 → log1p ≈ 10.3
+
+
+def inv_signed_log_p(y_log: torch.Tensor) -> torch.Tensor:
+    out = y_log.clone()
+    abs_log = y_log[..., 2].abs().clamp(max=_SIGNED_LOG_P_CLAMP)
+    out[..., 2] = torch.sign(y_log[..., 2]) * torch.expm1(abs_log)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Transolver model
 # ---------------------------------------------------------------------------
 
@@ -218,7 +242,7 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device, sanity_print: bool = False) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -229,6 +253,7 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
     n_surf = n_vol = n_batches = 0
+    sanity_done = False
 
     with torch.no_grad():
         for x, y, is_surface, mask in loader:
@@ -237,8 +262,24 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Per-sample skip for non-finite y. Workaround for the scoring.py
+            # `Inf * 0 = NaN` poisoning bug: test_geom_camber_cruise has 1 sample
+            # with non-finite y. Filter it before the loss/MAE pass so the
+            # downstream arithmetic never sees Inf. Matches the baseline's
+            # `test_clean_with_workaround` (BASELINE.md, test_avg=92.608).
+            B = y.shape[0]
+            y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)  # [B]
+            if not y_finite.any():
+                continue
+            if not y_finite.all():
+                x = x[y_finite]
+                y = y[y_finite]
+                is_surface = is_surface[y_finite]
+                mask = mask[y_finite]
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
-            y_norm = (y - stats["y_mean"]) / stats["y_std"]
+            y_log = signed_log_p(y)
+            y_norm = (y_log - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
             abs_err = (pred - y_norm).abs()
@@ -254,7 +295,18 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             ).item()
             n_batches += 1
 
-            pred_orig = pred * stats["y_std"] + stats["y_mean"]
+            pred_log = pred * stats["y_std"] + stats["y_mean"]
+            pred_orig = inv_signed_log_p(pred_log)
+            if sanity_print and not sanity_done:
+                _valid = mask
+                _pred_p = pred_orig[..., 2][_valid]
+                _y_p = y[..., 2][_valid]
+                print(
+                    f"    [signed-log-p sanity] pred_p[min,max]=({_pred_p.min().item():.2f}, "
+                    f"{_pred_p.max().item():.2f})  y_p[min,max]=({_y_p.min().item():.2f}, "
+                    f"{_y_p.max().item():.2f})"
+                )
+                sanity_done = True
             ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
@@ -397,6 +449,24 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
+
+# Recompute pressure normalization stats in signed-log space (PR #905).
+# One pass over train_ds; ~30s of CPU work. Only y[..., 2] is touched.
+import math as _math
+_n, _sum, _sumsq = 0, 0.0, 0.0
+for _i in range(len(train_ds)):
+    _, _y_i, _ = train_ds[_i]
+    _p_log = torch.sign(_y_i[:, 2]) * torch.log1p(_y_i[:, 2].abs())
+    _n += _p_log.numel()
+    _sum += _p_log.sum().item()
+    _sumsq += (_p_log * _p_log).sum().item()
+_p_log_mean = _sum / _n
+_p_log_var = max(_sumsq / _n - _p_log_mean * _p_log_mean, 1e-12)
+_p_log_std = _math.sqrt(_p_log_var)
+stats["y_mean"][2] = _p_log_mean
+stats["y_std"][2] = _p_log_std
+print(f"[signed-log-p] p_log_mean={_p_log_mean:.4f}, p_log_std={_p_log_std:.4f}")
+
 stats = {k: v.to(device) for k, v in stats.items()}
 
 loader_kwargs = dict(collate_fn=pad_collate, num_workers=4, pin_memory=True,
@@ -507,7 +577,8 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
-        y_norm = (y - stats["y_mean"]) / stats["y_std"]
+        y_log = signed_log_p(y)
+        y_norm = (y_log - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
         abs_err = (pred - y_norm).abs()
 
@@ -533,8 +604,12 @@ for epoch in range(MAX_EPOCHS):
 
     # --- Validate ---
     model.eval()
+    _sanity_split = next(iter(val_loaders))
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(
+            model, loader, stats, cfg.surf_weight, device,
+            sanity_print=(name == _sanity_split),
+        )
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
