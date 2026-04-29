@@ -1,9 +1,10 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-29 ~02:30 (**SwiGLU baseline 81.81 / test 73.04** holds; #938 sent back for σ∈{2,5} sweep (RFF σ=10 +2.4%, mechanism diagnosed: no low-freq channel); #939 closed (frieren n_layers=6 +4.7% under-trained), frieren→#963 schedule-to-budget T_max=13; #883 closed (Fourier K-axis settled), thorfinn→#955 per-channel heads; #920 closed (coord-skip), fern→#949 LayerScale; #863 askeladd rebase #3 in flight; **#873 EMA is the predicted next BIG compounded winner**, awaiting rebase. **NEW THEME: schedule-budget mismatch surfaced from #939 analysis** — affects ALL pre-#914 PRs that were "still descending" at timeout)
+- **As of:** 2026-04-29 ~02:55 (**SwiGLU unseeded best 81.81 / test 73.04** holds; **#863 MERGED — canonical seeded baseline `--seed 0 = 85.14`, bit-perfect determinism on single-GPU**; #938 sent back for σ∈{2,5} sweep (RFF σ=10 +2.4%, mechanism diagnosed: no low-freq channel); #939 closed (frieren n_layers=6 +4.7% under-trained), frieren→#963 schedule-to-budget T_max=13; #883 closed (Fourier K-axis settled), thorfinn→#955 per-channel heads; #920 closed (coord-skip), fern→#949 LayerScale; **#873 EMA is the predicted next BIG compounded winner**, awaiting rebase; askeladd→3-seed mean follow-up assigned. **NEW THEME: schedule-budget mismatch from #939 affects ALL pre-#914 PRs that were "still descending" at timeout. NEW INFRA: borderline-ablation contract — PRs with <2% predicted Δ must run `--seed {0,1,2}` mean ± std.**)
 - **Most recent human direction:** none yet for this track
 - **Branch:** `icml-appendix-willow-pai2e-r4`
-- **Current best:** `val_avg/mae_surf_p = 89.714` (#820) and `3-split test mean = 88.16` (run `w9xbc0wl`)
+- **Current best (unseeded):** `val_avg/mae_surf_p = 81.81` (#914), `test_avg = 73.04` (4-split, finite), `3-split test mean = 81.28` (run `2akpdg9t`)
+- **Seeded canonical (`--seed 0` PR-to-PR ranking):** `val_avg = 85.14`, `test_avg = 78.97`, `3-split = 86.78` (run `j1r5y758`, post-#914+#863)
 
 ## Current research focus
 
@@ -40,7 +41,7 @@ on L1-only baseline). The compounding mechanism is well-understood.
 |---|---|---|---|---|
 | #816 | alphonse | FiLM conditioning of LayerNorm | -5 to -12% | **needs rebase onto post-#914 (81.81)** |
 | #820 | thorfinn | Fourier PE K=4 | −9.59% | **MERGED — val 89.71** |
-| #863 | askeladd | Seed determinism (infra) | variance ↓ | **rebase #3 in progress onto post-#914 + 1 canonical seeded run** |
+| #863 | askeladd | Seed determinism (infra) | variance ↓ | **MERGED — bit-perfect; canonical `--seed 0 = 85.14`; askeladd→3-seed mean follow-up** |
 | #819 | frieren | Relative L2 α=0.5 (rebase #2) | washed +0.27% | **CLOSED — Fourier PE absorbs equalization; camber_rc −4.59% orthogonal** |
 | #888 | fern | Stratified vol subsample | +3.77% actual | **CLOSED — VOLUME-MASK-SUBSAMPLING exhausted** |
 | #920 | fern | Per-block coord skip-connection | -1 to -3% predicted | **CLOSED +4.1% val (vs pre-#914) / +14.4% vs post-#914; mechanism active but cruise/re_rand regress sharply; COORD-INJECTION exhausted** |
@@ -55,6 +56,7 @@ on L1-only baseline). The compounding mechanism is well-understood.
 | #949 | fern | LayerScale γ_init=1e-4 (CaiT) | -1 to -3% | wip |
 | #955 | thorfinn | Per-channel output heads (Ux/Uy/p) | -2 to -4% | wip |
 | #963 | frieren | Schedule-to-budget T_max=13 (cosine match horizon) | -1 to -3% | wip (just assigned, post-#914) |
+| #972 | askeladd | 3-seed mean canonical (--seed {0,1,2}) | replace single-seed noise → tight ranking quantity | wip (just assigned, post-#863+#914) |
 
 **Round 3 candidates (queued, contingent on round 2 outcomes):**
 

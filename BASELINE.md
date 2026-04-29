@@ -1,6 +1,27 @@
 # Current Baseline — `icml-appendix-willow-pai2e-r4`
 
-## Best metrics
+## Two ranking quantities (post-#863 seed determinism merge)
+
+After PR #863 (askeladd, canonical bit-perfect determinism), there are now
+**two distinct ranking quantities** for evaluating future PRs:
+
+1. **`val_avg/mae_surf_p` @ `--seed 0` = 85.14** (seeded canonical, run `j1r5y758`)
+   — Used to compare future PR ablations PR-to-PR. All round-3+ PRs should
+   set `--seed 0` and beat this number to demonstrate reproducible improvement.
+2. **`val_avg/mae_surf_p` unseeded best = 81.81** (`2akpdg9t`, post-#914)
+   — Retained as best-known reference; will be replaced by a 3-seed mean
+   (`--seed {0, 1, 2}`) once that experiment lands.
+
+The seeded canonical (85.14) is +4.07% above the unseeded best (81.81); this
+gap is one tail of the seed-noise distribution, consistent with the ~10%
+seed-to-seed variance observed across 3 trees (pre-#820: 100.80, post-#820:
+97.92, post-#914: 85.14).
+
+**Borderline-ablation contract:** PRs claiming <2% absolute val_avg
+improvement must run `--seed {0, 1, 2}` and report mean ± std until the
+3-seed mean baseline lands. ≥2% effects can stay single-seed for now.
+
+## Best metrics — unseeded best (paper-facing, until 3-seed mean replaces)
 
 | Metric | Value | Run | PR |
 |--------|-------|-----|----|
@@ -14,6 +35,40 @@
 **`test_avg/mae_surf_p` is now finite (73.04)** — NaN guards + SwiGLU run
 on the merged branch confirms cruise sample 000020 is correctly filtered
 by #797.
+
+## Seeded canonical (`--seed 0` reproducible PR-to-PR ranking)
+
+| Metric | Value | Run | PR |
+|--------|-------|-----|----|
+| `val_avg/mae_surf_p` | **85.1370** | `j1r5y758` | #863 |
+| `test_avg/mae_surf_p` | **78.9686** (4-split, finite) | `j1r5y758` | #863 |
+| 3-split test mean (excl. cruise) | **86.78** | `j1r5y758` | #863 |
+| Best epoch | 13 / 13 (timeout — still descending) | | |
+| Wall time | 30.7 min | | |
+| Params | 661,735 (unchanged; seed PR was infra-only) | | |
+
+### Per-split val @ `--seed 0` (epoch 13, run `j1r5y758`)
+
+| Split | mae_surf_p |
+|-------|-----------|
+| `val_single_in_dist` | 109.20 |
+| `val_geom_camber_rc` | 91.50 |
+| `val_geom_camber_cruise` | 65.09 |
+| `val_re_rand` | 74.77 |
+| **val_avg** | **85.14** |
+
+### A/B determinism proof — bit-exact (0.0000 abs diff)
+
+| Tree | Run A | Run B | val_avg @ seed 0 | |Δ| |
+|---|---|---|---:|---:|
+| pre-#820 (no Fourier, no SwiGLU) | `sk040lf3` | `gkqoo0v4` | 100.80 | 0.0000 |
+| post-#820 (Fourier only) | `0zx4mdxs` | `u58qtuye` (4 ep) | 97.92 | 0.0000 |
+| post-#914 (Fourier + SwiGLU) | `j1r5y758` | (no A/B) | 85.14 | (carry) |
+
+Bit-exactness without `cudnn.deterministic`: Transolver has no convolutions,
+no AMP, fixed reduction order in `torch.matmul` at single-GPU scale. Future
+PRs that add dropout, AMP, or scatter-based aggregation will need a fresh
+A/B sanity check.
 
 ## Per-split val (epoch 12, run `2akpdg9t`)
 
@@ -59,7 +114,7 @@ by #797.
 | `epochs` | 50 (capped) |
 | Timeout | 30 min |
 | NaN guards | active in `evaluate_split` (#797) — drops cruise sample 000020 |
-| Seed | NONE (val_avg drifts ~5-10% across runs; seed PR #863 in flight) |
+| **Seed** | **`--seed 0` default (#863)** — bit-perfect determinism on single-GPU; pass `generator=g` to sampler+DataLoader |
 | Params | **661,735** (−4,720 vs prior; SwiGLU 2/3 dim trick saves ~792 params/block) |
 
 ## Delta history
@@ -98,11 +153,12 @@ channel_weights=[1,1,3], batch_size=4, fourier_bands=4, CosineAnnealingLR.)
 
 ## Open issues
 
-- **Run-to-run val variance:** Seed PR #863 (askeladd) is in flight — will
-  eliminate the ~5-10% init/sampler drift once merged.
+- **Run-to-run val variance:** Seed PR #863 merged; canonical seeded
+  baseline now `--seed 0 = 85.14`. 3-seed mean (`--seed {0,1,2}`)
+  follow-up assigned to askeladd to replace single-seed noise.
 - **Best epoch cliff at 12/13:** The best epoch was epoch 12; epoch 13 slightly
   bounced (85.75). With more epochs / longer LR schedule, SwiGLU may have
-  additional headroom — unexplored within current 30-min budget.
+  additional headroom — frieren #963 (`T_max=13`) is testing this directly.
 - **Cruise-test `-Inf` GT (workaround active):** `test_geom_camber_cruise/000020.pt`
   has 761 `-Inf` values in the `p` channel. The per-sample `y_finite` guard
   in `evaluate_split` (#797) filters this sample. Dataset is read-only.

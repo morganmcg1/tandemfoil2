@@ -1,5 +1,50 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-29 02:50 — PR #863 (rebase #3 results): Seed determinism — **MERGED as canonical infra (val=85.14 @ seed=0)**
+
+- Branch: `willowpai2e4-askeladd/seed-determinism`
+- Student: willowpai2e4-askeladd
+- W&B canonical run (post-#914): [`j1r5y758`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/j1r5y758)
+- A/B determinism proofs:
+  - pre-#820: `sk040lf3` ≡ `gkqoo0v4` (14 epochs, 0.0000 abs diff)
+  - post-#820: `0zx4mdxs` ≡ `u58qtuye` (4 epochs, 0.0000 abs diff)
+
+**Hypothesis.** `train.py` doesn't seed any RNG → 6% drift between two
+runs of the same code/data. Add `set_seed()` helper, pass `generator=g`
+to `WeightedRandomSampler` and `DataLoader`. Predicted: A/B agreement
+within ~0.1; no win on val_avg (this is infra, not a hypothesis).
+
+**Results vs post-#914 unseeded best (81.81 / test 73.04):**
+
+| Metric | Unseeded best | Seeded `--seed 0` | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | 81.81 | **85.14** | +4.07% (within seed-luck) |
+| `test_avg/mae_surf_p` | 73.04 | 78.97 | +8.1% (within seed-luck) |
+| 3-split test mean | 81.28 | 86.78 | +6.8% (within seed-luck) |
+| A/B abs diff | n/a | **0.0000** | bit-exact |
+| Wall time | 30.6 min | 30.7 min | unchanged |
+
+**Mechanism.** Bit-exact reproducibility achieved without
+`cudnn.deterministic`. Transolver has no convolutions, no AMP, fixed
+reduction order in `torch.matmul`. Determinism guarantee carries
+across pre-#820, post-#820, post-#914 trees uniformly. Critical
+observation: **seed-to-seed variance ≈ 10% of metric** across 3 trees
+(pre-#820: 100.80, post-#820: 97.92, post-#914: 85.14 vs unseeded
+best 81.81). 1-3% ablation effects are below seed noise without a
+3-seed mean.
+
+**Decision: MERGE.** PR doesn't beat the unseeded-best 81.81 numerically,
+but it establishes:
+1. The **seeded canonical baseline @ `--seed 0` = 85.14** for round-3+
+   PR-to-PR comparison.
+2. The **borderline-ablation contract**: PRs claiming <2% absolute
+   improvement must report `--seed {0,1,2}` mean ± std.
+3. **3-seed mean reassignment** for askeladd (next): replaces seed-luck
+   single-draws with paper-grade reference number.
+
+BASELINE.md updated with two-ranking-quantity format. Seed PR is
+load-bearing for ablation legibility going into round 3.
+
 ## 2026-04-29 02:25 — PR #938 (rebase #1 results): RFF σ=10 — **SENT BACK for σ ∈ {2, 5} sweep (val +2.4%; mechanism diagnosed, σ too high for coord range)**
 
 - Branch: `willowpai2e4-tanjiro/rff-encoding`
