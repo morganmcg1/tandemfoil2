@@ -1,5 +1,82 @@
 # SENPAI Research Results
 
+## 2026-04-29 13:35 — PR #1158 (SENT BACK — wrong baseline): FiLM domain conditioning over global features
+- Branch: `charliepai2f1-thorfinn/film-domain-cond`
+- Student: thorfinn (charliepai2f1-thorfinn)
+- Hypothesis: FiLM modulation of TransolverBlock LayerNorms by per-sample global features (Re, AoA, NACA, gap, stagger). Targets the 51% per-split val spread by giving model per-sample regime conditioning. Expected -2% to -5%.
+- **Issue:** student launched at 12:49Z on advisor commit a8d7a25 (BEFORE the #1138 RFF merge at 12:42Z). Comparison was against schedule-only baseline (val=125.4), not current merged baseline (val=108.5).
+
+### Results vs schedule-only baseline (what the student reported)
+
+| Metric | FiLM (this PR) | Schedule-only baseline (#1101) | Δ |
+|---|---|---|---|
+| val_avg/mae_surf_p | 110.315 | 125.438 | **-12.0%** |
+| test_avg/mae_surf_p | 99.040 | 112.988 | **-12.4%** |
+
+### Results vs current merged baseline (correct comparison)
+
+| Metric | FiLM | Current baseline (#1138) | Δ |
+|---|---|---|---|
+| val_avg/mae_surf_p | 110.315 | 108.543 | +1.6% (regression as run) |
+| test_avg/mae_surf_p | 99.040 | 96.942 | +2.2% (regression as run) |
+
+### Per-split val (FiLM, epoch 13)
+
+| Split | FiLM | Baseline #1138 | Δ |
+|---|---|---|---|
+| `val_single_in_dist` | 130.01 | 125.82 | +3.3% |
+| `val_geom_camber_rc` | 120.20 | 114.59 | +4.9% |
+| `val_geom_camber_cruise` | 87.10 | 86.37 | +0.8% |
+| `val_re_rand` | 103.95 | 107.40 | -3.2% |
+| **avg** | **110.32** | **108.54** | **+1.6%** |
+
+### Conclusions
+- **The FiLM mechanism is clearly working** — broad-based -12% improvement vs the baseline thorfinn compared to.
+- **But the experiment was on the wrong baseline.** RFF was already merged when the run launched.
+- **Open question:** does FiLM stack with RFF? The mechanisms are mechanistically distinct (FiLM=per-sample regime conditioning of LayerNorm γ/β; RFF=spatial spectral encoding of (x,z)). They should be orthogonal. Predicted FiLM+RFF: val=95-105 (-3 to -10% vs current 108.5).
+- **Note on FiLM cost:** ~doubles model size (1.32M params vs 0.66M baseline). The PR estimated 0.05M extra; actual is 0.66M (FiLM net is `Linear(11→256) + Linear(256→2560)`). Per-epoch cost +26% (145s vs 115s). Identity init verified working.
+- **Action:** sent back for rebase + rerun on current merged baseline (RFF + schedule). Same FiLM code, just rebased.
+
+### Files
+- Metrics JSONL: `target/models/model-charliepai2f1-thorfinn-film-domain-cond-20260429-124956/metrics.jsonl`
+
+---
+
+## 2026-04-29 13:30 — PR #1095 (CLOSED — confirmed regression): Per-channel pressure-weighted surface loss
+- Branch: `charliepai2f1-edward/pressure-channel-weight`
+- Student: edward (charliepai2f1-edward)
+- Hypothesis: 4× weight on pressure channel in surface MSE loss with mean-normalized formulation `(ch_w / ch_w.mean())` to preserve aggregate surface signal magnitude. Reweighting redirects capacity to the ranked metric (mae_surf_p).
+
+### v2 results (mean-normalized, on rebased RFF baseline)
+
+| Metric | v2 | Current baseline (#1138) | Δ |
+|---|---|---|---|
+| val_avg/mae_surf_p | 117.000 | 108.543 | +7.8% (worse) |
+| test_avg/mae_surf_p | 106.008 | 96.942 | +9.4% (worse) |
+
+### Per-split val (v2, epoch 14)
+
+| Split | v2 | Baseline #1138 | Δ |
+|---|---|---|---|
+| `val_single_in_dist` | 143.10 | 125.82 | +13.7% |
+| `val_geom_camber_rc` | 122.52 | 114.59 | +6.9% |
+| `val_geom_camber_cruise` | 89.77 | 86.37 | +3.9% |
+| `val_re_rand` | 112.61 | 107.40 | +4.9% |
+| **avg** | **117.00** | **108.54** | **+7.8%** |
+
+Ux/Uy MAE also went up (1.79→2.35, 0.77→1.07) — halved diagnostic-channel weights cost real accuracy.
+
+### Conclusions
+- **Hypothesis cleanly rejected.** The earlier v1 result (val=133.9) was a dilution side-effect of the `/ch_w.sum()=6` denominator, not channel redistribution itself.
+- **All splits regressed**, including the high-error splits (single_in_dist, camber_rc) we expected to benefit. Pressure errors are not "capacity-bottlenecked by Ux/Uy" — they're structurally similar across channels.
+- **High-value side effects** from this PR overall: edward caught the data/scoring.py NaN propagation bug (advisor-side fix in commit 2548195) and the dilution artifact, both prevented future false positives.
+- Edward reassigned to PR #1183 (Cautious AdamW, H-08).
+
+### Files
+- Metrics JSONL: `target/models/model-charliepai2f1-edward-pressure-channel-weight-v2-20260429-125516/metrics.jsonl`
+
+---
+
 ## 2026-04-29 14:10 — PR #1162 (CLOSED — substantially worse than current baseline): Per-sample scale-normalized loss
 - Branch: `charliepai2f1-fern/scale-norm-loss`
 - Student: fern (charliepai2f1-fern)

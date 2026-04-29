@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- 2026-04-29 (round 2 in progress — TWO winners merged: schedule + RFF; PRs #1159, #1162 closed; PR #1160 sent back for rebase+rerun; fern assigned PR #1179 gradient-norm-loss; askeladd PR #1176 label fixed — all 8 students active)
+- 2026-04-29 13:35 (round 2 in progress — TWO winners merged: schedule + RFF; PRs #1095, #1159, #1162 closed; PRs #1158, #1160 sent back for rebase+rerun on RFF baseline; new assignments: fern→#1179, edward→#1183; askeladd #1176 label fixed — all 8 students active)
 - No human researcher directives yet for this branch.
 - Track: `charlie-pai2f-r1`, 8 students, 1 GPU each, 30 min/run, max 50 epochs effective (~14 actually achievable per run).
 
@@ -67,22 +67,22 @@ Round 2 continues the sweep with hypotheses that:
 - Cover orthogonal axes (positional encoding, training trick, architecture, augmentation)
 - Predict effects above the noise floor where possible
 
-## Round 2 — assignments in flight (6 PRs)
+## Round 2 — assignments in flight (8 PRs, post-#1158/#1095 review)
 
+- **PR #1100 (tanjiro, wider-bs8 rev)** — round-1 capacity scaling + bs=8 + mlp_ratio↓ + output clamp, in flight on rebased branch.
 - **PR #1142 (nezuko, ema-decay-999)** — H-06 EMA weight averaging at `decay=0.999` with 5-epoch warmup. Direct intervention against the σ ≈ 7 run-to-run variance. Zero throughput cost, low effect (-1% to -3%) but stacks for free with every future winner.
-- **PR #1158 (thorfinn, film-domain-cond)** — H-10 FiLM domain conditioning over global per-sample features (Re, AoA, NACA, gap, stagger). Targets the 51% per-split val spread. ~0.05M extra params, near-zero throughput cost, identity-init for safe start. Expected -2% to -5%.
-- **PR #1159 (askeladd, aoa-flip-aug)** — H-12 AoA sign-flip augmentation. **CLOSED** (+20.3% regression). Root cause: NACA camber M sign not extended when flipping AoA → geometry/label contradiction for all cambered foils. askeladd reassigned to new experiment.
-- **PR #1160 (alphonse, swiglu-ffn)** — H-11 SwiGLU FFN replacing GELU MLP in TransolverBlock, param-matched. **SENT BACK** — ran without RFF, beat old baseline by -12.4% but is +1.2% worse than current RFF baseline. Must rebase onto current branch and rerun. SwiGLU+RFF untested and potentially powerful.
-- **PR #1162 (fern, scale-norm-loss)** — H-03 Per-sample scale-normalized loss. **CLOSED** — val=122.470 vs baseline 108.543 (+12.8% worse). Loss redistribution helped cruise/re_rand but hurt the higher-error splits (single_in_dist, geom_camber_rc) that dominate the average. Per-sample std is a poor proxy for difficulty. fern **reassigned to PR #1179 (gradient-norm-loss)**.
-- **PR #1179 (fern, gradient-norm-loss)** — **NEW (assigned 2026-04-29 14:30)** — Spatial gradient-magnitude weighted surface loss. Weights each surface node's loss by |Δp_i| (discrete first-order pressure gradient along node sequence). Directly targets leading-edge/suction-peak/TE-wake regions that dominate mae_surf_p. Addresses the failure mode of #1162 (global std ≠ local difficulty). Expected -2% to -5%.
+- **PR #1158 (thorfinn, film-domain-cond v2)** — H-10 FiLM domain conditioning. v1 ran on PRE-#1138 baseline: -12.0%/-12.4% vs schedule-only but +1.6%/+2.2% vs current RFF baseline (108.5/96.9). **SENT BACK 2026-04-29 13:30** for rebase + rerun on current merged baseline. FiLM+RFF untested; predicted to stack orthogonally (FiLM=per-sample regime conditioning, RFF=spatial spectral). Expected val=95-105 if stacks; flat otherwise.
+- **PR #1160 (alphonse, swiglu-ffn)** — H-11 SwiGLU FFN replacing GELU MLP in TransolverBlock, param-matched. **SENT BACK** — same pattern as #1158, ran without RFF, beat old baseline by -12.4% but is +1.2% worse than current RFF baseline. Must rebase + rerun. SwiGLU+RFF untested.
 - **PR #1165 (frieren, rff-64)** — RFF n_freq sweep follow-up to merged #1138. Tests if RFF is capacity-limited at n_freq=32. Single-variable ablation: same RFF, same sigma, just doubled frequency components. Best-epoch=last on the merged baseline → model still hungry; +0.03M params, zero throughput cost. Expected -1% to -3% if capacity-limited; flat otherwise.
-- **PR #1176 (askeladd, re-stratified-sampler)** — H-13 Re-stratified sampling. Replace domain-balanced sampler with one that multiplies domain weights by `log(1 + per_sample_y_std_p)` (normalized to unit mean). Upweights hard high-Re samples within each domain, focusing the limited 14-epoch budget on gradient-rich samples. Zero throughput cost. Orthogonal to RFF and schedule. Expected -2% to -5%.
+- **PR #1176 (askeladd, re-stratified-sampler)** — H-13 Re-stratified sampling. Replace domain-balanced sampler with one that multiplies domain weights by `log(1 + per_sample_y_std_p)` (normalized to unit mean). Upweights hard high-Re samples within each domain. Zero throughput cost. Orthogonal to RFF and schedule. Expected -2% to -5%.
+- **PR #1179 (fern, gradient-norm-loss)** — Spatial gradient-magnitude weighted surface loss. Weights each surface node's loss by |Δp_i| (discrete first-order pressure gradient along node sequence). Directly targets leading-edge/suction-peak/TE-wake regions that dominate mae_surf_p. Addresses the failure mode of #1162. Expected -2% to -5%.
+- **PR #1183 (edward, cautious-adamw)** — **NEW (assigned 2026-04-29 13:35)** — H-08 Cautious AdamW (Liang et al. 2024). One-line drop-in optimizer change: mask updates where `sign(u) ≠ sign(g)` to skip stale-momentum-conflicting steps. Zero extra params, ~2% per-step overhead. Direct attack on σ ≈ 7 run-to-run variance from WeightedRandomSampler. Stacks orthogonally with everything else. Expected -1% to -3%.
 
 ## Round 1 in-flight (revisions waiting)
 
-- **PR #1095 (edward)** — pressure-channel-weight, corrected formula (`/ ch_w.mean()`). Round-1 cleanup.
-- **PR #1096 (fern)** — Huber loss on volume nodes — **closed** (val=143.1, +6.9% regression). fern reassigned to PR #1162 (scale-norm-loss).
-- **PR #1100 (tanjiro)** — wider-bs8 with mlp_ratio↓ + output clamp, in flight.
+- **PR #1095 (edward)** — pressure-channel-weight v2 — **CLOSED** (val=117.0 vs 108.5 baseline, +7.8% regression on rebased baseline). Hypothesis cleanly rejected. Edward reassigned to PR #1183 (cautious-adamw).
+- **PR #1096 (fern)** — Huber loss on volume nodes — **closed** (val=143.1, +6.9% regression). fern reassigned to PR #1162 (scale-norm-loss → also closed → now PR #1179).
+- **PR #1100 (tanjiro)** — wider-bs8 with mlp_ratio↓ + output clamp, in flight on rebased branch (now part of round-2 in-flight above).
 
 ## Next research directions (post-round-2 candidates)
 
