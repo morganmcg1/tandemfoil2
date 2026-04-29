@@ -258,7 +258,7 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device, split_name: str = "") -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -279,7 +279,9 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
+                pred = model({"x": x_norm})["preds"]
+            pred = pred.float()  # cast to fp32 for stable per-sample loss aggregation
 
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
@@ -303,13 +305,31 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
                         (pred[i][sm_i] - y_norm[i][sm_i]).abs().mean() / rms_i
                     )
             if vol_losses_b:
-                vol_loss_sum += torch.stack(vol_losses_b).mean().item()
+                vol_loss_sum += torch.stack(vol_losses_b).mean().float().item()
             if surf_losses_b:
-                surf_loss_sum += torch.stack(surf_losses_b).mean().item()
+                surf_loss_sum += torch.stack(surf_losses_b).mean().float().item()
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+
+            finite_per_sample = torch.isfinite(pred_orig).all(dim=(-1, -2))  # [B]
+            if not finite_per_sample.all():
+                bad = (~finite_per_sample).sum().item()
+                print(f"[eval] dropping {bad} sample(s) with non-finite predictions in {split_name}")
+                keep = finite_per_sample.view(-1, 1).expand_as(mask)
+                mask = mask & keep
+                is_surface = is_surface & keep
+            y_finite_per_sample = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)  # [B]
+            if not y_finite_per_sample.all():
+                bad = (~y_finite_per_sample).sum().item()
+                print(f"[eval] dropping {bad} sample(s) with non-finite GT in {split_name}")
+                keep_y = y_finite_per_sample.view(-1, 1).expand_as(mask)
+                mask = mask & keep_y
+                is_surface = is_surface & keep_y
+            pred_orig = torch.nan_to_num(pred_orig, nan=0.0, posinf=0.0, neginf=0.0)
+            y_safe = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+
+            ds, dv = accumulate_batch(pred_orig, y_safe, is_surface, mask, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
 
@@ -476,7 +496,7 @@ model_config = dict(
     n_hidden=128,
     n_layers=5,
     n_head=4,
-    slice_num=64,
+    slice_num=128,
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
@@ -486,7 +506,7 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-EMA_DECAY = float(os.environ.get("EMA_DECAY", "0.999"))
+EMA_DECAY = float(os.environ.get("EMA_DECAY", "0.99"))
 ema = ModelEMA(model, decay=EMA_DECAY)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
@@ -576,7 +596,9 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
+        with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
+            pred = model({"x": x_norm})["preds"]
+        pred = pred.float()  # cast to fp32 for stable per-sample loss aggregation
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
@@ -610,10 +632,10 @@ for epoch in range(MAX_EPOCHS):
         optimizer.step()
         ema.update(model)
         global_step += 1
-        wandb.log({"train/loss": loss.item(), "global_step": global_step})
+        wandb.log({"train/loss": loss.float().item(), "global_step": global_step})
 
-        epoch_vol += vol_loss.item()
-        epoch_surf += surf_loss.item()
+        epoch_vol += vol_loss.float().item()
+        epoch_surf += surf_loss.float().item()
         n_batches += 1
 
     scheduler.step()
@@ -623,7 +645,7 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     raw_split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device, split_name=f"raw_{name}")
         for name, loader in val_loaders.items()
     }
     raw_val_avg = aggregate_splits(raw_split_metrics)
@@ -631,7 +653,7 @@ for epoch in range(MAX_EPOCHS):
     ema.apply_to(model)
     try:
         split_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, split_name=name)
             for name, loader in val_loaders.items()
         }
         val_avg = aggregate_splits(split_metrics)
@@ -714,7 +736,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, split_name=name)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
