@@ -4,26 +4,52 @@
 
 | Metric | Value |
 |--------|-------|
-| `val_avg/mae_surf_p` | **55.4877** (PR #1134 — n_layers=2 + huber_delta=0.1 + epochs=26 cosine-aligned, epoch 26/26) |
-| `test_avg/mae_surf_p` | **48.8156** (PR #1134) |
+| `val_avg/mae_surf_p` | **52.0698** (PR #1136 — weight_decay=5e-4 + huber_delta=0.1 + n_layers=2, epoch 30/30) |
+| `test_avg/mae_surf_p` | **46.1497** (PR #1136) |
 
-**Source:** PR #1134 — Cosine-aligned epochs=26 on n_layers=2 + huber_delta=0.1 stack — confirmed full cosine completion (LR=0.0 at epoch 26), 26.1 min wall-clock.
-- Branch: `charliepai2f5-edward/epochs-26-cosine-aligned`
-- Config: n_layers=2 (hardcoded), slice_num=16, n_hidden=256, n_head=8, loss=huber, huber_delta=0.1, ema_decay=0.999, grad_clip=1.0, per_sample_norm, epochs=26, lr=5e-4, batch_size=4, surf_weight=10.0
-- Run completed all 26/26 epochs; LR=0.0 at final epoch (full cosine completion)
-- 1,141,299 params, Peak VRAM 22.22 GB
+**Source:** PR #1136 — Stronger L2: weight_decay=5e-4 to improve OOD generalization — all 30 epochs completed (LR=0.0 at epoch 30), 30.07 min wall-clock.
+- Branch: `charliepai2f5-askeladd/weight-decay-5e-4`
+- Config: n_layers=2 (hardcoded), slice_num=16, n_hidden=256, n_head=8, loss=huber, huber_delta=0.1, ema_decay=0.999, grad_clip=1.0, per_sample_norm, epochs=30, lr=5e-4, batch_size=4, weight_decay=5e-4
+- Run completed all 30/30 epochs; LR=0.0 at final epoch (full cosine completion). Best epoch = 30 (model still improving at termination — training-budget-limited)
+- 1,141,299 params, Peak VRAM 22.22 GB, Run ID: l6zjon8u
 
-**Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper reference) — currently +19.3% above target.
+**Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper reference) — currently +12.7% above target (gap closed from 8.69 to 5.22 vs prior best).
 
-## Round r5 — Recommended Working Baseline (compound n_layers=2 + huber_delta=0.1 + epochs=26)
+## Round r5 — Recommended Working Baseline (compound n_layers=2 + huber_delta=0.1 + weight_decay=5e-4 + epochs=30)
 
 ```
-python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 26 \
-  --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm
+python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 30 \
+  --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm --weight_decay 5e-4
 ```
 *(Note: n_layers=2, slice_num=16 are hardcoded in model_config dict in train.py)*
 
 ## Round r5 — Merged Winners
+
+### PR #1136 — Stronger L2: weight_decay=5e-4 to improve OOD generalization (2026-04-29)
+**Student:** charliepai2f5-askeladd | **Branch:** charliepai2f5-askeladd/weight-decay-5e-4
+
+| Metric | Value |
+|--------|-------|
+| `val_avg/mae_surf_p` | **52.0698** (epoch 30/30 — full cosine completion, LR=0.0) |
+| `val_single_in_dist/mae_surf_p` | 56.5175 |
+| `val_geom_camber_rc/mae_surf_p` | 66.5405 |
+| `val_geom_camber_cruise/mae_surf_p` | 34.0280 |
+| `val_re_rand/mae_surf_p` | 51.1932 |
+| `test_avg/mae_surf_p` | **46.1497** |
+| `test_single_in_dist/mae_surf_p` | 51.7768 |
+| `test_geom_camber_rc/mae_surf_p` | 61.4231 |
+| `test_geom_camber_cruise/mae_surf_p` | 28.3556 |
+| `test_re_rand/mae_surf_p` | 43.0433 |
+
+**vs prior baseline (PR #1134):** 52.0698 vs 55.4877 → **-6.16% val improvement**
+**Test improvement:** 46.1497 vs 48.8156 → **-5.46% test improvement**
+**vs PR #1120 (instructions baseline):** val -7.72%, test -7.00%
+**Run config:** n_layers=2 (hardcoded), huber_delta=0.1, weight_decay=5e-4, epochs=30, lr=5e-4, batch_size=4, grad_clip=1.0, ema_decay=0.999, per_sample_norm
+**Best epoch:** 30/30 — model still improving at termination (is_best=True every epoch from 24 onward) — training-budget-limited result
+**OOD analysis:** All OOD splits beat in-dist on relative gain (geom_camber_cruise: -13.57%, re_rand: -10.52%, vs in-dist: -3.16%). geom_camber_rc gained least (-4.19%) — bottlenecked by representation, not pure overfitting. Compete gap: 5.22 (from 8.69 prior round)
+**Peak VRAM:** 22.22 GB | **Wall-clock:** 30.07 min | **Run ID:** l6zjon8u
+**Metrics JSONL:** `metrics/charliepai2f5-askeladd-weight-decay-5e-4-l6zjon8u.jsonl`
+**Reproduce:** `python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 30 --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm --weight_decay 5e-4`
 
 ### PR #1134 — Cosine-aligned epochs=26 on n_layers=2 + huber_delta=0.1 stack (2026-04-29)
 **Student:** charliepai2f5-edward | **Branch:** charliepai2f5-edward/epochs-26-cosine-aligned
@@ -249,4 +275,5 @@ python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epoch
 - 2026-04-29: Round r5 launched on icml-appendix-charlie-pai2f-r5.
 - 2026-04-29: PR #1121 merged. huber_delta=0.1: val_avg=58.4790 (-5.04%), test_avg=51.3554 (-5.52%).
 - 2026-04-29: PR #1120 merged. n_layers=2: val_avg=56.4257 (-3.51%), test_avg=49.6211 (-3.38%).
-- 2026-04-29: PR #1134 merged. epochs=26 cosine-aligned (n_layers=2 + huber_delta=0.1 compound): val_avg=55.4877 (-1.66%), test_avg=48.8156 (-1.62%) — **Current best.**
+- 2026-04-29: PR #1134 merged. epochs=26 cosine-aligned (n_layers=2 + huber_delta=0.1 compound): val_avg=55.4877 (-1.66%), test_avg=48.8156 (-1.62%).
+- 2026-04-29: PR #1136 merged. weight_decay=5e-4 (n_layers=2 + huber_delta=0.1 + epochs=30): val_avg=52.0698 (-6.16% vs PR #1134), test_avg=46.1497 (-5.46%) — **Current best.** Compete gap: 5.22.
