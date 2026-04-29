@@ -484,7 +484,32 @@ for epoch in range(MAX_EPOCHS):
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+
+        # Gradient-magnitude weighted surface pressure loss: per sample,
+        # extract surface pressures along the node sequence (each foil's
+        # surface forms a contiguous block in the array), compute |Δp| as
+        # a per-node difficulty weight, normalise so weights average to 1
+        # within each sample (preserving the loss scale).
+        w = torch.zeros_like(y_norm[..., 0])
+        with torch.no_grad():
+            for b in range(y_norm.shape[0]):
+                sb_idx = surf_mask[b].nonzero(as_tuple=True)[0]
+                n_b = sb_idx.numel()
+                if n_b == 0:
+                    continue
+                if n_b == 1:
+                    w[b, sb_idx[0]] = 1.0
+                    continue
+                surf_p_b = y_norm[b, sb_idx, 0]
+                grad_b = surf_p_b[1:] - surf_p_b[:-1]
+                grad_b = torch.cat([grad_b[:1], grad_b])
+                w_b = grad_b.abs() + 1e-6
+                w_b = w_b / w_b.sum() * n_b
+                w[b, sb_idx] = w_b
+
+        surf_loss_p = (sq_err[..., 0] * w).sum() / surf_mask.sum().clamp(min=1)
+        surf_loss_vel = (sq_err[..., 1:] * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        surf_loss = surf_loss_p + surf_loss_vel
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
