@@ -30,7 +30,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import yaml
 from einops import rearrange
-from timm.layers import trunc_normal_
+from timm.layers import trunc_normal_, DropPath
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
@@ -138,7 +138,8 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 drop_path_rate=0.0):
         super().__init__()
         self.last_layer = last_layer
         self.ln_1 = nn.LayerNorm(hidden_dim)
@@ -149,6 +150,7 @@ class TransolverBlock(nn.Module):
         self.ln_2 = nn.LayerNorm(hidden_dim)
         self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
                        n_layers=0, res=False, act=act)
+        self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0.0 else nn.Identity()
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
@@ -157,8 +159,8 @@ class TransolverBlock(nn.Module):
             )
 
     def forward(self, fx):
-        fx = self.attn(self.ln_1(fx)) + fx
-        fx = self.mlp(self.ln_2(fx)) + fx
+        fx = self.drop_path(self.attn(self.ln_1(fx))) + fx
+        fx = self.drop_path(self.mlp(self.ln_2(fx))) + fx
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
         return fx
@@ -185,11 +187,14 @@ class Transolver(nn.Module):
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
+        max_drop_path = 0.1
+        drop_path_rates = [x.item() for x in torch.linspace(0, max_drop_path, n_layers)]
         self.blocks = nn.ModuleList([
             TransolverBlock(
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                drop_path_rate=drop_path_rates[i],
             )
             for i in range(n_layers)
         ])
@@ -235,6 +240,14 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             y = y.to(device, non_blocking=True)
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
+
+            # Drop samples whose ground-truth has any non-finite value, and
+            # neutralize NaN/Inf in y so that masked-out positions can't
+            # propagate NaN through `0 * NaN = NaN` into loss/MAE accumulators.
+            B = y.shape[0]
+            y_finite_per_sample = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            mask = mask & y_finite_per_sample.unsqueeze(-1)
+            y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
