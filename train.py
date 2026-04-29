@@ -429,7 +429,7 @@ DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 # observed BF16 training duration and letting the schedule anneal to min_lr
 # right as training ends.
 ONECYCLE_PER_EPOCH_SEC_ESTIMATE = 100.0
-ONECYCLE_MAX_LR = 1.2e-3
+ONECYCLE_MAX_LR = 1.5e-3
 ONECYCLE_PCT_START = 0.3
 ONECYCLE_DIV_FACTOR = 25.0
 ONECYCLE_FINAL_DIV_FACTOR = 1e4
