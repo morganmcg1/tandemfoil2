@@ -363,10 +363,11 @@ LR_ETA_MIN = 1e-6
 
 @dataclass
 class Config:
-    lr: float = 5e-4
+    lr: float = 1e-3
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 25.0
+    grad_clip: float = 0.0  # max global gradient norm; 0.0 disables clipping
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
@@ -471,6 +472,8 @@ for epoch in range(MAX_EPOCHS):
 
         optimizer.zero_grad()
         loss.backward()
+        if cfg.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
 
         epoch_vol += vol_loss.item()
