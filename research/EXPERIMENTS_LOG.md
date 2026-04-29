@@ -29,7 +29,12 @@ Gradient-ratio diagnostics confirmed rebalancing occurred: sw=10→sw=5 shifted 
 
 ---
 
-## 2026-04-29 — PR #1016 (PENDING REBASE → MERGE): bf16 mixed precision — strong win, val_avg=58.49, test_avg=51.50, 14/14 epochs in 26.1 min
+## 2026-04-29 — PR #1016 (SENT BACK 2nd time): bf16 mixed precision — needs re-run on new canonical (RMSNorm+ratio=1)
+- **Update:** Frieren rebased and ran a 3-epoch sanity run on new canonical (mlp_ratio=1) — bf16 implementation correct (`fvv9mn38`). But the **headline 14-epoch result `extyiumn` (val=58.49) was on the OLD canonical** (ratio=2 + LayerNorm). RMSNorm merged in between (PR #999, val=57.9550). Against new canonical, 58.49 is +0.94% (neutral-to-worse, not a strong win).
+- **Action:** Sent back for one fresh 14-epoch run on the actual canonical: `--epochs 14 --re_stratify --swiglu_ratio 1 --rms_norm --bf16`. Optional v3 extension to `--epochs 16` if wall-clock allows.
+- **Compound prediction:** val_avg ~56-57, test_avg ~50 if mechanisms additive. RMSNorm+bf16 wall-clock should be ~110s/epoch × 14 = ~26 min (well under budget; opens room for `--epochs 16` extension probe).
+
+### Original `extyiumn` result (on old canonical SwiGLU ratio=2 + LayerNorm) — preserved for reference
 - **Branch:** `frieren/bf16`
 - **Hypothesis:** bf16 unlocks wall-clock budget — SwiGLU's 12/14-epoch truncation at fp32 (152s/epoch) recovers to 14/14 with full cosine decay at bf16 (~112s/epoch). Same dynamic range as fp32 (8 exp bits), no loss scaling needed. Predicted −0.5 to −2% from recovered cosine epochs alone.
 - **Run:** W&B `extyiumn`, 14/14 epochs, **26.1 min** (4 min slack), 41.8 GB peak, group `bf16`

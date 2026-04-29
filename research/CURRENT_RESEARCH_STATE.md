@@ -13,8 +13,8 @@
 - Beat-threshold for new PRs: **val_avg < 57.9550**
 - **Note:** PR #999 (thorfinn, merged 2026-04-29) added RMSNorm as canonical normalization. Current canonical stack: SwiGLU(ratio=1) + RMSNorm + FiLM-pre(log_Re) + L1 + Re-stratify, 0.619M params, 14/14 epochs at 148-150s/epoch. All new experiments build on this HEAD.
 
-### Pending merge (strong win — mechanical rebase only)
-- **PR #1016 bf16 mixed precision:** val_avg=58.49, test_avg=51.50, 14/14 epochs in 26.1 min. Frieren rebasing against new HEAD (now includes #999). Once merged, beat-threshold is min(57.96, new compound val). Compound prediction with RMSNorm already merged: val_avg ~56-57, test_avg ~50.
+### Pending re-run on new canonical (RMSNorm+ratio=1 stack)
+- **PR #1016 bf16 mixed precision:** Original headline `extyiumn` val_avg=58.49 was on OLD canonical (ratio=2 + LayerNorm). Against new RMSNorm canonical (57.95), that result is +0.94% — not a strong win. Frieren sent back to run one full canonical+bf16 compound: `--epochs 14 --re_stratify --swiglu_ratio 1 --rms_norm --bf16`. Predicted compound: val_avg ~56-57. Wall-clock projection ~26 min (RMSNorm+bf16 ≈ 110s/epoch × 14).
 
 ### Prior bests (for reference)
 - val_avg/mae_surf_p = 79.54 (nezuko Re-stratified batch sampling, merged PR #910) — superseded by SwiGLU
