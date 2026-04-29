@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import time
@@ -85,6 +86,39 @@ class ModelEMA:
         for k, v in self.backup.items():
             sd[k].copy_(v)
         self.backup = {}
+
+
+# ---------------------------------------------------------------------------
+# Multi-scale Random Fourier Features (PR #928)
+# ---------------------------------------------------------------------------
+
+
+class MultiScaleRFF(nn.Module):
+    """Multi-scale random Fourier features for 2D normalized (x,z) coords.
+
+    Projects [..., 2] -> [..., 2 + 4*num_freq]:
+      [x, z, sin(2pi B1 xy), cos(2pi B1 xy), sin(2pi B2 xy), cos(2pi B2 xy)]
+    with B1 ~ N(0, sigma1**2 I), B2 ~ N(0, sigma2**2 I), both frozen at init.
+    sigma1=1.0 captures global low-frequency structure; sigma2=5.0 captures
+    near-wall high-frequency variation (Aero-Nef multi-scale recipe).
+    """
+
+    def __init__(self, num_freq: int = 32, sigma1: float = 1.0, sigma2: float = 5.0, seed: int = 42):
+        super().__init__()
+        rng = torch.Generator()
+        rng.manual_seed(seed)
+        B1 = torch.randn(num_freq, 2, generator=rng) * sigma1
+        B2 = torch.randn(num_freq, 2, generator=rng) * sigma2
+        self.register_buffer("B1", B1)
+        self.register_buffer("B2", B2)
+
+    def forward(self, xy_norm: torch.Tensor) -> torch.Tensor:
+        proj1 = 2 * math.pi * (xy_norm @ self.B1.T)
+        proj2 = 2 * math.pi * (xy_norm @ self.B2.T)
+        return torch.cat(
+            [xy_norm, proj1.sin(), proj1.cos(), proj2.sin(), proj2.cos()],
+            dim=-1,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +292,7 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device, rff_encoder) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -279,7 +313,9 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            rff_feats = rff_encoder(x_norm[..., :2])
+            x_rff = torch.cat([rff_feats, x_norm[..., 2:]], dim=-1)
+            pred = model({"x": x_rff})["preds"]
 
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
@@ -469,8 +505,19 @@ val_loaders = {
     for name, ds in val_splits.items()
 }
 
+# Multi-scale RFF: 2 raw normalized coords + 4*num_freq sinusoids = 130-dim space input.
+RFF_NUM_FREQ = 32
+RFF_SIGMA1 = 1.0
+RFF_SIGMA2 = 5.0
+RFF_SEED = 42
+SPACE_DIM = 2 + 4 * RFF_NUM_FREQ  # = 130
+
+rff_encoder = MultiScaleRFF(
+    num_freq=RFF_NUM_FREQ, sigma1=RFF_SIGMA1, sigma2=RFF_SIGMA2, seed=RFF_SEED
+).to(device)
+
 model_config = dict(
-    space_dim=2,
+    space_dim=SPACE_DIM,
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
@@ -485,6 +532,10 @@ model_config = dict(
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+print(
+    f"RFF: num_freq={RFF_NUM_FREQ}, sigma1={RFF_SIGMA1}, sigma2={RFF_SIGMA2}, "
+    f"space_dim={SPACE_DIM} (+22 fun_dim = {SPACE_DIM + X_DIM - 2} total input)"
+)
 
 EMA_DECAY = float(os.environ.get("EMA_DECAY", "0.999"))
 ema = ModelEMA(model, decay=EMA_DECAY)
@@ -576,7 +627,9 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
+        rff_feats = rff_encoder(x_norm[..., :2])
+        x_rff = torch.cat([rff_feats, x_norm[..., 2:]], dim=-1)
+        pred = model({"x": x_rff})["preds"]
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
@@ -623,7 +676,7 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     raw_split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device, rff_encoder)
         for name, loader in val_loaders.items()
     }
     raw_val_avg = aggregate_splits(raw_split_metrics)
@@ -631,7 +684,7 @@ for epoch in range(MAX_EPOCHS):
     ema.apply_to(model)
     try:
         split_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, rff_encoder)
             for name, loader in val_loaders.items()
         }
         val_avg = aggregate_splits(split_metrics)
@@ -714,7 +767,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device, rff_encoder)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
