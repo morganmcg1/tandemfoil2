@@ -1,5 +1,5 @@
 # SENPAI Research State
-- 2026-04-29 23:30 (icml-appendix-charlie-pai2f-r3)
+- 2026-04-29 23:45 (icml-appendix-charlie-pai2f-r3)
 - No recent research directives from the human researcher team
 - Current best (merged): `val_avg/mae_surf_p = 33.1552` (PR #1258, charliepai2f3-nezuko, lr=1.5e-4 + 100ep + T_max=100 + warmup=5, best epoch=66/100 — still improving at wall-clock cutoff). test_avg/mae_surf_p = 28.1158.
 - Previous best: `val_avg/mae_surf_p = 34.3851` (PR #1226, lr=3e-4 + T_max=100, 100ep, warmup=5)
@@ -28,10 +28,11 @@ The primary metric is `val_avg/mae_surf_p` (lower is better), averaged across 4 
 - **Fourier pos enc (x,z) optimal at freqs=(1,2,4,8,16,32,64)**: Adding freq=128 regresses. Do not change.
 - **SAF Fourier encoding NEGATIVE**: PR #1210. Do not revisit.
 - **dsdf Fourier encoding NEGATIVE**: PR #1169. Do not revisit.
-- **n_hidden width scaling NEGATIVE on early configs**: 128 < 192 < 256 under n_layers=1 without warmup+full schedule. n_hidden=192 + full schedule still in flight (PR #1255).
+- **n_hidden width scaling NEGATIVE on early configs**: 128 < 192 < 256 under n_layers=1 without warmup+full schedule. n_hidden=192 + full schedule completed; result pending review.
 - **Per-channel pressure weighting NEGATIVE**: W_p in {2,3,5} did not beat baseline. Do not revisit.
-- **surf_weight=28 confirmed optimal**.
-- **n_layers=2 at iso-param failed (compute-budget)**: PR #1252 with full params; PR #1277 testing iso-compute swap.
+- **surf_weight=28 assumed optimal but being re-verified**: PR #1286 re-sweeping {14, 21, 28, 35, 42} to confirm optimality on current full config.
+- **slice_num=64 assumed optimal but being re-verified**: PR #1285 sweeping {32, 64, 96, 128} on full current config.
+- **n_layers=2 at iso-param failed (compute-budget)**: PR #1252 with full params; PR #1277 testing iso-compute swap (n_hidden=96).
 
 ## Active WIP Experiments
 
@@ -43,11 +44,11 @@ NOTE: All experiments below must beat current best baseline (**33.1552**, PR #12
 | #1272 | charliepai2f3-alphonse | SWA over last 10 epochs | Running |
 | #1174 | tanjiro | Extended Fourier freqs on (x,z): sweep L in {5,6,7,8} octaves | Running |
 | #1250 | frieren | lr=2e-4 on previous best config (T_max=100 + warmup=5 + 100ep) — pairs with PR #1258 lr=1.5e-4 win to triangulate optimum | Running |
+| #1280 | nezuko | Lion lr=1e-4 on full current-best config (finer LR sweep below 1.5e-4) | Running |
+| #1282 | fern | Lion weight_decay sweep {5e-3, 1e-2, 2e-2, 4e-2} at lr=1.5e-4 | Running |
+| #1285 | askeladd | slice_num sweep {32, 64, 96, 128}: Transolver mesh partition granularity | Running |
+| #1286 | edward | surf_weight re-sweep {14, 21, 28, 35, 42}: stale hyperparameter after FiLM+Fourier | Running |
 | #1277 | thorfinn | Depth-vs-width iso-compute swap: n_layers=2 + n_hidden=96 (~252K params) | Running |
-| #1254 | edward | T_max=150 to keep LR ~49% of peak at ep66 cutoff | Running |
-| #1255 | askeladd | n_hidden=192 width scaling on full FiLM+Fourier+warmup+T_max=100 config | Running |
-
-Idle: charliepai2f3-fern, charliepai2f3-nezuko (need new assignments now).
 
 ## Potential Next Research Directions
 
