@@ -406,6 +406,7 @@ def write_experiment_summary(
         "weight_decay": cfg.weight_decay,
         "batch_size": cfg.batch_size,
         "surf_weight": cfg.surf_weight,
+        "surf_grad_weight": cfg.surf_grad_weight,
         "epochs_configured": cfg.epochs,
     }
 
@@ -554,12 +555,35 @@ class Config:
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 10.0
+    surf_grad_weight: float = 10.0
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip final test evaluation
+
+
+def surface_gradient_loss(pred_norm, y_norm, surf_mask):
+    """MSE between predicted and GT arc-length finite-difference pressure
+    gradients along surface nodes (Sobolev-style, pressure channel only)."""
+    B = pred_norm.shape[0]
+    grad_loss_total = pred_norm.new_zeros(())
+    n_valid = 0
+    for b in range(B):
+        sm = surf_mask[b]
+        n_surf = int(sm.sum().item())
+        if n_surf < 2:
+            continue
+        pred_p = pred_norm[b, sm, 2]
+        gt_p = y_norm[b, sm, 2]
+        pred_grad = pred_p[1:] - pred_p[:-1]
+        gt_grad = gt_p[1:] - gt_p[:-1]
+        grad_loss_total = grad_loss_total + F.mse_loss(pred_grad, gt_grad)
+        n_valid += 1
+    if n_valid == 0:
+        return pred_norm.new_zeros(())
+    return grad_loss_total / n_valid
 
 
 cfg = sp.parse(Config)
@@ -668,7 +692,7 @@ for epoch in range(MAX_EPOCHS):
 
     t0 = time.time()
     model.train()
-    epoch_vol = epoch_surf = 0.0
+    epoch_vol = epoch_surf = epoch_surf_grad = 0.0
     n_batches = 0
 
     n_skipped_steps = 0
@@ -691,6 +715,7 @@ for epoch in range(MAX_EPOCHS):
             surf_mask = mask & is_surface
             vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
             surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            surf_grad_loss = surface_gradient_loss(pred, y_norm, surf_mask)
 
             if curriculum_active:
                 # Per-sample loss with EMA-derived importance weights.
@@ -703,9 +728,9 @@ for epoch in range(MAX_EPOCHS):
                 ema_batch = sample_loss_ema[batch_indices].to(device).to(ps_loss.dtype)
                 ema_global_mean = sample_loss_ema.mean().to(device).to(ps_loss.dtype).clamp(min=1e-8)
                 ema_weights = (ema_batch / ema_global_mean).pow(weight_temperature)
-                loss = (ema_weights * ps_loss).mean()
+                loss = (ema_weights * ps_loss).mean() + cfg.surf_grad_weight * surf_grad_loss
             else:
-                loss = vol_loss + cfg.surf_weight * surf_loss
+                loss = vol_loss + cfg.surf_weight * surf_loss + cfg.surf_grad_weight * surf_grad_loss
 
         optimizer.zero_grad()
         scaler.scale(loss).backward()
@@ -734,12 +759,14 @@ for epoch in range(MAX_EPOCHS):
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
+        epoch_surf_grad += surf_grad_loss.item()
         n_batches += 1
 
     current_lr = optimizer.param_groups[0]["lr"]
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
+    epoch_surf_grad /= max(n_batches, 1)
     avg_mask = optimizer.pop_avg_mask()
 
     # --- Validate ---
@@ -782,7 +809,9 @@ for epoch in range(MAX_EPOCHS):
         "lr": current_lr,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/surf_grad_loss": epoch_surf_grad,
         "train/avg_mask": avg_mask,
+        "surf_grad_weight": cfg.surf_grad_weight,
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
@@ -799,7 +828,7 @@ for epoch in range(MAX_EPOCHS):
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  lr={current_lr:.2e}  "
-        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f} mask={avg_mask:.3f}]  "
+        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f} surf_grad={epoch_surf_grad:.4f} mask={avg_mask:.3f}]  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}  "
         f"amp[skip={n_skipped_steps} scale={scaler.get_scale():.0f}]  "
         f"curriculum={'on' if curriculum_active else 'off'}"
