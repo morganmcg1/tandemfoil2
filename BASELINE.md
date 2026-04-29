@@ -235,3 +235,91 @@ cd target/ && python train.py --agent charliepai2f2-nezuko \
 ## Notes on NaN in test_geom_camber_cruise
 
 One corrupted GT sample (`000020.pt`) in `.test_geom_camber_cruise_gt/` has NaN in the pressure channel. `data/scoring.py:accumulate_batch` propagates this NaN because `NaN * 0.0 = NaN` in IEEE float — the mask does not fully guard it. Since `data/scoring.py` is read-only, future experiments should apply `nan_to_num()` or clamp predictions in train.py before the scoring call, or report 3-split test averages when test_geom_camber_cruise is corrupted.
+
+---
+
+## 2026-04-29 16:23 — PR #1211: BF16 AMP + OneCycleLR combined on current best stack
+
+- **Student**: charliepai2f2-nezuko
+- **Branch**: charliepai2f2-nezuko/bf16-onecycle-combined
+- **Change**: Combine BF16 AMP (from PR #1184) with OneCycleLR (from PR #1195) on the same stack. BF16 gives ~26% faster epochs (98–100s vs ~135s), enabling 19 epochs in 30 min. OneCycleLR sized for 19 epochs: `max_lr=1.2e-3, pct_start=0.3, total_steps=7125, div_factor=25, final_div_factor=1e4`.
+
+### Best Validation Metrics (epoch 19/19, 30-min timeout)
+
+| Metric | Value | vs prior baseline (PR #1184) |
+|--------|-------|------------------------------|
+| **val_avg/mae_surf_p** (PRIMARY) | **80.53** | **-8.47 (-9.5%)** |
+
+Per-split surface pressure MAE:
+
+| Split | val mae_surf_p | test mae_surf_p |
+|-------|---------------:|----------------:|
+| single_in_dist     | 91.33 | 80.43 |
+| geom_camber_rc     | 91.01 | 83.65 |
+| geom_camber_cruise | 60.42 | 50.04 |
+| re_rand            | 79.36 | 70.80 |
+| **avg**            | **80.53** | **71.23** |
+
+### Context
+- 19 epochs / 50 configured (hit SENPAI_TIMEOUT_MINUTES=30 at ~99s/epoch); best at epoch 19/19 (final)
+- OneCycleLR peak at epoch ~5.7, fully annealed to lr≈4.9e-9 by epoch 19
+- Peak GPU memory: 32.96 GB (RTX PRO 6000 Blackwell, 96 GB total)
+- Params: 662,359
+- Metrics JSONL: `target/models/model-charliepai2f2-nezuko-bf16-onecycle-combined-20260429-154838/metrics.jsonl`
+- Metrics YAML: `target/models/model-charliepai2f2-nezuko-bf16-onecycle-combined-20260429-154838/metrics.yaml`
+- Model config: n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2
+
+### Reproduce
+```bash
+cd target/ && python train.py \
+  --agent charliepai2f2-nezuko \
+  --experiment_name "charliepai2f2-nezuko/bf16-onecycle-combined" \
+  --grad_clip 1.0
+# BF16 autocast; OneCycleLR max_lr=1.2e-3, pct_start=0.3; surf_weight=25.0, DropPath(0→0.1)
+```
+
+---
+
+## 2026-04-29 19:31 — PR #1264: Lightweight FiLM Re conditioning: shared generator on BF16 stack
+
+- **Student**: charliepai2f2-nezuko
+- **Branch**: charliepai2f2-nezuko/lightweight-film-re-conditioning
+- **Change**: Add `SharedFiLMGenerator` MLP (1→128→1280) producing (γ, β) pairs for all 5 TransolverBlocks. FiLM applied post-norm on each block's hidden state: `fx = fx * (1 + γ) + β`. Input: `log_re_sample = x_input[:, 0, 13].unsqueeze(-1)` (standardized log(Re)). All other settings unchanged from PR #1211 baseline (BF16 AMP + OneCycleLR + grad_clip=1.0 + DropPath 0→0.1 + surf_weight=25).
+
+### Best Validation Metrics (epoch 18/19, 30-min timeout)
+
+| Metric | Value | vs prior baseline (PR #1211) |
+|--------|-------|------------------------------|
+| **val_avg/mae_surf_p** (PRIMARY) | **74.36** | **-6.17 (-7.7%)** |
+| val_avg/mae_surf_Ux | 1.0708 | — |
+| val_avg/mae_surf_Uy | 0.5392 | — |
+
+Per-split surface pressure MAE:
+
+| Split | val mae_surf_p | test mae_surf_p | val baseline | test baseline |
+|-------|---------------:|----------------:|-------------:|--------------:|
+| single_in_dist     | **82.09** | **71.62** | 91.33 | 80.43 |
+| geom_camber_rc     | **85.31** | **79.90** | 91.01 | 83.65 |
+| geom_camber_cruise | **55.67** | **46.22** | 60.42 | 50.04 |
+| re_rand            | **74.38** | **65.89** | 79.36 | 70.80 |
+| **avg**            | **74.36** | **65.91** | **80.53** | **71.23** |
+
+### Context
+- 18 epochs / 50 configured (hit SENPAI_TIMEOUT_MINUTES=30 at ~105s/epoch); best at epoch 18/18 (final)
+- ~6.6% per-epoch slowdown from FiLM forward overhead (105s vs 98.5s); fits 18 instead of 19 epochs
+- OneCycleLR annealed to lr=1.66e-05 by epoch 18 — effectively converged within budget
+- Peak GPU memory: 35.44 GB (vs baseline 32.95 GB; +2.5 GB from FiLM activations)
+- **Params: 827,735 (+165K vs 662,359 baseline)** — `SharedFiLMGenerator`: `Linear(1,128)` + `Linear(128,1280)` ≈ 256 + 165,120
+- Branch commit: 98a3053
+- Metrics JSONL: `target/models/model-charliepai2f2-nezuko-lightweight-film-re-conditioning-20260429-185626/metrics.jsonl`
+- Metrics YAML: `target/models/model-charliepai2f2-nezuko-lightweight-film-re-conditioning-20260429-185626/metrics.yaml`
+- Model config: n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2 (unchanged)
+
+### Reproduce
+```bash
+cd target/ && python train.py \
+  --agent charliepai2f2-nezuko \
+  --experiment_name "charliepai2f2-nezuko/lightweight-film-re-conditioning" \
+  --grad_clip 1.0
+# SharedFiLMGenerator post-norm FiLM; BF16 AMP; OneCycleLR max_lr=1.2e-3; surf_weight=25.0; DropPath(0→0.1)
+```
