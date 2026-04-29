@@ -165,14 +165,14 @@ Sorted by `test_avg/mae_surf_p` (lower better).
 |---:|---|---:|---:|---|
 | 1 | `w6-onecycle-widemid-40ep` | 50.07 | **42.61** | tpp + sw20 + lr1e-3 + onecycle + widemid + 40 ep, bs=2 |
 | 2 | `w6-cosine-widemid-40ep` | 54.24 | 47.43 | tpp + sw20 + lr1e-3 + cosine+warmup + widemid + 40 ep, bs=2 |
-| 3 | `w5-onecycle-widemid-30ep` | 56.44 | 49.38 | tpp + sw20 + lr1e-3 + onecycle + widemid + 30 ep, bs=2 |
-| 4 | `w5-cosine-50ep` | 61.41 | 54.05 | tpp + sw20 + lr1e-3 + cosine+warmup + 50 ep |
-| 5 | `w5-final-40ep` | 63.55 | 55.94 | tpp + sw20 + lr1e-3 + cosine+warmup + 40 ep |
-| 6 | `w5-onecycle-40ep` | 64.29 | 56.87 | tpp + sw20 + lr1e-3 + onecycle + 40 ep |
-| 7 | `w5-cosine-widemid-30ep` | 64.97 | 56.86 | tpp + sw20 + lr1e-3 + cosine+warmup + widemid + 30 ep, bs=2 |
-| 8 | `w4-onecycle-30ep` | 71.36 | 61.64 | tpp + sw20 + lr1e-3 + onecycle + 30 ep |
-| 9 | `w3-triple-30ep` | 74.93 | 64.92 | tpp + sw20 + lr1e-3 + cosine+warmup + 30 ep |
-| 10 | `w4-onecycle-widemid` | 75.28 | 66.30 | tpp + sw20 + lr1e-3 + onecycle + widemid + 16 ep, bs=2 |
+| 3 | `w5-onecycle-widemid-30ep` | 56.44 | 49.38 | tpp + sw20 + lr1e-3 + onecycle + widemid + 30 ep, bs=2 (seed 0) |
+| 4 | `w7-best-seed1` | 59.15 | 50.56 | identical to row 3, seed=1 — Δval=+2.71, Δtest=+1.18 (run-to-run noise) |
+| 5 | `w5-cosine-50ep` | 61.41 | 54.05 | tpp + sw20 + lr1e-3 + cosine+warmup + 50 ep |
+| 6 | `w5-final-40ep` | 63.55 | 55.94 | tpp + sw20 + lr1e-3 + cosine+warmup + 40 ep |
+| 7 | `w5-onecycle-40ep` | 64.29 | 56.87 | tpp + sw20 + lr1e-3 + onecycle + 40 ep |
+| 8 | `w5-cosine-widemid-30ep` | 64.97 | 56.86 | tpp + sw20 + lr1e-3 + cosine+warmup + widemid + 30 ep, bs=2 |
+| 9 | `w4-onecycle-30ep` | 71.36 | 61.64 | tpp + sw20 + lr1e-3 + onecycle + 30 ep |
+| 10 | `w3-triple-30ep` | 74.93 | 64.92 | tpp + sw20 + lr1e-3 + cosine+warmup + 30 ep |
 
 The full per-run breakdown is in `MLINTERN_RESULTS.jsonl`.
 
@@ -193,16 +193,25 @@ The full per-run breakdown is in `MLINTERN_RESULTS.jsonl`.
   converge in the available wall clock; 14 epochs got val=80, while
   widemid `192/6/6/64` got val=75 in the same time.
 
+## Run-to-run noise
+
+I ran the second-best config (`onecycle + widemid + 30 ep`) twice with
+different seeds: seed=0 → val=56.44 / test=49.38, seed=1 → val=59.15 /
+test=50.56.  That's roughly **±3 val points (5 %) of run-to-run noise**.
+The 6-point gap between rank-1 (`40 ep`, test=42.61) and rank-3 (`30 ep`,
+test=49.38) is therefore real, not noise.
+
 ## Recommendations for the next replicate
 
 1. **Run the winning config for longer** — observed scaling:
-   * `onecycle + widemid + 30 ep` → test=49.38
+   * `onecycle + widemid + 30 ep` → test=49.38 (or 50.56 with a different seed)
    * `onecycle + widemid + 40 ep` → test=42.61 (-14 % from +33 % more epochs)
 
    Extrapolating, `onecycle + widemid + 50 ep` should land near
    test ≈ 38, and 60 ep near test ≈ 35 (likely diminishing returns
    beyond there).  Each additional 10 epochs costs ~ 40 minutes on a
-   single GPU at bs=2.
+   single GPU at bs=2.  A 50 ep run (`w8-onecycle-widemid-50ep`) is
+   in flight at submission; results will be in the JSONL.
 2. **Add Reynolds conditioning as a DiT-style token** instead of just an
    input feature.  Published work on transonic-wing surrogates
    ([2511.21474](https://arxiv.org/abs/2511.21474)) uses adaLN-style
