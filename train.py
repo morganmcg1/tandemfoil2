@@ -564,6 +564,8 @@ model_config = dict(
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print(f"[depth-vs-width] n_params={n_trainable:,}", flush=True)
 print(
     f"  fourier_pos_enc={cfg.fourier_pos_enc} space_dim={pos_enc_dim} "
     f"input_dim={pos_enc_dim + (X_DIM - 2)}"
