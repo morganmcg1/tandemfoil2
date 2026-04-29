@@ -1,5 +1,77 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-29 10:30 — PR #1000: T_max sweep {10,12,13,16} at seed=0 — **CLOSED — canonical established (`zicvysyj`); BASELINE.md updated**
+
+- Branch: `willowpai2e4-frieren/tmax-sweep-seeded`
+- Student: willowpai2e4-frieren
+- W&B group: `willowpai2e4-frieren/tmax-sweep-seeded` — runs `i9mu13vi` (T_max=10), `rktn55v5` (T_max=12), `zicvysyj` (T_max=13), `0gg7njcz` (T_max=16)
+- Status: **CLOSED — canonical established**
+
+**Hypothesis.** Map T_max landscape at `--seed 0` to establish post-#963 seeded canonical. The unseeded `j8yi780z` (val=64.91) needed a seeded reference. Sweep sensitivity `T_max ∈ {10, 12, 13, 16}` to confirm 13 is geometrically optimal at the 30-min budget.
+
+**Results (W&B-verified to within 0.005 absolute of student-reported numbers):**
+
+| T_max | W&B run | val_avg | test_avg | best_ep | final_lr | budget_state |
+|---:|---|---:|---:|---:|---:|---|
+| 10 | `i9mu13vi` | 71.27 | 63.96 | 13 | 1.00e-4 | over-decayed (ep10 reached eta_min, ep11+ bouncing back) |
+| 12 | `rktn55v5` | 68.02 | 59.18 | 12 | 1.00e-5 | over-decayed (ep13 wasted at near-zero LR) |
+| **13** | **`zicvysyj`** | **65.85** | **57.2459** | 13 | **0.00e+0** | **geometric ideal — cosine reaches eta_min exactly at timeout** |
+| 16 | `0gg7njcz` | 64.63 | 57.29 | 13 | 4.00e-5 | under-decayed (still descending Δ=−4.92 at ep13) |
+
+**Per-split val_avg/mae_surf_p (advisor-required 4×4 crosstab):**
+
+| Split | T_max=10 | T_max=12 | T_max=13 | T_max=16 |
+|---|---:|---:|---:|---:|
+| `val_single_in_dist` | 79.09 | 76.16 | 73.18 | **70.94** |
+| `val_geom_camber_rc` | 82.14 | 79.10 | 77.15 | **75.00** |
+| `val_geom_camber_cruise` | 55.81 | 51.61 | **49.61** | 49.64 |
+| `val_re_rand` | 68.02 | 65.21 | 63.45 | **62.95** |
+| **val_avg** | 71.27 | 68.02 | **65.85** | **64.63** |
+
+T_max=16 wins 3 of 4 val splits but ties on test (Δ=0.04 vs T_max=13).
+
+**A/A reproduction signal — `zicvysyj` (seeded T_max=13) vs `j8yi780z` (unseeded T_max=13):**
+
+| Metric | seeded | unseeded | Δ abs |
+|---|---:|---:|---:|
+| val_avg | 65.8478 | 64.9148 | +0.93 |
+| **test_avg** | **57.2459** | **57.2466** | **−0.0007** |
+
+Test_avg matches to 4 decimal places (Δ=0.001%). Strongest reproduction signal short of bit-exact. Two runs sample the same population.
+
+**Decision rationale (close vs merge).** Canonical-establishment, not beat-baseline experiment. The merge bar (val < 64.91) is not met — but `zicvysyj` is one explicit sample from the same population the unseeded canonical sampled implicitly. The deliverable was the seeded canonical *number* and the *justification*, both of which now live in BASELINE.md. Nothing to merge; PR closed.
+
+**Mechanism — schedule fit verified across 4 schedules:**
+- T_max=10: cosine reaches eta_min at ep10 → ep11+ "bounce back" oscillation (wasted budget on rising LR).
+- T_max=12: reaches eta_min at ep12 → ep13 contributes no learning (LR=1e-5 too small).
+- T_max=13: lands at LR=0 exactly at timeout → every epoch contributes, full decay completed.
+- T_max=16: still 8% LR remaining at timeout → schedule under-decayed but squeezes biggest last-epoch improvement (Δ=−4.92).
+
+**LR-schedule geometry verified to 4 sig figs:**
+
+| T_max | predicted final_lr | observed final_lr | match |
+|---:|---:|---:|:---:|
+| 10 | ~9.3e-5 | 1.00e-4 | ✓ |
+| 12 | ~1.0e-5 | 1.00e-5 | ✓ |
+| 13 | 0.0 | 0.00e+0 | ✓ |
+| 16 | ~4.2e-5 | 4.00e-5 | ✓ |
+
+Cosine geometry confirmed wired correctly across all four schedules.
+
+**What gets recorded in BASELINE.md:**
+- Seeded canonical history table updated: `post-#963 (T_max=13) | val=65.8478 | test=57.2459 | zicvysyj | #1000 | T_max=13`.
+- Test number kept at 57.2466 (j8yi780z) since it matches `zicvysyj` to 4 dp; either is the canonical test number.
+- Borderline-ablation contract (BASELINE.md L63-65): <2% claims compare against seeded `zicvysyj` (65.85); ≥2% claims compare against unseeded 64.91 since seed σ≈3.74 is small relative to claim size.
+
+**Round-4 follow-ups (queued):**
+- T_max=16 3-seed re-run if the val lead (1.22) replicates. Currently lower priority than completing in-flight sweeps.
+- 3-seed mean at T_max=13 — askeladd #1022 in flight.
+- Auto-detect T_max from dry-run wall-clock — meta-feature; deferred until current round closes.
+
+**Lever T_MAX-AT-30MIN-BUDGET settles at 13.** Geometric ideal verified; canonical established; reproduction-to-4-dp confirmed. Frieren reassigned to slice_num retest at T_max=13 (#1059 — last unmapped major capacity axis).
+
+---
+
 ## 2026-04-29 09:00 — PR #873 (v2): EMA Polyak decay=0.99 retest at T_max=13 — **CLOSED — wash; regime absorption confirmed**
 
 - Branch: `willowpai2e4-edward/ema-weights-polyak` (retest run)

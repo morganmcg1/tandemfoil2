@@ -40,15 +40,17 @@ was stuck at ~85% of peak. With T_max=13, the full decay fits the budget.
 
 ## Seeded canonical history
 
-| Baseline state | val_avg @ `--seed 0` | Run | PR | T_max |
-|---|---:|---|---|---:|
-| post-#914 (Fourier + SwiGLU) | 85.14 | `j1r5y758` | #863 | 50 (under-trained) |
-| post-#963 (T_max=13) | **TBD** (T_max sweep in-flight) | — | — | 13 |
+| Baseline state | val_avg @ `--seed 0` | test_avg @ `--seed 0` | Run | PR | T_max |
+|---|---:|---:|---|---|---:|
+| post-#914 (Fourier + SwiGLU) | 85.14 | (n/a) | `j1r5y758` | #863 | 50 (under-trained) |
+| **post-#963 (T_max=13)** | **65.8478** | **57.2459** | `zicvysyj` | #1000 | 13 |
 
-Note: `j1r5y758` (val=85.14) used T_max=50 under the 30-min budget and is
-no longer a valid seeded canonical for T_max=13 comparisons. The T_max sweep
-(frieren, in-flight) will produce the new seeded canonical at T_max=13.
-Until then, use `--seed 0 --t_max 13` and compare vs this unseeded 64.91.
+Note: `zicvysyj` (val=65.85, test=57.2459) is the seeded canonical at the
+30-min budget. Test_avg reproduces unseeded `j8yi780z` (test=57.2466) to 4
+decimal places — the two runs sample the same post-#963 population. Use this
+as the comparison reference for borderline-ablation PRs (<2% absolute claims).
+For ≥2% claims, the unseeded 64.91 still serves as the headline target since
+seed noise (σ≈3.74 val from #972) is small relative to the claim size.
 
 ### A/B determinism proof — bit-exact (0.0000 abs diff, T_max=50 era)
 

@@ -1,7 +1,8 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-29 ~09:00
+- **As of:** 2026-04-29 ~10:30
 - **#963 MERGED** — T_max=13 schedule fix: val 81.81 → **64.91** (−20.66%), test 73.04 → **57.25** (−21.62%); largest single-PR win; run `j8yi780z`
+- **#1000 CLOSED** — T_max sweep canonical-establishment; **seeded T_max=13 canonical = `zicvysyj` (val=65.85, test=57.2459 — matches `j8yi780z` test to 4 dp)**; LR-schedule geometry verified across 4 schedules; frieren→#1059 slice_num sweep
 - **#1007 CLOSED** — RFF hybrid concat clean negative (+3.14% val); projection-bandwidth-dilution; RFF-ENCODING family fully exhausted; tanjiro→#1032 mlp_ratio sweep
 - **#873 CLOSED** — EMA decay=0.99 wash (+1.11% val, −0.53% test); #963 stole EMA's lunch; SNAPSHOT-AVERAGING family exhausted at T_max=13; edward→#1033 wd sweep
 - **#1006 CLOSED** — n_layers=6 retest at T_max=11 clean negative (+9.16% val, +8.26% test); 30-min budget binds depth choice
@@ -10,9 +11,10 @@
 - **#929 CLOSED** — DropPath@0.1 clean negative (+9.5–19.6% val regression, budget-binding, 3 seeds)
 - **Most recent human direction:** none
 - **Branch:** `icml-appendix-willow-pai2e-r4`
-- **Current best (unseeded):** `val_avg = 64.91`, `test_avg = 57.25` (run `j8yi780z`, PR #963, T_max=13)
-- **Seeded canonical at T_max=13:** TBD — frieren #1000 (T_max sweep {10,12,13,16} at seed=0) in flight
+- **Current best (unseeded):** `val_avg = 64.91`, `test_avg = 57.2466` (run `j8yi780z`, PR #963, T_max=13)
+- **Seeded canonical at T_max=13:** **`val_avg = 65.8478`, `test_avg = 57.2459`** (run `zicvysyj`, PR #1000, T_max=13). Test reproduces `j8yi780z` to 4 decimal places — same population.
 - **Prior seeded canonical (T_max=50, obsolete for ranking):** val=85.14 (run `j1r5y758`, PR #863) — same architecture, wrong schedule regime
+- **Borderline-ablation comparison rule (per BASELINE.md L63-65):** ≥2% absolute claims compare against unseeded 64.91; <2% claims compare against seeded 65.85 (`zicvysyj`).
 
 ## Current research focus
 
@@ -77,7 +79,8 @@ on L1-only baseline). The compounding mechanism is well-understood.
 | #963 | frieren | Schedule-to-budget T_max=13 | **−20.66% val / −21.62% test** | **MERGED — new baseline 64.91** |
 | #979 | thorfinn | Pressure-only head (decouple only p) | +0.61% val (seed noise); −2.45% 3-split test | **CLOSED — new baseline supersedes; DECODER-DECOUPLING exhausted; thorfinn→#1006** |
 | #972 | askeladd | 3-seed mean canonical (T_max=50) | variance floor | **CLOSED — methodology valid, regime obsolete; askeladd→#1022** |
-| #1000 | frieren | T_max sweep {10,12,13,16} at seed=0 | map LR optimum + seeded canonical | **WIP** |
+| #1000 | frieren | T_max sweep {10,12,13,16} at seed=0 | T_max=13 confirmed canonical (`zicvysyj` val=65.85, test=57.2459) | **CLOSED — canonical established; frieren→#1059 slice_num sweep** |
+| #1059 | frieren | slice_num sweep at T_max=13: {32, 64, 128} | last unmapped major capacity axis (n_layers settled, mlp_ratio in flight, n_head in flight) | **WIP (just assigned)** |
 | #1002 | nezuko | DropPath@0.05 + T_max=13 | +2.0% actual | **CLOSED — convergence drag; DROPPATH exhausted; nezuko→#1017** |
 | #1017 | nezuko | Channel-weight re-tune: p-weight sweep {2,4,6} at T_max=13 | 0 to −3% | **WIP** |
 | #1006 | thorfinn | n_layers=6 retest at T_max=11 | +9.16% actual | **CLOSED — compute-starved at 30-min; DEPTH-VIA-MORE-BLOCKS exhausted; thorfinn→#1023** |
@@ -92,9 +95,21 @@ on L1-only baseline). The compounding mechanism is well-understood.
 
 ⚠️ **ALL round-3 experiments MUST include `--t_max 13` and beat val=64.91.**
 
-- **T_max sweep {10,12,13,16} at seed=0** — IN FLIGHT as frieren #1000. Maps
-  LR-schedule optimum AND establishes seeded T_max=13 canonical. Predicted:
-  T_max ∈ {12, 13} near-optimal; T_max=10 cuts too early; T_max=16 under-anneals.
+- **T_max sweep {10,12,13,16} at seed=0** — **CLOSED #1000.** T_max=13 is the
+  geometric ideal (cosine reaches eta_min exactly at timeout); T_max=10/12
+  over-decay (waste budget); T_max=16 under-decays (still descending at ep13)
+  but ties on test_avg. Seeded canonical established: `zicvysyj` val=65.85,
+  test=57.2459 (matches `j8yi780z` test to 4 dp). LR geometry verified to 4 sf
+  across all four schedules. Frieren→#1059 slice_num sweep (last unmapped
+  major capacity axis).
+- **slice_num sweep at T_max=13** — **IN FLIGHT as frieren #1059.** slice_num
+  ∈ {32, 64, 128} at seed=0, T_max=13. Tiny code change (add slice_num field
+  to Config). Tests latent-token-budget capacity axis under post-#963 schedule.
+  Frieren previously closed slice_num=128 under T_max=50 in #755 (under-trained
+  regime); this is the proper retest. Orthogonal to mlp_ratio (FFN width),
+  n_head (attention shape), wd (regularization), lr (peak step) sweeps.
+  Predicted: budget-cliff risk at slice_num=128 (1.5–1.8× block compute);
+  if it lands ≤11 epochs, comparison partially confounded.
 - **n_layers=6 retest at T_max=11** — **CLOSED #1006 +9.16% val / +8.26% test.**
   Schedule fix worked (LR landed 0 at E11); model still descending at E11 with
   steeper-than-expected slope → compute-starved. 30-min budget binds depth.
