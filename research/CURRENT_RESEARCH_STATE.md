@@ -18,6 +18,7 @@
 - **PR #1021 slice_num=32 (nezuko):** Won −5.0% on SwiGLU+ratio=1 stack (val=59.57). Monotonic trend across {32, 64, 96, 128}. Predicted compound on RMSNorm canonical: ~55 if mechanism additive. Sent back for paired sn32+RMSNorm vs sn64+RMSNorm A/B. Optional sn=16 extension probe.
 - **PR #1020 ultra-thin SwiGLU (alphonse):** Pareto-flat at ratio=2/3 (intermediate=85, 0.54M params), val=62.69 vs ratio=1 62.74. Sent back for ratio=2/3+RMSNorm vs ratio=1+RMSNorm paired A/B. Most likely outcome: Pareto-flat merge as new param-efficient canonical.
 - **PR #976 AoA-FiLM (askeladd, 2nd send-back):** v2 paired on SwiGLU+ratio=1 gave −0.44% val / −1.67% test (within noise band). γ-norm diagnostic shows AoA orthogonal axis added (Re-only γ unchanged, AoA-only γ adds +0.33). Cross-stack mechanism shrinkage: v1 −1.2% → v2 −0.4% → v3 ? Sent back for paired RMSNorm A/B.
+- **PR #1029 surface quantile-reweight (fern):** v1 (top10/α=2) wins −2.6% val on SwiGLU stack (val=61.09), test −2.0% (53.91). Cruise OOD largest gain (-7.7% val, -9.3% test). qr_e_top_over_rest=4.14× confirms heavy-tail mechanism after 14 epochs. Predicted compound on RMSNorm canonical: ~56.5 val (potential new best). Sent back for paired A/B.
 
 ### Prior bests (for reference)
 - val_avg/mae_surf_p = 79.54 (nezuko Re-stratified batch sampling, merged PR #910) — superseded by SwiGLU
@@ -78,7 +79,7 @@
 | askeladd | #976 | AoA-FiLM: extend FiLM input from 1-d log_Re to 3-d (log_Re, AoA1, AoA2) | **SENT BACK 2nd time 2026-04-29** — v2 paired SwiGLU val=61.01 vs 61.28 (Δ−0.44% within noise; test Δ−1.67%); cross-stack γ shrinkage 34% with AoA orthogonal addition; needs v3 RMSNorm paired A/B |
 | thorfinn | #1076 | **Coordinate-frame canonicalization (rotate (x,y) by -AoA1) — physics-informed inductive bias targeting camber OOD** | WIP — new 2026-04-29 (replaced #1057 NACA_M FiLM which CLOSED) |
 | nezuko | #1021 | **slice_num sweep {32, 64, 96, 128} — physics-attention spatial resolution ablation** | **SENT BACK 2026-04-29** — sn=32 wins decisively on SwiGLU stack (val=59.57, −5.0%); monotonic trend; cruise −10.3%; needs RMSNorm paired A/B + optional sn=16 |
-| fern | #1029 | **Surface loss reweighting by per-node pressure quantile (within-sample, target-value-gated; sweep top10/α=2, top20/α=2, top10/α=3)** | WIP — new 2026-04-29 (post-SwiGLU) |
+| fern | #1029 | **Surface quantile-reweight (top10/α=2 wins −2.6% val on SwiGLU stack, cruise −7.7%; qr_e_top_over_rest=4.14× confirms heavy-tail mechanism)** | **SENT BACK 2026-04-29** — needs RMSNorm canonical paired A/B; predicted compound ~56.5 val (potential new best) |
 | edward | #1061 | **NACA_M1-stratified batch sampling — camber-axis gradient equalization targeting geom_camber_rc** | WIP — new 2026-04-29 (replaced #975 DropPath which closed) |
 | frieren | #1016 | **bf16 mixed precision training — wall-clock unlock + cosine recovery** | **SENT BACK 2nd time 2026-04-29** — original v1 (val=58.49) was on OLD canonical (ratio=2 + LayerNorm); +0.94% vs new RMSNorm 57.95 — needs canonical+bf16 compound run |
 | tanjiro | #1056 | **LR sweep (lr=2e-4, 5e-4 ref, 1e-3) — optimizer axis not touched since round 1; RMSNorm+SwiGLU change loss landscape** | WIP — new 2026-04-29 |

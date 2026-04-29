@@ -24,8 +24,28 @@
 
 ---
 
+## 2026-04-29 — PR #1029 (SENT BACK): surf-quantile reweight v1 wins decisively on SwiGLU stack — needs RMSNorm rebase
+- **Branch:** `willowpai2e3-fern/surf-quantile-reweight`
+- **Hypothesis:** Per-sample top-K |y_p| reweight on surface L1 — concentrates gradient on heavy-tail surface-pressure spikes (stagnation/separation points). 3-run sweep top10/α=2, top20/α=2, top10/α=3.
+- **Runs (on SwiGLU+ratio=1 stack, NOT RMSNorm canonical):**
+
+| Run | val_avg surf_p | Δ vs canonical 62.74 | test_avg | qr_e_top_over_rest | W&B |
+|---|---|---|---|---|---|
+| Canonical (#983) | 62.74 | — | 55.04 | — | `3m9a8l02` |
+| **v1 top10, α=2** | **61.09** | **−2.6%** | **53.91** | **4.14×** | `4n3urb4q` |
+| v2 top20, α=2 | 62.87 | +0.2% | 55.98 | 2.84× | `h9zn1kk1` |
+| v3 top10, α=3 ⚠️ | 66.61 | +6.2% (on ratio=2) | 59.46 | 2.63× | `grbhu2nt` |
+
+⚠️ v3 ran on ratio=2 (older SwiGLU) due to missing `--swiglu_ratio 1` flag; α=3 verdict (over-aggressive) is mechanism-confirmed by qr_e_rest_p rise diagnostic, not config artifact.
+
+- **Per-split (v1, vs canonical):** **cruise -7.7% val / -9.3% test (largest gain — opposite of original prediction)**, single_in_dist −1.2%, geom_camber_rc −0.6%, re_rand −2.7%. Cruise's small absolute |p| means canonical L1 was under-fitting localized spikes; reweight directly upweights those.
+- **Mechanism diagnostic (v1 final batch):** qr_e_top_over_rest = **4.14×** — top-10% surface-p nodes carry 4× per-node error of the rest after 14 epochs. Heavy-tail hypothesis confirmed. v2 broadening dilutes ratio to 2.84× (less heavy tail captured); v3 α=3 over-regularizes (qr_e_rest_p rises 0.061→0.089).
+- **Decision: SENT BACK** for paired A/B on RMSNorm canonical. Predicted compound: val ~56.45 / test ~50.1 (mechanism RMSNorm-independent, additive gain). Would be new leaderboard best (current 57.95).
+
+---
+
 ## 2026-04-29 — PRs #1021 (SENT BACK), #1020 (SENT BACK), #976 (SENT BACK 2nd): all need RMSNorm rebase before merge
-- Three review-ready PRs all ran on SwiGLU+ratio=1 WITHOUT RMSNorm. PR #999 RMSNorm merged at `321c1db` while these were in flight, advancing canonical to val_avg=57.9550.
+- Five review-ready PRs all ran on SwiGLU+ratio=1 WITHOUT RMSNorm. PR #999 RMSNorm merged at `321c1db` while these were in flight, advancing canonical to val_avg=57.9550.
 - **PR #1021 (nezuko slice_num):** sn=32 wins decisively on SwiGLU stack (val=59.5744 vs PR #983 ratio=1 baseline 62.74 = **−5.0%**). Monotonic trend across {32, 64, 96, 128} — every step finer is worse. Largest gain on `geom_camber_cruise` (val −10.3%, test −9.8%). Wall-clock 14% faster. **Doesn't beat current RMSNorm canonical (57.95).** Mechanism (slice-token regularization + tighter aggregation) is RMSNorm-independent — predicted compound: 57.95 × 0.95 ≈ 55 (potential major new best). Sent back for paired A/B sn32+RMSNorm vs sn64+RMSNorm. Optional sn=16 extension probe.
 - **PR #1020 (alphonse ultra-thin SwiGLU):** intermediate=85 (ratio=2/3) lands paired-flat vs ratio=1 (62.69 vs 62.74) at **0.54M params (−13% vs ratio=1, −23% vs old GELU baseline)**. Pareto-efficiency claim. Cruise improved further (val −4.4%). **Doesn't beat RMSNorm canonical.** Sent back for paired ratio=2/3+RMSNorm vs ratio=1+RMSNorm A/B verification — most likely outcome is Pareto-flat merge as new param-efficient canonical.
 - **PR #976 (askeladd AoA-FiLM, 2nd send-back):** v2 paired on SwiGLU+ratio=1 gave v2-aoa val=61.008 vs v2-baseline 61.276 (Δ=−0.44% within noise; test Δ=−1.67%). Cross-stack γ-norm diagnostic gold-standard: full γ shrunk 34% (0.698→0.460) but AoA-only γ orthogonal addition lifted full γ +6.5% over v2-baseline (Re-only γ within 1% of baseline). Cruise direction reproduces (val −4.0%, test −4.4%). Sent back for v3 paired A/B on RMSNorm canonical. Mechanism trajectory: v1 (GELU) −1.2% → v2 (SwiGLU) −0.4% → v3 (RMSNorm) ?? → quantifies "canonical absorbs multiplicative-modulation work."
