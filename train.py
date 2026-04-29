@@ -275,10 +275,10 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
                 / vol_mask.sum().clamp(min=1)
             ).item()
             ch_w = SURF_CHANNEL_WEIGHTS.to(sq_err.device, dtype=sq_err.dtype)
-            weighted_sq = sq_err * ch_w
+            weighted_sq = sq_err * (ch_w / ch_w.mean())
             surf_loss_sum += (
                 (weighted_sq * surf_mask.unsqueeze(-1)).sum()
-                / (surf_mask.sum().clamp(min=1) * ch_w.sum())
+                / surf_mask.sum().clamp(min=1)
             ).item()
             n_batches += 1
 
@@ -490,8 +490,8 @@ for epoch in range(MAX_EPOCHS):
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
         ch_w = SURF_CHANNEL_WEIGHTS.to(sq_err.device, dtype=sq_err.dtype)
-        weighted_sq = sq_err * ch_w
-        surf_loss = (weighted_sq * surf_mask.unsqueeze(-1)).sum() / (surf_mask.sum().clamp(min=1) * ch_w.sum())
+        weighted_sq = sq_err * (ch_w / ch_w.mean())
+        surf_loss = (weighted_sq * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
