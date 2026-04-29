@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- 2026-04-29 14:30 (round 2 in progress — TWO winners merged: schedule + RFF; PRs #1159, #1162 closed; PR #1160 sent back for rebase+rerun; fern assigned PR #1179 gradient-norm-loss)
+- 2026-04-29 (round 2 in progress — TWO winners merged: schedule + RFF; PRs #1159, #1162 closed; PR #1160 sent back for rebase+rerun; fern assigned PR #1179 gradient-norm-loss; askeladd PR #1176 label fixed — all 8 students active)
 - No human researcher directives yet for this branch.
 - Track: `charlie-pai2f-r1`, 8 students, 1 GPU each, 30 min/run, max 50 epochs effective (~14 actually achievable per run).
 
