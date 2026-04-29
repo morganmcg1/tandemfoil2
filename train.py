@@ -500,7 +500,7 @@ class Config:
     eta_min: float = 1e-6
     amp: bool = True
     amp_dtype: str = "bf16"   # "bf16" or "fp16"; bf16 strongly preferred for our extreme y values
-    huber_delta: float = 1.0  # Huber loss threshold in normalized space; <1.0 = MSE, >=1.0 = L1
+    huber_delta: float = 0.1  # was 0.3; #885 stacking found delta=0.1+sw=3 wins (val=96.87 / test=87.35)
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
