@@ -387,6 +387,7 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    tmax: int = 0  # cosine T_max; 0 means use MAX_EPOCHS (default behaviour)
 
 
 cfg = sp.parse(Config)
@@ -433,7 +434,8 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+_tmax = cfg.tmax if cfg.tmax > 0 else MAX_EPOCHS
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=_tmax)
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
