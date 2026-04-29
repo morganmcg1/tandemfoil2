@@ -190,7 +190,8 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 film_num_blocks: int = 2):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -214,7 +215,10 @@ class Transolver(nn.Module):
             )
             for i in range(n_layers)
         ])
-        self.film_layers = nn.ModuleList([FiLMLayer(n_hidden) for _ in range(n_layers)])
+        # FiLM applied only to the last `film_num_blocks` blocks: Re-modulation
+        # of late-block features while early blocks learn geometry-independent reps.
+        self.film_num_blocks = max(0, min(film_num_blocks, n_layers))
+        self.film_layers = nn.ModuleList([FiLMLayer(n_hidden) for _ in range(self.film_num_blocks)])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
         # Re-zero FiLM final layer after global _init_weights override.
@@ -236,10 +240,15 @@ class Transolver(nn.Module):
         # log(Re) is broadcast-identical across nodes; pull from node 0 of each sample.
         log_re = x[:, 0, 13:14]  # [B, 1]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        for block, film in zip(self.blocks, self.film_layers):
-            gamma, beta = film(log_re)
-            # Pre-block FiLM: condition the input to attention/MLP, not the output.
-            fx = (1.0 + gamma.unsqueeze(1)) * fx + beta.unsqueeze(1)
+        n = len(self.blocks)
+        film_start = n - self.film_num_blocks
+        film_iter = iter(self.film_layers)
+        for i, block in enumerate(self.blocks):
+            if i >= film_start:
+                film = next(film_iter)
+                gamma, beta = film(log_re)
+                # Pre-block FiLM: condition the input to attention/MLP, not the output.
+                fx = (1.0 + gamma.unsqueeze(1)) * fx + beta.unsqueeze(1)
             fx = block(fx)
         return {"preds": fx}
 
@@ -561,6 +570,7 @@ if __name__ == "__main__":
         mlp_ratio=2,
         output_fields=["Ux", "Uy", "p"],
         output_dims=[1, 1, 1],
+        film_num_blocks=2,
     )
 
     model = Transolver(**model_config).to(device)
