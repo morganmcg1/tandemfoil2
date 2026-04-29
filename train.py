@@ -519,6 +519,14 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
+        # Re noise augmentation — training only, per-sample (preserves within-sample Re coherence)
+        RE_NOISE_STD = 0.05  # ~5% of one normalized std
+        if model.training:
+            re_noise = torch.randn(
+                x_norm.size(0), 1, 1, device=x_norm.device, dtype=x_norm.dtype
+            ) * RE_NOISE_STD
+            x_norm = x_norm.clone()
+            x_norm[..., 13:14] = x_norm[..., 13:14] + re_noise
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             pred = model({"x": x_norm})["preds"]
