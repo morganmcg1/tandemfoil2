@@ -360,7 +360,7 @@ def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
 
 DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 WARMUP_EPOCHS = 2  # warm-up epochs used to estimate the timeout-aware cosine budget
-LR_ETA_MIN = 1e-6
+LR_ETA_MIN = 1e-5
 
 
 @dataclass
