@@ -1,5 +1,79 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-29 00:25 — PR #872: Domain-ID embedding (3-class additive) — **CLOSED (regression on 3 of 4 val splits)**
+
+- Branch: `willowpai2e4-nezuko/domain-id-embedding`
+- Student: willowpai2e4-nezuko
+- W&B run: per PR comments
+
+**Hypothesis.** Derive a 3-class domain ID at runtime from the
+global scalars (single / tandem-RC / tandem-cruise), embed via a
+zero-init `[3, n_hidden]` lookup table, and add to the per-node
+feature stream after preprocess. Predicted −2 to −6%; mechanism
+distinct from FiLM (continuous multiplicative) — categorical
+additive shift to encode regime discontinuity.
+
+**Implementation deviation handled correctly.** The student found
+the spec'd 5.0-rad threshold (≈286°) was degenerate post-z-norm
+and self-corrected to a data-grounded discriminator
+`abs(aoa1-aoa2) < 1e-4`. Diagnostic counts confirmed sane class
+balance across batches. Bug was caught before any wasted training.
+
+**Results vs current baseline 89.71/88.16 (post-#820 Fourier PE):**
+
+| Metric | Baseline | This run | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | 89.71 | ~92.5 | **+3.1%** ✗ |
+| `test_avg` (3-split) | 88.16 | ~88.0 | tied |
+
+**Per-split val:**
+
+| Split | Δ |
+|---|---:|
+| `val_re_rand` | **+9.87% ✗** (largest regression — exactly where regime info should help most) |
+| `val_single_in_dist` | mild regression |
+| `val_geom_camber_rc` | mild regression |
+| `val_geom_camber_cruise` | flat-ish |
+
+**Per-split test (best signal):**
+- `test_single_in_dist`: **−10.4% ✓** (regime info CAN help in right form)
+- Other test splits: mixed-to-negative
+
+**Mechanistic post-mortem:**
+
+The additive shift on `fx` injects a bias that the rest of the
+network can't easily down-weight when the regime label is unhelpful.
+LayerNorm inside each TransolverBlock partially undoes it but only
+after the first attention pass has already been disturbed. Across
+5 blocks the additive shift propagates and amplifies in unhelpful
+directions on splits where the embedding doesn't carry useful
+information. The single-foil class barely got used (norm 0.20 vs
+~0.52 for tandem) — the model learns "no foil 2" from
+`x[:, :, 18:24]` (zeroed foil-2 globals) directly through the
+preprocess MLP. The categorical embedding was redundant in a way
+the additive design couldn't take advantage of.
+
+**Three takeaways for the appendix:**
+1. **Additive categorical conditioning fights LayerNorm.**
+   Additive shifts propagated through 5 blocks of attention amplify
+   in unhelpful directions. `val_re_rand` +9.87% is the cleanest
+   evidence: the split where regime info should help most, hurt most.
+2. **Single class barely got used (norm 0.20 vs ~0.52 for tandem).**
+   Negative signal that the model didn't find single-foil to need a
+   special channel — the `x[:, :, 18:24]` zeros already do that work.
+3. **`test_single_in_dist` improved −10.4%** — partial signal that
+   regime info CAN help in the right form. Hypothesis isn't dead;
+   delivery mechanism was wrong. **Categorical-FiLM as round-3
+   stack** is the natural follow-up if alphonse's #816 (continuous
+   FiLM) lands: same regime-anchoring effect with a multiplicative
+   form that the model can down-weight when not helpful.
+
+**nezuko reassigned PR #929: DropPath / Stochastic Depth (rate 0.1
+linear schedule across 5 blocks).** Implicit ensembling regularizer,
+fully orthogonal to EMA (#873) and FiLM (#816). Zero parameter cost,
+zero inference cost. Predicted −1 to −3%, with largest gains on the
+OOD camber splits where overfitting is the failure mode.
+
 ## 2026-04-29 00:05 — PR #888: Stratified volume subsample (BL Gaussian, σ=0.05) — **CLOSED (regression on 3 of 4 splits)**
 
 - Branch: `willowpai2e4-fern/stratified-vol-subsample`

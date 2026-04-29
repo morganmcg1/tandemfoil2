@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-29 ~00:08 (Fourier PE K=4 merged at 89.71; 4 PRs in rebase queue; #880 closed, #888 closed; tanjiro reassigned #914 SwiGLU MLP, fern reassigned #920 coord-skip; **#873 EMA is the predicted next big winner** at val=88.85/test=78.67 on pre-#820 base, awaiting compound-test on post-#820)
+- **As of:** 2026-04-29 ~00:25 (Fourier PE K=4 merged at 89.71; 4 PRs in rebase queue; #880, #888, #872 closed; tanjiro→#914 SwiGLU, fern→#920 coord-skip, nezuko→#929 DropPath rate=0.1; **#873 EMA is the predicted next big winner** at val=88.85/test=78.67 on pre-#820 base, awaiting compound-test on post-#820)
 - **Most recent human direction:** none yet for this track
 - **Branch:** `icml-appendix-willow-pai2e-r4`
 - **Current best:** `val_avg/mae_surf_p = 89.714` (#820) and `3-split test mean = 88.16` (run `w9xbc0wl`)
@@ -41,7 +41,8 @@ on L1-only baseline). The compounding mechanism is well-understood.
 | #819 | frieren | Relative L2 mix α=0.5 (rebase #1 returned val=98.01 / test=88.78 on PRE-#820 base) | -1 to -4% target | **rebase #2 onto post-#820; predicted val ≤88.6 to merge** |
 | #888 | fern | Stratified vol subsample by distance-to-surface | -1 to -4% predicted; +3.77% actual | **CLOSED — VOLUME-MASK-SUBSAMPLING lever family exhausted** |
 | #920 | fern | Per-block coordinate skip-connection (Fourier feat re-injection at each block) | -1 to -3% | wip (just assigned) |
-| #872 | nezuko | Domain-ID embedding 3-class (#8) — replaces #757 (closed) | -2 to -6% | wip |
+| #872 | nezuko | Domain-ID embedding 3-class (#8) — replaces #757 (closed) | -2 to -6% predicted; +3.1% actual | **CLOSED — additive categorical fights LN; categorical-FiLM as round-3 follow-up** |
+| #929 | nezuko | DropPath / Stochastic Depth at rate 0.1 linear (replaces #872 close) | -1 to -3% | wip (just assigned) |
 | #873 | edward | EMA model weights (Polyak decay=0.99) — predicted -1 to -3%, ACTUAL **-10.46% val / -15.06% test** on pre-#820 baseline | -1 to -3% predicted; **4-5× actual** | **rebase to post-#820; predicted compounded val ≈ 80-83 / test ≈ 70-73 if compounds with Fourier PE** |
 | #880 | tanjiro | LinearNO ELU+1 linear attention | -3 to -8% predicted; +6.92% actual | **CLOSED — attention-kernel-substitution lever family exhausted at S=64** |
 | #914 | tanjiro | SwiGLU MLP swap (replaces #880 close) | -1 to -3% | wip (just assigned) |
@@ -108,6 +109,20 @@ on L1-only baseline). The compounding mechanism is well-understood.
   predicted (~29% vol drop, not ~85%). **Lever family
   VOLUME-MASK-SUBSAMPLING exhausted** — future surface-focus
   experiments should use loss-side levers, not mask-side surgery.
+- #872 nezuko Domain-ID embedding 3-class additive → val +3.1%,
+  test_avg tied. `val_re_rand` +9.87% is the cleanest regression
+  signal — the split where regime info should help MOST, hurt
+  MOST. Mechanism: additive shift on `fx` propagates through 5
+  blocks of attention; LayerNorm only partially undoes it after
+  first attention pass already disturbed. Single-class embedding
+  norm 0.20 vs tandem 0.52 → model didn't find single-foil to
+  need a special channel (the `x[:, :, 18:24]` zeros already
+  encode "no foil 2"). **Partial-signal:** test_single_in_dist
+  −10.4% suggests regime info CAN help in the right form.
+  **Categorical-FiLM (multiplicative) is the round-3 follow-up**
+  if alphonse's #816 (continuous FiLM) lands. Lever family
+  ADDITIVE-CATEGORICAL-CONDITIONING exhausted; multiplicative
+  variants remain candidates.
 
 **Note on rebasing after #820 merge:** All in-flight PRs (#816, #819, #861,
 #863, #872, #873, #880) are based on the old 99.23 baseline. They now need
