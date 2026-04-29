@@ -1,6 +1,36 @@
 # Baseline — icml-appendix-charlie-pai2e-r3
 
 ## Current Best
+- **Source**: Per-sample Re-aware loss normalization (PR #919, fern)
+- **PR**: #919
+- **Primary**: `val_avg/mae_surf_p` = **87.614** (lower is better)
+- **Test (3-split mean, excl. cruise NaN)**: `test_avg/mae_surf_p` = **84.461**
+
+### Best checkpoint metrics (val, epoch 14)
+
+| Split | mae_surf_p | Δ vs PR #889 |
+|---|---|---|
+| val_single_in_dist | 104.985 | -11.13% |
+| val_geom_camber_rc | 95.516 | -4.76% |
+| val_geom_camber_cruise | 66.346 | -6.66% |
+| val_re_rand | 83.608 | -5.05% |
+| **val_avg** | **87.614** | **-7.18%** |
+
+### Test metrics (raw, NaN in cruise due to known 1-sample bug)
+
+| Split | mae_surf_p |
+|---|---|
+| test_single_in_dist | 93.332 |
+| test_geom_camber_rc | 83.844 |
+| test_geom_camber_cruise | NaN (1-sample GT bug) |
+| test_re_rand | 76.206 |
+| **test_avg (3-split excl. cruise)** | **84.461** |
+
+- **Metric summary**: `target/runs/re-aware-sample-loss-weighting/metrics.jsonl`
+- **Reproduce**: `cd target/ && python train.py --lr 5e-4 --surf_weight 10 --batch_size 4 --epochs 50`
+  (Per-sample Re-aware RMS normalization merged in train.py; T_max=15 + 1-epoch warmup)
+
+## Previous Best (PR #889)
 - **Source**: Cosine T_max=15 + 1-epoch warmup for 30-min budget (PR #889, fern)
 - **PR**: #889
 - **Primary**: `val_avg/mae_surf_p` = **94.387** (lower is better)
