@@ -217,7 +217,7 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device, bf16: bool = False) -> dict[str, float]:
     """Evaluate a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -238,7 +238,9 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
+                pred = model({"x": x_norm})["preds"]
+            pred = pred.float()
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -340,6 +342,48 @@ def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Optimizer + EMA helpers
+# ---------------------------------------------------------------------------
+
+
+class Lion(torch.optim.Optimizer):
+    """Lion optimizer: https://arxiv.org/abs/2302.06675"""
+
+    def __init__(self, params, lr=1e-4, betas=(0.9, 0.99), weight_decay=0.0):
+        defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                grad = p.grad
+                state = self.state[p]
+                if len(state) == 0:
+                    state["exp_avg"] = torch.zeros_like(p)
+                exp_avg = state["exp_avg"]
+                beta1, beta2 = group["betas"]
+                if group["weight_decay"] > 0:
+                    p.data.mul_(1 - group["lr"] * group["weight_decay"])
+                update = exp_avg * beta1 + grad * (1 - beta1)
+                p.add_(torch.sign(update), alpha=-group["lr"])
+                exp_avg.mul_(beta2).add_(grad, alpha=1 - beta2)
+        return loss
+
+
+def update_ema(model, ema_model, decay):
+    with torch.no_grad():
+        for ema_p, p in zip(ema_model.parameters(), model.parameters()):
+            ema_p.mul_(decay).add_(p, alpha=1 - decay)
+
+
+# ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
 
@@ -348,16 +392,28 @@ DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 
 @dataclass
 class Config:
-    lr: float = 5e-4
-    weight_decay: float = 1e-4
+    lr: float = 3e-4
+    weight_decay: float = 1e-2
     batch_size: int = 4
-    surf_weight: float = 10.0
+    surf_weight: float = 28.0
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip final test evaluation
+    optimizer: str = "lion"       # "adamw" | "lion"
+    loss: str = "l1"              # "mse" | "l1"
+    bf16: bool = True             # use torch.autocast("cuda", dtype=torch.bfloat16)
+    n_layers: int = 1             # Transolver depth
+    n_hidden: int = 128
+    n_head: int = 4
+    slice_num: int = 64
+    mlp_ratio: int = 2
+    clip_grad_norm: float = 1.0   # 0.0 = disabled
+    ema_decay: float = 0.995      # 0.0 = disabled
+    scheduler: str = "cosine"     # "cosine" | "none"
+    T_max: int = 15               # cosine scheduler T_max
 
 
 cfg = sp.parse(Config)
@@ -390,11 +446,11 @@ model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
-    mlp_ratio=2,
+    n_hidden=cfg.n_hidden,
+    n_layers=cfg.n_layers,
+    n_head=cfg.n_head,
+    slice_num=cfg.slice_num,
+    mlp_ratio=cfg.mlp_ratio,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
@@ -403,8 +459,23 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+if cfg.optimizer == "lion":
+    optimizer = Lion(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+else:
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+
+if cfg.scheduler == "cosine":
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.T_max)
+else:
+    scheduler = None
+
+ema_model = None
+if cfg.ema_decay > 0:
+    import copy
+    ema_model = copy.deepcopy(model)
+    ema_model.eval()
+    for p in ema_model.parameters():
+        p.requires_grad_(False)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -443,31 +514,43 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=cfg.bf16):
+            pred = model({"x": x_norm})["preds"]
+
+        if cfg.loss == "l1":
+            err = torch.abs(pred.float() - y_norm)
+        else:
+            err = (pred.float() - y_norm) ** 2
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        vol_loss = (err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+        surf_loss = (err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
         loss.backward()
+        if cfg.clip_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad_norm)
         optimizer.step()
+        if ema_model is not None:
+            update_ema(model, ema_model, cfg.ema_decay)
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    scheduler.step()
+    if scheduler is not None:
+        scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
     # --- Validate ---
     model.eval()
+    eval_model = ema_model if ema_model is not None else model
+    eval_model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(eval_model, loader, stats, cfg.surf_weight, device, bf16=cfg.bf16)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -482,7 +565,7 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        torch.save(eval_model.state_dict(), model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
@@ -512,8 +595,9 @@ print(f"\nTraining done in {total_time:.1f} min")
 if best_metrics:
     print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-    model.eval()
+    eval_model_for_test = Transolver(**model_config).to(device)
+    eval_model_for_test.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    eval_model_for_test.eval()
 
     test_metrics = None
     test_avg = None
@@ -525,7 +609,7 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(eval_model_for_test, loader, stats, cfg.surf_weight, device, bf16=cfg.bf16)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
