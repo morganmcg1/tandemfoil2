@@ -485,6 +485,7 @@ class Config:
     skip_test: bool = False  # skip end-of-run test evaluation
     fourier_bands: int = 0  # 0 = disabled, baseline behavior
     use_swiglu: bool = False  # True = swap per-block MLP from GELU to SwiGLU
+    n_layers: int = 5  # number of Transolver blocks (default = baseline)
 
 
 cfg = sp.parse(Config)
@@ -521,7 +522,7 @@ model_config = dict(
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
-    n_layers=5,
+    n_layers=cfg.n_layers,
     n_head=4,
     slice_num=64,
     mlp_ratio=2,
@@ -532,7 +533,9 @@ model_config = dict(
 
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
-print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+print(f"Model: Transolver ({n_params/1e6:.2f}M params, n_layers={cfg.n_layers})")
+last_layer_flags = [(i, b.last_layer) for i, b in enumerate(model.blocks)]
+print(f"Block last_layer flags: {last_layer_flags}")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
@@ -560,6 +563,9 @@ wandb.define_metric("val/*", step_metric="global_step")
 for _name in VAL_SPLIT_NAMES:
     wandb.define_metric(f"{_name}/*", step_metric="global_step")
 wandb.define_metric("lr", step_metric="global_step")
+
+wandb.summary["model/n_layers"] = cfg.n_layers
+wandb.summary["model/n_params"] = n_params
 
 model_dir = Path(f"models/model-{run.id}")
 model_dir.mkdir(parents=True, exist_ok=True)
