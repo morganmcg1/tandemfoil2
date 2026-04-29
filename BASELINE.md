@@ -4,27 +4,55 @@
 
 | Metric | Value |
 |--------|-------|
-| `val_avg/mae_surf_p` | **51.0626** (PR #1149 — warmup_epochs=3 + wd=5e-4 + epochs=30, full cosine completion) |
-| `test_avg/mae_surf_p` | **44.7020** (PR #1149) |
+| `val_avg/mae_surf_p` | **49.0719** (PR #1191 — adamw_beta2=0.98 on full compound stack) |
+| `test_avg/mae_surf_p` | **42.8204** (PR #1191) |
 
-**Source:** PR #1149 — 3-epoch linear LR warmup before cosine decay, on top of PR #1136 compound (wd=5e-4 + epochs=30).
-- Branch: `charliepai2f5-fern/warmup-lr-schedule`
-- Config: n_layers=2 (hardcoded), slice_num=16, n_hidden=256, n_head=8, loss=huber, huber_delta=0.1, ema_decay=0.999, grad_clip=1.0, per_sample_norm, warmup_epochs=3, epochs=30, lr=5e-4, batch_size=4, weight_decay=5e-4
-- Best epoch = 30/30 (full cosine completion, LR=0.0, model monotonically improving every epoch)
-- 1,141,299 params, Peak VRAM 22.22 GB, Run ID: vvp4agqj
+**Source:** PR #1191 — AdamW beta2=0.98 (LLaMA-style faster second moment adaptation), on top of PR #1149 compound (wd=5e-4 + warmup_epochs=3 + epochs=30).
+- Branch: `nezuko/adamw-betas-0.9-0.98`
+- Config: n_layers=2 (hardcoded), slice_num=16, n_hidden=256, n_head=8, loss=huber, huber_delta=0.1, ema_decay=0.999, grad_clip=1.0, per_sample_norm, warmup_epochs=3, epochs=30, lr=5e-4, batch_size=4, weight_decay=5e-4, adamw_beta2=0.98
+- Best epoch = 30/30 (final epoch, val curve still descending — training-budget-limited)
+- 1,141,299 params, Peak VRAM 22.22 GB, Run ID: 1ie79roq
 
-**Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper reference) — currently +9.2% above target (gap closed from 4.44 to 3.77 vs prior best).
+**Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper reference) — currently +4.6% above target (gap closed from 3.77 to 1.89 vs prior best).
 
-## Round r5 — Recommended Working Baseline (compound n_layers=2 + huber_delta=0.1 + weight_decay=5e-4 + warmup_epochs=3 + epochs=30)
+## Round r5 — Recommended Working Baseline (compound n_layers=2 + huber_delta=0.1 + weight_decay=5e-4 + warmup_epochs=3 + epochs=30 + adamw_beta2=0.98)
 
 ```
 python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 30 \
-  --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm --weight_decay 5e-4 --warmup_epochs 3
+  --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm --weight_decay 5e-4 --warmup_epochs 3 \
+  --adamw_beta2 0.98
 ```
 *(Note: n_layers=2, slice_num=16 are hardcoded in model_config dict in train.py)*
 *(Note: warmup_epochs=3 activates SequentialLR: LinearLR 3 epochs ramp + CosineAnnealingLR over remaining 27 epochs)*
 
 ## Round r5 — Merged Winners
+
+### PR #1191 — AdamW betas=(0.9, 0.98): LLaMA-style faster second moment adaptation (2026-04-29)
+**Student:** charliepai2f5-nezuko | **Branch:** nezuko/adamw-betas-0.9-0.98
+
+| Metric | Value |
+|--------|-------|
+| `val_avg/mae_surf_p` | **49.0719** (epoch 30/30 — final epoch, val curve still descending) |
+| `val_single_in_dist/mae_surf_p` | 51.8270 |
+| `val_geom_camber_rc/mae_surf_p` | 63.0721 |
+| `val_geom_camber_cruise/mae_surf_p` | 30.7061 |
+| `val_re_rand/mae_surf_p` | 50.6823 |
+| `test_avg/mae_surf_p` | **42.8204** |
+| `test_single_in_dist/mae_surf_p` | 48.1549 |
+| `test_geom_camber_rc/mae_surf_p` | 57.1495 |
+| `test_geom_camber_cruise/mae_surf_p` | 25.5606 |
+| `test_re_rand/mae_surf_p` | 40.4164 |
+
+**vs prior baseline (PR #1149):** 49.0719 vs 51.0626 → **-3.90% val improvement**
+**Test improvement:** 42.8204 vs 44.7020 → **-4.21% test improvement**
+**vs paper target:** compete gap 1.89 (from 3.77 prior best) — test_avg now only +4.6% above Transolver reference
+**Run config:** n_layers=2 (hardcoded), huber_delta=0.1, weight_decay=5e-4, warmup_epochs=3, epochs=30 (full completion), lr=5e-4, batch_size=4, grad_clip=1.0, ema_decay=0.999, per_sample_norm, adamw_beta2=0.98
+**Mechanism:** Faster second moment adaptation (β2=0.98 vs default 0.999) helps optimizer respond more quickly to gradient magnitude changes in short 30-epoch runs. Previous β2=0.95 (PR #1157) caused +4.19% regression; 0.98 is the sweet spot.
+**Split analysis:** Biggest gains on single_in_dist (-7.40% val) and geom_camber_rc (-4.47% val). geom_camber_cruise near-saturated, minor gain. re_rand: small val gain (-1.11%) but larger test gain (-3.70%).
+**Budget-limited:** Best val at final epoch 30, loss curve still descending — more epochs may yield further gains.
+**Peak VRAM:** 22.22 GB | **Wall-clock:** 30.1 min | **Run ID:** 1ie79roq
+**Metrics JSONL:** `metrics/charliepai2f5-nezuko-adamw-beta2-0.98-1ie79roq.jsonl`
+**Reproduce:** `python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 30 --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm --weight_decay 5e-4 --warmup_epochs 3 --adamw_beta2 0.98`
 
 ### PR #1149 — warmup-lr-schedule: 3-epoch linear LR warmup before cosine decay (2026-04-29)
 **Student:** charliepai2f5-fern | **Branch:** charliepai2f5-fern/warmup-lr-schedule
@@ -329,4 +357,6 @@ python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epoch
 - 2026-04-29: PR #1121 merged. huber_delta=0.1: val_avg=58.4790 (-5.04%), test_avg=51.3554 (-5.52%).
 - 2026-04-29: PR #1120 merged. n_layers=2: val_avg=56.4257 (-3.51%), test_avg=49.6211 (-3.38%).
 - 2026-04-29: PR #1134 merged. epochs=26 cosine-aligned (n_layers=2 + huber_delta=0.1 compound): val_avg=55.4877 (-1.66%), test_avg=48.8156 (-1.62%).
-- 2026-04-29: PR #1136 merged. weight_decay=5e-4 (n_layers=2 + huber_delta=0.1 + epochs=30): val_avg=52.0698 (-6.16% vs PR #1134), test_avg=46.1497 (-5.46%) — **Current best.** Compete gap: 5.22.
+- 2026-04-29: PR #1136 merged. weight_decay=5e-4 (n_layers=2 + huber_delta=0.1 + epochs=30): val_avg=52.0698 (-6.16% vs PR #1134), test_avg=46.1497 (-5.46%). Compete gap: 5.22.
+- 2026-04-29: PR #1149 merged. warmup_epochs=3 (linear LR ramp + cosine): val_avg=51.0626 (-1.43%), test_avg=44.7020 (-1.47%). Compete gap: 3.77.
+- 2026-04-29: PR #1191 merged. adamw_beta2=0.98 (faster second moment adaptation): val_avg=49.0719 (-3.90%), test_avg=42.8204 (-4.21%) — **Current best.** Compete gap: 1.89.
