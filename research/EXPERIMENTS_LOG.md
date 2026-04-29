@@ -1,5 +1,32 @@
 # SENPAI Research Results
 
+## 2026-04-29 00:30 — PR #859: Surface weight scan ↩ SENT BACK (rebase + Huber stack)
+
+- Branch: `willowpai2e1-fern/surf-weight-scan`
+- Hypothesis: Increase surf_weight beyond default 10 to put more gradient pressure on the surface MAE objective. Sweep ∈ {10, 20, 50, 100} with EMA decay=0.99.
+
+| surf_weight | val_avg/mae_surf_p | test_avg/mae_surf_p | Best epoch | W&B run |
+|------------:|-------------------:|--------------------:|:----------:|---------|
+| 10 (control) | 122.38 | 109.15 | 12 | [fwpcgiwo](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/fwpcgiwo) |
+| **20** | **115.87** | **103.92** | 13 | [c54oko37](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/c54oko37) |
+| 50 | 123.34 | 111.88 | 14 | [rlcqbqzw](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/rlcqbqzw) |
+| 100 | 129.79 | 119.33 | 14 | [6z7uhk6s](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/6z7uhk6s) |
+
+Per-split test (sw=20): single=117.79, rc=112.11, cruise=78.88, re_rand=106.90  
+Won 3/4 splits in val and test; cruise marginally regressed (already easiest).
+
+**Mechanism check (train losses):** vol_loss monotone-degrades with sw (0.43→1.00); surf_loss flat. The gain at sw=20 is a *generalization* effect via EMA, not better surface fit. At sw=50/100, volume-task starvation feeds back into surface error — the failure mode is "boundary-only training under-constrains the volume field."
+
+**Analysis and conclusions:**
+
+sw=20 is the surf_weight optimum under EMA decay=0.99 (no Huber): −5.3% val / −4.8% test within-sweep vs sw=10 control. The non-monotonic curve with optimum at 2× default is consistent with surface-emphasis being a real lever, but volume-task starvation kicks in by sw=50.
+
+**However**, the result is built on the OLD baseline (EMA-only, val=119.35) — the new baseline is PR #769 (Huber δ=0.5, val=102.86) which merged after these runs started. sw=20+EMA at 115.87 does not beat the new baseline, and crucially Huber implicitly upweights surface-vs-volume (since surface residuals are smaller than volume in normalized space, Huber clips volume more aggressively). So the optimum surf_weight under Huber may shift.
+
+**PR sent back for rebase + 4-variant Huber+EMA stack scan** (sw ∈ {10, 15, 20, 30}). If sw=20 still wins under Huber, that's the new baseline ~98-100 val. If the optimum shifts down to 15 (likely under the Huber-already-upweights-surface argument), that's actually an even stronger result.
+
+---
+
 ## 2026-04-28 22:45 — PR #769: Huber loss for outlier-robust pressure regression ✓ MERGED
 
 - Branch: `willowpai2e1-alphonse/huber-loss`
