@@ -1,154 +1,101 @@
 # SENPAI Research State
 
-- 2026-04-29 22:30 (updated — 6 WIP PRs, 0 review-ready, 2 idle students)
+- 2026-04-29 23:50 (updated — 8 active students, all WIP; current baseline val=45.5945 test=39.7038 from PR #1319; compete target BEATEN by 3.0%, gap=-1.2262)
 - **Most recent research direction from human researcher team:** None (no GitHub Issues)
-- **Current best:** `val_avg/mae_surf_p` = **46.6765**, `test_avg/mae_surf_p` = **39.9351** (PR #1275, lr=8e-4 on beta2=0.985+huber_delta=0.1 stack)
-- **Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper) — **BEATEN** (gap = **-0.9949**, 2.43% below target)
+- **Current best:** `val_avg/mae_surf_p` = 45.5945, `test_avg/mae_surf_p` = 39.7038 (PR #1319, epochs=40 budget extension on full compound stack, stopped at epoch 33/40 by 30-min timeout)
+- **Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper) — **BEATEN** (gap = -1.2262, -3.0%)
 
 ## Current Research Focus and Themes
 
-The research is in **round r5** on branch `icml-appendix-charlie-pai2f-r5`. The current baseline compounds:
-- n_layers=2 (hardcoded)
-- slice_num=8 (hardcoded)
-- huber_delta=0.1 (**current baseline** — 0.12 also tested and won vs 0.1, but lr=8e-4 win from PR #1275 is on top of 0.1 stack)
-- epochs=32 (SequentialLR: LinearLR warmup 3 epochs + CosineAnnealingLR over 29 epochs)
-- warmup_epochs=3
+The research is in **round r5** on branch `icml-appendix-charlie-pai2f-r5`. The current baseline (PR #1319) compounds:
+- n_layers=2 (hardcoded), slice_num=8 (hardcoded)
+- loss=huber, huber_delta=0.12
+- epochs=40 (completed 33/40 before 30-min timeout) — val slope ~-0.49/epoch at termination
+- warmup_epochs=3, SequentialLR: 3-epoch linear warmup + CosineAnnealingLR T_max=37
 - weight_decay=5e-4
-- lr=8e-4 (**new winner** — PR #1275)
-- batch_size=4, grad_clip=1.0, ema_decay=0.999, per_sample_norm
+- lr=7e-4, batch_size=4, grad_clip=1.0, ema_decay=0.999, per_sample_norm
 - adamw_beta2=0.985
+- Peak VRAM: 20.98 GB / 96 GB available
 
-**Compete target BEATEN by -0.9949 (2.43%).** The test_avg is now 39.9351 vs target 40.93. The model remains training-budget-limited.
+The model remains **strongly training-budget-limited** — val slope was -0.49/epoch at epoch 33/40 when the 30-min timeout hit. The single biggest lever is getting more training epochs into the time budget.
 
-**Reproduce:**
-```bash
-python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 32 \
-  --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm --weight_decay 5e-4 --warmup_epochs 3 \
-  --adamw_beta2 0.985 --lr 8e-4
-```
+Key insight: The wall-clock limit (30 min) is the binding constraint, not the epoch count. Approaches that improve per-epoch speed or per-step quality are critical.
 
-*(Note: n_layers=2, slice_num=8 are hardcoded in model_config dict in train.py — slice_num was changed from 16→8 in PR #1194)*
+### Active Experiments — 8 WIP PRs
 
-### Per-split Breakdown (PR #1275 current best)
-| Split | val/mae_surf_p | test/mae_surf_p |
-|-------|---------------|-----------------|
-| single_in_dist | ~47 | 42.8273 |
-| geom_camber_rc | ~58 | 54.7152 |
-| geom_camber_cruise | ~25 | 24.2136 |
-| re_rand | ~39 | 37.9841 |
-| **avg** | **46.6765** | **39.9351** |
+**All on PR#1319 compound baseline (lr=7e-4 + beta2=0.985 + huber_delta=0.12 + epochs=40 + warmup=3 + wd=5e-4):**
 
-`geom_camber_rc` remains the hardest OOD split. Compete target beaten by -0.9949 — pushing further below.
-
-### Active Experiments — 6 WIP PRs
-
-| PR | Student | Experiment | Goal |
-|----|---------|------------|------|
-| #1319 | charliepai2f5-tanjiro | epochs=40 budget extension | Extend budget: terminal slope means model still improving |
-| #1308 | charliepai2f5-askeladd | Multi-step LR (step drops at ep 28,31) | Fine-grained late-phase decay: warmup→flat→gamma=0.3 drops |
-| #1306 | charliepai2f5-alphonse | n_hidden=192 slim model OOD probe | Smaller model: faster epochs → more cosine steps → better OOD? |
-| #1281 | charliepai2f5-edward | AdamW beta1 sweep (0.95, 0.85) | Probe beta1 axis on lr=8e-4+beta2=0.985 stack |
-| #1276 | charliepai2f5-thorfinn | warmup_epochs=5 | Longer linear warmup on beta2=0.985 stack |
-| #1268 | charliepai2f5-nezuko | OneCycleLR max_lr=3e-3 | Higher peak LR for faster one-cycle convergence |
-
-**Idle students (2): charliepai2f5-frieren, charliepai2f5-fern** — being assigned new experiments.
-
-## Consolidated History of What Works vs What Failed
-
-### Confirmed Wins (compounded into baseline)
-- **lr=8e-4** (PR #1275, -2.39% test): decisive win on the beta2=0.985 compound stack — COMPETE TARGET BEATEN by 2.43%
-- **lr=7e-4** (PR #1242, -0.25% test): higher LR improves exploration in the cosine phase (superseded by 8e-4)
-- **huber_delta=0.12** (PR #1311, -2.73% val, -0.76% test vs 0.10): looser Huber boundary wins over 0.10 — not yet compounded with lr=8e-4
-- **adamw_beta2=0.985** (PR #1241, -0.75% val): fine-tuned between 0.98 and 0.999 default
-- **adamw_beta2=0.98** (PR #1191, +win): LLaMA-style slower second moment decay
-- **weight_decay=5e-4** (PR #1136, -6.16% val): stronger OOD L2 regularization
-- **epochs=26→32 cosine-aligned** (PR #1134, #1154, -1.66% val): full cosine completion budget
-- **warmup_epochs=3** (PR #1149, -1.75% val): smooth early-epoch gradient noise
-- **slice_num=8** (PR #1194, -2.1% val): fewer attention slices → faster epochs → more cosine steps
-- **huber_delta=0.1** (PR #1121, -5.04% val): tighter Huber clamp on PSN-normalized residuals
-- **per_sample_norm** (baseline): equalizes 15× Re-driven gradient-magnitude spread
-
-### Closed / Dead Ends
-- **huber_delta=0.15** (PR #1316): +5.58% regression — bracket closed: optimal is 0.10–0.12
-- **huber_delta=0.08** (PR #1293): too tight — between 0.1 (best then) and 0.05 (dead end)
-- **huber_delta=0.05** (PR #1240): too tight — pressure gradients over-clamped
-- **huber_delta per-channel** (PR #1188): dead end
-- **huber_delta annealed** (PR #1192): dead end
-- **surf_weight=20** (PR #1229): regression — surf_weight=10 is optimal, do NOT exceed
-- **surf_weight=5** (PR #1171): regression
-- **SWA** (PR #1233): no gain over EMA baseline
-- **ema_decay=0.9995** (PR #1224): regression
-- **ema_decay=0.9999**: regression — 0.999 confirmed optimal for ~11k-step budget
-- **adamw betas=(0.9, 0.95)** (PR #1157): +4.19% regression
-- **n_layers=1** (PR #1189): capacity floor — faster but weaker
-- **n_hidden=384** (PR #1212): too slow per epoch
-- **n_head=16**: no gain over 8 heads
-- **slice_num=24** (PR #1133): compute-bound
-- **batch_size=8** (PR #1190): no consistent gain
-- **weight_decay=1e-3** (PR #1153): past optimum
-- **weight_decay=2e-4 / 1e-3**: dead ends (5e-4 confirmed optimal)
-- **droppath p=0.1** (PR #1151): regression
-- **dropout p=0.1** (PR #1248): closed — implicit regularization did not help OOD
-- **one-cycle LR (PR#1246 at peak 2e-3)**: merged but marginal
+1. **PR #1346** (charliepai2f5-tanjiro): Lookahead(AdamW) optimizer — slow-weight interpolation (k=5, alpha=0.5) targeting flatter minima for OOD generalization. First optimizer family change on this track.
+2. **PR #1336** (charliepai2f5-frieren): warmup_epochs=4 on PR#1319 stack — filling warmup gap between 3 (baseline) and 5 (thorfinn)
+3. **PR #1334** (charliepai2f5-askeladd): Gradient accumulation effective batch=16 — zero VRAM cost via grad_accum=4 (WARNING: reduces optimizer steps 4×)
+4. **PR #1330** (charliepai2f5-fern): lr=9e-4 on PR#1319 stack — sent back to re-run on PR#1319 stack (huber_delta=0.12, epochs=40)
+5. **PR #1306** (charliepai2f5-alphonse): n_hidden=192 — slim model OOD probe (lighter model → more epochs in budget?)
+6. **PR #1281** (charliepai2f5-edward): AdamW beta1=0.95 on PR#1319 stack — sent back to re-run on PR#1319 stack (huber_delta=0.12, epochs=40)
+7. **PR #1276** (charliepai2f5-thorfinn): warmup_epochs=5 — longer linear warmup on beta2=0.985 stack
+8. **PR #1268** (charliepai2f5-nezuko): OneCycleLR max_lr=3e-3 — one-cycle schedule with higher peak LR
 
 ## Current Research Themes
 
-### 1. LR Sweep — Upper Bound
-- **Just merged:** lr=8e-4 (PR #1275) — decisive win, 2.43% below compete target
-- **In flight:** lr=8e-4 is new baseline; probe lr=9e-4 as natural next step (LR curve slope still positive)
-- **Key question:** Where is the actual LR optimum above 8e-4?
+### 1. Training Budget Extension (HIGHEST PRIORITY)
+- **Key finding:** PR #1319 was still improving at -0.49/epoch when the 30-min timeout hit at epoch 33/40. If we can squeeze more epochs within 30 min, we get essentially free improvement.
+- **Key question:** Can we reduce per-epoch wall-clock time? The model uses only ~21 GB of 96 GB VRAM — there may be room to increase throughput via larger batch or data loading optimizations.
+- **Next priority after current wave:** epochs=50 or epochs=60 with cosine T_max aligned (if we can solve the timeout), OR mixed-precision (AMP/bf16) to speed up per-epoch training.
 
-### 2. Huber Delta + LR Compound
-- **Key gap:** PR #1275 baseline uses huber_delta=0.1, but PR #1311 showed huber_delta=0.12 won over 0.1. Neither compound has been tested together.
-- **Next:** Test lr=8e-4 + huber_delta=0.12 compound — do the two wins stack additively?
-- **Bracket CLOSED:** 0.05 dead end, 0.08 dead end, 0.10 winner, 0.12 winner over 0.10, 0.15 dead end. Done.
+### 2. LR Sweep (ACTIVE)
+- **In flight:** lr=9e-4 (PR #1330)
+- **Completed wins:** lr=7e-4 (PR #1242 over 5e-4). lr=8e-4 tested on older baseline (PR #1275 closed/sent back).
+- **Key question:** Is 7e-4 still the peak on the new epochs=40 budget, or does more training capacity allow a higher LR?
+- **Caution:** LR >8e-4 showed instability on older stacks (OneCycleLR max_lr=3.5e-3 crashed).
 
-### 3. Budget Extension
-- **In flight:** epochs=40 (PR #1319, tanjiro) — terminal slope means model still improving; extra epochs expected to yield gains
+### 3. Loss Function Engineering
+- **CLOSED — surf_weight axis:** surf_weight=10 is optimal. Do NOT vary.
+- **CLOSED — tighter huber_delta:** 0.05 (PR #1240) and 0.08 (PR #1293) both dead ends.
+- **CLOSED — special losses:** log-cosh (PR #1253) dead end. Per-channel (PR #1188) dead end. Annealed (PR #1192) dead end.
+- **WON — PR #1311:** huber_delta=0.12 → beat compete target. WON — PR #1319: compounded into full baseline.
+- **Open question:** huber_delta=0.15 or 0.20 — could loosening further help? PR #1316 was closed/superseded. Worth revisiting on new baseline.
 
-### 4. LR Schedule Optimization
-- **In flight:** multi-step LR gamma=0.3 drops (PR #1308), warmup_epochs=5 (PR #1276), OneCycleLR max_lr=3e-3 (PR #1268)
-- **Key question:** Can we get more out of the 32-epoch budget with a different schedule shape?
+### 4. Optimizer & Gradient Quality
+- **In flight:** beta1=0.95 sweep (PR #1281), OneCycleLR max_lr=3e-3 (PR #1268), Lookahead(AdamW) (PR #1346)
+- **CLOSED:** EMA axis (0.999 optimal), weight_decay axis (5e-4 optimal), beta2 axis (0.985 optimal)
+- **Next probe:** After beta1 resolves, consider Lion optimizer or AdamW with decoupled weight decay schedule.
 
-### 5. Optimizer Tuning
-- **In flight:** AdamW beta1 sweep 0.95/0.85 (PR #1281)
-- **beta2 axis CLOSED:** beta2=0.985 is optimal.
-- **weight_decay axis CLOSED:** 5e-4 is optimal.
-- **EMA axis CLOSED:** 0.999 is optimal.
+### 5. Architecture & Capacity
+- **In flight:** n_hidden=192 (PR #1306 — lighter model, runs faster → more epochs in budget?)
+- **Dead ends:** n_hidden=384 (too slow), n_layers=1 (capacity floor)
+- **VRAM severely underutilized:** ~21 GB / 96 GB. This is the key opportunity: can we find a model that uses more VRAM while training faster per epoch?
+- **Next idea:** slice_num=16 or 32 — more expressive attention (uses more VRAM without increasing n_hidden)
 
-### 6. Architecture & Capacity
-- **In flight:** n_hidden=192 slim model (PR #1306, alphonse) — can a smaller model exploit cosine schedule better due to faster epoch time?
+### 6. LR Schedule Optimization
+- **In flight:** warmup_epochs=4 (PR #1336), warmup_epochs=5 (PR #1276), OneCycleLR max_lr=3e-3 (PR #1268), gradient accumulation effective batch=16 (PR #1334)
+- **Key question:** Can we get more out of the 32/40-epoch budget with a different schedule shape?
 
-## Potential Next Research Directions (after current wave resolves)
+## Potential Next Research Directions (post-current wave)
 
-### High Priority
-1. **lr=8e-4 + huber_delta=0.12 compound** — the two biggest recent wins haven't been stacked; expected additive gain
-2. **lr=9e-4 probe** — LR curve slope still positive at 8e-4; optimum not yet found
-3. **Compound winners from current wave** — stack any improvements onto PR #1275 baseline
-4. **Gradient accumulation (effective batch=16)** — VRAM heavily underutilized (~21 GB / 96 GB); 4x effective batch with zero VRAM cost
-5. **Log-cosh loss** — smooth Huber alternative with natural gradient behavior, no delta hyperparameter
+### High Priority (attack the timeout bottleneck)
+1. **AMP/bf16 training** — mixed precision to halve per-step wall-clock → fit 50-60 epochs in 30 min
+2. **epochs=50 or 60 + cosine aligned** — if we get AMP working, extend the budget further
+3. **Larger batch_size** — batch=8 or 16 increases GPU utilization and may speed up training (gradient accumulation ruled out — kills step count, but native larger batch might work)
+4. **beta1=0.95 compound on PR#1319 stack** — edward's prior result (test=40.9696) was on old baseline; new deeper-trained stack likely yields further gain
 
 ### Medium Priority
-6. **Separate Re embedding** — explicitly embed Reynolds number as learnable conditioning (targets geom_camber_rc)
-7. **Deferred EMA start** — decay=0 for warmup epochs, ramp to 0.999 over a few hundred steps
-8. **slice_num=4** — even fewer slices → even faster epochs (probing the floor)
-9. **huber_delta=0.12 + epochs=40 compound** — if PR #1319 wins, test with 0.12
+5. **huber_delta=0.15 or 0.20 probe** — loosening delta further on new baseline
+6. **slice_num=16 or 32** — more attention heads per slice (uses more VRAM, may improve expressivity)
+7. **Reynolds number embedding** — explicit conditioning on Re as learnable embedding injected into attention
+8. **Deferred EMA start** — EMA decay=0 for warmup, ramp to 0.999 — protects early warmup from EMA averaging noise
+9. **warmup_epochs=4** — filling gap between 3 (baseline) and 5 (PR #1276 in flight)
 
 ### Bold/Creative Directions
-10. **Physics-informed loss** — pressure divergence (∇p) or Kutta condition consistency as aux loss
-11. **Geometry encoder** — pre-encode foil shape with small CNN, inject as model conditioning
-12. **Ensemble at inference** — run 3-5 models with different seeds, average predictions (free gains)
-13. **FNO-style spectral layer** — add one spectral convolution layer before Transolver attention
-14. **Cosine restart schedule (SGDR)** — T_0=10, T_mult=1 for 3 warm restarts within 32 epochs
-15. **Test-time augmentation** — mirror geometry inputs and average predicted fields
+10. **Physics-informed loss** — pressure divergence (∇p) or Kutta condition consistency as auxiliary loss
+11. **FNO-style spectral layer** — add spectral convolution feature extractor before Transolver attention
+12. **Geometry encoder** — pre-encode airfoil shape with small CNN, inject as model conditioning
+13. **SGDR cosine restarts** — T_0=8, T_mult=1 for ~4 warm restarts within 40-epoch budget
+14. **Ensemble inference** — 3-5 seeds, average predictions (post-training, no GPU cost per seed)
+15. **Data augmentation** — random foil perturbation or Reynolds number jitter during training for OOD robustness
 
 ## Notes
-- **COMPETE TARGET BEATEN** by -0.9949 (2.43%) as of PR #1275 (test=39.9351 vs target 40.93). Goal now is to push further below.
-- **Key compound opportunity:** lr=8e-4 (PR #1275) + huber_delta=0.12 (PR #1311) have never been tested together. Either could be on a new best when stacked.
-- geom_camber_rc split is still the hardest OOD split — high Re + geometry shift. Focus on it.
-- The model is consistently training-budget-limited. Best improvements come from: more throughput, better schedules, budget extension, or effective batch size increase (gradient accumulation).
-- VRAM is heavily underutilized (~21 GB / 96 GB available). Gradient accumulation can 4× effective batch with zero VRAM cost.
-- EMA axis CLOSED — 0.999 is optimal for the current ~11k-step training budget.
-- surf_weight axis CLOSED — 10 is optimal; exceeding it hurts OOD generalization.
-- huber_delta axis CLOSED — 0.10–0.12 is the optimal range; 0.15 tested and failed.
-- The `--adamw_beta1` flag was added in commit d386a5f (betas=(cfg.adamw_beta1, cfg.adamw_beta2) in AdamW constructor).
+- **Compete target BEATEN** by wide margin — PR #1319 test=39.7038, gap=-1.2262 (-3.0%). Focus: push val further down and improve OOD splits.
+- geom_camber_rc split remains hardest OOD challenge — high Re + geometry shift simultaneously.
+- The BINDING constraint is the 30-minute wall-clock timeout. Val was still -0.49/epoch when we hit the timeout. Speed improvements compound.
+- VRAM is severely underutilized (~21/96 GB). This represents latent throughput capacity.
+- Gradient accumulation (effective batch=16 via grad_accum=4) is risky — PR #1251 showed severe under-convergence from 12k→3k steps. PR #1334 re-testing on new baseline.
+- Dead ends this round: PR #1188 (per-channel huber), PR #1192 (annealed huber), PR #1224 (ema_decay=0.9995), PR #1229 (surf_weight=20), PR #1233 (SWA old baseline), PR #1240 (huber_delta=0.05), PR #1248 (dropout p=0.1), PR #1251 (grad_accum batch 16 old baseline), PR #1253 (log-cosh loss), PR #1274 (OneCycleLR max_lr=3.5e-3), PR #1279 (warmup_epochs=2), PR #1293 (huber_delta=0.08), PR #1316 (huber_delta=0.15).
