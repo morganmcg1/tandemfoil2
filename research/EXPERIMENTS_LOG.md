@@ -1,5 +1,46 @@
 # SENPAI Research Results
 
+## 2026-04-29 — PR #886: Pressure-channel loss weighting (p_weight sweep) on Huber baseline
+
+- Branch: `charliepai2e1-alphonse/pressure-channel-weight`
+- Hypothesis: Upweighting pressure channel (index 2) in Huber loss would align training with the `val_avg/mae_surf_p` objective.
+
+### Results
+
+| Run | `val_avg/mae_surf_p` | `val_avg/mae_surf_Ux` | `val_avg/mae_surf_Uy` | Delta vs current baseline |
+|-----|----------------------|-----------------------|-----------------------|--------------------------|
+| Baseline (PR #882) | **103.2182** | — | — | — |
+| `p_weight=2.0` | 113.0719 | 1.9448 | 0.8346 | +9.54% |
+| `p_weight=3.0` | 109.8322 | 2.3026 | 0.8398 | +6.40% |
+| `p_weight=5.0` | 125.6185 | 2.7838 | 0.9450 | +21.73% |
+
+Per-split surface pressure MAE (best epoch=14 for all):
+
+| Run | `val_single_in_dist` | `val_geom_camber_rc` | `val_geom_camber_cruise` | `val_re_rand` |
+|-----|----------------------|----------------------|--------------------------|---------------|
+| `p_weight=2.0` | 145.84 | 114.46 | 89.28 | 102.71 |
+| `p_weight=3.0` | 138.21 | 120.66 | 82.12 | 98.34 |
+| `p_weight=5.0` | 154.96 | 135.42 | 99.45 | 112.65 |
+
+- Metrics: `metrics/charliepai2e1-alphonse-pweight-2.0-k5sydadm.jsonl`, `metrics/charliepai2e1-alphonse-pweight-3.0-yrd9rvw7.jsonl`, `metrics/charliepai2e1-alphonse-pweight-5.0-1gn6crxv.jsonl`
+- Config base: `--loss huber --huber_delta 1.0 --surf_weight 30 --n_hidden 128 --n_head 4`
+- All runs: 14 epochs (30-min timeout), ~131 s/epoch
+
+### Analysis and Conclusions
+
+**Decision: Closed — clear dead-end.** All three p_weight values are substantially worse than the current baseline (103.2182 from PR #882). The PR was originally written against the older PR #827 baseline (109.5716), and even against that weaker target, only p_weight=3.0 came close (+0.24%). Against the actual current best, the best run (p_weight=3.0) is still +6.4% worse.
+
+Student's analysis is accurate and insightful:
+1. Targets are normalized pre-loss, so channels already compete on comparable scales.
+2. `surf_weight=30` already routes 30x gradient toward surface nodes (where pressure is evaluated). Stacking channel reweighting on top is redundant and harmful.
+3. High p_weight (5.0) effectively rescales the Huber loss regime — the delta=1.0 threshold is calibrated for unit-weight loss, and multiplying by 5 pushes gradients into the linear tail, impairing convergence.
+
+**Key takeaway:** The model is already pressure-focused at the node level via `surf_weight`. Channel-level reweighting is the wrong lever. Gains must come from representation quality (model capacity, architecture), not gradient routing.
+
+**Follow-up note:** Student offered to take a bug-fix PR for `test_geom_camber_cruise` NaN — this was already resolved in PR #792's infrastructure fix (grad_clip + eval sanitization). New assignments build on that baseline.
+
+---
+
 ## 2026-04-28 20:15 — PR #792: Deeper Transolver: n_layers 5→8, lr 5e-4→3e-4
 
 - Branch: `charliepai2e1-frieren/more-layers`
