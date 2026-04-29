@@ -1,6 +1,36 @@
 # Baseline — icml-appendix-charlie-pai2e-r3
 
 ## Current Best
+- **Source**: Multi-scale RFF (σ₁=1.0, σ₂=5.0, num_freq=32) on normalized (x,z) coords + EMA decay=0.99 + per-sample Re-aware RMS loss normalization (PR #928, frieren)
+- **PR**: #928
+- **Primary**: `val_avg/mae_surf_p` = **83.338** (lower is better)
+- **Test (3-split mean, excl. cruise NaN)**: `test_avg/mae_surf_p` = **82.635**
+
+### Best checkpoint metrics (val, best EMA checkpoint, epoch 13)
+
+| Split | mae_surf_p | Δ vs PR #895 |
+|---|---|---|
+| val_single_in_dist | 99.354 | -4.59% |
+| val_geom_camber_rc | 93.856 | -3.79% |
+| val_geom_camber_cruise | 60.324 | -7.11% |
+| val_re_rand | 79.819 | -3.02% |
+| **val_avg** | **83.338** | **-4.46%** |
+
+### Test metrics (best-val checkpoint, epoch 13; EMA weights; NaN in cruise due to known 1-sample bug)
+
+| Split | mae_surf_p |
+|---|---|
+| test_single_in_dist | 91.795 |
+| test_geom_camber_rc | 84.131 |
+| test_geom_camber_cruise | NaN (1-sample GT bug) |
+| test_re_rand | 71.978 |
+| **test_avg (3-split excl. cruise)** | **82.635** |
+
+- **Metric summary**: `target/runs/multi-scale-rff-normalized/training_metrics.jsonl`
+- **Reproduce**: `cd target/ && WANDB_MODE=offline EMA_DECAY=0.99 python train.py --lr 5e-4 --surf_weight 10 --batch_size 4 --epochs 50`
+  (Multi-scale RFF σ₁=1.0, σ₂=5.0, num_freq=32, normalized coords, seed=42; EMA decay=0.99; per-sample Re-aware RMS normalization; Cosine T_max=15 + 1-epoch warmup)
+
+## Previous Best (PR #895)
 - **Source**: EMA of model weights (decay=0.99) for evaluation (PR #895, thorfinn)
 - **PR**: #895
 - **Primary**: `val_avg/mae_surf_p` = **87.233** (lower is better)
