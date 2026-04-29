@@ -408,6 +408,8 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    warmup_epochs: int = 0  # 0 disables warmup; otherwise linear warmup then cosine
+    clip_norm: float = 0.0  # 0 disables grad clipping; otherwise clip total grad norm
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -417,6 +419,7 @@ class Config:
     ema_decay: float = 0.999  # Polyak/EMA decay; 0.999 → ~1000-step half-life
     ema_warmup_epochs: int = 5  # epochs to skip EMA accumulation (avoid pulling toward random init)
     huber_delta: float = 0.0  # Huber loss transition point in normalized space; 0 → MSE
+    eval_checkpoint: str | None = None  # if set, skip training; load checkpoint and run test eval only
 
 
 cfg = sp.parse(Config)
@@ -472,7 +475,23 @@ print(
 )
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+warmup_epochs = max(0, min(cfg.warmup_epochs, MAX_EPOCHS - 1))
+if warmup_epochs > 0:
+    warmup = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_epochs,
+    )
+    cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(MAX_EPOCHS - warmup_epochs, 1),
+    )
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs],
+    )
+else:
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+print(
+    f"Optim: AdamW lr={cfg.lr} wd={cfg.weight_decay}  "
+    f"warmup_epochs={warmup_epochs}  clip_norm={cfg.clip_norm}"
+)
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -514,6 +533,37 @@ best_metrics: dict = {}
 global_step = 0
 train_start = time.time()
 
+if cfg.eval_checkpoint:
+    # Re-eval mode: skip training, load given checkpoint, run test eval only.
+    ckpt_path = Path(cfg.eval_checkpoint)
+    print(f"\n[eval-only] Loading checkpoint: {ckpt_path}")
+    model.load_state_dict(torch.load(ckpt_path, map_location=device, weights_only=True))
+    model.eval()
+    print("[eval-only] Evaluating on held-out test splits...")
+    test_datasets = load_test_data(cfg.splits_dir, debug=cfg.debug)
+    test_loaders = {
+        name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
+        for name, ds in test_datasets.items()
+    }
+    test_metrics = {
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        for name, loader in test_loaders.items()
+    }
+    test_avg = aggregate_splits(test_metrics)
+    print(f"\n  TEST  avg_surf_p={test_avg['avg/mae_surf_p']:.4f}")
+    for name in TEST_SPLIT_NAMES:
+        print_split_metrics(name, test_metrics[name])
+    test_log: dict[str, float] = {}
+    for split_name, m in test_metrics.items():
+        for k, v in m.items():
+            test_log[f"test/{split_name}/{k}"] = v
+    for k, v in test_avg.items():
+        test_log[f"test_{k}"] = v
+    wandb.log(test_log)
+    wandb.summary.update(test_log)
+    wandb.finish()
+    raise SystemExit(0)
+
 for epoch in range(MAX_EPOCHS):
     if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
         print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
@@ -551,11 +601,19 @@ for epoch in range(MAX_EPOCHS):
 
         optimizer.zero_grad()
         loss.backward()
+        if cfg.clip_norm > 0:
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.clip_norm)
+        else:
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float("inf"))
         optimizer.step()
         if epoch >= cfg.ema_warmup_epochs:
             ema_model.update_parameters(model)
         global_step += 1
-        wandb.log({"train/loss": loss.item(), "global_step": global_step})
+        wandb.log({
+            "train/loss": loss.item(),
+            "train/grad_norm": grad_norm.item(),
+            "global_step": global_step,
+        })
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
