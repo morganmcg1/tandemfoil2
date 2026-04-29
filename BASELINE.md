@@ -6,7 +6,49 @@ SPDX-PackageName: senpai
 
 # Baseline Metrics — TandemFoilSet (pai2e-r5)
 
-## 2026-04-29 02:30 — PR #926: surf_weight=28 on Lion+T_max=15+EMA baseline (NEW BEST)
+## 2026-04-29 04:00 — PR #913: n_layers=3 + bf16 autocast on Lion+L1+clip+T_max=15+EMA+sw=28 baseline (NEW BEST)
+
+- **Surface MAE:** Ux=0.8735, Uy=0.4147, p=**63.0588** (val_avg, best checkpoint epoch 29)
+- **val_avg/mae_surf_p:** 63.0588 — **−6.22% vs previous best (67.2490)**
+- **Metric summary:** `metrics/tanjiro-nlayers3-bf16-wyals8i4.jsonl`
+- **Reproduce:** `cd target/ && python train.py --n_layers 3 --bf16 --surf_weight 28.0 --optimizer lion --lr 3e-4 --weight_decay 1e-2 --loss l1 --scheduler cosine --T_max 15 --clip_grad_norm 1.0 --n_hidden 128 --n_head 4 --slice_num 64 --mlp_ratio 2 --batch_size 4`
+
+### Per-split validation (best checkpoint, epoch 29)
+
+| Split | surf Ux | surf Uy | surf p | vol Ux | vol Uy | vol p |
+|-------|--------:|--------:|-------:|-------:|-------:|------:|
+| val_single_in_dist     | 0.7230 | 0.3749 |  69.5556 | 3.4483 | 1.4977 |  96.2418 |
+| val_geom_camber_rc     | 1.4011 | 0.6057 |  77.6902 | 4.1075 | 2.1391 |  91.8509 |
+| val_geom_camber_cruise | 0.4399 | 0.2571 |  41.7779 | 2.3158 | 0.9109 |  47.9011 |
+| val_re_rand            | 0.9299 | 0.4210 |  63.2113 | 3.1335 | 1.4993 |  69.7065 |
+| **avg**                | **0.8735** | **0.4147** | **63.0588** | **3.2513** | **1.5118** | **76.4251** |
+
+### Model configuration
+
+| Parameter | Value |
+|-----------|-------|
+| **n_layers** | **3** (was 5 — key change) |
+| n_hidden | 128 |
+| n_head | 4 |
+| slice_num | 64 |
+| mlp_ratio | 2 |
+| optimizer | Lion |
+| lr | 3e-4 |
+| weight_decay | 1e-2 |
+| surf_weight | 28.0 |
+| batch_size | 4 |
+| loss | L1 (vol + surf_weight * surf) |
+| scheduler | CosineAnnealingLR T_max=15 |
+| gradient clipping | clip_grad_norm max_norm=1.0 |
+| EMA | decay=0.995 |
+| **bf16** | **True** (autocast bfloat16 — key change, enables ~1.7× more epochs in budget) |
+| epochs run | 29 (vs 14 in fp32 — bf16 gives more epochs within timeout) |
+
+**Improvement over previous baseline (PR #926):** 67.2490 → 63.0588 (−6.22%)
+
+---
+
+## 2026-04-29 02:30 — PR #926: surf_weight=28 on Lion+T_max=15+EMA baseline
 
 - **Surface MAE:** Ux=0.8727, Uy=0.4681, p=**67.2490** (val_avg, best checkpoint epoch 14)
 - **val_avg/mae_surf_p:** 67.2490 — **−4.35% vs previous best (70.3212)**
