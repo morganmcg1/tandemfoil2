@@ -1,5 +1,50 @@
 # SENPAI Research Results — willow-pai2e-r3
 
+## 2026-04-29 — PR #1016 (PENDING REBASE → MERGE): bf16 mixed precision — strong win, val_avg=58.49, test_avg=51.50, 14/14 epochs in 26.1 min
+- **Branch:** `frieren/bf16`
+- **Hypothesis:** bf16 unlocks wall-clock budget — SwiGLU's 12/14-epoch truncation at fp32 (152s/epoch) recovers to 14/14 with full cosine decay at bf16 (~112s/epoch). Same dynamic range as fp32 (8 exp bits), no loss scaling needed. Predicted −0.5 to −2% from recovered cosine epochs alone.
+- **Run:** W&B `extyiumn`, 14/14 epochs, **26.1 min** (4 min slack), 41.8 GB peak, group `bf16`
+
+| Split | val v1 (`extyiumn`) | val SwiGLU baseline | Δ val | test v1 | test SwiGLU baseline | Δ test |
+|---|---|---|---|---|---|---|
+| `single_in_dist` | 62.80 | 74.96 | **−16.22%** | 54.74 | 65.07 | −15.87% |
+| `geom_camber_rc` | 72.88 | 73.39 | −0.69% | 67.18 | 67.47 | −0.43% |
+| `geom_camber_cruise` | 40.22 | 42.66 | −5.72% | 33.77 | 35.67 | −5.33% |
+| `re_rand` | 58.05 | 57.81 | +0.42% | 50.29 | 51.93 | −3.16% |
+| **avg** | **58.4890** | **62.20** | **−5.97%** | **51.4986** | **55.04** | **−6.43%** |
+
+### bf16 sanity (mandatory instrumentation, all clean)
+```
+[bf16-sanity epoch=0 batch=0]   loss=19.350222  grad_norm=52.6791  weight_dtype=torch.float32  fwd_dtype=torch.bfloat16  finite=True
+[bf16-sanity epoch=1 batch=373] loss=4.014130   grad_norm=31.4794  weight_dtype=torch.float32  fwd_dtype=torch.bfloat16  finite=True
+```
+- Master weights fp32 (autocast did not modify) ✓
+- Forward pass bf16 (autocast active) ✓
+- All grads finite throughout 14 epochs, no NaN/Inf ✓
+- No PhysicsAttention softmax precision rescue needed ✓
+
+### Per-epoch val_avg trajectory (cosine descent → recovered budget)
+```
+ep 1: 204.45    ep 8:  83.08
+ep 2: 154.86    ep 9:  84.30
+ep 3: 129.39    ep 10: 78.39
+ep 4: 127.57    ep 11: 66.17
+ep 5: 113.34    ep 12: 66.56  ← fp32 SwiGLU truncated here at val=66
+ep 6: 104.71    ep 13: 59.35  ← recovered budget
+ep 7: 104.02    ep 14: 58.49  ← best (still descending)
+```
+Best is final epoch — cosine schedule actually fully decayed. Decomposition: epoch 12 val=66.56 essentially same as fp32-SwiGLU at 12 epochs (bf16 didn't hurt); epochs 13-14 give −8 absolute points of pure recovered-budget gain.
+
+### Decision: PENDING REBASE → MERGE — strong win (val < 60 cleared); merge conflict, mechanical rebase only
+- **val < 60 strong-win threshold cleared** (58.49 vs 62.20 = −5.97%).
+- **bf16 didn't hurt convergence** (epoch-by-epoch curve nearly identical to fp32 baseline through epoch 12, then +2 epochs of pure cosine descent).
+- **Wall-clock unlock confirmed:** 26.1 min full 14-epoch run leaves 4 min slack for `--epochs 16` extension experiments OR depth/width scaling without timeout pressure.
+- **Sent back for mechanical rebase** — same merge-conflict situation as #999 (advisor branch updated since PR submission). No re-run needed; rebase + sanity print + resubmit.
+- **Strategic implication:** PR #936 (n_layers=7 closed for wall-clock incompatibility at fp32) is now reopenable. Depth scaling + width scaling become high-EV next-round candidates.
+- **Test_avg=51.50 is ~3.5 points below the literature reference 55.0** — paper-facing benchmark is now genuinely below the SOTA reference for this dataset.
+
+---
+
 ## 2026-04-29 — PR #999 (PENDING REBASE → MERGE): RMSNorm — strong win, two seeds, val_avg=58.30 mean (best 57.95)
 - **Branch:** `thorfinn/rmsnorm`
 - **Hypothesis:** RMSNorm (scale-only, no mean-centering) is the canonical normalization pairing for SwiGLU. Removing the mean-centering preserves scale (the bilinear-gate-relevant statistic), reduces activation coupling, and gives back ~2 epochs of wall-clock margin inside the 30-min budget.
