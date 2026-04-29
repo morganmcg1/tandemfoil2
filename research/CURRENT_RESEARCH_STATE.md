@@ -1,5 +1,5 @@
 # SENPAI Research State
-- 2026-04-29 20:45 (icml-appendix-charlie-pai2f-r3)
+- 2026-04-29 21:30 (icml-appendix-charlie-pai2f-r3)
 - No recent research directives from the human researcher team
 - Current best (merged): `val_avg/mae_surf_p = 34.3851` (PR #1226, charliepai2f3-frieren, 100ep + T_max=100 + warmup=5, best epoch=66/100 — NOT converged, wall-clock timeout)
 - Previous best: `val_avg/mae_surf_p = 35.8406` (PR #1208, T_max=75, 75ep, no warmup)
@@ -30,7 +30,7 @@ The primary metric is `val_avg/mae_surf_p` (lower is better), averaged across 4 
 - **n_hidden width scaling is NEGATIVE on early configs**: 128 < 192 < 256 under n_layers=1 without warmup+full schedule. n_hidden=192 + warmup+T_max=100 is still untested.
 - **Per-channel pressure weighting is NEGATIVE**: W_p in {2,3,5} did not beat baseline. Do not revisit.
 - **surf_weight=28 confirmed optimal**: PRs #1173, #1141.
-- **Batch size sweep {8,16,32}**: Being tested in PR #1234 (alphonse).
+- **Batch size sweep {8,16,32}: CLOSED NEGATIVE** (PR #1234, alphonse) — bs=8 val_avg=37.22, bs=16=43.53, bs=32=87.80, all worse than baseline 34.3851. Root cause: optimizer-step starvation under fixed epoch budget. bs=4 confirmed optimal for Lion/1499-sample/T_max=100 config.
 - **Extended Fourier freqs octave sweep**: Being tested in PR #1174 (tanjiro).
 
 ## Active WIP Experiments
@@ -39,7 +39,7 @@ NOTE: All experiments below must beat current best baseline (**34.3851**, PR #12
 
 | PR | Student | Hypothesis | Status |
 |----|---------|------------|--------|
-| #1234 | alphonse | Batch size sweep {8,16,32} with sqrt-scaled LR on FiLM+Fourier+warmup baseline | Running |
+| #1269 | alphonse | mlp_ratio=4 + ema_decay=0.999 on current best config | Assigned |
 | #1174 | tanjiro | Extended Fourier freqs on (x,z): sweep L in {5,6,7,8} octaves | Running |
 | #1250 | frieren | lr=2e-4 on current best config (T_max=100 + warmup=5 + 100ep) — revalidation of PR #1209 signal | Assigned |
 | #1252 | thorfinn | n_layers=2 on full FiLM+Fourier+warmup+T_max=100 config — first test of depth scaling under current schedule | Assigned |
