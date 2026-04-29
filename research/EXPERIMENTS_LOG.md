@@ -1,5 +1,24 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2f-r3
 
+## 2026-04-29 20:15 — PR #1280: Lion lr=1e-4 on full current-best config (charliepai2f3-nezuko) — CLOSED DEAD END (LR-too-low regression)
+
+- Branch: charliepai2f3-nezuko/lion-lr-1e-4-current-best (closed, branch deleted)
+- Hypothesis: lr=1e-4 with full current-best schedule (warmup=5 + T_max=100) might beat lr=1.5e-4 baseline (PR #1258); the original stale-config PR #1209 sweep that ranked lr=2e-4 best lacked warmup/T_max=100.
+- Results: hypothesis REJECTED — lr=1e-4 regresses on every val and test split.
+
+| Split | val (lr=1e-4) | val baseline (1.5e-4) | Δ |
+|-------|---------------|------------------------|---|
+| val_single_in_dist | 34.5394 | 32.1133 | +2.4261 |
+| val_geom_camber_rc | 50.0609 | 47.2012 | +2.8597 |
+| val_geom_camber_cruise | 18.3391 | 17.1896 | +1.1495 |
+| val_re_rand | 37.7178 | 36.1165 | +1.6013 |
+| **val_avg** | **35.1643** | **33.1552** | **+2.0091 (+6.06%)** |
+| **test_avg** | **29.0013** | **28.1158** | **+0.8855 (+3.15%)** |
+
+- Metrics path: target/models/model-charliepai2f3-nezuko-lion-lr-1e-4-current-best-20260429-193618/metrics.jsonl
+- Best epoch = 65/100, reached ep66 (same wall-clock budget as baseline). LR at cutoff = 3.52e-5.
+- Commentary: Closes the lower bracket of the LR triangulation on the full FiLM+Fourier+warmup+T_max=100 config: lr=1e-4 (35.1643) > lr=1.5e-4 (33.1552, best) < lr=3e-4 (34.3851), with frieren's lr=2e-4 result (PR #1250 review) at 33.81. The optimum is at 1.5e-4 with shallow curvature on the high side and steep regression on the low side. Consistent with Lion's wall-clock-distance argument: per-step magnitude ≈ lr; lower lr means less cumulative parameter movement under a binding 30-min wall-clock. LR sweeping has saturated — further headroom is in architecture / surf_weight / weight_decay / slice_num (PRs #1294, #1286, #1285, #1282 in flight).
+
 ## 2026-04-29 23:30 — PR #1257: T_max=200 extreme slow decay (charliepai2f3-fern) — CLOSED DEAD END
 
 - Branch: charliepai2f3-fern/grad-accum-effective-batch16-tmax100-warmup5 (closed)
