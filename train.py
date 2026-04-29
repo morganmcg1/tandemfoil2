@@ -513,7 +513,8 @@ class Config:
     clip_grad_norm: float = 1.0   # 0.0 = disabled
     ema_decay: float = 0.995      # 0.0 = disabled
     scheduler: str = "cosine"     # "cosine" | "none"
-    T_max: int = 15               # cosine scheduler T_max
+    T_max: int = 15               # cosine scheduler T_max (post-warmup if warmup_epochs > 0)
+    warmup_epochs: int = 0        # linear warmup epochs before cosine; 0 = no warmup
     fourier_pos_enc: bool = False  # apply Fourier features to (x, z) dims
     fourier_freqs: list[float] = field(default_factory=lambda: [1.0, 2.0, 4.0, 8.0, 16.0])
 
@@ -573,7 +574,25 @@ else:
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
 if cfg.scheduler == "cosine":
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.T_max)
+    if cfg.warmup_epochs > 0:
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=1.0 / 30,
+            end_factor=1.0,
+            total_iters=cfg.warmup_epochs,
+        )
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=cfg.T_max,
+            eta_min=1e-6,
+        )
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[cfg.warmup_epochs],
+        )
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.T_max)
 else:
     scheduler = None
 
