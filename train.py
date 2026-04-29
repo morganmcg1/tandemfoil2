@@ -521,7 +521,8 @@ for epoch in range(MAX_EPOCHS):
         # Per-sample Re-based weight: downweight high-Re samples.
         # x dim 13 is log(Re), shared across all nodes of a sample.
         log_re_per_sample = x[:, 0, 13]  # [B]
-        re_weight = 1.0 / (log_re_per_sample - log_re_per_sample.min() + 1.0)  # [B]
+        alpha = 1.5
+        re_weight = 1.0 / (log_re_per_sample - log_re_per_sample.min() + 1.0) ** alpha  # [B]
         re_weight = re_weight / re_weight.sum()  # normalize to sum=1
         re_weight = re_weight.detach()
 
