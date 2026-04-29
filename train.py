@@ -22,7 +22,7 @@ import math
 import os
 import subprocess
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import simple_parsing as sp
@@ -218,7 +218,7 @@ class Transolver(nn.Module):
 # Fourier positional encoding for 2D node coordinates
 # ---------------------------------------------------------------------------
 
-FOURIER_FREQS = (1, 2, 4, 8, 16)
+FOURIER_FREQS = (1.0, 2.0, 4.0, 8.0, 16.0)
 
 
 def fourier_pos_enc(xy: torch.Tensor, freqs=FOURIER_FREQS) -> torch.Tensor:
@@ -239,7 +239,8 @@ def fourier_pos_enc(xy: torch.Tensor, freqs=FOURIER_FREQS) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 
 def evaluate_split(model, loader, stats, surf_weight, device,
-                   bf16: bool = False, use_fourier: bool = False) -> dict[str, float]:
+                   bf16: bool = False, use_fourier: bool = False,
+                   fourier_freqs=FOURIER_FREQS) -> dict[str, float]:
     """Evaluate a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -273,7 +274,7 @@ def evaluate_split(model, loader, stats, surf_weight, device,
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             if use_fourier:
                 xy_norm = x_norm[..., :2]
-                xy_enc = fourier_pos_enc(xy_norm)
+                xy_enc = fourier_pos_enc(xy_norm, freqs=fourier_freqs)
                 x_in = torch.cat([xy_enc, x_norm[..., 2:]], dim=-1)
             else:
                 x_in = x_norm
@@ -454,6 +455,7 @@ class Config:
     scheduler: str = "cosine"     # "cosine" | "none"
     T_max: int = 15               # cosine scheduler T_max
     fourier_pos_enc: bool = False  # apply Fourier features to (x, z) dims
+    fourier_freqs: list[float] = field(default_factory=lambda: [1.0, 2.0, 4.0, 8.0, 16.0])
 
 
 cfg = sp.parse(Config)
@@ -482,7 +484,7 @@ val_loaders = {
     for name, ds in val_splits.items()
 }
 
-pos_enc_dim = 2 + 4 * len(FOURIER_FREQS) if cfg.fourier_pos_enc else 2
+pos_enc_dim = 2 + 4 * len(cfg.fourier_freqs) if cfg.fourier_pos_enc else 2
 model_config = dict(
     space_dim=pos_enc_dim,
     fun_dim=X_DIM - 2,
@@ -561,7 +563,7 @@ for epoch in range(MAX_EPOCHS):
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         if cfg.fourier_pos_enc:
             xy_norm = x_norm[..., :2]
-            xy_enc = fourier_pos_enc(xy_norm)
+            xy_enc = fourier_pos_enc(xy_norm, freqs=cfg.fourier_freqs)
             x_in = torch.cat([xy_enc, x_norm[..., 2:]], dim=-1)
         else:
             x_in = x_norm
@@ -604,6 +606,7 @@ for epoch in range(MAX_EPOCHS):
         name: evaluate_split(
             eval_model, loader, stats, cfg.surf_weight, device,
             bf16=cfg.bf16, use_fourier=cfg.fourier_pos_enc,
+            fourier_freqs=cfg.fourier_freqs,
         )
         for name, loader in val_loaders.items()
     }
@@ -666,6 +669,7 @@ if best_metrics:
             name: evaluate_split(
                 eval_model_for_test, loader, stats, cfg.surf_weight, device,
                 bf16=cfg.bf16, use_fourier=cfg.fourier_pos_enc,
+                fourier_freqs=cfg.fourier_freqs,
             )
             for name, loader in test_loaders.items()
         }
