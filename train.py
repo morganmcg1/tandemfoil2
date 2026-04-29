@@ -172,8 +172,9 @@ class TransolverBlock(nn.Module):
         fx = self.attn(self.ln_1(fx)) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
-            return self.mlp2(self.ln_3(fx))
-        return fx
+            hidden = self.ln_3(fx)
+            return self.mlp2(hidden), hidden
+        return fx, None
 
 
 class Transolver(nn.Module):
@@ -206,6 +207,14 @@ class Transolver(nn.Module):
             for i in range(n_layers)
         ])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
+
+        aux_hidden = max(n_hidden // 2, 32)
+        self.aux_surf_p_head = nn.Sequential(
+            nn.Linear(n_hidden, aux_hidden, bias=True),
+            nn.GELU(),
+            nn.Linear(aux_hidden, 1, bias=True),
+        )
+
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -220,9 +229,13 @@ class Transolver(nn.Module):
     def forward(self, data, **kwargs):
         x = data["x"]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
+        hidden = None
         for block in self.blocks:
-            fx = block(fx)
-        return {"preds": fx}
+            fx, h = block(fx)
+            if h is not None:
+                hidden = h
+        aux_surf_p = self.aux_surf_p_head(hidden)
+        return {"preds": fx, "aux_surf_p": aux_surf_p}
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +340,7 @@ def write_experiment_summary(
         "weight_decay": cfg.weight_decay,
         "batch_size": cfg.batch_size,
         "surf_weight": cfg.surf_weight,
+        "aux_surf_weight": cfg.aux_surf_weight,
         "epochs_configured": cfg.epochs,
         "cosine_tmax": cfg.cosine_tmax,
         "cosine_eta_min": cfg.cosine_eta_min,
@@ -370,6 +384,7 @@ class Config:
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 10.0
+    aux_surf_weight: float = 20.0  # auxiliary surface-pressure head loss weight
     epochs: int = 50
     cosine_tmax: int = 15  # CosineAnnealingLR T_max — match realised epoch budget
     cosine_eta_min: float = 1e-6
@@ -480,6 +495,7 @@ for epoch in range(MAX_EPOCHS):
     epoch_std_max = 0.0
     epoch_w_min = float("inf")
     epoch_w_max = 0.0
+    epoch_aux_surf = 0.0
     n_batches = 0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
@@ -491,7 +507,9 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp_enabled):
-            pred = model({"x": x_norm})["preds"]
+            out = model({"x": x_norm})
+            pred = out["preds"]
+            aux_surf_p = out.get("aux_surf_p")
             sq_err = (pred - y_norm) ** 2
 
             vol_mask = mask & ~is_surface
@@ -521,6 +539,14 @@ for epoch in range(MAX_EPOCHS):
             surf_loss = (sq_err_w * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
             loss = vol_loss + cfg.surf_weight * surf_loss
 
+            aux_surf_loss_val = 0.0
+            if aux_surf_p is not None and surf_mask.any():
+                y_surf_p_norm = y_norm[surf_mask][:, 2:3]
+                aux_surf_p_masked = aux_surf_p[surf_mask]
+                aux_surf_loss = F.mse_loss(aux_surf_p_masked, y_surf_p_norm)
+                loss = loss + cfg.aux_surf_weight * aux_surf_loss
+                aux_surf_loss_val = aux_surf_loss.item()
+
         epoch_std_mean += surf_p_std.mean().item()
         epoch_std_min = min(epoch_std_min, surf_p_std.min().item())
         epoch_std_max = max(epoch_std_max, surf_p_std.max().item())
@@ -534,11 +560,13 @@ for epoch in range(MAX_EPOCHS):
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
+        epoch_aux_surf += aux_surf_loss_val
         n_batches += 1
 
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
+    epoch_aux_surf /= max(n_batches, 1)
     epoch_std_mean /= max(n_batches, 1)
 
     # --- Validate ---
@@ -572,6 +600,7 @@ for epoch in range(MAX_EPOCHS):
         "lr": epoch_lr,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/aux_surf_loss": epoch_aux_surf,
         "train/surf_p_std_mean": epoch_std_mean,
         "train/surf_p_std_min": epoch_std_min,
         "train/surf_p_std_max": epoch_std_max,
@@ -583,7 +612,7 @@ for epoch in range(MAX_EPOCHS):
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
-        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f} "
+        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f} aux={epoch_aux_surf:.4f} "
         f"std(mn/mx)={epoch_std_min:.3f}/{epoch_std_max:.3f} "
         f"w(mn/mx)={epoch_w_min:.3f}/{epoch_w_max:.3f}]  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
