@@ -4,9 +4,39 @@ Lower `val_avg/mae_surf_p` is better.
 
 ---
 
+## 2026-04-29 01:55 — PR #850: Lower surf_weight 10→3 on Huber+BF16 stack
+
+- **val_avg/mae_surf_p:** 101.563 ← **current best**
+- **val per-split surf p MAE:**
+  - `val_single_in_dist`: 120.51
+  - `val_geom_camber_rc`: 107.95
+  - `val_geom_camber_cruise`: 82.16
+  - `val_re_rand`: 95.64
+- **test_avg/mae_surf_p:** 89.918 ← **best clean 4-split test**
+- **test per-split surf p MAE:**
+  - `test_single_in_dist`: 102.846
+  - `test_geom_camber_rc`: 94.352
+  - `test_geom_camber_cruise`: 70.128
+  - `test_re_rand`: 92.346
+- **Best epoch:** 17 of 17 (still descending at 30-min timeout)
+- **Model:** `n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2` (663K params + distance features)
+- **Training:** `lr=1e-3 (peak), warmup_epochs=5, warmup_start_lr=1e-4, eta_min=1e-6, weight_decay=1e-4, batch_size=4, surf_weight=3.0, epochs=50, amp=True, amp_dtype=bf16, huber_delta=1.0`
+- **Changes vs prior:** `surf_weight` lowered from 10.0 to 3.0. Lower surface weight forces volume residual to inform attention more, exploiting the global pressure-Poisson relationship.
+- **W&B run:** `6rh7dzkx`
+- **Reproduce:**
+  ```bash
+  cd target/ && python train.py --agent willowpai2e5-edward \
+    --amp --amp_dtype bf16 \
+    --surf_weight 3.0 \
+    --wandb_name "willowpai2e5-edward/sw3-huber" \
+    --wandb_group lower-surf-weight-huber-stack
+  ```
+
+---
+
 ## 2026-04-28 23:40 — PR #739: Replace MSE with Huber loss (delta=1.0) for high-Re outlier robustness
 
-- **val_avg/mae_surf_p:** 110.594 ← **current best**
+- **val_avg/mae_surf_p:** 110.594
 - **val per-split surf p MAE:**
   - `val_single_in_dist`: 130.87
   - `val_geom_camber_rc`: 115.14
