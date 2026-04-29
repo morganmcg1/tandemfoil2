@@ -217,6 +217,11 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
+# Pressure-channel clamp in normalized space: ~3× training pressure range
+# (train |p|_max ≈ 45K, y_std[2] ≈ 679 → 3·45K/679 ≈ 199; round to 200).
+P_NORM_CLAMP = 200.0
+
+
 def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
     """Evaluate a split and return metrics matching the organizer scorer.
 
@@ -237,9 +242,26 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             mask = mask.to(device, non_blocking=True)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
-            y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+            pred = torch.cat(
+                [pred[..., :2], pred[..., 2:3].clamp(-P_NORM_CLAMP, P_NORM_CLAMP)],
+                dim=-1,
+            )
 
+            # Drop samples with non-finite GT before any error compute so that
+            # `Inf * 0 = NaN` cannot pollute loss/metric accumulators (e.g.
+            # test_geom_camber_cruise/000020.pt has Inf in y[..., p]).
+            B = y.shape[0]
+            y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            if not y_finite.any():
+                continue
+            if not y_finite.all():
+                pred = pred[y_finite]
+                y = y[y_finite]
+                is_surface = is_surface[y_finite]
+                mask = mask[y_finite]
+
+            y_norm = (y - stats["y_mean"]) / stats["y_std"]
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
@@ -350,7 +372,7 @@ DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 class Config:
     lr: float = 5e-4
     weight_decay: float = 1e-4
-    batch_size: int = 4
+    batch_size: int = 6
     surf_weight: float = 10.0
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
@@ -444,6 +466,10 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
+        pred = torch.cat(
+            [pred[..., :2], pred[..., 2:3].clamp(-P_NORM_CLAMP, P_NORM_CLAMP)],
+            dim=-1,
+        )
         sq_err = (pred - y_norm) ** 2
 
         vol_mask = mask & ~is_surface
