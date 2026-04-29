@@ -367,7 +367,7 @@ LR_ETA_MIN = 1e-6
 class Config:
     lr: float = 1e-3
     weight_decay: float = 1e-4
-    batch_size: int = 4
+    batch_size: int = 8
     surf_weight: float = 25.0
     grad_clip: float = 0.0  # max global gradient norm; 0.0 disables clipping
     epochs: int = 50
