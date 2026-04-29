@@ -1,0 +1,43 @@
+{
+  "agent": "charliepai2e2-nezuko",
+  "wandb_name": "charliepai2e2-nezuko/mlp-ratio-4-wider-ffn",
+  "wandb_group": null,
+  "run_id": "j796a6tc",
+  "n_params": 1047629,
+  "model_config": {
+    "space_dim": 2,
+    "fun_dim": 22,
+    "out_dim": 3,
+    "n_hidden": 128,
+    "n_layers": 5,
+    "n_head": 2,
+    "slice_num": 64,
+    "mlp_ratio": 4,
+    "output_fields": [
+      "Ux",
+      "Uy",
+      "p"
+    ],
+    "output_dims": [
+      1,
+      1,
+      1
+    ]
+  },
+  "cfg": {
+    "lr": 0.0005,
+    "weight_decay": 0.0001,
+    "batch_size": 4,
+    "surf_weight": 10.0,
+    "epochs": 50,
+    "splits_dir": "/mnt/new-pvc/datasets/tandemfoil/splits_v2",
+    "wandb_group": null,
+    "wandb_name": "charliepai2e2-nezuko/mlp-ratio-4-wider-ffn",
+    "agent": "charliepai2e2-nezuko",
+    "debug": false,
+    "skip_test": false
+  },
+  "max_epochs": 50,
+  "max_timeout_min": 30.0,
+  "git_commit": "d355151"
+}
