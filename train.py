@@ -406,6 +406,8 @@ ONECYCLE_PCT_START = 0.3
 ONECYCLE_DIV_FACTOR = 25.0
 ONECYCLE_FINAL_DIV_FACTOR = 1e4
 
+GRAD_ACCUM_STEPS = 2  # effective batch = batch_size * GRAD_ACCUM_STEPS = 4*2 = 8
+
 
 @dataclass
 class Config:
@@ -477,7 +479,11 @@ budgeted_epochs_lr = min(
     max(2, int(MAX_TIMEOUT_MIN * 60.0 / ONECYCLE_PER_EPOCH_SEC_ESTIMATE) + 1),
 )
 steps_per_epoch = len(train_loader)
-total_steps = steps_per_epoch * budgeted_epochs_lr
+# Optimizer steps per epoch (one per GRAD_ACCUM_STEPS micro-batches). Floor
+# division here means a final remainder micro-batch in an epoch may flush an
+# extra optimizer step; the OneCycleLR ValueError below clamps gracefully.
+effective_steps_per_epoch = max(1, steps_per_epoch // GRAD_ACCUM_STEPS)
+total_steps = budgeted_epochs_lr * effective_steps_per_epoch
 scheduler = OneCycleLR(
     optimizer,
     max_lr=ONECYCLE_MAX_LR,
@@ -491,13 +497,16 @@ scheduler = OneCycleLR(
 )
 print(
     f"OneCycleLR: max_lr={ONECYCLE_MAX_LR:g}, total_steps={total_steps} "
-    f"(steps_per_epoch={steps_per_epoch} x budgeted_epochs={budgeted_epochs_lr}), "
+    f"(effective_steps_per_epoch={effective_steps_per_epoch} "
+    f"= micro_batches_per_epoch={steps_per_epoch} // grad_accum={GRAD_ACCUM_STEPS}) "
+    f"x budgeted_epochs={budgeted_epochs_lr}, "
     f"pct_start={ONECYCLE_PCT_START}, div_factor={ONECYCLE_DIV_FACTOR}, "
     f"final_div_factor={ONECYCLE_FINAL_DIV_FACTOR:g} | "
     f"initial_lr={ONECYCLE_MAX_LR/ONECYCLE_DIV_FACTOR:.2e}, "
     f"min_lr={ONECYCLE_MAX_LR/(ONECYCLE_DIV_FACTOR*ONECYCLE_FINAL_DIV_FACTOR):.2e}, "
     f"peak at step {int(total_steps * ONECYCLE_PCT_START)} "
-    f"(epoch ~{budgeted_epochs_lr * ONECYCLE_PCT_START:.1f})"
+    f"(epoch ~{budgeted_epochs_lr * ONECYCLE_PCT_START:.1f}) | "
+    f"effective_batch_size={cfg.batch_size * GRAD_ACCUM_STEPS}"
 )
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
@@ -525,7 +534,10 @@ append_metrics_jsonl(metrics_jsonl_path, {
     "anneal_strategy": "cos",
     "three_phase": False,
     "cycle_momentum": False,
-    "steps_per_epoch": steps_per_epoch,
+    "micro_batches_per_epoch": steps_per_epoch,
+    "effective_steps_per_epoch": effective_steps_per_epoch,
+    "grad_accum_steps": GRAD_ACCUM_STEPS,
+    "effective_batch_size": cfg.batch_size * GRAD_ACCUM_STEPS,
     "budgeted_epochs": budgeted_epochs_lr,
     "total_steps": total_steps,
 })
@@ -544,7 +556,11 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
 
-    for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
+    optimizer.zero_grad()
+    batch_idx = -1
+    for batch_idx, (x, y, is_surface, mask) in enumerate(
+        tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False)
+    ):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
@@ -561,22 +577,35 @@ for epoch in range(MAX_EPOCHS):
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
         surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+        loss = (vol_loss + cfg.surf_weight * surf_loss) / GRAD_ACCUM_STEPS
 
-        optimizer.zero_grad()
         loss.backward()
+        if (batch_idx + 1) % GRAD_ACCUM_STEPS == 0:
+            if cfg.grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+            optimizer.step()
+            try:
+                scheduler.step()
+            except ValueError:
+                # OneCycleLR raises if stepped past total_steps; clamp at min_lr
+                pass
+            optimizer.zero_grad()
+
+        epoch_vol += vol_loss.item()
+        epoch_surf += surf_loss.item()
+        n_batches += 1
+
+    # Flush an incomplete final accumulation window so the gradients from the
+    # trailing micro-batches actually update the parameters this epoch.
+    if n_batches > 0 and (batch_idx + 1) % GRAD_ACCUM_STEPS != 0:
         if cfg.grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
         try:
             scheduler.step()
         except ValueError:
-            # OneCycleLR raises if stepped past total_steps; clamp at min_lr
             pass
-
-        epoch_vol += vol_loss.item()
-        epoch_surf += surf_loss.item()
-        n_batches += 1
+        optimizer.zero_grad()
 
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
