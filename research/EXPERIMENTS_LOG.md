@@ -556,6 +556,33 @@ Best epoch = 17/17 (val still descending at 30-min timeout cutoff).
 
 ---
 
+## 2026-04-29 02:45 — PR #896: Per-sample y-normalization on Huber+sw=3 — closed (redundant with existing baseline)
+
+- **Branch:** `alphonse/per-sample-y-normalization` (closed; ran clean on rebased Huber+sw=3 stack)
+- **W&B run:** `ngaailh7` — `per-sample-y-norm-huber-sw3-clip1`
+- **Hypothesis:** Normalize each sample's residual by per-sample sigma_per before loss, equalizing Re-regime contributions. This is a TARGET-SPACE fix; Huber is a LOSS-SPACE fix. Hypothesis: they're complementary.
+
+### Results vs current baseline (#850: val_avg=101.563, test_avg=89.918)
+
+| Split | baseline #850 | per-sample-norm + Huber + sw=3 | Δ val | test baseline | test + norm | Δ test |
+|-------|-------------:|-------------------------------:|------:|--------------:|------------:|-------:|
+| `single_in_dist`    | 120.507 | 127.759 | **+6.0%** | 102.846 | 116.274 | **+13.1%** |
+| `geom_camber_rc`    | 107.951 | 120.592 | **+11.7%** | 94.352 | 110.080 | **+16.7%** |
+| `geom_camber_cruise`| 82.156  | **63.843** | −22.3% | 70.128 | **53.730** | −23.4% |
+| `re_rand`           | 95.636  | **88.545** | −7.4% | 92.346 | **82.658** | −10.5% |
+| **avg**             | **101.563** | **100.185** | **−1.36%** | **89.918** | **90.686** | **+0.85%** |
+
+### Commentary & Conclusions
+
+- **Redistributive, not Pareto-improving.** Val/test directions disagree. The per-split flip pattern is exact: low-Re splits (cruise, re_rand) win massively (−22%, −10% test), high-Re splits (sid, rc) regress equally (+13%, +17% test). This confirms per-sample-norm and Huber+sw=3 attack the SAME underlying Re-imbalance problem from different sides, largely substituting for each other.
+- **Val avg marginally better (−1.36%) but within seed noise.** Test avg slightly worse (+0.85%) — the paper-facing metric goes the wrong direction.
+- **sigma_per stats confirm mechanism:** mean=0.336, min=0.082, max=0.700 in normalized space. Low-Re samples have ~4× smaller sigma than high-Re — confirming the imbalance the normalizer attacks. But Huber already caps high-Re gradient contribution, leaving per-sample-norm with little independent room.
+- **Decision: Closed.** The mechanism works but the lever is saturated by the existing baseline. The earlier appearance of a +17%/+19% win (#896 vs #811) was a stale-baseline artifact.
+- **Mechanism insight:** Target-space (sigma_per) and loss-space (Huber) approaches to Re-imbalance appear to be nearly equivalent substitutes when both are properly tuned. A hybrid approach (smaller Huber δ AND sigma-rescaling) might still add value if they're not fully equivalent — this is a Wave 3 question.
+- **Follow-up assigned: #980 (alphonse)** — boundary-layer-weighted volume loss, a mechanistically distinct lever using dist_to_surface feature.
+
+---
+
 ## 2026-04-29 01:15 — PR #915: Mask padded nodes in PhysicsAttention slice aggregation — closed (mixed result)
 
 - **Branch:** `willowpai2e5-frieren/physics-attention-padding-mask` (closed)

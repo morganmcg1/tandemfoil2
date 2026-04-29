@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r5
 
-- **Last updated:** 2026-04-29 02:30
+- **Last updated:** 2026-04-29 02:50
 - **Advisor branch:** `icml-appendix-willow-pai2e-r5`
 - **Track tag:** `willow-pai2e-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r5`
@@ -31,7 +31,8 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 |---------|----|--------|--------|
 | alphonse | #732 | Closed | val_avg=154.95 ref; NaN test; 6/50 epochs |
 | alphonse | #796 | Closed | FiLM-Re ineffective: val_avg=135.51 vs 135.35 control; test +4.5% |
-| alphonse | #896 | **WIP (rebase)** | Per-sample y-norm won on MSE (val=105.45, −4.7% vs Huber best); merge conflict with Huber #739 → sent back to rebase on Huber baseline and stack both |
+| alphonse | #896 | **Closed** | Per-sample y-norm on Huber+sw=3: val_avg=100.185 (−1.36%, noise-level), test_avg=90.686 (+0.85%). Redistributive not Pareto. Mechanism substitutes for Huber+sw=3 rather than stacking. |
+| alphonse | #980 | **WIP** | Boundary-layer-weighted volume loss — distance-decaying weight on volume nodes using x_aug[:,:,24] (dist_to_surface). Sweep boundary_focus ∈ {0, 1.0, 5.0}. Distinct mechanism. |
 | askeladd | #733 | Closed | val_avg=151.50; throughput cost decisive |
 | askeladd | #811 | **Merged** | val_avg=127.402; BF16 1.20× speedup |
 | askeladd | #848 | Closed | bs={8,10}: regressed; bs=12 OOM; `add_derived_features` loop bottleneck |
@@ -62,39 +63,31 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 5. Lower surf_weight=3 (#850) → **val_avg=101.563, test_avg=89.918**
 
 **[PENDING — REBASE FOR STACKING TEST]**
-- **Per-sample y-norm (#896, alphonse)** — val=105.45 on MSE+sw=10 baseline; needs rebase
-  onto current (Huber+sw=3) + rerun to confirm stacking.
 - **Huber δ=0.3 (#885, askeladd)** — δ=0.3 alone won val=97.96 / test=87.78 (beats current
   best 101.56/89.92 in absolute terms!), but on stale sw=10. Sent back for rebase + δ=0.3+sw=3
   decisive stacking run. If δ=0.3+sw=3 wins → merge as 6th compounding win.
 
-**All 8 GPUs in use:** alphonse #896 (per-sample-y-norm rebase), askeladd #885 (δ=0.3 rebase
-+ stacking test), edward #953 (sw-below-3 sweep), fern #809 (schedule-budget), frieren #943
-(per-channel-surf-weight), nezuko #923 (vectorize data prep), tanjiro #745 (heads Option 3 rebase),
-thorfinn #810 (EMA rebase).
+**All 8 GPUs in use:** alphonse #980 (boundary-layer vol-loss sweep), askeladd #885 (δ=0.3
+rebase + stacking test), edward #953 (sw-below-3 sweep), fern #809 (schedule-budget), frieren
+#943 (per-channel-surf-weight), nezuko #923 (vectorize data prep), tanjiro #745 (heads Option 3
+rebase), thorfinn #810 (EMA rebase).
 
 ## Current research themes
 
-1. **Loss-shape (Huber δ) is the strongest single lever found yet.** Askeladd #885 sweep on
-   sw=10 showed δ=0.3 alone gives val=97.96 — already better than the merged sw=3+δ=1.0
-   baseline (101.56). Sent back for δ=0.3+sw=3 stacking test. If they stack: **6th compounding win**.
-2. **Loss-balance (sw) lever — floor not yet found.** sw=3 (#850, merged) gives −8.2% val /
-   −11.2% test and the val curve was still descending at timeout. Edward #953 sweeps
-   sw ∈ {0.5, 1.0, 2.0} to find where volume-driven inference bottoms out. May saturate or
-   continue trend.
-3. **Three-lever interaction map taking shape:**
-   - δ=0.3 (loss-shape, gradient magnitude cap) — askeladd
-   - sw=3 (loss-balance, surface vs volume weight) — edward
-   - Per-channel surf weighting (channel-balance within surface) — frieren #943
-   - Per-sample y-norm (target-scale equalization) — alphonse #896 rebasing
-   These mechanisms are partially orthogonal; full stacking gain unknown.
-4. **Per-channel surface loss weighting (#943, frieren)** — now starting from sw=3 baseline.
-   Run 1 (p_surf=3, vel_surf=10) effectively *raises* velocity weight above the sw=3 default.
-   Tests whether velocity surface supervision at w=10 is the hidden bottleneck.
-5. **Throughput unblock (#923, nezuko)** — vectorizing `add_derived_features` still in-flight.
-   Once landed, enables batch-size scaling experiments (linearly-scaled LR + bs=8).
-6. **PhysicsAttention padding mask (Wave 3):** soft learnable gate (sigmoid(MLP)) rather than
-   binary mask — captures cruise benefit without rc regression. Pending other wins first.
+1. **Loss-shape (Huber δ) is the strongest single lever found.** δ=0.3 alone (val=97.96) beats
+   current baseline (101.56) on stale sw=10. Askeladd's rebase + δ=0.3+sw=3 stacking run (#885)
+   is the highest-priority in-flight experiment. Potential 6th compounding win.
+2. **Per-sample y-norm (alphonse) is exhausted as a standalone lever.** It's a substitute for
+   Huber+sw=3 rather than a complement. Closed #896. Assigned #980 (boundary-layer vol-loss) —
+   distinct mechanism using dist_to_surface feature to weight near-wall volume nodes more.
+3. **Loss-balance (sw) floor still unknown.** Edward #953 sweeps sw ∈ {0.5, 1.0, 2.0}.
+   The val curve was still descending at epoch 17 with sw=3 — lower sw may continue the trend.
+4. **Per-channel surface loss weighting (#943, frieren)** — tests whether splitting surface loss
+   into channel-specific terms (p vs velocity) improves over uniform sw=3. Run 1 (p=3, vel=10)
+   effectively raises velocity supervision above baseline; Run 2 (p=20, vel=10) boosts pressure.
+5. **Throughput unblock (#923, nezuko)** — vectorizing `add_derived_features`. Once landed,
+   enables batch-size scaling (bs=8, lr=2e-3 linear scaling rule).
+6. **PhysicsAttention padding mask (Wave 3):** soft learnable gate — pending other wins first.
 
 ## Open questions
 
