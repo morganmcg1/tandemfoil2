@@ -1,21 +1,21 @@
 # SENPAI Research State
-- 2026-04-28 (last check: 2026-04-29 ~07:00, all 8 students active, all pods READY 1/1); branch icml-appendix-charlie-pai2e-r5
+- 2026-04-28 (last check: 2026-04-29 ~09:00, all 8 students active, all pods READY 1/1); branch icml-appendix-charlie-pai2e-r5
 - Most recent research direction from human researcher team: None received yet.
 
 ## Current Best Baseline
 
-**PR #801** — `val_avg/mae_surf_p` = **70.3212** (epoch 14, best checkpoint, −1.36% vs previous best 71.2882)
-Branch: `charliepai2e5-edward/ema-decay-0.995` (merged)
+**PR #926** — `val_avg/mae_surf_p` = **67.2490** (epoch 14, best checkpoint, −4.35% vs previous best 70.3212)
+Branch: `charliepai2e5-alphonse/sw-sweep-28` (merged)
 
-Configuration: n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2, **Lion** optimizer, lr=3e-4, wd=1e-2, surf_weight=20, batch_size=4, **CosineAnnealingLR T_max=15**, **L1 loss** (vol + surf_weight * surf), grad_clip=1.0, **EMA decay=0.995**.
+Configuration: n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2, **Lion** optimizer, lr=3e-4, wd=1e-2, **surf_weight=28**, batch_size=4, **CosineAnnealingLR T_max=15**, **L1 loss** (vol + surf_weight * surf), grad_clip=1.0, **EMA decay=0.995**.
 
-Per-split surf p MAE: single=74.06, camber_rc=87.18, camber_cruise=51.83, re_rand=68.22.
+Per-split surf p MAE: single=73.08, camber_rc=82.60, camber_cruise=47.72, re_rand=65.61.
 
-Baseline improvement trajectory: 128.83 (MSE+AdamW) → 97.45 (L1+AdamW, PR #798, −24.4%) → 77.30 (L1+Lion+clip, PR #799, −20.7%) → 71.29 (Cosine T_max=15, PR #901, −7.78%) → **70.32 (EMA decay=0.995, PR #801, −1.36%)**
+Baseline improvement trajectory: 128.83 (MSE+AdamW) → 97.45 (L1+AdamW, PR #798, −24.4%) → 77.30 (L1+Lion+clip, PR #799, −20.7%) → 71.29 (Cosine T_max=15, PR #901, −7.78%) → 70.32 (EMA decay=0.995, PR #801, −1.36%) → **67.25 (surf_weight=28, PR #926, −4.35%)**
 
-**All current experiments must rebase on the Lion+L1+clip+T_max=15+EMA(0.995) recipe.**
+**All current experiments must rebase on the Lion+L1+clip+T_max=15+EMA(0.995)+sw=28 recipe.**
 
-**Weakest split: `val_geom_camber_rc` (surf p = 87.18).** This split represents the hardest OOD geometry and is the main drag on the average. Follow-on experiments that reduce camber_rc error faster than other splits will compound gains well.
+**Weakest split: `val_geom_camber_rc` (surf p = 82.60).** This split represents the hardest OOD geometry and is the main drag on the average. Follow-on experiments that reduce camber_rc error faster than other splits will compound gains well.
 
 ## Completed Experiments (merged wins)
 
@@ -25,6 +25,7 @@ Baseline improvement trajectory: 128.83 (MSE+AdamW) → 97.45 (L1+AdamW, PR #798
 | #799 | Lion optimizer + L1 + clip=1.0 | 77.30 | −20.7% vs 97.45 |
 | #901 | Cosine LR T_max budget alignment (T_max 50→15) | 71.29 | −7.78% vs 77.30 |
 | #801 | EMA model averaging (decay=0.995) | 70.32 | −1.36% vs 71.29 |
+| #926 | surf_weight=28 on Lion+T_max=15+EMA baseline | 67.25 | −4.35% vs 70.32 |
 
 ## Closed (dead ends)
 
@@ -52,9 +53,9 @@ Baseline improvement trajectory: 128.83 (MSE+AdamW) → 97.45 (L1+AdamW, PR #798
 | #908 | charliepai2e5-thorfinn | slice_num sweep 32/64/128: physics attention bottleneck tuning |
 | #913 | charliepai2e5-tanjiro | n_layers depth sweep (4/5/6) on Lion+L1+clip |
 | #918 | charliepai2e5-fern | Lion weight_decay sweep: 1e-3/5e-3/5e-2 vs baseline 1e-2 |
-| #926 | charliepai2e5-alphonse | surf_weight=25 validation on Lion+T_max=15 baseline (sw sweep 20/25/28) |
 | #941 | charliepai2e5-askeladd | bf16 autocast at bs=4 for throughput gain (more epochs within timeout) |
 | #945 | charliepai2e5-edward | EMA higher decay (0.999/0.9985) with bias-correction warmup |
+| #977 | charliepai2e5-alphonse | Lion LR warmup: linear warmup 1-3 epochs before cosine decay |
 
 ## Idle Students Needing Assignment
 
