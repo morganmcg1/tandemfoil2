@@ -502,6 +502,11 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol = epoch_surf = 0.0
     epoch_grad_norm_sum = 0.0
     epoch_grad_norm_max = 0.0
+    epoch_rew_min = float("inf")
+    epoch_rew_max = 0.0
+    epoch_rew_sum = 0.0
+    epoch_logre_min = float("inf")
+    epoch_logre_max = 0.0
     n_batches = 0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
@@ -513,12 +518,35 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+        sq_err = (pred - y_norm) ** 2  # [B, N, 3]
 
+        B = x.shape[0]
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+
+        # Per-sample MSE over valid nodes (sum over 3 channels, normalized by node count).
+        per_sample_vol_loss = (
+            (sq_err * vol_mask.unsqueeze(-1)).sum(dim=(1, 2))
+            / vol_mask.sum(dim=1).clamp(min=1)
+        )  # [B]
+        per_sample_surf_loss = (
+            (sq_err * surf_mask.unsqueeze(-1)).sum(dim=(1, 2))
+            / surf_mask.sum(dim=1).clamp(min=1)
+        )  # [B]
+
+        # Re-aware sample weights: 1 / log(Re), normalized to sum to batch_size.
+        # x[:, :, 13] is log(Re) (unnormalized); padding rows are 0. Average over
+        # valid nodes only — every node in a sample shares the same Re.
+        mask_f = mask.float()
+        log_re_per_sample = (
+            (x[:, :, 13] * mask_f).sum(dim=1) / mask_f.sum(dim=1).clamp(min=1)
+        )  # [B]
+        re_weights = 1.0 / log_re_per_sample.clamp(min=9.0)
+        re_weights = re_weights * (B / re_weights.sum())
+        re_weights = re_weights.detach()
+
+        vol_loss = (re_weights * per_sample_vol_loss).mean()
+        surf_loss = (re_weights * per_sample_surf_loss).mean()
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
@@ -526,14 +554,31 @@ for epoch in range(MAX_EPOCHS):
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         global_step += 1
+
+        rew_min = re_weights.min().item()
+        rew_max = re_weights.max().item()
+        rew_mean = re_weights.mean().item()
+        logre_min = log_re_per_sample.min().item()
+        logre_max = log_re_per_sample.max().item()
+
         wandb.log({"train/loss": loss.item(),
                    "train/grad_norm": grad_norm.item(),
+                   "train/re_weight_min": rew_min,
+                   "train/re_weight_max": rew_max,
+                   "train/re_weight_mean": rew_mean,
+                   "train/log_re_min": logre_min,
+                   "train/log_re_max": logre_max,
                    "global_step": global_step})
         train_metrics_fp.write(json.dumps({
             "global_step": global_step,
             "epoch": epoch + 1,
             "train/loss": loss.item(),
             "train/grad_norm": grad_norm.item(),
+            "train/re_weight_min": rew_min,
+            "train/re_weight_max": rew_max,
+            "train/re_weight_mean": rew_mean,
+            "train/log_re_min": logre_min,
+            "train/log_re_max": logre_max,
         }) + "\n")
         train_metrics_fp.flush()
 
@@ -541,12 +586,18 @@ for epoch in range(MAX_EPOCHS):
         epoch_surf += surf_loss.item()
         epoch_grad_norm_sum += grad_norm.item()
         epoch_grad_norm_max = max(epoch_grad_norm_max, grad_norm.item())
+        epoch_rew_min = min(epoch_rew_min, rew_min)
+        epoch_rew_max = max(epoch_rew_max, rew_max)
+        epoch_rew_sum += rew_mean
+        epoch_logre_min = min(epoch_logre_min, logre_min)
+        epoch_logre_max = max(epoch_logre_max, logre_max)
         n_batches += 1
 
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
     epoch_grad_norm_mean = epoch_grad_norm_sum / max(n_batches, 1)
+    epoch_rew_mean = epoch_rew_sum / max(n_batches, 1)
 
     # --- Validate ---
     model.eval()
@@ -564,6 +615,11 @@ for epoch in range(MAX_EPOCHS):
         "train/surf_loss": epoch_surf,
         "train/grad_norm_epoch_mean": epoch_grad_norm_mean,
         "train/grad_norm_epoch_max": epoch_grad_norm_max,
+        "train/re_weight_epoch_min": epoch_rew_min,
+        "train/re_weight_epoch_max": epoch_rew_max,
+        "train/re_weight_epoch_mean": epoch_rew_mean,
+        "train/log_re_epoch_min": epoch_logre_min,
+        "train/log_re_epoch_max": epoch_logre_max,
         "val/loss": val_loss_mean,
         "lr": scheduler.get_last_lr()[0],
         "epoch_time_s": dt,
@@ -585,6 +641,11 @@ for epoch in range(MAX_EPOCHS):
         "train/surf_loss": epoch_surf,
         "train/grad_norm_epoch_mean": epoch_grad_norm_mean,
         "train/grad_norm_epoch_max": epoch_grad_norm_max,
+        "train/re_weight_epoch_min": epoch_rew_min,
+        "train/re_weight_epoch_max": epoch_rew_max,
+        "train/re_weight_epoch_mean": epoch_rew_mean,
+        "train/log_re_epoch_min": epoch_logre_min,
+        "train/log_re_epoch_max": epoch_logre_max,
         "val/loss": val_loss_mean,
         "val_avg/mae_surf_p": val_avg["avg/mae_surf_p"],
     }
