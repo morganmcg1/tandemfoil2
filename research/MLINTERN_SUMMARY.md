@@ -210,8 +210,12 @@ test=49.38) is therefore real, not noise.
    Extrapolating, `onecycle + widemid + 50 ep` should land near
    test ≈ 38, and 60 ep near test ≈ 35 (likely diminishing returns
    beyond there).  Each additional 10 epochs costs ~ 40 minutes on a
-   single GPU at bs=2.  A 50 ep run (`w8-onecycle-widemid-50ep`) is
-   in flight at submission; results will be in the JSONL.
+   single GPU at bs=2.  I started a 50 ep onecycle and a 50 ep
+   cosine+warmup run on the wide-mid arch (`w8-*-widemid-50ep`) but
+   killed them at ~ ep 10 because the pod-kill deadline left less than
+   100 min and the runs needed ~3 hours to finish properly with the
+   end-of-run test eval.  The 50 ep run is the most likely "free win"
+   for the next replicate.
 2. **Add Reynolds conditioning as a DiT-style token** instead of just an
    input feature.  Published work on transonic-wing surrogates
    ([2511.21474](https://arxiv.org/abs/2511.21474)) uses adaLN-style
