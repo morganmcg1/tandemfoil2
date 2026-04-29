@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import time
@@ -214,10 +215,31 @@ class Transolver(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Fourier positional encoding for 2D node coordinates
+# ---------------------------------------------------------------------------
+
+FOURIER_FREQS = (1, 2, 4, 8, 16)
+
+
+def fourier_pos_enc(xy: torch.Tensor, freqs=FOURIER_FREQS) -> torch.Tensor:
+    """Augment normalized 2D positions with sin/cos features at multiple scales.
+
+    xy: [..., 2] — already normalized
+    returns: [..., 2 + 4*len(freqs)] — original + sin/cos at each frequency
+    """
+    enc = [xy]
+    for f in freqs:
+        enc.append(torch.sin(f * math.pi * xy))
+        enc.append(torch.cos(f * math.pi * xy))
+    return torch.cat(enc, dim=-1)
+
+
+# ---------------------------------------------------------------------------
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device, bf16: bool = False) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device,
+                   bf16: bool = False, use_fourier: bool = False) -> dict[str, float]:
     """Evaluate a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -236,10 +258,27 @@ def evaluate_split(model, loader, stats, surf_weight, device, bf16: bool = False
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Drop samples whose ground truth contains any non-finite values
+            # (e.g. test_geom_camber_cruise sample 20 has 761 inf entries).
+            # Without this, the masked-sum pattern below produces inf*0=NaN
+            # and the bad sample's error leaks into the MAE accumulator.
+            B = y.shape[0]
+            y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            if not y_finite.all():
+                bad_sample = (~y_finite)[:, None]
+                mask = mask & ~bad_sample
+                y = torch.where(bad_sample.unsqueeze(-1), torch.zeros_like(y), y)
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
+            if use_fourier:
+                xy_norm = x_norm[..., :2]
+                xy_enc = fourier_pos_enc(xy_norm)
+                x_in = torch.cat([xy_enc, x_norm[..., 2:]], dim=-1)
+            else:
+                x_in = x_norm
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
-                pred = model({"x": x_norm})["preds"]
+                pred = model({"x": x_in})["preds"]
             pred = pred.float()
 
             sq_err = (pred - y_norm) ** 2
@@ -414,6 +453,7 @@ class Config:
     ema_decay: float = 0.995      # 0.0 = disabled
     scheduler: str = "cosine"     # "cosine" | "none"
     T_max: int = 15               # cosine scheduler T_max
+    fourier_pos_enc: bool = False  # apply Fourier features to (x, z) dims
 
 
 cfg = sp.parse(Config)
@@ -442,8 +482,9 @@ val_loaders = {
     for name, ds in val_splits.items()
 }
 
+pos_enc_dim = 2 + 4 * len(FOURIER_FREQS) if cfg.fourier_pos_enc else 2
 model_config = dict(
-    space_dim=2,
+    space_dim=pos_enc_dim,
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=cfg.n_hidden,
@@ -458,6 +499,10 @@ model_config = dict(
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+print(
+    f"  fourier_pos_enc={cfg.fourier_pos_enc} space_dim={pos_enc_dim} "
+    f"input_dim={pos_enc_dim + (X_DIM - 2)}"
+)
 
 if cfg.optimizer == "lion":
     optimizer = Lion(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
@@ -514,8 +559,14 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
+        if cfg.fourier_pos_enc:
+            xy_norm = x_norm[..., :2]
+            xy_enc = fourier_pos_enc(xy_norm)
+            x_in = torch.cat([xy_enc, x_norm[..., 2:]], dim=-1)
+        else:
+            x_in = x_norm
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=cfg.bf16):
-            pred = model({"x": x_norm})["preds"]
+            pred = model({"x": x_in})["preds"]
 
         if cfg.loss == "l1":
             err = torch.abs(pred.float() - y_norm)
@@ -550,7 +601,10 @@ for epoch in range(MAX_EPOCHS):
     eval_model = ema_model if ema_model is not None else model
     eval_model.eval()
     split_metrics = {
-        name: evaluate_split(eval_model, loader, stats, cfg.surf_weight, device, bf16=cfg.bf16)
+        name: evaluate_split(
+            eval_model, loader, stats, cfg.surf_weight, device,
+            bf16=cfg.bf16, use_fourier=cfg.fourier_pos_enc,
+        )
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -609,7 +663,10 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(eval_model_for_test, loader, stats, cfg.surf_weight, device, bf16=cfg.bf16)
+            name: evaluate_split(
+                eval_model_for_test, loader, stats, cfg.surf_weight, device,
+                bf16=cfg.bf16, use_fourier=cfg.fourier_pos_enc,
+            )
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
