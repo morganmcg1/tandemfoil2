@@ -507,6 +507,7 @@ class Config:
     use_swiglu: bool = False  # True = swap per-block MLP from GELU to SwiGLU
     seed: int = 0  # global seed for torch / numpy / random / sampler / DataLoader
     t_max: int = 0  # 0 = use cfg.epochs; >0 = override CosineAnnealing T_max (e.g., 13 for budget-matched)
+    n_head: int = 4  # number of attention heads (head_dim = n_hidden / n_head)
 
 
 cfg = sp.parse(Config)
@@ -550,7 +551,7 @@ model_config = dict(
     out_dim=3,
     n_hidden=128,
     n_layers=5,
-    n_head=4,
+    n_head=cfg.n_head,
     slice_num=64,
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
