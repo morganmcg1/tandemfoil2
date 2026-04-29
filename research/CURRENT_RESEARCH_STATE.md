@@ -28,7 +28,7 @@
 | alphonse | #853 | Huber δ sweep: δ=0.5 and δ=2.0 on compound+Huber base | loss (δ tuning) | WIP |
 | frieren  | #854 | Huber + grad accum (accum_steps=2): double throughput, ~60 epochs in budget | training throughput | WIP |
 | fern     | #855 | Huber + surf_weight sweep: sw=5 and sw=20 vs baseline sw=10 | loss weighting | WIP |
-| askeladd | TBD | 3rd-seed verification of new baseline + warmup-length sweep | variance (seed budget) | pending assignment |
+| askeladd | #1008 | 3rd-seed (seed7) at warmup=5 + warmup sweep warmup_epochs∈{3,10} | variance (seed budget) | WIP |
 | edward   | #940 | Relative MAE ε sweep: ε ∈ {1e-3, 1e-2, 1e-1} vs default 1e-6 | loss (ε tuning) | WIP |
 | stark    | #842 | compound + SwiGLU param-matched h=168 | architecture (activation) | WIP |
 | himmel   | #843 | compound + gradient norm clipping (max_norm sweep 0.5 / 1.0) | optimization (stability) | WIP |
