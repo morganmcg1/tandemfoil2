@@ -215,6 +215,34 @@ Note: All three runs WITHOUT `--fourier_pos_enc`. Current baseline is 44.4154 (P
 
 - Commentary: **SENT BACK — tested against stale baseline (PR #1106, 44.4154).** Both warmup variants beat the Fourier-only baseline but are significantly above the current FiLM+Fourier best (39.9450, +6.4% and +7.4% respectively). The warmup signal is genuine — LinearLR to cosine reduces early instability and reaches better optima on the old baseline. The student was sent back with instructions to: (1) test warmup_epochs=10 and warmup_epochs=5 on the current best FiLM+Fourier config with same SequentialLR structure; (2) also try single-decay cosine (skip warmup, T_max=45) per student's own suggestion. LR warmup direction preserved for follow-up.
 
+## 2026-04-29 16:10 — PR #1209: Lion LR sweep {1e-4,2e-4,3e-4,5e-4} on FiLM+Fourier baseline — ASSIGNED (nezuko)
+
+- Branch: nezuko/lion-lr-sweep-film
+- Hypothesis: The FiLM+Fourier model (PR #1104) was trained with lr=3e-4, calibrated on the pre-FiLM 184k-param model. The FiLM model has 252k params (+36.5%). Lion LR is known to be sensitive to model scale; optimal LR may have shifted with FiLM conditioning layers added. Sweep lr in {1e-4, 2e-4, 3e-4 (control), 5e-4} on the full FiLM+Fourier baseline to find the true optimum.
+- Target metric: beat `val_avg/mae_surf_p = 39.9450`
+
+## 2026-04-29 16:10 — PR #1208: Extended training 75ep + T_max=75 on FiLM+Fourier baseline — ASSIGNED (frieren)
+
+- Branch: frieren/extended-training-film-75ep
+- Hypothesis: PR #1104 (FiLM+Fourier) best epoch was 49/50 — the final epoch, a clear convergence signal. Extending to 75 epochs + T_max=75 cosine (single full decay matching training duration) should yield further improvement. Based on convergence trajectory, expect −3 to −5% on val_avg.
+- Target metric: beat `val_avg/mae_surf_p = 39.9450`
+
+## 2026-04-29 15:55 — PR #1173: surf_weight sweep {28,32,40,50} on Fourier pos enc baseline — CLOSED DEAD END
+
+- Branch: charliepai2f3-nezuko/surf-weight-sweep
+- Hypothesis: surf_weight=28 was calibrated on the pre-Fourier compound baseline. With Fourier positional encoding active, optimal surf_weight may shift. Testing {28, 32, 40, 50} on the Fourier pos enc baseline (PR #1148) to find a better balance between surface and volume losses.
+- Results:
+
+| surf_weight | val_avg/mae_surf_p | val_single | val_geom_rc | val_geom_cruise | val_re_rand |
+|-------------|-------------------|-----------|-------------|-----------------|-------------|
+| 28 (control) | 43.2807 | 41.5985 | 60.2897 | 25.4378 | 45.6970 |
+| **32** | **43.2052** | **41.4048** | **60.7736** | **25.3476** | **45.2948** |
+| 40 | 44.0009 | 42.5217 | 60.5671 | 25.1978 | 47.7170 |
+| 50 | 44.9148 | 44.0413 | 61.0218 | 25.1920 | 49.3040 |
+
+- Best (sw=32): val_avg=43.2052, test_avg=36.4182
+- Commentary: **CLOSED — DEAD END relative to current baseline.** The best result (sw=32, val_avg=43.2052) was designed against the PR #1106 Fourier baseline (val_avg=44.4154) and beats that assigned baseline by ~1.2 points. However, the current merged best (PR #1104, FiLM+Fourier) is 39.9450 — making sw=32's result 3.26 points worse than the actual benchmark. sw=28 is confirmed optimal (sw=32 only marginally better, sw≥40 clearly hurts). The volume gradient acts as useful regularization; heavy upweighting of surf_weight is detrimental. This direction is exhausted — surf_weight=28 should remain fixed in all FiLM+Fourier experiments.
+
 ## 2026-04-29 17:00 — PR #1170: Depth sweep n_layers in {2, 3} on Fourier pos enc baseline — CLOSED NEGATIVE
 
 - Branch: charliepai2f3-fern/depth-sweep-n-layers
