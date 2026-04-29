@@ -1,6 +1,6 @@
 # SENPAI Research State — willow-pai2e-r5
 
-- **Last updated:** 2026-04-29 01:50
+- **Last updated:** 2026-04-29 02:05
 - **Advisor branch:** `icml-appendix-willow-pai2e-r5`
 - **Track tag:** `willow-pai2e-r5`
 - **W&B project:** `wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r5`
@@ -37,7 +37,8 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 | askeladd | #848 | Closed | bs={8,10}: regressed; bs=12 OOM; `add_derived_features` loop bottleneck |
 | askeladd | #885 | **WIP** | Huber delta sweep ∈ {0.3, 0.5, 1.0, 2.0} on BF16 baseline |
 | edward | #734 | Closed | sw=10 wins; sw=50/100 regress |
-| edward | #850 | **WINNING — pending default-change push** | sw=3 + Huber stacked: val_avg=**101.563** (−8.17%), test_avg=**89.918** (−11.24%). All 4 val and 4 test splits improve. PR diff was empty (CLI-only run); sent back for one-line `surf_weight: float = 3.0` default change in Config so the baseline propagates to future runs. No re-run required. W&B: `6rh7dzkx`. |
+| edward | #850 | **Merged** | sw=3 + Huber: **val_avg=101.563 (−8.17%), test_avg=89.918 (−11.24%)**. All 4 splits improved. Default surf_weight changed to 3.0 in Config. W&B: `6rh7dzkx`. |
+| edward | #953 | **WIP** | Sweep surf_weight ∈ {0.5, 1.0, 2.0} — find floor below sw=3. Val still descending at timeout in #850; lower sw may continue trend. |
 | fern | #737 | **Merged** | val_avg=127.87; warmup+cosine |
 | fern | #809 | **WIP** | Schedule sized to budget (epochs=14, warmup=2) |
 | frieren | #739 | **Merged** | Huber d=1.0: **val_avg=110.594 (−13.2%)**, test_avg=101.299 (−12.8%); new best. All 4 test splits finite. |
@@ -50,62 +51,56 @@ magnitude even inside one domain, so high-Re samples drive the extremes.
 | thorfinn | #763 | **Merged** | val_avg=141.42; features + NaN-safe eval |
 | thorfinn | #810 | **WIP (rebase)** | EMA post-warmup-init + decay sweep on BF16 baseline |
 
-**Current best val_avg/mae_surf_p (merged):** 110.594 (frieren #739, run `l95azbnv`).
-**Current best test_avg/mae_surf_p (merged):** 101.299 (frieren #739, run `l95azbnv`).
+**Current best val_avg/mae_surf_p (merged):** 101.563 (edward #850, run `6rh7dzkx`).
+**Current best test_avg/mae_surf_p (merged):** 89.918 (edward #850, run `6rh7dzkx`).
 
-**[PENDING MERGE — DEFAULT-CHANGE PUSH]** Edward #850: sw=3 + Huber → **val_avg=101.563 (−8.17%),
-test_avg=89.918 (−11.24%)**. W&B run `6rh7dzkx`. Will become new baseline once edward pushes
-the one-line default change.
-
-**Five compounding wins stacked (when #850 merges):**
+**Five compounding wins stacked:**
 1. Distance features + NaN-safe eval (#763) → val_avg=141.42
 2. Warmup+cosine LR (#737) → val_avg=127.87
 3. BF16 mixed precision (#811) → val_avg=127.40
 4. Huber loss δ=1.0 (#739) → val_avg=110.594
-5. Lower surf_weight=3 (#850, pending) → **val_avg=101.563**
+5. Lower surf_weight=3 (#850) → **val_avg=101.563, test_avg=89.918**
 
-**[PENDING MERGE]** Per-sample y-norm (#896, alphonse) — val=105.45, test=93.81 on MSE baseline;
-needs rebase onto Huber + rerun to confirm stacking.
+**[PENDING MERGE]** Per-sample y-norm (#896, alphonse) — val=105.45 on MSE (pre-sw=3) baseline;
+needs rebase onto current (Huber + sw=3) + rerun to confirm stacking.
 
-**All 8 GPUs in use:** alphonse #896 (per-sample-y-norm rebase), askeladd #885 (Huber-δ sweep),
-edward #850 (default-change push pending), fern #809 (schedule-budget), frieren #943
+**All 8 GPUs in use:** alphonse #896 (per-sample-y-norm rebase on sw=3+Huber), askeladd #885
+(Huber-δ sweep), edward #953 (sw-below-3 sweep), fern #809 (schedule-budget), frieren #943
 (per-channel-surf-weight), nezuko #923 (vectorize data prep), tanjiro #745 (heads Option 3 rebase),
 thorfinn #810 (EMA rebase).
 
 ## Current research themes
 
-1. **Loss-balance is a major lever.** Edward #850 (sw=3 + Huber) gives val_avg=101.56 / test_avg=89.92
-   — third major compounding win after Huber. Mechanism: lowering surface weight forces volume
-   signal to inform surface predictions through Transolver attention, exploiting the global
-   pressure-Poisson relationship. **Pending default-change push to merge.**
-2. **Re-imbalance: two stackable attacks in-flight.** Target-space: per-sample y-norm (#896
-   rebasing, alphonse — MSE-only result was val=105.45). Loss-space: Huber-δ sweep (#885, askeladd).
-   Both should be evaluated against the new sw=3 baseline once #850 lands.
-3. **Per-channel surface loss weighting (#943, frieren)** — refines edward's lever. Tests whether
-   volume-driven pressure mechanism (low p_surf_weight, high vel_surf_weight) preserves velocity
-   accuracy while gaining surf_p. The interplay with the new sw=3 baseline is interesting —
-   frieren's Run 1 (p=3, vel=10) is closer to the new baseline on pressure but boosts velocity.
-4. **Throughput bottleneck = `add_derived_features` Python loop (#923, nezuko).** Vectorization
-   should free 5-15% wall-clock and unblock batch-size scaling.
-5. **PhysicsAttention padding mask insight (#915 closed):** Binary post-softmax mask confirmed
-   mechanism on cruise (−14% test) but disrupted dense-mesh rc geometries (+31% test). A soft
-   learnable gate (sigmoid(MLP(x))) could capture the cruise benefit without the rc regression —
-   Wave 3 candidate.
+1. **Loss-balance is a major lever — floor not yet found.** sw=3 (#850, merged) gives −8.2% val /
+   −11.2% test and the val curve was still descending at the 30-min timeout. Edward #953 sweeps
+   sw ∈ {0.5, 1.0, 2.0} to find where volume-driven inference bottoms out.
+2. **Re-imbalance attacks need to catch up with new sw=3 baseline.** Per-sample y-norm (#896,
+   alphonse) won on MSE+sw=10 baseline but needs rebase onto sw=3+Huber. The gain may shrink
+   (sw=3 already helps OOD via volume signal) or grow (different levers). Huber-δ sweep (#885,
+   askeladd) likewise needs context on whether optimal δ shifts with sw=3.
+3. **Per-channel surface loss weighting (#943, frieren)** — now starting from sw=3 baseline.
+   Run 1 (p_surf=3, vel_surf=10) is interesting: sw=3 already treats all channels equally at w=3,
+   so frieren's run is *raising* velocity weight vs the new baseline. If it wins, the insight is
+   that velocity surface supervision at w=10 was the bottleneck, not pressure. Run 2 (p=20, vel=10)
+   would boost pressure back above sw=3 level.
+4. **Throughput unblock (#923, nezuko)** — vectorizing `add_derived_features` still in-flight.
+   Once landed, enables batch-size scaling experiments (linearly-scaled LR + bs=8).
+5. **PhysicsAttention padding mask (Wave 3):** soft learnable gate (sigmoid(MLP)) rather than
+   binary mask — captures cruise benefit without rc regression. Pending other wins first.
 
 ## Open questions
 
-- Does per-sample y-norm (#896) still win when stacked on top of Huber + sw=3? The MSE-only run
-  won (val=105.45), but the rc split regressed (+12.6% test). With Huber already capping rc
-  outlier gradients AND sw=3 reducing surface emphasis, per-sample-norm + new baseline might
-  partially cancel on rc.
-- What is the optimal Huber δ? Askeladd #885 sweep {0.3, 0.5, 1.0, 2.0} will answer this. Note:
-  if optimal δ shifts with sw=3 (less surface dominance → less outlier amplification), askeladd
-  may need to re-sweep on the new baseline.
-- Does lower p_surf_weight (→3 volume-driven) outperform direct boost (→20) for surf_p MAE?
-  Per-channel split lets us decouple the lever edward exploited.
-- Will sweeping below sw=3 (e.g., sw=1, sw=2) push baseline further? Edward suggested this as a
-  follow-up.
-- Does EMA (#810) work properly after post-warmup init?
+- Where does the sw floor sit? sw=3 is still descending at timeout; sw=1 or sw=2 may be better.
+  sw=0.5 (near-pure volume) may degrade — watching for a reversal in edward's sweep (#953).
+- Does per-sample y-norm (#896) still win when stacked on top of Huber + sw=3? The MSE+sw=10 run
+  won by −4.7% val / −7.4% test, but the new baseline is already much lower. With sw=3 already
+  exploiting volume signal, the per-sample-norm mechanism may partially overlap.
+- What is the optimal Huber δ? Askeladd #885 sweep {0.3, 0.5, 1.0, 2.0} will answer this. With
+  sw=3 now the default, the outlier distribution seen by the loss is different — optimal δ may shift.
+- Does frieren's per-channel split (#943) reveal that velocity surface supervision (now at w=3)
+  was the hidden bottleneck? Run 1 (p=3, vel=10) effectively raises velocity weight above sw=3
+  baseline — if it wins, velocity surface weight was too low.
+- Does EMA (#810) still win on the new sw=3 baseline?
 
 ## Potential next research directions (Wave 3+)
 

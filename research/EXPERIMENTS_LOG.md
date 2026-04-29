@@ -490,7 +490,36 @@ vs BF16 baseline #811 (val_avg=127.40, test_avg=116.21):
   2. Counter-intuitive trade: surf_p improves at sw=3 but surf_Ux/Uy degrade. Pressure has fat-tailed magnitudes (high-Re outliers); strong surface emphasis amplifies gradient noise on `p` more than on velocity.
 - **Stale baseline issue:** all three runs predate the Huber merge (sw=3 created at 22:25, Huber merged at 23:40). Current best is now 110.594, so sw=3's 124.05 looks worse than baseline. But Huber and sw-lowering attack different mechanisms: Huber caps high-Re gradient contribution, low-sw boosts volume informativeness. They MAY stack.
 - **Send-back instructions:** Single re-run with `--surf_weight 3.0` on rebased branch (Huber δ=1.0 is now default). If beats 110.594 → merge as new baseline. If lands 105-115 → marginal. If >115 → Huber already captured this lever.
-- **Future PR (per-channel surface weights):** student suggested `surf_weight_p=3, surf_weight_uv=10` to keep velocity accuracy while gaining pressure improvement — clever, hold for follow-up if this PR wins.
+- **Future PR (per-channel surface weights):** student suggested `surf_weight_p=3, surf_weight_uv=10` to keep velocity accuracy while gaining pressure improvement — clever, assigned to frieren as #943.
+
+---
+
+## 2026-04-29 01:55 — PR #850: Lower surf_weight 10→3 on Huber+BF16 stack — **MERGED** (new best)
+
+- **Branch:** `willowpai2e5-edward/lower-surf-weight` (merged)
+- **W&B run:** `6rh7dzkx` — group `lower-surf-weight-huber-stack`
+- **Hypothesis:** Lower `surf_weight` from 10 to 3 on the Huber+BF16 baseline. The mechanism: lower surface weight forces more gradient signal through volume residuals; Transolver cross-token attention propagates that volume information back to surface predictions, exploiting the global pressure-Poisson relationship.
+
+### Results vs Huber baseline (val_avg=110.594, test_avg=101.299)
+
+| Split | Huber sw=10 | sw=3 + Huber | Δ val | test sw=10 | test sw=3 | Δ test |
+|-------|------------:|-------------:|------:|-----------:|----------:|-------:|
+| `single_in_dist`    | 130.87 | **120.51** | −7.92% | 124.544 | **102.846** | −17.4% |
+| `geom_camber_rc`    | 115.14 | **107.95** | −6.24% | 99.385  | **94.352**  | −5.1%  |
+| `geom_camber_cruise`| 92.61  | **82.16**  | −11.3% | 80.195  | **70.128**  | −12.5% |
+| `re_rand`           | 103.76 | **95.64**  | −7.83% | 101.070 | **92.346**  | −8.6%  |
+| **avg**             | **110.594** | **101.563** | **−8.17%** | **101.299** | **89.918** | **−11.24%** |
+
+Best epoch = 17/17 (val still descending at 30-min timeout cutoff).
+
+### Commentary & Conclusions
+
+- **Decisive win — all 4 splits improved on both val and test.** Test improvements larger than val (e.g., sid −17.4% test vs −7.9% val), consistent with better generalization rather than noise.
+- **Mechanisms stack orthogonally:** Huber caps gradient *magnitude* on high-Re outliers; lower sw rebalances surface vs volume *weight* in the loss. These are independent levers → compounding gains as predicted.
+- **val curve was still descending at epoch 17** (trajectory: 230.5 → 165.0 → 147.8 → 128.2 → 124.9 → 143.2 → 110.7 → 101.56). Suggests further improvement possible with more budget or even lower sw.
+- **PR diff was initially empty** (CLI-only run; student didn't update default). Sent back for one-line Config change (`surf_weight: float = 3.0`). Merged cleanly on resubmit.
+- **Fifth compounding win stacked:** distance-features → warmup+cosine → BF16 → Huber → sw=3.
+- **Follow-up: #953 (edward)** — sweep sw ∈ {0.5, 1.0, 2.0} to find floor below sw=3.
 
 ---
 
