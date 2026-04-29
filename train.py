@@ -425,11 +425,14 @@ class Config:
     per_sample_norm: bool = False  # divide each sample's loss by its per-sample y_norm std
     warmup_epochs: int = 0  # linear LR warmup epochs before cosine decay (0 disables warmup)
     adamw_beta2: float = 0.999  # AdamW beta2 (second moment decay). Default 0.999 (PyTorch default).
+    accumulate_grad_batches: int = 1  # gradient accumulation factor (effective batch = batch_size * accumulate_grad_batches)
 
 
 cfg = sp.parse(Config)
 if cfg.loss not in ("mse", "huber"):
     raise ValueError(f"--loss must be 'mse' or 'huber', got '{cfg.loss}'")
+if cfg.accumulate_grad_batches < 1:
+    raise ValueError(f"--accumulate_grad_batches must be >= 1, got {cfg.accumulate_grad_batches}")
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
@@ -565,6 +568,7 @@ best_avg_surf_p = float("inf")
 best_metrics: dict = {}
 global_step = 0
 train_start = time.time()
+optimizer.zero_grad()
 
 for epoch in range(MAX_EPOCHS):
     if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
@@ -577,7 +581,9 @@ for epoch in range(MAX_EPOCHS):
     n_batches = 0
     epoch_per_stds: list[float] = []
 
-    for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
+    for step, (x, y, is_surface, mask) in enumerate(
+        tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False)
+    ):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
@@ -588,7 +594,6 @@ for epoch in range(MAX_EPOCHS):
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
 
-        optimizer.zero_grad()
         with torch.cuda.amp.autocast(dtype=torch.bfloat16):
             pred = model({"x": x_norm})["preds"]
             if cfg.per_sample_norm:
@@ -621,14 +626,16 @@ for epoch in range(MAX_EPOCHS):
                 surf_loss = (err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
             loss = vol_loss + cfg.surf_weight * surf_loss
 
-        scaler.scale(loss).backward()
-        if cfg.grad_clip > 0.0:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
-        scaler.step(optimizer)
-        scaler.update()
-        if ema_model is not None:
-            ema_model.update_parameters(model)
+        scaler.scale(loss / cfg.accumulate_grad_batches).backward()
+        if (step + 1) % cfg.accumulate_grad_batches == 0:
+            if cfg.grad_clip > 0.0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
+            if ema_model is not None:
+                ema_model.update_parameters(model)
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
