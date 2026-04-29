@@ -509,6 +509,7 @@ class Config:
     re_stratify: bool = True  # round-robin Re-quintile mini-batches (overrides domain-balanced sampler)
     n_re_quintiles: int = 5
     re_stratify_seed: int = 42
+    swiglu_ratio: int = 2  # mlp_ratio for SwiGLU intermediate dim (2 = current merged baseline; 1 = parameter-matched ablation)
 
 
 if __name__ == "__main__":
@@ -571,7 +572,7 @@ if __name__ == "__main__":
         n_layers=5,
         n_head=4,
         slice_num=64,
-        mlp_ratio=2,
+        mlp_ratio=cfg.swiglu_ratio,
         output_fields=["Ux", "Uy", "p"],
         output_dims=[1, 1, 1],
     )
