@@ -12,7 +12,7 @@ target space. Train/val/test MAE all flow through ``data.scoring`` so the
 numbers are produced identically.
 
 Usage:
-  python train.py [--debug] [--epochs 50] [--agent <name>] [--experiment_name <name>]
+  python train.py [--debug] [--epochs 50] [--agent <name>] [--wandb_name <name>]
 """
 
 from __future__ import annotations
@@ -28,9 +28,12 @@ import simple_parsing as sp
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import wandb
 import yaml
 from einops import rearrange
 from timm.layers import trunc_normal_
+from torch.cuda.amp import GradScaler
+from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
@@ -217,8 +220,21 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
-    """Evaluate a split and return metrics matching the organizer scorer.
+def per_element_loss(pred, target, loss_type: str, huber_delta: float = 1.0):
+    """Elementwise regression loss, no reduction.
+
+    For ``"huber"`` returns ``F.huber_loss(reduction='none')`` with the given
+    delta — 0.5*x^2 for |x|<delta, delta*(|x|-0.5*delta) otherwise. For
+    ``"mse"`` returns the unreduced squared error matching the original baseline.
+    """
+    if loss_type == "huber":
+        return F.huber_loss(pred, target, reduction="none", delta=huber_delta)
+    return (pred - target) ** 2
+
+
+def evaluate_split(model, loader, stats, surf_weight, device,
+                   loss_type: str = "mse", huber_delta: float = 1.0) -> dict[str, float]:
+    """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
@@ -236,19 +252,33 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Pre-filter samples with non-finite ground truth: scoring.accumulate_batch
+            # masks them via 0 * err, but 0 * NaN = NaN in IEEE 754, so the NaN
+            # leaks into the accumulator. Drop these samples before any compute.
+            B = y.shape[0]
+            keep = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            if not keep.all():
+                if not keep.any():
+                    continue
+                x = x[keep]; y = y[keep]
+                is_surface = is_surface[keep]; mask = mask[keep]
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
-            sq_err = (pred - y_norm) ** 2
+            if not torch.isfinite(pred).all():
+                pred = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)
+
+            err = per_element_loss(pred, y_norm, loss_type, huber_delta)
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
             vol_loss_sum += (
-                (sq_err * vol_mask.unsqueeze(-1)).sum()
+                (err * vol_mask.unsqueeze(-1)).sum()
                 / vol_mask.sum().clamp(min=1)
             ).item()
             surf_loss_sum += (
-                (sq_err * surf_mask.unsqueeze(-1)).sum()
+                (err * surf_mask.unsqueeze(-1)).sum()
                 / surf_mask.sum().clamp(min=1)
             ).item()
             n_batches += 1
@@ -266,9 +296,10 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
     return out
 
 
-def _sanitize_path_token(s: str) -> str:
+def _sanitize_artifact_token(s: str) -> str:
+    """wandb artifact names allow alnum, '-', '_', '.' — replace everything else."""
     out = "".join(c if c.isalnum() or c in "-_." else "-" for c in s)
-    return out.strip("-_.") or "experiment"
+    return out.strip("-_.") or "run"
 
 
 def _git_commit_short() -> str:
@@ -281,12 +312,8 @@ def _git_commit_short() -> str:
         return "unknown"
 
 
-def append_metrics_jsonl(metrics_path: Path, record: dict) -> None:
-    with open(metrics_path, "a") as f:
-        f.write(json.dumps(record, sort_keys=True) + "\n")
-
-
-def write_experiment_summary(
+def save_model_artifact(
+    run,
     model_path: Path,
     model_dir: Path,
     cfg: "Config",
@@ -297,14 +324,32 @@ def write_experiment_summary(
     n_params: int,
     model_config: dict,
 ) -> None:
-    """Write a local summary next to the best checkpoint."""
-    summary: dict = {
+    """Log the best checkpoint as a wandb model artifact.
+
+    Name: ``model-<agent-or-wandb_name>-<run.id>`` (run.id guarantees uniqueness).
+    Aliases: ``best`` + ``epoch-N`` so the best checkpoint is addressable
+    both by role and by the epoch it came from.
+    Payload: ``checkpoint.pt`` + ``config.yaml`` (if present).
+    Metadata: run context, selected val metric, optional test metrics, git
+    commit, model config, and hyperparams — enough to trace and reload.
+    """
+    if cfg.wandb_name:
+        base = _sanitize_artifact_token(cfg.wandb_name)
+    elif cfg.agent:
+        base = _sanitize_artifact_token(cfg.agent)
+    else:
+        base = "tandemfoil"
+    artifact_name = f"model-{base}-{run.id}"
+
+    metadata: dict = {
+        "run_id": run.id,
+        "run_name": run.name,
         "agent": cfg.agent,
-        "experiment_name": cfg.experiment_name,
+        "wandb_name": cfg.wandb_name,
+        "wandb_group": cfg.wandb_group,
         "git_commit": _git_commit_short(),
         "n_params": n_params,
         "model_config": model_config,
-        "checkpoint": str(model_path),
         "best_epoch": best_metrics["epoch"],
         "best_val_avg/mae_surf_p": best_avg_surf_p,
         "lr": cfg.lr,
@@ -314,20 +359,32 @@ def write_experiment_summary(
         "epochs_configured": cfg.epochs,
     }
 
-    for split_name, m in best_metrics["per_split"].items():
-        for k, v in m.items():
-            summary[f"best_val/{split_name}/{k}"] = v
+    description = (
+        f"Transolver checkpoint — best val_avg/mae_surf_p = {best_avg_surf_p:.4f} "
+        f"at epoch {best_metrics['epoch']}"
+    )
+
     if test_avg is not None and "avg/mae_surf_p" in test_avg:
-        summary["test_avg/mae_surf_p"] = test_avg["avg/mae_surf_p"]
+        metadata["test_avg/mae_surf_p"] = test_avg["avg/mae_surf_p"]
         if test_metrics is not None:
             for split_name, m in test_metrics.items():
-                for k, v in m.items():
-                    summary[f"test/{split_name}/{k}"] = v
+                metadata[f"test/{split_name}/mae_surf_p"] = m["mae_surf_p"]
+        description += f" | test_avg/mae_surf_p = {test_avg['avg/mae_surf_p']:.4f}"
 
-    summary_path = model_dir / "metrics.yaml"
-    with open(summary_path, "w") as f:
-        yaml.safe_dump(summary, f, sort_keys=True)
-    print(f"\nSaved experiment summary to {summary_path}")
+    artifact = wandb.Artifact(
+        name=artifact_name,
+        type="model",
+        description=description,
+        metadata=metadata,
+    )
+    artifact.add_file(str(model_path), name="checkpoint.pt")
+    config_yaml = model_dir / "config.yaml"
+    if config_yaml.exists():
+        artifact.add_file(str(config_yaml), name="config.yaml")
+
+    aliases = ["best", f"epoch-{best_metrics['epoch']}"]
+    run.log_artifact(artifact, aliases=aliases)
+    print(f"\nLogged model artifact '{artifact_name}' (aliases: {', '.join(aliases)})")
 
 
 def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
@@ -353,14 +410,24 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    n_hidden: int = 128
+    n_head: int = 4
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
-    experiment_name: str | None = None
+    wandb_group: str | None = None
+    wandb_name: str | None = None
     agent: str | None = None
     debug: bool = False
-    skip_test: bool = False  # skip final test evaluation
+    skip_test: bool = False  # skip end-of-run test evaluation
+    loss: str = "mse"  # "mse" or "huber"
+    huber_delta: float = 1.0  # delta for Huber loss in normalized target space
+    grad_clip: float = 0.0  # max grad norm (0 disables clipping)
+    ema_decay: float = 0.0  # EMA decay (0 disables EMA tracking)
+    per_sample_norm: bool = False  # divide each sample's loss by its per-sample y_norm std
 
 
 cfg = sp.parse(Config)
+if cfg.loss not in ("mse", "huber"):
+    raise ValueError(f"--loss must be 'mse' or 'huber', got '{cfg.loss}'")
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
 
@@ -390,10 +457,10 @@ model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
+    n_hidden=cfg.n_hidden,
+    n_layers=3,
+    n_head=cfg.n_head,
+    slice_num=16,
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
@@ -403,26 +470,78 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
+ema_model = None
+if cfg.ema_decay > 0.0:
+    ema_model = AveragedModel(model, multi_avg_fn=get_ema_multi_avg_fn(cfg.ema_decay))
+    print(f"EMA enabled (decay={cfg.ema_decay})")
+val_eval_model = ema_model if ema_model is not None else model
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
-experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
-experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
-model_dir = Path("models") / f"model-{_sanitize_path_token(experiment_label)}-{experiment_stamp}"
-model_dir.mkdir(parents=True, exist_ok=True)
-model_path = model_dir / "checkpoint.pt"
-metrics_jsonl_path = model_dir / "metrics.jsonl"
-with open(model_dir / "config.yaml", "w") as f:
-    yaml.safe_dump({
+# bf16 mixed precision (PR #808). GradScaler is included per the advisor's
+# instructions even though it's typically a no-op with bf16 — bf16 has the
+# same exponent range as fp32 so gradient underflow isn't a concern. Keeping
+# the recipe intact in case any ops go through fp16 fallback paths.
+scaler = GradScaler()
+
+run = wandb.init(
+    entity=os.environ.get("WANDB_ENTITY"),
+    project=os.environ.get("WANDB_PROJECT"),
+    group=cfg.wandb_group,
+    name=cfg.wandb_name,
+    tags=[cfg.agent] if cfg.agent else [],
+    config={
         **asdict(cfg),
         "model_config": model_config,
         "n_params": n_params,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
-    }, f, sort_keys=True)
+    },
+    mode=os.environ.get("WANDB_MODE", "disabled"),
+)
+
+wandb.define_metric("global_step")
+wandb.define_metric("train/*", step_metric="global_step")
+wandb.define_metric("val/*", step_metric="global_step")
+for _name in VAL_SPLIT_NAMES:
+    wandb.define_metric(f"{_name}/*", step_metric="global_step")
+wandb.define_metric("lr", step_metric="global_step")
+
+model_dir = Path(f"models/model-{run.id}")
+model_dir.mkdir(parents=True, exist_ok=True)
+model_path = model_dir / "checkpoint.pt"
+with open(model_dir / "config.yaml", "w") as f:
+    yaml.dump(model_config, f)
+
+metrics_dir = Path("metrics")
+metrics_dir.mkdir(parents=True, exist_ok=True)
+metrics_token = _sanitize_artifact_token(cfg.wandb_name or cfg.agent or "tandemfoil")
+metrics_path = metrics_dir / f"{metrics_token}-{run.id}.jsonl"
+
+
+def _log_jsonl(record: dict) -> None:
+    with open(metrics_path, "a") as f:
+        f.write(json.dumps(record, default=float) + "\n")
+
+
+_log_jsonl({
+    "event": "config",
+    "run_id": run.id,
+    "wandb_name": cfg.wandb_name,
+    "agent": cfg.agent,
+    "config": asdict(cfg),
+    "model_config": model_config,
+    "n_params": n_params,
+    "train_samples": len(train_ds),
+    "val_samples": {k: len(v) for k, v in val_splits.items()},
+    "git_commit": _git_commit_short(),
+})
+print(f"Metrics JSONL: {metrics_path}")
 
 best_avg_surf_p = float("inf")
 best_metrics: dict = {}
+global_step = 0
 train_start = time.time()
 
 for epoch in range(MAX_EPOCHS):
@@ -434,6 +553,7 @@ for epoch in range(MAX_EPOCHS):
     model.train()
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
+    epoch_per_stds: list[float] = []
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
         x = x.to(device, non_blocking=True)
@@ -443,18 +563,52 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
-
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            pred = model({"x": x_norm})["preds"]
+            if cfg.per_sample_norm:
+                B = pred.size(0)
+                batch_vol_loss = pred.new_zeros((), dtype=torch.float32)
+                batch_surf_loss = pred.new_zeros((), dtype=torch.float32)
+                valid_samples = 0
+                for i in range(B):
+                    m_i = mask[i]
+                    vol_i = vol_mask[i]
+                    surf_i = surf_mask[i]
+                    if vol_i.sum() == 0:
+                        continue
+                    per_std = y_norm[i][m_i].std().clamp(min=1e-6)
+                    epoch_per_stds.append(per_std.item())
+                    vol_err = per_element_loss(pred[i][vol_i], y_norm[i][vol_i],
+                                               cfg.loss, cfg.huber_delta)
+                    batch_vol_loss = batch_vol_loss + vol_err.mean() / per_std
+                    if surf_i.sum() > 0:
+                        surf_err = per_element_loss(pred[i][surf_i], y_norm[i][surf_i],
+                                                    cfg.loss, cfg.huber_delta)
+                        batch_surf_loss = batch_surf_loss + surf_err.mean() / per_std
+                    valid_samples += 1
+                denom = max(valid_samples, 1)
+                vol_loss = batch_vol_loss / denom
+                surf_loss = batch_surf_loss / denom
+            else:
+                err = per_element_loss(pred, y_norm, cfg.loss, cfg.huber_delta)
+                vol_loss = (err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+                surf_loss = (err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            loss = vol_loss + cfg.surf_weight * surf_loss
+
+        scaler.scale(loss).backward()
+        if cfg.grad_clip > 0.0:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+        scaler.step(optimizer)
+        scaler.update()
+        if ema_model is not None:
+            ema_model.update_parameters(model)
+        global_step += 1
+        wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
@@ -465,14 +619,37 @@ for epoch in range(MAX_EPOCHS):
     epoch_surf /= max(n_batches, 1)
 
     # --- Validate ---
-    model.eval()
+    val_eval_model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(val_eval_model, loader, stats, cfg.surf_weight, device,
+                             cfg.loss, cfg.huber_delta)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
     avg_surf_p = val_avg["avg/mae_surf_p"]
+    val_loss_mean = sum(m["loss"] for m in split_metrics.values()) / len(split_metrics)
     dt = time.time() - t0
+
+    log_metrics = {
+        "train/vol_loss": epoch_vol,
+        "train/surf_loss": epoch_surf,
+        "val/loss": val_loss_mean,
+        "lr": scheduler.get_last_lr()[0],
+        "epoch_time_s": dt,
+        "global_step": global_step,
+    }
+    if cfg.per_sample_norm and epoch_per_stds:
+        std_t = torch.tensor(epoch_per_stds)
+        log_metrics["train/per_std_min"] = std_t.min().item()
+        log_metrics["train/per_std_max"] = std_t.max().item()
+        log_metrics["train/per_std_mean"] = std_t.mean().item()
+        log_metrics["train/per_std_median"] = std_t.median().item()
+    for split_name, m in split_metrics.items():
+        for k, v in m.items():
+            log_metrics[f"{split_name}/{k}"] = v
+    for k, v in val_avg.items():
+        log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
+    wandb.log(log_metrics)
 
     tag = ""
     if avg_surf_p < best_avg_surf_p:
@@ -482,21 +659,11 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        ckpt_state = ema_model.module.state_dict() if ema_model is not None else model.state_dict()
+        torch.save(ckpt_state, model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
-    append_metrics_jsonl(metrics_jsonl_path, {
-        "event": "epoch",
-        "epoch": epoch + 1,
-        "seconds": dt,
-        "peak_memory_gb": peak_gb,
-        "train/vol_loss": epoch_vol,
-        "train/surf_loss": epoch_surf,
-        "val_avg/mae_surf_p": avg_surf_p,
-        "val_splits": split_metrics,
-        "is_best": tag == " *",
-    })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
@@ -505,12 +672,39 @@ for epoch in range(MAX_EPOCHS):
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
 
+    epoch_record = {
+        "event": "epoch",
+        "epoch": epoch + 1,
+        "epoch_time_s": dt,
+        "lr": scheduler.get_last_lr()[0],
+        "peak_gb": peak_gb,
+        "is_best": tag == " *",
+        "global_step": global_step,
+        "train/vol_loss": epoch_vol,
+        "train/surf_loss": epoch_surf,
+        "val/loss": val_loss_mean,
+        **{f"{n}/{k}": v for n, m in split_metrics.items() for k, v in m.items()},
+        **{f"val_{k}": v for k, v in val_avg.items()},
+    }
+    if cfg.per_sample_norm and epoch_per_stds:
+        std_t = torch.tensor(epoch_per_stds)
+        epoch_record["train/per_std_min"] = std_t.min().item()
+        epoch_record["train/per_std_max"] = std_t.max().item()
+        epoch_record["train/per_std_mean"] = std_t.mean().item()
+        epoch_record["train/per_std_median"] = std_t.median().item()
+    _log_jsonl(epoch_record)
+
 total_time = (time.time() - train_start) / 60.0
 print(f"\nTraining done in {total_time:.1f} min")
 
-# --- Test evaluation + local summary ---
+# --- Test evaluation + artifact upload ---
 if best_metrics:
     print(f"\nBest val: epoch {best_metrics['epoch']}, val_avg/mae_surf_p = {best_avg_surf_p:.4f}")
+    wandb.summary.update({
+        "best_epoch": best_metrics["epoch"],
+        "best_val_avg/mae_surf_p": best_avg_surf_p,
+        "total_train_minutes": total_time,
+    })
 
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
@@ -525,30 +719,57 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                                 cfg.loss, cfg.huber_delta)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
         print(f"\n  TEST  avg_surf_p={test_avg['avg/mae_surf_p']:.4f}")
         for name in TEST_SPLIT_NAMES:
             print_split_metrics(name, test_metrics[name])
-        append_metrics_jsonl(metrics_jsonl_path, {
+
+        test_log: dict[str, float] = {}
+        for split_name, m in test_metrics.items():
+            for k, v in m.items():
+                test_log[f"test/{split_name}/{k}"] = v
+        for k, v in test_avg.items():
+            test_log[f"test_{k}"] = v
+        wandb.log(test_log)
+        wandb.summary.update(test_log)
+        _log_jsonl({
             "event": "test",
             "best_epoch": best_metrics["epoch"],
-            "test_avg": test_avg,
-            "test_splits": test_metrics,
+            "best_val_avg/mae_surf_p": best_avg_surf_p,
+            **test_log,
         })
 
-    write_experiment_summary(
-        model_path=model_path,
-        model_dir=model_dir,
-        cfg=cfg,
-        best_metrics=best_metrics,
-        best_avg_surf_p=best_avg_surf_p,
-        test_metrics=test_metrics,
-        test_avg=test_avg,
-        n_params=n_params,
-        model_config=model_config,
-    )
+    if os.environ.get("WANDB_MODE", "disabled") != "disabled":
+        save_model_artifact(
+            run=run,
+            model_path=model_path,
+            model_dir=model_dir,
+            cfg=cfg,
+            best_metrics=best_metrics,
+            best_avg_surf_p=best_avg_surf_p,
+            test_metrics=test_metrics,
+            test_avg=test_avg,
+            n_params=n_params,
+            model_config=model_config,
+        )
+
+    _log_jsonl({
+        "event": "done",
+        "best_epoch": best_metrics["epoch"],
+        "best_val_avg/mae_surf_p": best_avg_surf_p,
+        "best_per_split": {n: best_metrics["per_split"][n] for n in VAL_SPLIT_NAMES},
+        "test_per_split": test_metrics,
+        "test_avg": test_avg,
+        "total_train_minutes": total_time,
+        "peak_gb_final": torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0,
+        "model_path": str(model_path),
+    })
 else:
-    print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping test evaluation.")
+    print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping artifact upload.")
+    _log_jsonl({"event": "done", "no_checkpoint": True, "total_train_minutes": total_time})
+
+wandb.finish()
