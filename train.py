@@ -434,6 +434,11 @@ for epoch in range(MAX_EPOCHS):
     t0 = time.time()
     model.train()
     epoch_vol = epoch_surf = 0.0
+    epoch_std_mean = 0.0
+    epoch_std_min = float("inf")
+    epoch_std_max = 0.0
+    epoch_w_min = float("inf")
+    epoch_w_max = 0.0
     n_batches = 0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
@@ -449,9 +454,36 @@ for epoch in range(MAX_EPOCHS):
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+
+        # Per-sample Re-adaptive loss weighting: 1/σ on GT surface pressure.
+        # GT (not pred) avoids gameable-divisor + cold-start collapse;
+        # clamp(0.2) is at p25 of normalized GT σ_p — caps weight dynamic
+        # range at 25× without losing the high-Re equalization signal;
+        # 1/σ (not 1/σ²) matches heteroscedastic regression and avoids
+        # over-stripping gradient from high-σ samples; mean-1 norm keeps
+        # the gradient scale comparable to baseline.
+        B = sq_err.shape[0]
+        surf_mask_f = surf_mask.float()
+        surf_count = surf_mask.sum(dim=1).clamp(min=1).float()
+        surf_p_gt = y_norm[..., 2]
+        surf_p_mean = (surf_p_gt * surf_mask_f).sum(dim=1) / surf_count
+        surf_p_var = (
+            ((surf_p_gt - surf_p_mean.unsqueeze(1)) ** 2) * surf_mask_f
+        ).sum(dim=1) / surf_count
+        surf_p_std = surf_p_var.sqrt().clamp(min=0.2)
+        inv_std = 1.0 / surf_p_std
+        weights = inv_std / inv_std.mean().clamp(min=1e-6)
+
+        sq_err_w = sq_err * weights.view(B, 1, 1)
+        vol_loss = (sq_err_w * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+        surf_loss = (sq_err_w * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
         loss = vol_loss + cfg.surf_weight * surf_loss
+
+        epoch_std_mean += surf_p_std.mean().item()
+        epoch_std_min = min(epoch_std_min, surf_p_std.min().item())
+        epoch_std_max = max(epoch_std_max, surf_p_std.max().item())
+        epoch_w_max = max(epoch_w_max, weights.max().item())
+        epoch_w_min = min(epoch_w_min, weights.min().item())
 
         optimizer.zero_grad()
         loss.backward()
@@ -464,6 +496,7 @@ for epoch in range(MAX_EPOCHS):
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
+    epoch_std_mean /= max(n_batches, 1)
 
     # --- Validate ---
     model.eval()
@@ -494,13 +527,20 @@ for epoch in range(MAX_EPOCHS):
         "peak_memory_gb": peak_gb,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/surf_p_std_mean": epoch_std_mean,
+        "train/surf_p_std_min": epoch_std_min,
+        "train/surf_p_std_max": epoch_std_max,
+        "train/weight_min": epoch_w_min,
+        "train/weight_max": epoch_w_max,
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
-        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
+        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f} "
+        f"std(mn/mx)={epoch_std_min:.3f}/{epoch_std_max:.3f} "
+        f"w(mn/mx)={epoch_w_min:.3f}/{epoch_w_max:.3f}]  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
     )
     for name in VAL_SPLIT_NAMES:
