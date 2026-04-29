@@ -330,6 +330,8 @@ def write_experiment_summary(
         "epochs_configured": cfg.epochs,
         "cosine_tmax": cfg.cosine_tmax,
         "cosine_eta_min": cfg.cosine_eta_min,
+        "scheduler": "CosineAnnealingWarmRestarts" if cfg.warm_restart else "CosineAnnealingLR",
+        "warm_restart_t0": cfg.warm_restart_t0 if cfg.warm_restart else None,
     }
 
     for split_name, m in best_metrics["per_split"].items():
@@ -373,6 +375,8 @@ class Config:
     epochs: int = 50
     cosine_tmax: int = 15  # CosineAnnealingLR T_max — match realised epoch budget
     cosine_eta_min: float = 1e-6
+    warm_restart: bool = False
+    warm_restart_t0: int = 7
     n_hidden: int = 192  # Transolver hidden dim (capacity scaling step above 160)
     n_layers: int = 5
     n_head: int = 4
@@ -433,9 +437,14 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    optimizer, T_max=cfg.cosine_tmax, eta_min=cfg.cosine_eta_min
-)
+if cfg.warm_restart:
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=cfg.warm_restart_t0, T_mult=1, eta_min=cfg.cosine_eta_min
+    )
+else:
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=cfg.cosine_tmax, eta_min=cfg.cosine_eta_min
+    )
 
 _AMP_DTYPE_MAP = {"bfloat16": torch.bfloat16, "float16": torch.float16}
 amp_enabled = cfg.amp and torch.cuda.is_available()
