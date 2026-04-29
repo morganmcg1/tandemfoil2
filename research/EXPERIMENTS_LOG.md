@@ -841,3 +841,69 @@ Monotone trend: smaller δ → better val/test. Original δ=0.3 win on sw=10 was
 ### Reassignment
 
 Askeladd → δ-floor-below-0.1-sweep (next experiment). Trend not yet bottomed out at δ=0.1 per askeladd's own analysis. Need to find where the floor is.
+
+---
+
+## 2026-04-29 04:55 — PR #980: Boundary-layer-weighted volume loss — CLOSED
+
+- **Branch:** `willowpai2e5-alphonse/boundary-layer-weighted-vol-loss` (closed, no merge)
+- **W&B runs:** `vh3pgrtv` (focus=1.0, control), `pp9c3csm` (focus=2.0), `xyk0e9wn` (focus=5.0)
+- **Hypothesis:** Reweighting volume-loss residuals by `exp(-focus * dist_to_surface_norm)` (focus=2.0 default) emphasizes near-surface bulk-flow nodes where pressure-Poisson gradients are strongest, restoring sid/rc supervision while preserving cruise/re_rand wins from δ=0.1.
+
+### Results (alphonse's reported numbers, current baseline = val 96.866 / test 87.348)
+
+| variant | val_avg | test_avg | val Δ% | test Δ% | W&B |
+|---------|--------:|---------:|------:|------:|-----|
+| focus=1.0 | 103.27 | 91.99 | +6.6% | +5.3% | vh3pgrtv |
+| focus=2.0 | 100.74 | 89.41 | +4.0% | +2.4% | pp9c3csm |
+| focus=5.0 | 93.88 | 88.21 | −3.1% | +1.0% | xyk0e9wn |
+
+### Per-split delta @ focus=5.0 (best variant) vs current baseline
+
+| Split | Baseline | focus=5.0 | Δ |
+|-------|---------:|----------:|--:|
+| `single_in_dist`    | 109.152 | ~98.7  | **−9.5% better** |
+| `geom_camber_rc`    | 107.290 | ~95.5  | **−11.0% better** |
+| `geom_camber_cruise`| 53.250  | ~67.2  | **+26.2% worse** |
+| `re_rand`           | 79.700  | ~91.4  | **+14.7% worse** |
+
+### Commentary & Conclusions
+
+- **Inverse split-trade pattern.** Boundary-layer weighting helps sid/rc (sharp-gradient splits) by emphasizing near-surface gradients — exactly where #885's δ=0.1 cure regressed. But it hurts cruise/re_rand (smooth-field splits) by underweighting their bulk-flow signal.
+- **Net regression.** focus=5.0 is the only variant where val improves (−3.1%), but test ties (+1.0%) — and the per-split pattern is just inverted from #885. This is the same Pareto wall as #953 (sw=0.5): you can shift gain between split categories but not lift the aggregate.
+- **focus=2.0 default is too gentle.** With focus=2.0, the weighting decays to ~14% at half-domain — most of the volume loss is still uniform. focus=5.0 (~0.7% at half-domain) is what actually changes behavior.
+- **Vol-loss-shape lever exhausted as a same-axis cure.** Both shape-of-loss-on-volume-residuals knobs (δ via #885 and now exp-decay weighting via #980) live on the same trade-off curve.
+- **Decision: Closed.** Need a different mechanism to break the split-trade — per-channel sigma normalization (#1045 alphonse), per-split heads, multi-resolution, or attention-level changes are more promising than further loss-shape tweaks.
+
+### Reassignment
+
+Alphonse → #1045 per-channel sigma normalization (huber_err / sigma_per[b, c]). Mechanistically distinct from boundary-layer weighting: targets pressure-vs-velocity supervision balance rather than near-surface-vs-bulk weighting. Tests whether #896's per-sample-y-norm regression on rc was caused by sigma being pressure-dominated.
+
+---
+
+## 2026-04-29 05:15 — PR #986: torch.compile dynamic=True — SENT BACK FOR REBASE
+
+- **Branch:** `willowpai2e5-nezuko/torch-compile-acceleration` (rebase pending on δ=0.1 baseline)
+- **W&B runs:** Run A (control, eager) `[id]` val=108.31 / test=98.11; Run B (compile=on) `[id]` val=111.96 / test=99.95
+- **Hypothesis:** torch.compile with dynamic=True (CUDA Graph Trees disabled — meshes are 74K-242K nodes, variable per-batch) gives 1.5-2× wall-clock speedup → more epochs in 30-min budget → better val.
+
+### Results (nezuko's reported numbers, ran on STALE δ=1.0 baseline)
+
+| variant | val_avg | test_avg | epochs | s/epoch | speedup | W&B |
+|---------|--------:|---------:|-------:|--------:|--------:|-----|
+| Run A (eager) | 108.31 | 98.11 | 17/50 | 110.4 | 1.0× | [pending] |
+| Run B (compile, dynamic=True) | 111.96 | 99.95 | 29/50 | 62.4 | **1.77×** | [pending] |
+
+### Commentary & Conclusions
+
+- **Speedup verified at 1.77×.** Variable-N graphs notwithstanding, torch.compile mode="default" with dynamic=True does work — 17 → 29 epochs in same 30 min wall budget. CUDA Graph Trees (mode="reduce-overhead") fails on variable-N as predicted; "default" succeeds.
+- **Quality verification incomplete.** Both runs used δ=1.0 (current default before this PR was rebased), not the new δ=0.1 baseline (val=96.866). On stale baseline:
+  - Run A val=108.31 already beats stale baseline 110.59 (slight noise)
+  - Run B val=111.96 *with compile on* slightly regresses vs Run A despite getting 12 more epochs
+  - This is suspicious — needs verification on the δ=0.1 baseline where the question matters
+- **Decision: Sent back for rebase + decisive verification.** Asked nezuko to rebase onto current advisor branch (huber_delta=0.1 default) and re-run both control and compile-on with same wandb_group. Want to see whether compile delivers val ≤ 96.866 consistently when stacked on the current best.
+- **Risk if rebased:** dynamic=True with bf16 may hit shape-recompilation pathologies on the variable-N path; need to monitor compile cache size & per-step variance.
+
+### Reassignment
+
+Nezuko remains on #986 after rebase + re-run. If rebased numbers beat current baseline, this is the 7th compounding win — and crucially a throughput win, not a quality lever, so it composes with everything else.
