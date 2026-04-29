@@ -1,7 +1,7 @@
 # SENPAI Research State
-- 2026-04-29 01:20 UTC (last updated)
+- 2026-04-29 ~02:00 UTC (last updated)
 - Most recent research direction from human researcher team: None received yet (no GitHub Issues found)
-- Current research focus and themes: Round 1 — Compound baseline refinement: stacking orthogonal improvements (Huber loss + wider model + EMA + surf_weight + grad_clip) on Transolver CFD surrogate for TandemFoilSet-Balanced
+- Current research focus and themes: Round 1 — Compound baseline refinement + promising winners awaiting final rebase. Three potential breakthrough PRs (#792 frieren 90.78, #795 thorfinn 93.40, #789 askeladd) blocked on final rebase+re-run onto post-#882 compound stack.
 
 ## Current Baseline
 
@@ -15,18 +15,18 @@
 cd target/ && python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 1.0 --epochs 12 --grad_clip 1.0 --ema_decay 0.999
 ```
 
-## Active WIP PRs (8 students, all running)
+## Active WIP PRs (8 students, all running or awaiting rebase)
 
-| PR | Student | Hypothesis | Status |
-|----|---------|------------|--------|
-| #954 | alphonse | surf_weight=30 stacked on compound baseline (n_hidden=256, EMA, grad_clip) | Just assigned — most promising next step |
-| #942 | nezuko | EMA decay sweep: 0.99/0.995 vs 0.999 on compound baseline | Running |
-| #904 | fern | Huber delta sweep: 0.25/0.5/1.0/2.0 on wider-model baseline | Running |
-| #828 | edward | AdamW weight_decay sweep (1e-4, 1e-3, 1e-2) on Huber baseline | Running |
-| #795 | thorfinn | Per-sample loss normalization to equalize Re-regime gradients | Running |
-| #794 | tanjiro | Linear LR warmup (5 epochs) before cosine annealing | Running |
-| #792 | frieren | Deeper Transolver: n_layers 5→8, lr 5e-4→3e-4 | Running (revision round) |
-| #789 | askeladd | Add gradient clipping (max_norm=1.0) for training stability | Running (revision round) |
+| PR | Student | Hypothesis | Status | Last best val |
+|----|---------|------------|--------|---------------|
+| #960 | alphonse | surf_weight sweep (20/30/50) on compound + grad_clip baseline | Running (just assigned) | — |
+| #942 | nezuko | EMA decay sweep: 0.99/0.995 vs 0.999 on compound baseline | Running | — |
+| #904 | fern | Huber delta sweep: 0.25/0.5/1.0/2.0 on wider-model baseline | Running | — |
+| #828 | edward | AdamW weight_decay=1e-4 on compound baseline | Awaiting rebase+re-run | 106.9078 (pre-compound) |
+| #795 | thorfinn | Per-sample loss norm + Huber on compound stack | **Awaiting final rebase+re-run** | **93.3991** (potential winner) |
+| #794 | tanjiro | LR warmup (2 epochs) + Huber on compound stack | Awaiting re-run | 136.25 (pre-compound) |
+| #792 | frieren | Huber + grad_clip 1.0 on compound stack | **Awaiting final rebase+re-run** | **90.7796** (potential winner -12.0%) |
+| #789 | askeladd | Gradient clipping (max_norm=1.0) on compound stack | **Awaiting v4 experiment run** | 109.67 (pre-compound) |
 
 ## Merged Winners (Round 1)
 
