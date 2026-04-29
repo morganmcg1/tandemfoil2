@@ -236,6 +236,17 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Drop samples with non-finite ground truth before any arithmetic.
+            # scoring.py masks them out by construction, but inf*0 still produces
+            # NaN that contaminates the float-tensor reductions for the rest of
+            # the batch (test_geom_camber_cruise has one such sample).
+            keep = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)
+            if not keep.all():
+                if not keep.any():
+                    continue
+                x = x[keep]; y = y[keep]
+                is_surface = is_surface[keep]; mask = mask[keep]
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
@@ -353,6 +364,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    mlp_ratio: int = 4
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
@@ -394,7 +406,7 @@ model_config = dict(
     n_layers=5,
     n_head=4,
     slice_num=64,
-    mlp_ratio=2,
+    mlp_ratio=cfg.mlp_ratio,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
