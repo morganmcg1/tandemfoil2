@@ -4,102 +4,115 @@
 
 | Metric | Value | Run | PR |
 |--------|-------|-----|----|
-| `val_avg/mae_surf_p` | **89.7141** | `w9xbc0wl` | #820 |
-| `test_avg/mae_surf_p` | NaN (cruise -Inf GT; see #797 guards) | — | — |
-| 3-split test mean (excl. cruise) | **88.16** | `w9xbc0wl` | #820 |
-| Best epoch | 14 / 50 (timeout cliff) | | |
-| Wall time | 30.91 min | | |
+| `val_avg/mae_surf_p` | **81.8075** | `2akpdg9t` | #914 |
+| `test_avg/mae_surf_p` | **73.04** (4-split, finite) | `2akpdg9t` | #914 |
+| 3-split test mean (excl. cruise) | **81.28** | `2akpdg9t` | #914 |
+| Best epoch | 12 / 13 (timeout) | | |
+| Wall time | 30.6 min | | |
+| Params | 661,735 (−4,720 vs prior; SwiGLU 2/3 trick) | | |
 
-Note: `test_avg/mae_surf_p` came back as NaN on thorfinn's rebased run even
-though #797's NaN guards are merged. This may be a rebase artifact — the
-guards should fire and filter cruise sample 000020. Next run on the merged
-branch should report a finite test_avg. The 3-split test mean (88.16) is
-the reliable paper-facing comparison metric until then.
+**`test_avg/mae_surf_p` is now finite (73.04)** — NaN guards + SwiGLU run
+on the merged branch confirms cruise sample 000020 is correctly filtered
+by #797.
 
-## Per-split val (epoch 14, run `w9xbc0wl`)
-
-| Split | mae_surf_p |
-|-------|-----------|
-| `val_single_in_dist` | 109.16 |
-| `val_geom_camber_rc` | 106.62 |
-| `val_geom_camber_cruise` | **60.60** |
-| `val_re_rand` | 82.47 |
-| **val_avg** | **89.714** |
-
-## Per-split test (epoch 14, run `w9xbc0wl`)
+## Per-split val (epoch 12, run `2akpdg9t`)
 
 | Split | mae_surf_p |
 |-------|-----------|
-| `test_single_in_dist` | 96.32 |
-| `test_geom_camber_rc` | 92.86 |
-| `test_geom_camber_cruise` | NaN (cruise -Inf GT, filtered by #797) |
-| `test_re_rand` | 75.31 |
-| **3-split test mean (excl. cruise)** | **88.16** |
+| `val_single_in_dist` | 97.53 |
+| `val_geom_camber_rc` | 94.17 |
+| `val_geom_camber_cruise` | **59.18** |
+| `val_re_rand` | 76.36 |
+| **val_avg** | **81.8075** |
 
-## Configuration (post-#820)
+## Per-split test (epoch 12, run `2akpdg9t`)
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy | mae_vol_p |
+|-------|-----------|------------|------------|----------|
+| `test_single_in_dist` | 86.73 | 1.354 | 0.500 | 88.08 |
+| `test_geom_camber_rc` | 85.54 | 1.640 | 0.679 | 83.16 |
+| `test_geom_camber_cruise` | 48.32 | 0.919 | 0.356 | 44.53 |
+| `test_re_rand` | 71.57 | 1.192 | 0.525 | 65.67 |
+| **test_avg** | **73.04** | **1.276** | **0.515** | **70.36** |
+
+## Configuration (post-#914)
 
 | Knob | Value |
 |------|-------|
-| Model | Transolver |
+| Model | Transolver + **SwiGLU MLP** |
 | `n_hidden` | 128 |
 | `n_layers` | 5 |
 | `n_head` | 4 |
 | `slice_num` | 64 |
 | `mlp_ratio` | 2 |
+| **`use_swiglu`** | **True** — SiLU-gated FFN, n_hidden_swiglu=168 (int(256×2/3) → multiple of 8) |
 | Optimizer | AdamW |
 | `lr` | 5e-4 |
 | `weight_decay` | 1e-4 |
 | Schedule | CosineAnnealingLR, T_max=epochs |
 | `batch_size` | 4 |
 | `surf_weight` | 10.0 |
-| **`channel_weights`** | **[1.0, 1.0, 3.0]** for [Ux, Uy, p] |
+| `channel_weights` | [1.0, 1.0, 3.0] for [Ux, Uy, p] |
 | Loss | L1 (absolute error) on normalized space, vol + surf_weight × surf |
-| **`fourier_bands`** | **4** — `[sin/cos(π·2^k·x), sin/cos(π·2^k·z)]` for k=0..3 prepended to input |
+| `fourier_bands` | 4 — `[sin/cos(π·2^k·x), sin/cos(π·2^k·z)]` for k=0..3 prepended to input |
 | Sampler | `WeightedRandomSampler` over balanced domain groups |
 | `epochs` | 50 (capped) |
 | Timeout | 30 min |
-| **NaN guards** | **active in `evaluate_split` (#797)** — drops cruise sample 000020 |
-| Seed | **NONE** (val_avg drifts ~5-10% across runs; seed PR #863 in flight) |
-| Params | 666,455 (+4,096 over prior baseline from Fourier input dim 24→40) |
+| NaN guards | active in `evaluate_split` (#797) — drops cruise sample 000020 |
+| Seed | NONE (val_avg drifts ~5-10% across runs; seed PR #863 in flight) |
+| Params | **661,735** (−4,720 vs prior; SwiGLU 2/3 dim trick saves ~792 params/block) |
 
 ## Delta history
 
-| Metric | L1-only (#752) | +ch=[1,1,3] (#754) | +Fourier PE K=4 (#820) |
-|---|---:|---:|---:|
-| `val_avg/mae_surf_p` | 101.93 | 99.23 | **89.71** |
-| 3-split test mean | 100.83 | 99.34 | **88.16** |
-| Δ vs prior | — | −2.65% | **−9.59%** |
-| Cumul. Δ vs L1-only | — | −2.65% | **−12.0%** |
+| Metric | L1-only (#752) | +ch=[1,1,3] (#754) | +Fourier PE K=4 (#820) | +SwiGLU MLP (#914) |
+|---|---:|---:|---:|---:|
+| `val_avg/mae_surf_p` | 101.93 | 99.23 | 89.71 | **81.81** |
+| `test_avg/mae_surf_p` | 100.83† | 99.34† | NaN† | **73.04** |
+| Δ vs prior | — | −2.65% | −9.59% | **−8.81%** |
+| Cumul. Δ vs L1-only | — | −2.65% | −12.0% | **−19.7%** |
 
-Fourier PE is **orthogonal and additive** with channel weighting. Mechanistically:
-ch=[1,1,3] tips the gradient balance toward pressure; Fourier PE provides the
-high-freq basis the preprocess MLP previously had to discover via composition.
-With both, the model gets constant-magnitude per-channel pressure gradient AND
-a free spectral basis — the wins stack cleanly. +4K params, −9.59% MAE.
+†3-split test mean (excl. cruise) for pre-#914 runs; #914 is first with
+finite `test_avg` across all 4 splits.
 
-Key physical observation: `val_re_rand` was flat with Fourier PE on the L1-only
-baseline (−0.2%) but gained −9.7% post-rebase with ch=[1,1,3]. Interpretation:
-ch=[1,1,3] makes pressure dominant in the loss, so Fourier's high-freq basis
-earns its keep on the Re-varying split too (the near-foil pressure BL structures
-are the same spatial frequencies regardless of Re). Mechanistically clean.
+SwiGLU's per-feature gating is load-bearing on CFD inputs because feature
+scales are heterogeneous (pressure dominates Ux/Uy by 10–100×) — the gate
+learns to allocate capacity to pressure features, which is exactly what
+ch=[1,1,3] pays for in the loss. Also: at mlp_ratio=2 the FFN is bottlenecked,
+so gating's information-routing effect matters more than in wide NLP FFNs.
+
+Key observation: converged at epoch 12 vs baseline epoch 14 — SwiGLU reaches a
+better minimum *faster*, suggesting the inductive bias matches the CFD task
+well. Timeout cut the run at epoch 13 — there may be additional headroom.
 
 ## Reproduce
 
 ```bash
 cd target/
-python train.py --fourier_bands 4 \
-  --agent willowpai2e4-thorfinn \
-  --wandb_name "willowpai2e4-thorfinn/fourier-pe-K4-on-L1-ch3"
+python train.py --use_swiglu \
+  --agent willowpai2e4-tanjiro \
+  --wandb_name "willowpai2e4-tanjiro/swiglu-mlp"
 ```
+
+(All other hyperparameters are now defaults in `Config`: lr=5e-4, surf_weight=10,
+channel_weights=[1,1,3], batch_size=4, fourier_bands=4, CosineAnnealingLR.)
 
 ## Open issues
 
 - **Run-to-run val variance:** Seed PR #863 (askeladd) is in flight — will
   eliminate the ~5-10% init/sampler drift once merged.
-- **test_avg NaN on Fourier PE run:** thorfinn's rebased run reports NaN for
-  test_avg despite #797 guards being merged. Most likely a rebase artifact.
-  Next run on advisor branch HEAD should produce a finite test_avg. The
-  3-split mean (88.16) is reliable in the interim.
+- **Best epoch cliff at 12/13:** The best epoch was epoch 12; epoch 13 slightly
+  bounced (85.75). With more epochs / longer LR schedule, SwiGLU may have
+  additional headroom — unexplored within current 30-min budget.
 - **Cruise-test `-Inf` GT (workaround active):** `test_geom_camber_cruise/000020.pt`
   has 761 `-Inf` values in the `p` channel. The per-sample `y_finite` guard
   in `evaluate_split` (#797) filters this sample. Dataset is read-only.
+
+---
+
+## Prior baseline (PR #820, Fourier PE K=4)
+
+| Metric | Value | Run |
+|--------|-------|-----|
+| `val_avg/mae_surf_p` | 89.7141 | `w9xbc0wl` |
+| 3-split test mean (excl. cruise) | 88.16 | `w9xbc0wl` |
+| Best epoch | 14 / 50 (timeout) | |
