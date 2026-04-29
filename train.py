@@ -182,7 +182,8 @@ class PhysicsAttention(nn.Module):
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
                  mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
-                 use_swiglu: bool = False):
+                 use_swiglu: bool = False,
+                 use_per_channel_heads: bool = False):
         super().__init__()
         self.last_layer = last_layer
         self.ln_1 = nn.LayerNorm(hidden_dim)
@@ -198,16 +199,29 @@ class TransolverBlock(nn.Module):
                            n_layers=0, res=False, act=act)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
-            self.mlp2 = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim), nn.GELU(),
-                nn.Linear(hidden_dim, out_dim),
-            )
+            self.use_per_channel_heads = use_per_channel_heads
+            if use_per_channel_heads:
+                self.heads = nn.ModuleList([
+                    nn.Sequential(
+                        nn.Linear(hidden_dim, hidden_dim), nn.GELU(),
+                        nn.Linear(hidden_dim, 1),
+                    )
+                    for _ in range(out_dim)
+                ])
+            else:
+                self.mlp2 = nn.Sequential(
+                    nn.Linear(hidden_dim, hidden_dim), nn.GELU(),
+                    nn.Linear(hidden_dim, out_dim),
+                )
 
     def forward(self, fx):
         fx = self.attn(self.ln_1(fx)) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
-            return self.mlp2(self.ln_3(fx))
+            out = self.ln_3(fx)
+            if self.use_per_channel_heads:
+                return torch.cat([h(out) for h in self.heads], dim=-1)
+            return self.mlp2(out)
         return fx
 
 
@@ -217,7 +231,8 @@ class Transolver(nn.Module):
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
                  output_dims: list[int] | None = None,
-                 use_swiglu: bool = False):
+                 use_swiglu: bool = False,
+                 use_per_channel_heads: bool = False):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -239,6 +254,7 @@ class Transolver(nn.Module):
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
                 use_swiglu=use_swiglu,
+                use_per_channel_heads=use_per_channel_heads,
             )
             for i in range(n_layers)
         ])
@@ -485,6 +501,7 @@ class Config:
     skip_test: bool = False  # skip end-of-run test evaluation
     fourier_bands: int = 0  # 0 = disabled, baseline behavior
     use_swiglu: bool = False  # True = swap per-block MLP from GELU to SwiGLU
+    use_per_channel_heads: bool = False  # Separate output head per channel (Ux, Uy, p)
 
 
 cfg = sp.parse(Config)
@@ -528,6 +545,7 @@ model_config = dict(
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
     use_swiglu=cfg.use_swiglu,
+    use_per_channel_heads=cfg.use_per_channel_heads,
 )
 
 model = Transolver(**model_config).to(device)
@@ -560,6 +578,17 @@ wandb.define_metric("val/*", step_metric="global_step")
 for _name in VAL_SPLIT_NAMES:
     wandb.define_metric(f"{_name}/*", step_metric="global_step")
 wandb.define_metric("lr", step_metric="global_step")
+
+if cfg.use_per_channel_heads:
+    last_block = model.blocks[-1]
+    init_stats = {"per_channel_head/n_heads": len(last_block.heads)}
+    for ch_idx, ch_name in enumerate(["Ux", "Uy", "p"]):
+        head = last_block.heads[ch_idx]
+        init_stats[f"per_channel_head/init/{ch_name}/linear_0_norm"] = head[0].weight.norm().item()
+        init_stats[f"per_channel_head/init/{ch_name}/linear_2_norm"] = head[2].weight.norm().item()
+    wandb.log(init_stats)
+    wandb.summary.update(init_stats)
+    print(f"[per-channel-heads] {len(last_block.heads)} heads initialized: {[ch for ch in ['Ux', 'Uy', 'p']]}")
 
 model_dir = Path(f"models/model-{run.id}")
 model_dir.mkdir(parents=True, exist_ok=True)
@@ -730,5 +759,18 @@ if best_metrics:
     )
 else:
     print("\nNo checkpoint was saved (no epoch improved on val_avg/mae_surf_p). Skipping artifact upload.")
+
+if cfg.use_per_channel_heads:
+    last_block = model.blocks[-1]
+    final_stats = {}
+    for ch_idx, ch_name in enumerate(["Ux", "Uy", "p"]):
+        head = last_block.heads[ch_idx]
+        final_stats[f"per_channel_head/final/{ch_name}/linear_0_norm"] = head[0].weight.norm().item()
+        final_stats[f"per_channel_head/final/{ch_name}/linear_2_norm"] = head[2].weight.norm().item()
+    wandb.log(final_stats)
+    wandb.summary.update(final_stats)
+    print("[per-channel-heads] final norms:")
+    for k, v in final_stats.items():
+        print(f"  {k} = {v:.4f}")
 
 wandb.finish()
