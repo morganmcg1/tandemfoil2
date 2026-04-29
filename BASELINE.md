@@ -4,8 +4,8 @@
 
 | Metric | Value |
 |--------|-------|
-| `val_avg/mae_surf_p` | **94.6541** (PR #1005 — n_layers=3 + slice_num=16 + EMA + bf16 + n_hidden=256 + n_head=8 + Huber + epochs=12, epoch 12) |
-| `test_avg/mae_surf_p` | **83.7608** (PR #1005) |
+| `val_avg/mae_surf_p` | **90.4014** (PR #795 — per-sample loss norm on compound stack, epoch 12) |
+| `test_avg/mae_surf_p` | **80.3748** (PR #795) |
 
 **Source:** README.md prior competition results — PR #32 (morganmcg1/tandemfoil2): "Single-head nl3/sn16 triple compound"
 - W&B run: [ip8hn4tx](https://wandb.ai/wandb-applied-ai-team/senpai-kagent-v-students/runs/ip8hn4tx)
@@ -17,6 +17,33 @@
 **Config (best known):** n_layers=3, slice_num=16, n_hidden tuned
 
 ## Round 1 — Merged Winners
+
+### PR #795 — Per-sample loss normalization on compound stack (2026-04-28)
+**Student:** charliepai2e1-thorfinn | **Branch:** charliepai2e1-thorfinn/per-sample-loss-norm
+
+| Metric | Value |
+|--------|-------|
+| `val_avg/mae_surf_p` | **90.4014** (epoch 12/12) |
+| `val_single_in_dist/mae_surf_p` | 108.5561 |
+| `val_geom_camber_rc/mae_surf_p` | 101.4393 |
+| `val_geom_camber_cruise/mae_surf_p` | 66.9027 |
+| `val_re_rand/mae_surf_p` | 84.7074 |
+| `val_avg/mae_surf_Ux` | 1.2856 |
+| `val_avg/mae_surf_Uy` | 0.6226 |
+| `test_avg/mae_surf_p` | **80.3748** |
+| `test_single_in_dist/mae_surf_p` | 95.3764 |
+| `test_geom_camber_rc/mae_surf_p` | 90.8052 |
+| `test_geom_camber_cruise/mae_surf_p` | 55.8264 |
+| `test_re_rand/mae_surf_p` | 79.4912 |
+| `test_avg/mae_surf_Ux` | 1.2007 |
+| `test_avg/mae_surf_Uy` | 0.5793 |
+
+**vs prior baseline (PR #1005):** 90.4014 vs 94.6541 → **-4.50% improvement**
+**Test improvement:** 80.3748 vs 83.7608 → **-4.05% improvement**
+**Model parameters:** same as PR #1005 compound stack | **Technique:** Per-sample Huber loss normalization by per-sample std (clamp min=1e-6), equalizing gradient contributions across 15× Reynolds-number std spread.
+**Metric summary:** `target/metrics/charliepai2e1-thorfinn-per-sample-norm-compound-v4-pr1005-6syzrp7t.jsonl`
+**Reproduce:** `cd target/ && python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 1.0 --epochs 12 --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm`
+*(Note: n_layers=3, slice_num=16 are hardcoded in model_config dict in train.py)*
 
 ### PR #1005 — n_layers=3, slice_num=16 reference architecture on compound baseline (2026-04-29)
 **Student:** charliepai2e1-edward | **Branch:** charliepai2e1-edward/n-layers-3-slice-num-16-compound
@@ -127,9 +154,7 @@
 
 | PR | Student | Hypothesis | Decision | Notes |
 |----|---------|------------|----------|-------|
-| #795 R3 | thorfinn | Huber + per-sample loss norm combined | **Rebase needed** | Winner: 93.3991 (-9.5% vs PR #808). Merge conflict after PR #882. Rebase onto advisor branch + re-run. |
-| #795 R2 | thorfinn | Huber + per-sample loss norm combined | **Rebase needed** | Winner: 104.2271 (-9.9% vs Huber baseline). Merge conflict after PR #788. Rebase onto advisor branch + re-run. |
-| #795 R1 | thorfinn | Per-sample loss normalization (MSE) | Revision requested | -11.5% vs MSE but above Huber baseline 115.65. Re-run with Huber+norm combined (done, see R2). |
+| #795 R1-R5 | thorfinn | Per-sample loss normalization | **MERGED** | Final: val=90.4014 (-4.50% vs PR #1005). 5 rounds including 4 rebases as advisor branch advanced. |
 | #794 | tanjiro | LR warmup 5 epochs + cosine | Revision requested | -4.87% vs no-warmup but above Huber baseline. Shorten warmup to 2 epochs + stack on Huber. |
 | #789 | askeladd | Gradient clipping (max_norm=1.0) | **Rebase needed** | Winner: 114.3451. Merge conflict on advisor branch. Rebase + re-run. |
 | #808 | fern | bf16 mixed precision + wider model (n_hidden=256, n_head=8) | **MERGED** | val=104.1120 (PR #808 Round 3 with Huber+epochs=12). |
@@ -152,7 +177,7 @@
 | #942 | nezuko | EMA decay sweep: 0.99/0.995 vs 0.999 on compound | Running |
 | #904 | fern | Huber delta sweep: 0.25/0.5/1.0/2.0 on wider-model baseline | Running |
 | #794 | tanjiro | LR warmup + Huber | Revision in progress |
-| #795 | thorfinn | Huber + per-sample norm — rebase + re-run | Awaiting rebase (R3 winner 93.40) |
+| #795 | thorfinn | Huber + per-sample norm — MERGED | val=90.4014 (-4.50% vs #1005) |
 | #789 | askeladd | Gradient clipping (max_norm=1.0) | Awaiting rebase (winner 114.35) |
 
 ### Key Infrastructure Fix (PR #792 Round 2)
@@ -184,3 +209,4 @@
 - 2026-04-29: PR #792 closed after 5 rounds. R5 rebase run produced val_avg=107.54 — above current baseline (103.22). grad_clip already in compound baseline via #882; unique delta (train-loss NaN guard) provides no measurable gain with grad_clip active.
 - 2026-04-29: PR #960 (alphonse, surf_weight sweep 20/30/50) closed — clean monotone degradation: sw=20 (+2.59%), sw=30 (+5.04%), sw=50 (+5.30%). Optimal surf_weight has shifted below default 10 on compound stack. Re-assigned as PR #1011 (sub-10 sweep: sw=1/3/5/7).
 - 2026-04-29: PR #1005 merged. n_layers=3, slice_num=16 reference architecture sets new best val_avg/mae_surf_p = 94.6541 (-8.31% vs PR #882 baseline 103.2182), test_avg = 83.7608 (-9.43%). Largest single-PR gain since Huber loss. Val curve still decreasing at epoch 12 — longer training is a strong next candidate.
+- 2026-04-28: PR #795 merged (R5 final). Per-sample loss normalization (normalize each sample's Huber loss by per-sample std before averaging) sets new best val_avg/mae_surf_p = 90.4014 (-4.50% vs PR #1005 baseline 94.6541), test_avg = 80.3748 (-4.05%). Acts on an independent failure mode (15× Reynolds-number std spread) from all prior winners. thorfinn now idle.
