@@ -221,6 +221,7 @@ class Transolver(nn.Module):
 def evaluate_split(
     model, loader, stats, surf_weight, device,
     huber_delta: float = 0.0, use_bf16: bool = False,
+    huber_delta_p: float = 0.0,
 ) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
@@ -229,6 +230,7 @@ def evaluate_split(
     ``score.py`` (float64, non-finite samples skipped).
     ``huber_delta`` mirrors the training loss: 0 → MSE, >0 → Huber.
     ``use_bf16`` mirrors the training autocast: forward pass runs in BF16.
+    ``huber_delta_p`` overrides the pressure-channel δ; 0 → reuse ``huber_delta``.
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
@@ -267,10 +269,13 @@ def evaluate_split(
             # Mask out non-finite sq_err entries before accumulating.
             if huber_delta > 0.0:
                 _abs = (pred - y_norm).abs()
+                # Per-channel delta: [δ_vel, δ_vel, δ_p] — channels are [Ux, Uy, p]
+                _delta_p = huber_delta_p if huber_delta_p > 0.0 else huber_delta
+                _delta = _abs.new_tensor([huber_delta, huber_delta, _delta_p])  # [3]
                 sq_err = torch.where(
-                    _abs < huber_delta,
+                    _abs < _delta,
                     0.5 * _abs ** 2,
-                    huber_delta * (_abs - 0.5 * huber_delta),
+                    _delta * (_abs - 0.5 * _delta),
                 )
             else:
                 sq_err = (pred - y_norm) ** 2
@@ -425,6 +430,7 @@ class Config:
     ema_decay: float = 0.999  # Polyak/EMA decay; 0.999 → ~1000-step half-life
     ema_warmup_epochs: int = 5  # epochs to skip EMA accumulation (avoid pulling toward random init)
     huber_delta: float = 0.0  # Huber loss transition point in normalized space; 0 → MSE
+    huber_delta_p: float = 0.0  # Per-channel Huber δ for pressure; 0 → use huber_delta for all channels
     use_bf16: bool = False  # BF16 autocast for faster forward/backward passes (no GradScaler needed)
     n_layers: int = 5  # Transolver depth (number of TransolverBlocks)
     eval_checkpoint: str | None = None  # if set, skip training; load checkpoint and run test eval only
@@ -593,7 +599,7 @@ if cfg.eval_checkpoint:
     }
     test_metrics = {
         name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
-                             cfg.huber_delta, cfg.use_bf16)
+                             cfg.huber_delta, cfg.use_bf16, cfg.huber_delta_p)
         for name, loader in test_loaders.items()
     }
     test_avg = aggregate_splits(test_metrics)
@@ -634,10 +640,13 @@ for epoch in range(effective_max_epochs):
             pred = model({"x": x_norm})["preds"]
             if cfg.huber_delta > 0.0:
                 _abs = (pred - y_norm).abs()
+                # Per-channel delta: [δ_vel, δ_vel, δ_p] — channels are [Ux, Uy, p]
+                _delta_p = cfg.huber_delta_p if cfg.huber_delta_p > 0.0 else cfg.huber_delta
+                _delta = _abs.new_tensor([cfg.huber_delta, cfg.huber_delta, _delta_p])  # [3]
                 sq_err = torch.where(
-                    _abs < cfg.huber_delta,
+                    _abs < _delta,
                     0.5 * _abs ** 2,
-                    cfg.huber_delta * (_abs - 0.5 * cfg.huber_delta),
+                    _delta * (_abs - 0.5 * _delta),
                 )
             else:
                 sq_err = (pred - y_norm) ** 2
@@ -647,6 +656,17 @@ for epoch in range(effective_max_epochs):
             vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
             surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
             loss = vol_loss + cfg.surf_weight * surf_loss
+            # Per-channel diagnostic: see whether δ_p is binding more on pressure than velocity
+            if global_step % 100 == 0:
+                with torch.no_grad():
+                    _node_count = mask.sum().clamp(min=1)
+                    _ch_loss = (sq_err * mask.unsqueeze(-1)).sum(dim=[0, 1]) / _node_count
+                    wandb.log({
+                        "diag/loss_ux": _ch_loss[0].item(),
+                        "diag/loss_uy": _ch_loss[1].item(),
+                        "diag/loss_p": _ch_loss[2].item(),
+                        "global_step": global_step,
+                    })
 
         optimizer.zero_grad()
         loss.backward()
@@ -682,7 +702,7 @@ for epoch in range(effective_max_epochs):
     ema_model.eval()
     live_split_metrics = {
         name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
-                             cfg.huber_delta, cfg.use_bf16)
+                             cfg.huber_delta, cfg.use_bf16, cfg.huber_delta_p)
         for name, loader in val_loaders.items()
     }
     live_val_avg = aggregate_splits(live_split_metrics)
@@ -691,7 +711,7 @@ for epoch in range(effective_max_epochs):
     if ema_active:
         ema_split_metrics = {
             name: evaluate_split(ema_model, loader, stats, cfg.surf_weight, device,
-                                 cfg.huber_delta, cfg.use_bf16)
+                                 cfg.huber_delta, cfg.use_bf16, cfg.huber_delta_p)
             for name, loader in val_loaders.items()
         }
         ema_val_avg = aggregate_splits(ema_split_metrics)
@@ -791,7 +811,7 @@ if best_metrics:
         }
         test_metrics = {
             name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
-                                 cfg.huber_delta, cfg.use_bf16)
+                                 cfg.huber_delta, cfg.use_bf16, cfg.huber_delta_p)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
