@@ -501,6 +501,12 @@ class Config:
     amp: bool = True
     amp_dtype: str = "bf16"   # "bf16" or "fp16"; bf16 strongly preferred for our extreme y values
     huber_delta: float = 0.1  # was 0.3; #885 stacking found delta=0.1+sw=3 wins (val=96.87 / test=87.35)
+    use_compile: bool = True  # wrap model in torch.compile(dynamic=True) for throughput; PR #986 validated 1.77× speedup
+    # "default" is correct for our variable-N (74K-242K) batches: "reduce-overhead"
+    # uses CUDA Graph Trees that record per-shape and silently fall back to eager
+    # past ~128 distinct N values, so it loses both speedups on this workload.
+    # "default" keeps kernel fusion + symbolic dispatch with no recording ceiling.
+    compile_mode: str = "default"  # "default", "reduce-overhead", "max-autotune"
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -554,6 +560,17 @@ model_config = dict(
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+
+if cfg.use_compile:
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True  # fallback on ops that don't compile
+    # Variable-N batches (74K-242K nodes) generate many distinct symbolic guard
+    # sets; default cache_size_limit=8 would trip recompile storms. Force N to
+    # be treated symbolically from the first trace, not specialised then invalidated.
+    torch._dynamo.config.cache_size_limit = 64
+    torch._dynamo.config.assume_static_by_default = False
+    model = torch.compile(model, dynamic=True, mode=cfg.compile_mode)
+    print(f"torch.compile enabled (dynamic=True, mode={cfg.compile_mode})")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
@@ -703,7 +720,10 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        # torch.compile wraps the model in OptimizedModule whose state_dict keys
+        # carry an "_orig_mod." prefix; save the underlying module so checkpoints
+        # round-trip identically with or without --use_compile.
+        torch.save(getattr(model, "_orig_mod", model).state_dict(), model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
@@ -727,7 +747,9 @@ if best_metrics:
         "total_train_minutes": total_time,
     })
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    getattr(model, "_orig_mod", model).load_state_dict(
+        torch.load(model_path, map_location=device, weights_only=True)
+    )
     model.eval()
 
     test_metrics = None
