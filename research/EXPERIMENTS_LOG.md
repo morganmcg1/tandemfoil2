@@ -1,5 +1,55 @@
 # SENPAI Research Results — willow-pai2e-r3
 
+## 2026-04-29 — PR #952 (CLOSED): Wider single output head (128→256→3) — capacity vs independence
+- **Branch:** `edward/wider-output-head`
+- **Hypothesis:** PR #924 (per-channel heads) failed: was the bottleneck channel decoupling or sheer head capacity? Test capacity-only by widening the single channel-coupled head from 128→128→3 to 128→256→3.
+- **Run:** W&B `qmrdrbcb`, 14/14 epochs, 31.81 min, group `wider-output-head`, peak 81.2 GB
+
+| Split | val baseline | val v1-x2 | Δ_val | test baseline | test v1-x2 | Δ_test |
+|---|---|---|---|---|---|---|
+| `single_in_dist` | 84.70 | 92.11 | **+8.7%** | 73.79 | 78.47 | +6.3% |
+| `geom_camber_rc` | 92.95 | **89.03** | **−4.2%** | 83.50 | **80.81** | **−3.2%** |
+| `geom_camber_cruise` | 63.49 | 65.54 | +3.2% | 52.45 | 55.20 | +5.2% |
+| `re_rand` | 77.02 | 79.38 | +3.1% | 71.29 | 72.98 | +2.4% |
+| **avg** | **79.54** | **81.52** | **+2.5%** | **70.26** | **71.86** | **+2.3%** |
+
+### Decision: CLOSED — decoder capacity isn't the lever (two-experiment falsification)
+- val_avg = **81.52** vs current best 79.54 → **+2.5% regression**. All 3 channels regressed uniformly (Ux +1.7%, Uy +1.0%, p +2.5%); 3/4 splits regressed.
+- **Two independent capacity probes now both falsified:** PR #924 (per-chan heads, +5.8%) — capacity + decoupling; PR #952 (wider single head, +2.5%) — capacity only, channel-coupled. Conclusion: decoder isn't bottlenecked by parameters at this depth/width budget.
+- Wall-clock healthy (+1.2%, 14/14 epochs done). Convergence wasn't the bottleneck this time — model just doesn't want more head parameters.
+- **Interesting preserved signal:** `geom_camber_rc` improved (−4.2% val / −3.2% test) — only split to benefit, and it's the hardest split. Suggests rc-specific bottleneck might be representational rather than capacity-uniform. Logged for future rc-targeted intervention design.
+- **Follow-up assigned:** edward → PR #975 (DropPath rate sweep on FiLM+L1+Re-stratify) — pivot to regularization axis.
+
+---
+
+## 2026-04-29 — PR #917 (CLOSED): Re-input noise augmentation σ ∈ {0.02, 0.05, 0.10}
+- **Branch:** `willowpai2e3-askeladd/re-input-noise`
+- **Hypothesis:** Add small Gaussian noise to log(Re) input during training to force FiLM to learn locally smooth conditioning function, regularizing against memorization of training Re values.
+- **Runs:** W&B `012xavg9` (σ=0.02), `jejfszpk` (σ=0.05), `x05pf7uo` (σ=0.10), 14 epochs each, group `re-input-noise`. **Run on OLD baseline (FiLM+L1, val=82.77)**, not current best (79.54).
+
+| σ | val_avg | Δ vs 82.77 | val_re_rand | Δ_re |
+|---|---|---|---|---|
+| 0.0 (baseline) | 82.77 | — | 79.26 | — |
+| 0.02 | 83.28 | +0.6% | 78.71 | −0.7% |
+| 0.05 | 83.08 | +0.4% | **77.58** | **−2.1%** |
+| 0.10 | 90.44 | +9.3% | 84.00 | +6.0% |
+
+### Decision: CLOSED — mechanism confirmed but small; saturated by Re-stratify on current stack
+- σ=0.05 is the cleanest mechanism point — `val_re_rand` improves monotonically 0 → 0.02 → 0.05 (clean dose-response on the targeted split, −2.1%). σ=0.10 collapses (perturbation overpowers FiLM). **The mechanism is real.**
+- BUT: net effect on val_avg = +0.4% on old baseline (at-noise-floor); val_re_rand on current stack (with Re-stratify) is already 77.02 — *better* than σ=0.05's 77.58 on old baseline. Re-stratify ate the lever Re-noise was probing.
+- **Three FiLM-redistribution attempts on current stack now falsified** (#934, #937, #756) — all clustering at +2-3% regression. Cross-cutting pattern: **Re-axis lever architecturally saturated** by FiLM-pre + Re-stratify. Re-noise lives on same axis and would likely cluster similarly on rebase. Closing rather than rebasing.
+- The σ=0.05 → val_re_rand −2.1% data point preserved as evidence that input-noise smoothing helps OOD-Re at the FiLM+L1 stage (pre-Re-stratify world).
+- **Follow-up assigned:** askeladd → PR #976 (AoA-FiLM: extend FiLM input from 1-d log_Re to 3-d (log_Re, AoA1, AoA2)) — pivot to multi-variable conditioning, fresh axis.
+
+---
+
+## 2026-04-29 — Assignments: PR #975 (edward DropPath sweep), PR #976 (askeladd AoA-FiLM)
+- **PR #975** (`edward/drop-path-sweep`): stochastic depth on FiLM+L1+Re-stratify stack at rates {0.05, 0.10, 0.15} with linear depth ramp. Regularization-axis probe — different from PR #751 v2 (which tested at L1-only base, single rate). On current stack with FiLM forcing every block to participate in Re-conditioning and Re-stratify giving cleaner gradients, DropPath should compose differently. Targets `geom_camber_rc` (hardest split, regularization-amenable).
+- **PR #976** (`askeladd/aoa-film`): FiLM input expanded from 1-d (log_Re) to 3-d (log_Re, AoA1, AoA2). Multi-variable conditioning probe — opens fresh axis after Re-axis saturation findings. AoA is a primary tandem-foil flow parameter that the model currently has zero conditioning awareness of. Expected to help geom_camber_* splits (where novel camber × AoA combinations live).
+- Both opened off current best (79.54). Beat-threshold: val_avg/mae_surf_p < 79.54.
+
+---
+
 ## 2026-04-29 — PR #937 (CLOSED): Dual FiLM (pre-block + post-block per block)
 - **Branch:** `willowpai2e3-nezuko/dual-film`
 - **Hypothesis:** Two FiLM heads per block — pre-block FiLM modulates attention input (regime-aware Q/K/V), post-block FiLM modulates output magnitude. Should give independent control over attention patterns vs scaling.
