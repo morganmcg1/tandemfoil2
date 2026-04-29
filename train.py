@@ -256,9 +256,12 @@ class Transolver(nn.Module):
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
 
-        self.rff = RFFEncoder(in_dim=2, n_freq=rff_n_freq, sigma=0.5)
-        self.rff_fine = RFFEncoder(in_dim=2, n_freq=rff_n_freq, sigma=2.0)
-        rff_out_dim = 4 * rff_n_freq
+        # Parameter-matched dual-bank RFF: split rff_n_freq across two sigmas so
+        # combined output dim equals the single-bank baseline (2 * rff_n_freq).
+        n_freq_per_bank = rff_n_freq // 2
+        self.rff = RFFEncoder(in_dim=2, n_freq=n_freq_per_bank, sigma=0.5)
+        self.rff_fine = RFFEncoder(in_dim=2, n_freq=n_freq_per_bank, sigma=2.0)
+        rff_out_dim = 4 * n_freq_per_bank
 
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
