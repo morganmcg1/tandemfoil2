@@ -6,6 +6,47 @@ SPDX-PackageName: senpai
 
 # Baseline Metrics — TandemFoilSet (pai2e-r5)
 
+## 2026-04-29 02:30 — PR #926: surf_weight=28 on Lion+T_max=15+EMA baseline (NEW BEST)
+
+- **Surface MAE:** Ux=0.8727, Uy=0.4681, p=**67.2490** (val_avg, best checkpoint epoch 14)
+- **val_avg/mae_surf_p:** 67.2490 — **−4.35% vs previous best (70.3212)**
+- **Metric summary:** `metrics/charliepai2e5-alphonse-sw-sweep-28-84a7c3zn.jsonl`
+- **Reproduce:** `cd target/ && python train.py --surf_weight 28.0 --optimizer lion --lr 3e-4 --weight_decay 1e-2 --loss l1 --scheduler cosine --T_max 15 --clip_grad_norm 1.0 --n_hidden 128 --n_layers 5 --n_head 4 --slice_num 64 --mlp_ratio 2 --batch_size 4`
+
+### Per-split validation (best checkpoint, epoch 14)
+
+| Split | surf Ux | surf Uy | surf p | vol Ux | vol Uy | vol p |
+|-------|--------:|--------:|-------:|-------:|-------:|------:|
+| val_single_in_dist     | 0.7106 | 0.4310 |  73.0754 | 3.9637 | 1.7670 | 109.9681 |
+| val_geom_camber_rc     | 1.4350 | 0.6685 |  82.5966 | 4.8815 | 2.5525 | 100.0313 |
+| val_geom_camber_cruise | 0.4319 | 0.3063 |  47.7165 | 2.6182 | 1.0685 |  60.0248 |
+| val_re_rand            | 0.9131 | 0.4668 |  65.6074 | 3.6150 | 1.7411 |  79.3861 |
+| **avg**                | **0.8727** | **0.4681** | **67.2490** | **3.7696** | **1.7823** | **87.3526** |
+
+### Model configuration
+
+| Parameter | Value |
+|-----------|-------|
+| n_hidden | 128 |
+| n_layers | 5 |
+| n_head | 4 |
+| slice_num | 64 |
+| mlp_ratio | 2 |
+| optimizer | Lion |
+| lr | 3e-4 |
+| weight_decay | 1e-2 |
+| **surf_weight** | **28.0** (was 20.0 — key change) |
+| batch_size | 4 |
+| loss | L1 (vol + surf_weight * surf) |
+| scheduler | CosineAnnealingLR T_max=15 |
+| gradient clipping | clip_grad_norm max_norm=1.0 |
+| EMA | decay=0.995 (inherited from merged PR #801) |
+| bf16 | None |
+
+**Improvement over previous baseline (PR #801):** 70.3212 → 67.2490 (−4.35%)
+
+---
+
 ## 2026-04-29 01:00 — PR #801: EMA model averaging (decay=0.995) for better generalization (NEW BEST)
 
 - **Surface MAE:** Ux=0.8997, Uy=0.4874, p=**70.3212** (val_avg, best checkpoint epoch 14)
