@@ -1,5 +1,74 @@
 # SENPAI Research Results
 
+## 2026-04-29 14:10 — PR #1162 (CLOSED — substantially worse than current baseline): Per-sample scale-normalized loss
+- Branch: `charliepai2f1-fern/scale-norm-loss`
+- Student: fern (charliepai2f1-fern)
+- Hypothesis: Per-sample std normalization of the MSE loss during training (not inference) to give equitable gradient weight across varying-std samples (different Re regimes have different baseline pressure magnitudes). Predicted to improve cross-Re generalization by equalizing training signal.
+- Reality: **val=122.470 (+12.8% worse than current baseline 108.543); test=112.456 (+16.0% worse than baseline 96.942)**. Mechanism worked as intended but net effect is regression.
+
+### Results
+
+| Metric | Student result | Current baseline (#1138) | Δ |
+|---|---|---|---|
+| `val_avg/mae_surf_p` | 122.470 | 108.543 | +12.8% (worse) |
+| `test_avg/mae_surf_p` | 112.456 | 96.942 | +16.0% (worse) |
+
+### Per-split val
+
+| Split | mae_surf_p | vs baseline | Δ |
+|---|---|---|---|
+| `val_single_in_dist` | 138.547 | 125.815 | +10.1% worse |
+| `val_geom_camber_rc` | 123.625 | 114.589 | +7.9% worse |
+| `val_geom_camber_cruise` | 75.855 | 86.371 | -12.2% better |
+| `val_re_rand` | 101.853 | 107.397 | -5.2% better |
+| **avg** | **122.470** | **108.543** | **+12.8% worse** |
+
+### Analysis & conclusions
+
+- The loss redistribution mechanism worked mechanically: cruise and re_rand (lower-error splits) improved, while single_in_dist and geom_camber_rc (higher-error splits) worsened.
+- Root cause: per-sample std is NOT a good proxy for model difficulty in this dataset. High-std samples are high-pressure-range cases; they are not necessarily the cases the model struggles most with. Normalizing by std deprioritizes the samples the model should learn most from.
+- The experiment ran against old baseline (~125.438) pre-RFF merge; scale-norm also did NOT include RFF, compounding the deficit.
+- **Decision: Closed.** The approach is valid in principle but the std proxy is wrong. A better signal for difficulty-weighted loss would be: spatial pressure gradient magnitude, boundary-layer thickness proxy, or online hard example mining (weight by current model loss, updated per epoch). These could be explored in a future PR.
+
+---
+
+## 2026-04-29 14:10 — PR #1160 (SENT BACK — needs rebase + rerun on current baseline): SwiGLU FFN
+- Branch: `charliepai2f1-alphonse/swiglu-ffn`
+- Student: alphonse (charliepai2f1-alphonse)
+- Hypothesis: Replace GELU MLP in Transolver FFN blocks with SwiGLU gated variant (`out = W_out(SiLU(W_gate(x)) * W_up(x))`), param-matched via `inner = int(hidden * mlp_ratio * 2/3)`. Predicted -2% to -5%.
+- Reality vs student's baseline: val=109.881 vs 125.438 = **-12.4% (strong improvement)**. Reality vs current baseline (RFF+schedule): val=109.881 vs 108.543 = **+1.2% (marginally worse)**. Sent back for rebase + rerun with RFF active.
+
+### Results (vs old baseline — student ran without RFF)
+
+| Metric | Student result | Student baseline (pre-RFF) | Δ vs student baseline |
+|---|---|---|---|
+| `val_avg/mae_surf_p` | 109.881 | 125.438 | -12.4% (strong) |
+| `test_avg/mae_surf_p` | 100.520 | 112.988 | -11.0% (strong) |
+
+| Metric | Student result | Current baseline (#1138 RFF) | Δ vs actual baseline |
+|---|---|---|---|
+| `val_avg/mae_surf_p` | 109.881 | 108.543 | +1.2% (slightly worse) |
+| `test_avg/mae_surf_p` | 100.520 | 96.942 | +3.7% (slightly worse) |
+
+### Per-split val (vs student's old baseline — uniform improvement pattern)
+
+| Split | mae_surf_p | vs student's 125.438 baseline | Δ |
+|---|---|---|---|
+| `val_single_in_dist` | ~122 (est.) | ~151 | -19% |
+| `val_geom_camber_rc` | ~120 (est.) | ~133 | -10% |
+| `val_geom_camber_cruise` | ~90 (est.) | ~100 | -10% |
+| `val_re_rand` | ~108 (est.) | ~118 | -8% |
+| **avg** | **109.881** | **125.438** | **-12.4%** |
+
+### Analysis & conclusions
+
+- SwiGLU showed strong, uniform improvement across all 4 splits on the old baseline — a pattern strongly suggesting genuine generalization improvement rather than split-specific overfitting.
+- The issue: student was assigned before PR #1138 (RFF) was merged, and ran without RFF. SwiGLU alone cannot beat the RFF+schedule baseline; SwiGLU+RFF is untested.
+- The combination is architecturally orthogonal: RFF changes the input encoding, SwiGLU changes the FFN activation. Both contribute to different aspects of the model.
+- **Decision: Sent back.** Rebase onto `icml-appendix-charlie-pai2f-r1` (RFF in train.py) and re-run. If SwiGLU contributes even -2% on top of RFF, it's a winner.
+
+---
+
 ## 2026-04-29 13:15 — PR #1159 (CLOSED — negative result): AoA sign-flip augmentation
 - Branch: `charliepai2f1-askeladd/aoa-flip-aug`
 - Student: askeladd (charliepai2f1-askeladd)

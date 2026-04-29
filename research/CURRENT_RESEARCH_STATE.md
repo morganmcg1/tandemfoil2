@@ -1,6 +1,6 @@
 # SENPAI Research State
 
-- 2026-04-29 13:15 (round 2 in progress — TWO winners merged: schedule + RFF; PR #1159 closed; askeladd reassigned)
+- 2026-04-29 14:30 (round 2 in progress — TWO winners merged: schedule + RFF; PRs #1159, #1162 closed; PR #1160 sent back for rebase+rerun; fern assigned PR #1179 gradient-norm-loss)
 - No human researcher directives yet for this branch.
 - Track: `charlie-pai2f-r1`, 8 students, 1 GPU each, 30 min/run, max 50 epochs effective (~14 actually achievable per run).
 
@@ -72,8 +72,9 @@ Round 2 continues the sweep with hypotheses that:
 - **PR #1142 (nezuko, ema-decay-999)** — H-06 EMA weight averaging at `decay=0.999` with 5-epoch warmup. Direct intervention against the σ ≈ 7 run-to-run variance. Zero throughput cost, low effect (-1% to -3%) but stacks for free with every future winner.
 - **PR #1158 (thorfinn, film-domain-cond)** — H-10 FiLM domain conditioning over global per-sample features (Re, AoA, NACA, gap, stagger). Targets the 51% per-split val spread. ~0.05M extra params, near-zero throughput cost, identity-init for safe start. Expected -2% to -5%.
 - **PR #1159 (askeladd, aoa-flip-aug)** — H-12 AoA sign-flip augmentation. **CLOSED** (+20.3% regression). Root cause: NACA camber M sign not extended when flipping AoA → geometry/label contradiction for all cambered foils. askeladd reassigned to new experiment.
-- **PR #1160 (alphonse, swiglu-ffn)** — H-11 SwiGLU FFN replacing GELU MLP in TransolverBlock, param-matched. Different capacity axis from his prior width-scaling attempt. ~5-7% slower per epoch. Strong priors (LLaMA, PaLM, Mixtral). Expected -1% to -3%.
-- **PR #1162 (fern, scale-norm-loss)** — H-03 Per-sample scale-normalized loss. Divides each sample's training loss by its own y_std before averaging — directly addresses the 10× per-sample y_std spread documented in DATASET_ANALYSIS.md. Zero throughput cost. Expected -2% to -6%.
+- **PR #1160 (alphonse, swiglu-ffn)** — H-11 SwiGLU FFN replacing GELU MLP in TransolverBlock, param-matched. **SENT BACK** — ran without RFF, beat old baseline by -12.4% but is +1.2% worse than current RFF baseline. Must rebase onto current branch and rerun. SwiGLU+RFF untested and potentially powerful.
+- **PR #1162 (fern, scale-norm-loss)** — H-03 Per-sample scale-normalized loss. **CLOSED** — val=122.470 vs baseline 108.543 (+12.8% worse). Loss redistribution helped cruise/re_rand but hurt the higher-error splits (single_in_dist, geom_camber_rc) that dominate the average. Per-sample std is a poor proxy for difficulty. fern **reassigned to PR #1179 (gradient-norm-loss)**.
+- **PR #1179 (fern, gradient-norm-loss)** — **NEW (assigned 2026-04-29 14:30)** — Spatial gradient-magnitude weighted surface loss. Weights each surface node's loss by |Δp_i| (discrete first-order pressure gradient along node sequence). Directly targets leading-edge/suction-peak/TE-wake regions that dominate mae_surf_p. Addresses the failure mode of #1162 (global std ≠ local difficulty). Expected -2% to -5%.
 - **PR #1165 (frieren, rff-64)** — RFF n_freq sweep follow-up to merged #1138. Tests if RFF is capacity-limited at n_freq=32. Single-variable ablation: same RFF, same sigma, just doubled frequency components. Best-epoch=last on the merged baseline → model still hungry; +0.03M params, zero throughput cost. Expected -1% to -3% if capacity-limited; flat otherwise.
 - **PR #1176 (askeladd, re-stratified-sampler)** — H-13 Re-stratified sampling. Replace domain-balanced sampler with one that multiplies domain weights by `log(1 + per_sample_y_std_p)` (normalized to unit mean). Upweights hard high-Re samples within each domain, focusing the limited 14-epoch budget on gradient-rich samples. Zero throughput cost. Orthogonal to RFF and schedule. Expected -2% to -5%.
 
