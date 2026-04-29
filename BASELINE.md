@@ -4,28 +4,51 @@
 
 | Metric | Value |
 |--------|-------|
-| `val_avg/mae_surf_p` | **56.4257** (PR #1120 — n_layers=2 + huber_delta=1.0, epoch 26/30) |
-| `test_avg/mae_surf_p` | **49.6211** (PR #1120) |
+| `val_avg/mae_surf_p` | **55.4877** (PR #1134 — n_layers=2 + huber_delta=0.1 + epochs=26 cosine-aligned, epoch 26/26) |
+| `test_avg/mae_surf_p` | **48.8156** (PR #1134) |
 
-**Source:** PR #1120 — Shallower model (n_layers=2) — measured on the old huber_delta=1.0 stack but compounded into the train.py code with PR #1121's huber_delta=0.1 win available via CLI flag.
-- Branch: `charlie5-nezuko/n-layers-2`
-- Config (as run): n_layers=2 (now hardcoded), slice_num=16, n_hidden=256, n_head=8, loss=huber, huber_delta=1.0 (in this run), ema_decay=0.999, grad_clip=1.0, per_sample_norm, epochs=30, lr=5e-4, batch_size=4, surf_weight=10.0
-- Val still falling at epoch 26/30 (LR=2.16e-5 — deep into cosine cooldown)
-- 1,141,299 params (-29%), Peak VRAM 22.22 GB (-27% vs PR #1121)
+**Source:** PR #1134 — Cosine-aligned epochs=26 on n_layers=2 + huber_delta=0.1 stack — confirmed full cosine completion (LR=0.0 at epoch 26), 26.1 min wall-clock.
+- Branch: `charliepai2f5-edward/epochs-26-cosine-aligned`
+- Config: n_layers=2 (hardcoded), slice_num=16, n_hidden=256, n_head=8, loss=huber, huber_delta=0.1, ema_decay=0.999, grad_clip=1.0, per_sample_norm, epochs=26, lr=5e-4, batch_size=4, surf_weight=10.0
+- Run completed all 26/26 epochs; LR=0.0 at final epoch (full cosine completion)
+- 1,141,299 params, Peak VRAM 22.22 GB
 
-**IMPORTANT — compound recommendation:** The merged code now hardcodes `n_layers=2`. The recommended round-r5 baseline command should ALSO add `--huber_delta 0.1` (PR #1121's win) so the two improvements compound. We have not yet verified the compound result; new experiments should adopt this as the working baseline command.
+**Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper reference) — currently +19.3% above target.
 
-**Compete target:** `test_avg/mae_surf_p` = 40.93 (Transolver paper reference)
-
-## Round r5 — Recommended Working Baseline (compound n_layers=2 + huber_delta=0.1)
+## Round r5 — Recommended Working Baseline (compound n_layers=2 + huber_delta=0.1 + epochs=26)
 
 ```
-python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 30 \
+python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 26 \
   --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm
 ```
-*(Note: n_layers=2 (NEW), slice_num=16 are hardcoded in model_config dict in train.py)*
+*(Note: n_layers=2, slice_num=16 are hardcoded in model_config dict in train.py)*
 
 ## Round r5 — Merged Winners
+
+### PR #1134 — Cosine-aligned epochs=26 on n_layers=2 + huber_delta=0.1 stack (2026-04-29)
+**Student:** charliepai2f5-edward | **Branch:** charliepai2f5-edward/epochs-26-cosine-aligned
+
+| Metric | Value |
+|--------|-------|
+| `val_avg/mae_surf_p` | **55.4877** (epoch 26/26 — full cosine completion, LR=0.0) |
+| `val_single_in_dist/mae_surf_p` | 60.5296 |
+| `val_geom_camber_rc/mae_surf_p` | 70.5915 |
+| `val_geom_camber_cruise/mae_surf_p` | 35.7350 |
+| `val_re_rand/mae_surf_p` | 55.0944 |
+| `test_avg/mae_surf_p` | **48.8156** |
+| `test_single_in_dist/mae_surf_p` | 54.9459 |
+| `test_geom_camber_rc/mae_surf_p` | 64.3997 |
+| `test_geom_camber_cruise/mae_surf_p` | 29.8793 |
+| `test_re_rand/mae_surf_p` | 46.0375 |
+
+**vs prior baseline (PR #1120):** 55.4877 vs 56.4257 → **-1.66% val improvement**
+**Test improvement:** 48.8156 vs 49.6211 → **-1.62% test improvement**
+**Run config:** n_layers=2 (hardcoded), huber_delta=0.1, epochs=26, cosine T_max=26 (fully aligned to budget)
+**Schedule alignment:** LR at epoch 26 = 0.0 (full cosine completion). Monotonically improving every epoch.
+**Peak VRAM:** 22.22 GB | **Wall-clock:** 26.11 min (well within 30-min budget)
+**Win concentrated in:** geom_camber_cruise (-7.45% val / -8.92% test) and re_rand (-3.34% val / -4.29% test). Minor regression on single_in_dist (+1.43%) and geom_camber_rc (+0.25%).
+**Metrics JSONL:** `metrics/charliepai2f5-edward-epochs-26-cosine-aligned-9a9ve4zq.jsonl`
+**Reproduce:** `python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epochs 26 --grad_clip 1.0 --ema_decay 0.999 --per_sample_norm`
 
 ### PR #1120 — Shallower model: n_layers=2 (2026-04-29)
 **Student:** charliepai2f5-nezuko | **Branch:** charlie5-nezuko/n-layers-2
@@ -225,4 +248,5 @@ python train.py --n_hidden 256 --n_head 8 --loss huber --huber_delta 0.1 --epoch
 - 2026-04-29: PR #1050 merged. PSN+epochs=30: val_avg=61.5855 (-7.8%).
 - 2026-04-29: Round r5 launched on icml-appendix-charlie-pai2f-r5.
 - 2026-04-29: PR #1121 merged. huber_delta=0.1: val_avg=58.4790 (-5.04%), test_avg=51.3554 (-5.52%).
-- 2026-04-29: PR #1120 merged. n_layers=2: val_avg=56.4257 (-3.51%), test_avg=49.6211 (-3.38%) — **Current best.** Compound recommendation: combine with --huber_delta 0.1.
+- 2026-04-29: PR #1120 merged. n_layers=2: val_avg=56.4257 (-3.51%), test_avg=49.6211 (-3.38%).
+- 2026-04-29: PR #1134 merged. epochs=26 cosine-aligned (n_layers=2 + huber_delta=0.1 compound): val_avg=55.4877 (-1.66%), test_avg=48.8156 (-1.62%) — **Current best.**
