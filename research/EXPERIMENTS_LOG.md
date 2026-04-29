@@ -2,27 +2,167 @@
 
 <!-- This log is maintained by the advisor. Each entry records a reviewed experiment PR. -->
 
-## 2026-04-29 01:00 — PR #879: Wider hidden dim: n_hidden 128→256 for more capacity under L1 loss (CLOSED)
-- Branch: charliepai2e5-thorfinn/wider-hidden-dim-256
-- Hypothesis: Increase Transolver hidden dimension from 128→256 (2.6M params) to provide more model capacity for the pressure field, under L1 loss.
+## 2026-04-29 04:00 — PR #913: n_layers depth sweep + bf16 autocast (MERGED — NEW BEST 63.0588)
+- Branch: charliepai2e5-tanjiro/n-layers-depth-sweep (squash-merged into icml-appendix-charlie-pai2e-r5)
+- Hypothesis: Shallower Transolver (fewer layers) may generalize better on this dataset; combined with bf16 autocast for ~1.7× throughput gain, enabling more epochs within the wall-clock budget.
+- Results (Round 2 — rebased on PR #926 config, EMA=0.995, T_max=15, sw=28):
+
+  | Config | Best epoch | val_avg/mae_surf_p | Δ vs baseline 70.3212 | Δ vs best 67.2490 |
+  |--------|------------|-------------------:|----------------------:|------------------:|
+  | **n_layers=3+bf16** ⭐ | **29** | **63.0588** | **−10.3%** | **−6.22%** |
+  | n_layers=4+bf16 | 22 | 65.3669 | −7.03% | −2.80% |
+  | (PR #926 baseline: n_layers=5, fp32) | 14 | 67.2490 | — | — |
+
+  Per-split at n_layers=3+bf16 (epoch 29):
+
+  | Split | surf Ux | surf Uy | surf p |
+  |-------|--------:|--------:|-------:|
+  | val_single_in_dist | 0.7230 | 0.3749 | 69.5556 |
+  | val_geom_camber_rc | 1.4011 | 0.6057 | 77.6902 |
+  | val_geom_camber_cruise | 0.4399 | 0.2571 | 41.7779 |
+  | val_re_rand | 0.9299 | 0.4210 | 63.2113 |
+  | **avg** | **0.8735** | **0.4147** | **63.0588** |
+
+  Metric files: `metrics/tanjiro-nlayers3-bf16-wyals8i4.jsonl`, `metrics/tanjiro-nlayers4-bf16-sk82pcjo.jsonl`
+
+- Analysis: **Merged as new baseline.** Two key findings:
+  1. **Shallower is better**: Monotonic trend (n_layers=6 > 5 > 4 > 3) consistent across both rounds, even after rebasing onto the best config. The Transolver with n_layers=3 has 0.420M params vs 0.541M for n_layers=5 — fewer params generalize better on this ~1.5K-sample dataset.
+  2. **bf16 compounds the gain**: The same architecture runs 29 epochs in the same wall-clock budget as 14 fp32 epochs (≈2× throughput). More epochs on the cosine schedule means the model sees the full annealing cycle rather than being cut off mid-curve.
+  3. **camber_rc improves most**: 82.60 → 77.69 (−5.8%) on the hardest OOD split — shallower depth reduces overfitting to training distribution geometry, helping generalization.
+  4. **Uy MAE also drops**: 0.4681 → 0.4147 (−11.4%) across all splits — a clean win on velocity prediction as well.
+  New baseline: **63.0588**. All subsequent experiments must rebase on n_layers=3+bf16+sw=28+T_max=15+EMA=0.995.
+
+## 2026-04-29 05:00 — PR #977: Lion LR warmup (linear warmup 1–3 epochs before cosine decay) (CLOSED — NEGATIVE)
+- Branch: charliepai2e5-alphonse/lion-lr-warmup (deleted on close)
+- Hypothesis: Lion's sign-based updates may benefit from a short linear warmup before cosine decay to avoid large sign-gradient steps from a cold start. Sweep warmup_epochs ∈ {1, 2, 3}.
+- Results (run against OLD config: n_layers=5, fp32, no bf16; baseline 67.2490):
+
+  | Config | Best epoch | val_avg/mae_surf_p | Δ vs baseline 67.2490 |
+  |--------|------------|-------------------:|----------------------:|
+  | baseline (no warmup) | 14 | 67.2490 | — |
+  | warmup-1ep | ~14 | 73.9375 | +9.9% |
+  | warmup-2ep | ~14 | 71.9860 | +7.0% |
+  | warmup-3ep | ~14 | 68.1991 | +1.4% |
+
+  Per-split at best (warmup-3ep): single=68.9881, camber_rc=81.2823, camber_cruise=54.1673, re_rand=68.3585
+
+- Analysis: **Closed — hypothesis rejected.** All three warmup variants regress vs baseline. The structural flaw: warmup_epochs shrinks the effective cosine decay budget. With T_max=15 and a 3-epoch warmup, the cosine phase runs for only 12 epochs — less refinement time than baseline. The loss curves show Lion is well-behaved from epoch 1 (no cold-start overshoot), confirming there is no cold-start pathology to cure. Monotonic trend (longer warmup = less regression) is entirely explained by less cosine budget being consumed: warmup-3ep converges to a partially-decayed LR that is closer to cosine-only. Even with re-run on the current best config (n_layers=3 + bf16, target 63.0588), the structural problem would remain unchanged. If warmup is revisited: extend T_max by warmup_epochs, or use per-iteration warmup over first ~500 gradient steps (decoupled from epoch count). Alphonse reassigned to new experiment.
+
+  **Config note**: experiment ran on old config (n_layers=5, fp32, no bf16) without rebasing on PR #913; conclusion is unaffected since all variants regress even against the stale 67.2490 baseline.
+
+## 2026-04-29 — PR #893: Lion lr sweep (lr=1e-4/5e-4/6e-4 vs baseline 3e-4) (SENT BACK — REBASE REQUIRED)
+- Branch: charliepai2e5-frieren/lion-lr-sweep
+- Hypothesis: Lion's default lr=3e-4 (borrowed from ImageNet paper) may be suboptimal for this task; sign-based step requires finer sweep. Test lr=1e-4, 5e-4, 6e-4.
+- Results (run against OLD config: surf_weight=20, T_max=50, no EMA):
+
+  | LR     | Best epoch | val_avg/mae_surf_p | Δ vs old baseline 77.30 |
+  |--------|------------|-------------------|--------------------------|
+  | 1e-4 ⭐ | 14/50      | 73.4909           | −4.93%                   |
+  | 3e-4   | 14/50      | 77.2954           | (0%, baseline repro)     |
+  | 5e-4   | 13/50      | 81.7269           | +5.73%                   |
+  | 6e-4   | 14/50      | 80.5594           | +4.22%                   |
+
+  Per-split at lr=1e-4: single=81.73, camber_rc=88.78, camber_cruise=51.47, re_rand=71.98
+
+- Analysis: **Sent back for rebase.** The lr=1e-4 finding is directionally valid and important — Lion benefits from a smaller LR than the default 3e-4 (−4.93% improvement even without current best config). However, the experiment was run against the old config (surf_weight=20, T_max=50, no EMA=0.995), predating PR #926. Best result 73.49 does not beat current baseline 67.2490. Student instructed to rerun lr=5e-5, lr=1e-4, lr=1.5e-4 on top of the full current best config (surf_weight=28, T_max=15, EMA=0.995, Lion, L1, clip=1.0). Frieren remains assigned to #893 with the rebase task.
+
+## 2026-04-29 — PR #922: Multi-step LR schedule for Lion optimizer (milestones=[7,11], gamma=0.3) (CLOSED — NEGATIVE)
+- Branch: charliepai2e5-askeladd/multi-step-lr-lion (deleted)
+- Hypothesis: MultiStepLR with milestone drops at 50% and 80% of the ~14-epoch budget (epochs 7 and 11), gamma=0.3, would outperform CosineAnnealingLR T_max=15, motivated by the Lion paper showing step-LR can beat cosine on ImageNet-scale training.
 - Results:
 
-  | Split | surf p (PR #879, AdamW) | surf p (baseline #799, Lion) | surf p (baseline #798, AdamW) | Δ vs Lion baseline |
-  |-------|-----------------------:|-----------------------------:|-----------------------------:|-------------------:|
-  | val_single_in_dist     | 159.50 | 92.02  | 126.62 | +73.3% |
-  | val_geom_camber_rc     | 129.46 | 87.77  | 110.45 | +47.5% |
-  | val_geom_camber_cruise |  88.81 | 57.97  |  65.88 | +53.2% |
-  | val_re_rand            | 107.58 | 71.42  |  86.84 | +50.7% |
-  | **avg (surf p)**       | **121.34** | **77.30** | **97.45** | **+57.0%** |
+  | Config | val_avg/mae_surf_p | Δ vs baseline 71.2882 |
+  |--------|-------------------:|----------------------:|
+  | MultiStepLR [7,11] gamma=0.3 | 71.5764 | +0.40% (regression) |
+  | **CosineAnnealingLR T_max=15 (baseline)** | **71.2882** | — |
 
-  Best checkpoint: epoch 8/9. Training rate: ~225s/epoch, 9 epochs in 33.7 min (timeout-bound).
-  NaN on test_geom_camber_cruise (pre-existing data/scoring.py bug).
-  Metric summary: `metrics/charliepai2e5-thorfinn-wider-hidden-dim-256-c5pmcj4x.jsonl` (on student branch before deletion).
+  Per-split: single=79.12 (−0.29 vs baseline 79.41), camber_rc=87.45 (+4.27 regression), camber_cruise=50.50 (−3.68 improvement), re_rand=69.23 (−0.85 improvement)
 
-- Analysis: Closed. Two compounding failure modes:
-  1. **Wrong optimizer**: Run used AdamW (lr=5e-4, wd=1e-4, the pre-PR-799 defaults), not Lion. The current baseline's key improvement is Lion's sign-based updates (−20.7%). Testing capacity expansion without Lion is an invalid comparison.
-  2. **FLOP-budget mismatch**: n_hidden=256 yields 2.6M params vs ~1.0M at 128, making each epoch ~61% slower (225s vs ~140s). Only 9 epochs completed in 30 min vs 14 for the baseline — fewer gradient steps under a fixed-wall-clock budget is a net loss for L1 convergence.
-  The model's per-epoch trajectory showed continued convergence at timeout (121→124 oscillation), and the student's analysis correctly identified these causes. The experiment would need: (a) Lion optimizer, (b) n_hidden ≤ 192 to stay within ~14-epoch budget, or (c) explicit bf16 speedup to fit 256 within the wall clock. Assigned thorfinn a slice_num sweep instead as the next capacity-related experiment.
+  Metric file: `metrics/charliepai2e5-askeladd_multistep-lion-7-11-2rtaam4i.jsonl` (branch deleted on close)
+
+- Analysis: Closed as negative result. The 50%/80% milestone heuristic from the Lion paper is calibrated for long training schedules (~90 epochs, ImageNet). At our 14-epoch budget: (a) first drop at epoch 7 is already 50% of training — too late to benefit from the elevated initial LR compared to cosine's continuous annealing; (b) post-drop plateau (lr=9e-5 at epochs 9-11) shows MAE 81→82→83 — slightly *increasing*, wasting training budget; (c) cosine gives smooth continuous decay to near-zero within the budget, which the short schedule strongly favors. The camber_rc split regression (+4.27) confirms the late-milestone schedule is harder on OOD generalization. Student suggested tighter milestones [4,9] or [5,10] or a 3-step [5,9,12] as follow-ups. Askeladd now idle, assigned a new experiment.
+
+## 2026-04-29 — PR #817: surf_weight sweep for L1 loss (values 10/15/20/25/30) (CLOSED — BASELINE MOVED)
+- Branch: charliepai2e5-alphonse/surf-weight-l1-sweep (deleted)
+- Hypothesis: With L1 loss (vs MSE), the optimal surf_weight should shift because L1 no longer quadratically inflates vol-loss gradients on high-Re outliers, making the surface/volume gradient balance different. Sweep surf_weight ∈ {10, 15, 20, 25, 30}.
+- Results:
+
+  | surf_weight | best epoch | val_avg/mae_surf_p | vs old baseline 97.4483 |
+  |------------:|----------:|-------------------:|------------------------:|
+  | 10          | 13/14     | 101.7187           | +4.38%                  |
+  | 15          | 14/14     | 102.5887           | +5.27%                  |
+  | 20          | 14/14     | 97.5026            | +0.06% (baseline repro) |
+  | **25**      | **14/14** | **95.5619**        | **−1.94% (winner)**     |
+  | 30          | 14/14     | 107.9856           | +10.81%                 |
+
+  All runs: 14/50 epochs (30-min timeout), peak GPU 42.1 GB H100.
+
+  Per-split at best (sw=25): single=123.51, camber_rc=101.52, camber_cruise=70.96, re_rand=86.26.
+
+  Metric paths: `metrics/charliepai2e5-alphonse-surf-weight-l1-sweep-sw{10/15/20/25/30}-{run_id}.jsonl` (branch deleted on close)
+
+- Analysis: **Closed** — PR #817's best result (95.5619 at sw=25) does not beat the current baseline of **71.2882** (PR #901 was merged during this experiment's run). Directional finding is valuable: unimodal sweep confirms optimal surf_weight with L1 shifts from 20 → 25. Consistent with hypothesis (L1 deflates outlier vol gradients, optimum re-centers higher). Sweep curve peaks clearly at 25, drops sharply at 30. Student also flagged the pre-existing test_geom_camber_cruise NaN bug (present since at least PR #798). Follow-up: test sw=25 with current best config (Lion + T_max=15); PR #894 covers {5,10,30,40} and does not include 25.
+
+## 2026-04-28 23:59 — PR #901: Cosine LR T_max budget align: T_max 50→15 to match timeout budget (MERGED — NEW BEST)
+- Branch: charliepai2e5-askeladd/cosine-tmax-budget-align
+- Hypothesis: `CosineAnnealingLR(T_max=50)` is misaligned with the ~14-epoch actual runtime budget under the 30-min timeout. With T_max=15, the LR fully anneals from 3e-4 → ~0 within the available training window, providing the low-LR fine-tuning phase cosine annealing is designed for.
+- Results:
+
+  | Split | surf Ux (baseline) | surf Ux (this) | surf Uy (baseline) | surf Uy (this) | surf p (baseline) | surf p (this) | Δ surf p |
+  |-------|-------------------:|---------------:|-------------------:|---------------:|------------------:|--------------:|---------:|
+  | val_single_in_dist     | 1.3596 | 0.7788 | 0.4770 | 0.4462 |  92.0183 |  79.4120 | −12.61 |
+  | val_geom_camber_rc     | 1.6130 | 1.4460 | 0.6790 | 0.6702 |  87.7708 |  83.1787 |  −4.59 |
+  | val_geom_camber_cruise | 1.0149 | 0.4725 | 0.3605 | 0.3372 |  57.9690 |  54.1816 |  −3.79 |
+  | val_re_rand            | 1.2637 | 0.9296 | 0.4993 | 0.4974 |  71.4235 |  68.3805 |  −3.04 |
+  | **val_avg**            | **1.3128** | **0.9077** | **0.5040** | **0.4877** | **77.2954** | **71.2882** | **−7.78%** |
+
+- Metric summary: `research/charliepai2e5-askeladd-cosine-tmax-15-9b1s4s0x.jsonl`
+- Analysis: Clear winner. A 7.78% improvement in the primary metric `val_avg/mae_surf_p` from a one-line scheduler change. The improvement is consistent across all 4 val splits and all 3 non-NaN test splits, confirming this is a fundamental training dynamics improvement rather than a split-specific artifact. The LR table shows the key insight: at epoch 14, baseline LR is still 55% of initial (1.665e-4) while the aligned schedule reaches ~1% (3.28e-6) — the model was never reaching the low-LR refinement phase. The large Ux improvement (−31%) suggests the model was also undertrained on velocity fields. The `test_geom_camber_cruise/mae_surf_p` NaN is a pre-existing data issue unrelated to this hypothesis. All WIP students now targeting the new baseline of 71.2882.
+- **New baseline: val_avg/mae_surf_p = 71.2882**
+
+## 2026-04-28 (post-resume) — PR #823: asinh pressure target transform (scale 100/500/2000) (CLOSED)
+- Branch: charliepai2e5-tanjiro/asinh-pressure-target-transform
+- Hypothesis: Apply asinh(x/scale)*scale to the pressure channel before normalization to compress its long tail and reduce loss explosion on extreme high-Re samples; sweep scale ∈ {100, 500, 2000}.
+- Results:
+
+  | Run | --asinh_p_scale | val_avg/mae_surf_p | Δ vs old AdamW+L1 (97.45) | Δ vs current Lion+L1 (77.30) |
+  |-----|----------------:|-------------------:|--------------------------:|----------------------------:|
+  | scale=100   | 100  | ~109   | +12% | +41% |
+  | **scale=500** | **500** | **99.26** | **+1.9%** | **+28.4%** |
+  | scale=2000  | 2000 | ~104   | +6.7% | +35% |
+
+  Per-split at best (scale=500): single=120.39, camber_rc=125.93, camber_cruise=62.54, re_rand=88.17.
+
+- Metric summary: `metrics/charliepai2e5-tanjiro-asinh-p-500-zu5vml2g.jsonl` (student fork branch, deleted on close)
+- Analysis: Closed as negative result. Three reasons the transform fails on top of L1+Lion: (a) L1 already handles long tails via its median-seeking property — asinh doubles up on a non-issue; (b) asinh is symmetric but pressure has an asymmetric tail (large negative suctions on upper surfaces, small positive stagnation peaks), so the squashing matches neither tail; (c) the transform attenuates mid-magnitude gradients, which dominate validation MAE. Compare to other rejected loss-shaping experiments (#822 Huber, #806 FiLM) — pattern is clear: with Lion+L1 the loss-surface is already well conditioned and additional shaping subtracts.
+
+## 2026-04-29 02:00 — PR #824: Gradient clipping: stabilize L1 training under heavy-tailed targets (max_norm sweep) (CLOSED)
+- Branch: charliepai2e5-frieren/gradient-clipping-and-weight-decay
+- Hypothesis: Gradient clipping by global norm (tested values 0.5, 1.0, 5.0) would stabilize L1 training under heavy-tailed target distributions and improve the AdamW+L1 baseline (97.4483).
+- Results (compared against PR #799 Lion baseline of 77.2954):
+
+  | Run | --grad_clip | val_avg/mae_surf_p | Δ vs AdamW+L1 baseline (97.45) | clip_frac |
+  |-----|------------:|-------------------:|-------------------------------:|----------:|
+  | Baseline (no clip) | — | **97.4483** | — | — |
+  | grad-clip-5.0 | 5.0 | 101.2255 | +3.9% | 1.00 |
+  | grad-clip-0.5 | 0.5 | 103.9121 | +6.6% | 1.00 |
+  | grad-clip-1.0 | 1.0 | 110.0872 | +13.0% | 1.00 |
+
+  Per-split (best run, clip=5.0):
+
+  | Split | clip=5.0 | L1+AdamW baseline |
+  |-------|---------|-----------------|
+  | val_single_in_dist     | 124.30 | 126.62 |
+  | val_geom_camber_rc     | 104.16 | 110.45 |
+  | val_geom_camber_cruise |  83.39 |  65.88 |
+  | val_re_rand            |  93.04 |  86.84 |
+  | **avg**                | **101.23** | **97.45** |
+
+  Note: All three runs far worse than current Lion+L1 baseline of 77.2954 (PR #799).
+
+  Metric files: `metrics/charliepai2e5-frieren-grad-clip-0.5-uavkg60o.jsonl`, `metrics/charliepai2e5-frieren-grad-clip-1.0-jd39rjdv.jsonl`, `metrics/charliepai2e5-frieren-grad-clip-5.0-ggwb2ohg.jsonl` (branch deleted, files not recovered)
+
+- Analysis: Closed. All three clip thresholds hurt performance vs AdamW+L1 baseline (and are completely irrelevant vs the 77.2954 Lion+L1 baseline). The key finding: natural gradient norm in this setup is **mean 85–115, max 180–440** due to `surf_weight=20 * L1` keeping the surface-loss gradient large and constant. All tested thresholds (0.5/1.0/5.0) are 1–2 orders of magnitude below the typical norm — binding every single batch (clip_frac=1.00), effectively acting as a ~100x LR reduction. The original hypothesis was based on standard transformer-regime assumptions (norm ~1–10); this regime is completely different due to the heavy surface-weight amplification. Crucially, the unclipped baseline shows no instability (monotonic val improvement), confirming that clipping was solving a non-problem. Student analysis was first-rate — the grad-norm trace was the decisive evidence. Important note: the Lion+L1+clip1.0 in PR #799 succeeds because Lion's sign-gradient normalization implicitly regularizes gradient magnitude — completely different mechanism from L1+AdamW+clip.
 
 ## 2026-04-29 00:15 — PR #799: Lion optimizer + L1 loss + gradient clipping (MERGED, NEW BASELINE)
 - Branch: charliepai2e5-askeladd/lion-optimizer
@@ -139,6 +279,24 @@
 
 - Metric summary: `target/metrics/charliepai2e5-thorfinn-film-domain-conditioning-l1-bztrpe2i.jsonl`
 - Analysis: Closed. FiLM conditioning is counterproductive on top of L1 loss. The student's analysis was correct: L1 loss already handles cross-domain magnitude bias via its linear penalization (median-seeking property), so the affine FiLM correction adds noise without compensating anything real. The cruise split regression (+37.9%) is the largest, suggesting FiLM's domain-specific scale shift is actively harmful when training data per domain is limited. Note: FiLM showed a marginal win (+2.6%) over the MSE baseline (128.83→125.48) — consistent with FiLM compensating MSE's quadratic domain-bias amplification. With L1 the interaction disappears and only the added noise remains.
+
+## 2026-04-28 — PR #852: Per-channel L1 loss weighting: amplify pressure in surf_loss (p_weight sweep 2/5/10) (CLOSED)
+- Branch: charliepai2e5-fern/per-channel-loss-weighting (deleted on close)
+- Hypothesis: Weight the pressure channel (dim 2) more heavily within `surf_loss` via per-channel multiplicative weights `[1.0, 1.0, p_weight]`, normalising by `ch_weights.mean()` to keep `surf_weight=20` approximately calibrated. Hypothesis: amplifying the pressure gradient signal inside `surf_loss` would drive the model toward better surface pressure predictions directly.
+- Results:
+
+  | Run | p_weight | best_val_avg/mae_surf_p | val_single_in_dist | val_geom_camber_rc | val_geom_camber_cruise | val_re_rand | Δ vs baseline (77.30) |
+  |-----|:--------:|:-----------------------:|-------------------:|-------------------:|-----------------------:|------------:|----------------------:|
+  | pweight-2  | 2  | 97.811 | 119.20 | 111.46 | 69.96 | 90.63 | +26.5% |
+  | pweight-5  | 5  | 106.602 | 140.60 | 119.53 | 76.67 | 89.61 | +37.9% |
+  | pweight-10 | 10 | 105.874 | 132.27 | 115.39 | 78.86 | 96.98 | +36.9% |
+  | **Current baseline (PR #799)** | — | **77.2954** | 92.02 | 87.77 | 57.97 | 71.42 | — |
+
+  All runs hit ~30-min timeout at epoch 13 or 14/50.
+
+  Metric files (on deleted branch): `metrics/charliepai2e5-fern-pweight-2-5ojx60ru.jsonl`, `metrics/charliepai2e5-fern-pweight-5-udy75eqy.jsonl`, `metrics/charliepai2e5-fern-pweight-10-hf2pxrva.jsonl`
+
+- Analysis: Closed. All three `p_weight` values produced large regressions vs the Lion+L1+clip baseline (77.30). Best result was `p_weight=2` at 97.81 (+26.5%). The approach fails for two structural reasons: (a) the `surf_weight=20` analogy breaks down at the channel level — globally up-weighting surface loss vs volume loss exploits different gradient flow paths than intra-channel re-weighting within an already-normalised L1 sum; (b) the mean-normalisation (`/ ch_weights.mean()`) preserves total loss scale but cannot prevent the model from over-specialising to minimise the pressure channel at the cost of Ux/Uy residuals, whose correlated errors then propagate back into camber_cruise and single_in_dist splits. The OOD splits (camber_cruise, re_rand) regress most sharply, consistent with increased sensitivity to distribution shift when the channel weighting distorts the loss landscape. Note: pre-existing `test_geom_camber_cruise` NaN/Inf bug is unrelated to this PR. Student suggested promising follow-ups: per-sample pressure variability scaling (adaptive weighting), auxiliary pressure decoder (separate objective), physics-informed regularisation terms.
 
 ## 2026-04-28 22:30 — PR #805: Preprocess MLP +1 residual layer (n_layers=0->1) for richer embeddings (CLOSED)
 - Branch: charliepai2e5-tanjiro/preprocess-mlp-depth
