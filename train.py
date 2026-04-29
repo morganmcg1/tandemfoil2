@@ -179,12 +179,16 @@ class TransolverBlock(nn.Module):
 
 
 class FiLMLayer(nn.Module):
-    """Per-block FiLM head: log(Re) -> (gamma, beta) for hidden modulation."""
+    """Per-block FiLM head: cond -> (gamma, beta) for hidden modulation.
 
-    def __init__(self, n_hidden):
+    cond_dim=1: log(Re) only (default, baseline).
+    cond_dim=3: (log_Re, AoA1, AoA2) joint conditioning.
+    """
+
+    def __init__(self, n_hidden, cond_dim=1):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(1, 32),
+            nn.Linear(cond_dim, 32),
             nn.SiLU(),
             nn.Linear(32, 2 * n_hidden),
         )
@@ -192,8 +196,8 @@ class FiLMLayer(nn.Module):
         nn.init.zeros_(self.net[-1].weight)
         nn.init.zeros_(self.net[-1].bias)
 
-    def forward(self, log_re):
-        out = self.net(log_re)
+    def forward(self, cond):
+        out = self.net(cond)
         gamma, beta = out.chunk(2, dim=-1)
         return gamma, beta
 
@@ -203,12 +207,15 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 aoa_film: bool = False):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
+        self.aoa_film = aoa_film
+        self.cond_dim = 3 if aoa_film else 1
 
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
@@ -227,7 +234,9 @@ class Transolver(nn.Module):
             )
             for i in range(n_layers)
         ])
-        self.film_layers = nn.ModuleList([FiLMLayer(n_hidden) for _ in range(n_layers)])
+        self.film_layers = nn.ModuleList(
+            [FiLMLayer(n_hidden, cond_dim=self.cond_dim) for _ in range(n_layers)]
+        )
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
         # Re-zero FiLM final layer after global _init_weights override.
@@ -244,17 +253,40 @@ class Transolver(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
+    def _build_cond(self, x):
+        """Extract sample-level conditioning vector from per-node features.
+
+        log_Re/AoA1/AoA2 are broadcast-identical across nodes; pull from node 0.
+        Returns [B, 1] when aoa_film=False (Re only), [B, 3] when True
+        (log_Re, AoA1, AoA2 in the order [13, 14, 18]).
+        """
+        if self.aoa_film:
+            return x[:, 0, [13, 14, 18]]
+        return x[:, 0, 13:14]
+
     def forward(self, data, **kwargs):
         x = data["x"]
-        # log(Re) is broadcast-identical across nodes; pull from node 0 of each sample.
-        log_re = x[:, 0, 13:14]  # [B, 1]
+        cond = self._build_cond(x)
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         for block, film in zip(self.blocks, self.film_layers):
-            gamma, beta = film(log_re)
+            gamma, beta = film(cond)
             # Pre-block FiLM: condition the input to attention/MLP, not the output.
             fx = (1.0 + gamma.unsqueeze(1)) * fx + beta.unsqueeze(1)
             fx = block(fx)
         return {"preds": fx}
+
+    @torch.no_grad()
+    def film_gamma_norms(self, cond):
+        """Per-block mean L2 norm of FiLM gamma output. Diagnostic only.
+
+        ``cond`` is a [B, cond_dim] tensor — caller chooses which conditioning
+        variant to probe (full vs Re-only vs AoA-only).
+        """
+        norms = []
+        for film in self.film_layers:
+            gamma, _ = film(cond)
+            norms.append(gamma.norm(dim=-1).mean().item())
+        return norms
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +542,7 @@ class Config:
     n_re_quintiles: int = 5
     re_stratify_seed: int = 42
     swiglu_ratio: int = 2  # mlp_ratio for SwiGLU intermediate dim (2 = current merged baseline; 1 = parameter-matched ablation)
+    aoa_film: bool = False  # condition FiLM on (log_Re, AoA1, AoA2) instead of just log_Re
 
 
 if __name__ == "__main__":
@@ -575,6 +608,7 @@ if __name__ == "__main__":
         mlp_ratio=cfg.swiglu_ratio,
         output_fields=["Ux", "Uy", "p"],
         output_dims=[1, 1, 1],
+        aoa_film=cfg.aoa_film,
     )
 
     model = Transolver(**model_config).to(device)
@@ -695,6 +729,27 @@ if __name__ == "__main__":
                 log_metrics[f"{split_name}/{k}"] = v
         for k, v in val_avg.items():
             log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
+
+        # FiLM gamma diagnostics: per-block γ L2 norm — confirms conditioning is being learned.
+        # When aoa_film is on, also log Re-only and AoA-only probe norms to attribute the signal.
+        cond_last = model._build_cond(x_norm)
+        film_norms_full = model.film_gamma_norms(cond_last)
+        for i, n in enumerate(film_norms_full):
+            log_metrics[f"film/gamma_norm_block_{i}"] = n
+        log_metrics["film/gamma_norm_mean"] = sum(film_norms_full) / len(film_norms_full)
+        if cfg.aoa_film:
+            cond_re = cond_last.clone()
+            cond_re[:, 1:] = 0.0
+            cond_aoa = cond_last.clone()
+            cond_aoa[:, 0] = 0.0
+            re_norms = model.film_gamma_norms(cond_re)
+            aoa_norms = model.film_gamma_norms(cond_aoa)
+            for i, (rn, an) in enumerate(zip(re_norms, aoa_norms)):
+                log_metrics[f"film/gamma_norm_re_only_block_{i}"] = rn
+                log_metrics[f"film/gamma_norm_aoa_only_block_{i}"] = an
+            log_metrics["film/gamma_norm_re_only_mean"] = sum(re_norms) / len(re_norms)
+            log_metrics["film/gamma_norm_aoa_only_mean"] = sum(aoa_norms) / len(aoa_norms)
+
         wandb.log(log_metrics)
 
         tag = ""
