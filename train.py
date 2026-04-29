@@ -46,6 +46,22 @@ from data import (
     pad_collate,
 )
 
+
+def aoa_flip_augment(x: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """In-place mirror-flip about the x-axis (physically exact 2D symmetry).
+
+    Negates: z-pos (idx 1), saf_z (idx 3), AoA0 (idx 14), AoA1 (idx 18),
+             stagger (idx 23) in x; Uy (idx 1) in y.
+    """
+    x[..., 1] = -x[..., 1]
+    x[..., 3] = -x[..., 3]
+    x[..., 14] = -x[..., 14]
+    x[..., 18] = -x[..., 18]
+    x[..., 23] = -x[..., 23]
+    y[..., 1] = -y[..., 1]
+    return x, y
+
+
 # ---------------------------------------------------------------------------
 # Transolver model
 # ---------------------------------------------------------------------------
@@ -451,6 +467,9 @@ for epoch in range(MAX_EPOCHS):
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
+
+        if torch.rand(1).item() < 0.5:
+            x, y = aoa_flip_augment(x, y)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
