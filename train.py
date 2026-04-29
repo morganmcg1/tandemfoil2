@@ -461,6 +461,93 @@ def indexed_pad_collate(batch):
 DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 
 
+class CautiousAdamW(torch.optim.AdamW):
+    """AdamW with the 'cautious' mask from Liang et al. 2024 (arxiv:2411.16085).
+
+    Masks updates whose direction disagrees with the current minibatch gradient
+    sign. Standard AdamW step computes u = m_hat / (sqrt(v_hat)+eps); cautious
+    sets u to 0 where sign(u) != sign(g), then rescales by 1/mask.mean() to
+    preserve aggregate update magnitude. Tracks mean mask agreement per step
+    for diagnostic logging.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._mask_running_sum = 0.0
+        self._mask_running_count = 0
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        per_step_mask_sum = 0.0
+        per_step_mask_count = 0
+
+        for group in self.param_groups:
+            beta1, beta2 = group["betas"]
+            lr = group["lr"]
+            eps = group["eps"]
+            wd = group["weight_decay"]
+
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                grad = p.grad
+                if grad.is_sparse:
+                    raise RuntimeError("CautiousAdamW does not support sparse grads")
+
+                state = self.state[p]
+                if len(state) == 0:
+                    state["step"] = 0
+                    state["exp_avg"] = torch.zeros_like(p)
+                    state["exp_avg_sq"] = torch.zeros_like(p)
+
+                exp_avg = state["exp_avg"]
+                exp_avg_sq = state["exp_avg_sq"]
+                state["step"] += 1
+                step = state["step"]
+
+                if wd != 0:
+                    p.mul_(1 - lr * wd)
+
+                exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
+                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
+
+                bias1 = 1 - beta1 ** step
+                bias2 = 1 - beta2 ** step
+                m_hat = exp_avg / bias1
+                v_hat = exp_avg_sq / bias2
+
+                u = m_hat / (v_hat.sqrt() + eps)
+
+                mask = (u * grad > 0).to(u.dtype)
+                mask_mean = mask.mean()
+                per_step_mask_sum += float(mask_mean)
+                per_step_mask_count += 1
+
+                scale = mask_mean.clamp(min=1e-8)
+                u = u * mask / scale
+
+                p.add_(u, alpha=-lr)
+
+        if per_step_mask_count > 0:
+            self._mask_running_sum += per_step_mask_sum / per_step_mask_count
+            self._mask_running_count += 1
+
+        return loss
+
+    def pop_avg_mask(self) -> float:
+        if self._mask_running_count == 0:
+            return float("nan")
+        avg = self._mask_running_sum / self._mask_running_count
+        self._mask_running_sum = 0.0
+        self._mask_running_count = 0
+        return avg
+
+
 @dataclass
 class Config:
     lr: float = 5e-4
@@ -540,7 +627,7 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+optimizer = CautiousAdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scaler = GradScaler()
 warmup_epochs = 1
 effective_epochs = 14
@@ -653,6 +740,7 @@ for epoch in range(MAX_EPOCHS):
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
+    avg_mask = optimizer.pop_avg_mask()
 
     # --- Validate ---
     model.eval()
@@ -694,6 +782,7 @@ for epoch in range(MAX_EPOCHS):
         "lr": current_lr,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/avg_mask": avg_mask,
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
@@ -710,7 +799,7 @@ for epoch in range(MAX_EPOCHS):
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  lr={current_lr:.2e}  "
-        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
+        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f} mask={avg_mask:.3f}]  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}  "
         f"amp[skip={n_skipped_steps} scale={scaler.get_scale():.0f}]  "
         f"curriculum={'on' if curriculum_active else 'off'}"
