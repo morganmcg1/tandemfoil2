@@ -21,7 +21,7 @@ import json
 import os
 import subprocess
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import simple_parsing as sp
@@ -429,6 +429,8 @@ class Config:
     one_cycle_lr: bool = False  # opt-in: use OneCycleLR instead of SequentialLR/CosineAnnealingLR
     one_cycle_max_lr: float = 2e-3  # OneCycleLR max_lr (only used when --one_cycle_lr)
     one_cycle_pct_start: float = 0.3  # OneCycleLR pct_start (only used when --one_cycle_lr)
+    lr_milestones: list[int] = field(default_factory=list)  # MultiStepLR epoch milestones (relative to sub-scheduler start)
+    lr_gamma: float = 1.0  # multiplicative LR decay factor at each milestone (1.0 = no decay)
 
 
 cfg = sp.parse(Config)
@@ -512,18 +514,33 @@ elif cfg.warmup_epochs > 0:
     warmup_sched = torch.optim.lr_scheduler.LinearLR(
         optimizer, start_factor=1e-3, end_factor=1.0, total_iters=cfg.warmup_epochs
     )
-    cosine_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=cosine_epochs, eta_min=cfg.lr * 0.05
-    )
+    if cfg.lr_milestones:
+        # MultiStepLR milestones are RELATIVE to sub-scheduler start (after warmup_epochs).
+        # E.g. warmup=3, MAX_EPOCHS=32, drops at absolute epochs 28 & 31 → relative milestones 25 & 28.
+        tail_sched = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer, milestones=cfg.lr_milestones, gamma=cfg.lr_gamma
+        )
+        tail_desc = (
+            f"MultiStepLR milestones={cfg.lr_milestones} (relative), "
+            f"gamma={cfg.lr_gamma} "
+            f"(absolute milestones={[m + cfg.warmup_epochs for m in cfg.lr_milestones]})"
+        )
+    else:
+        tail_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=cosine_epochs, eta_min=cfg.lr * 0.05
+        )
+        tail_desc = (
+            f"CosineAnnealingLR T_max={cosine_epochs}, "
+            f"eta_min={cfg.lr * 0.05:.2e}"
+        )
     scheduler = torch.optim.lr_scheduler.SequentialLR(
         optimizer,
-        schedulers=[warmup_sched, cosine_sched],
+        schedulers=[warmup_sched, tail_sched],
         milestones=[cfg.warmup_epochs],
     )
     print(
         f"LR schedule: SequentialLR — LinearLR warmup {cfg.warmup_epochs} epochs "
-        f"(1e-3×lr→lr={cfg.lr}), then CosineAnnealingLR {cosine_epochs} epochs "
-        f"(T_max={cosine_epochs}, eta_min={cfg.lr * 0.05:.2e})"
+        f"(1e-3×lr→lr={cfg.lr}), then {tail_desc}"
     )
 else:
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
