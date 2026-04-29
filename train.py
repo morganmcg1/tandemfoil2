@@ -85,12 +85,13 @@ class MLP(nn.Module):
 class SwiGLU(nn.Module):
     """Swish-gated linear unit (LLaMA/Mistral-style). Drop-in for the GELU MLP."""
 
-    def __init__(self, hidden_dim, mlp_ratio=2):
+    def __init__(self, hidden_dim, mlp_ratio=2, intermediate_dim=None):
         super().__init__()
-        intermediate = hidden_dim * mlp_ratio
-        self.w_gate = nn.Linear(hidden_dim, intermediate)
-        self.w_up = nn.Linear(hidden_dim, intermediate)
-        self.w_down = nn.Linear(intermediate, hidden_dim)
+        if intermediate_dim is None:
+            intermediate_dim = hidden_dim * mlp_ratio
+        self.w_gate = nn.Linear(hidden_dim, intermediate_dim)
+        self.w_up = nn.Linear(hidden_dim, intermediate_dim)
+        self.w_down = nn.Linear(intermediate_dim, hidden_dim)
 
     def forward(self, x):
         return self.w_down(F.silu(self.w_gate(x)) * self.w_up(x))
@@ -153,7 +154,8 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 swiglu_intermediate=None):
         super().__init__()
         self.last_layer = last_layer
         self.ln_1 = nn.LayerNorm(hidden_dim)
@@ -162,7 +164,8 @@ class TransolverBlock(nn.Module):
             dropout=dropout, slice_num=slice_num,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
-        self.mlp = SwiGLU(hidden_dim, mlp_ratio=mlp_ratio)
+        self.mlp = SwiGLU(hidden_dim, mlp_ratio=mlp_ratio,
+                          intermediate_dim=swiglu_intermediate)
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
@@ -203,7 +206,8 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 swiglu_intermediate: int | None = None):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -224,6 +228,7 @@ class Transolver(nn.Module):
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                swiglu_intermediate=swiglu_intermediate,
             )
             for i in range(n_layers)
         ])
@@ -510,6 +515,7 @@ class Config:
     n_re_quintiles: int = 5
     re_stratify_seed: int = 42
     swiglu_ratio: int = 2  # mlp_ratio for SwiGLU intermediate dim (2 = current merged baseline; 1 = parameter-matched ablation)
+    swiglu_intermediate: int = 0  # if > 0, override swiglu_ratio with explicit intermediate dim (e.g. 85 for ratio=2/3 at hidden=128)
 
 
 if __name__ == "__main__":
@@ -564,6 +570,7 @@ if __name__ == "__main__":
         for name, ds in val_splits.items()
     }
 
+    swiglu_intermediate_override = cfg.swiglu_intermediate if cfg.swiglu_intermediate > 0 else None
     model_config = dict(
         space_dim=2,
         fun_dim=X_DIM - 2,
@@ -573,6 +580,7 @@ if __name__ == "__main__":
         n_head=4,
         slice_num=64,
         mlp_ratio=cfg.swiglu_ratio,
+        swiglu_intermediate=swiglu_intermediate_override,
         output_fields=["Ux", "Uy", "p"],
         output_dims=[1, 1, 1],
     )
