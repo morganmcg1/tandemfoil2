@@ -348,11 +348,15 @@ DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 
 @dataclass
 class Config:
-    lr: float = 5e-4
+    lr: float = 8e-5  # AdamW initial lr = max_lr / div_factor (OneCycleLR ramps to max_lr).
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 10.0
     epochs: int = 50
+    max_lr: float = 2e-3
+    pct_start: float = 0.3
+    div_factor: float = 25.0
+    final_div_factor: float = 1e4
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
     agent: str | None = None
@@ -405,7 +409,22 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+steps_per_epoch = len(train_loader)
+total_steps = MAX_EPOCHS * steps_per_epoch
+scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    optimizer,
+    max_lr=cfg.max_lr,
+    total_steps=total_steps,
+    pct_start=cfg.pct_start,
+    div_factor=cfg.div_factor,
+    final_div_factor=cfg.final_div_factor,
+    anneal_strategy="cos",
+)
+print(
+    f"OneCycleLR: max_lr={cfg.max_lr:g} init_lr={cfg.max_lr/cfg.div_factor:g} "
+    f"final_lr={cfg.max_lr/cfg.div_factor/cfg.final_div_factor:g} "
+    f"pct_start={cfg.pct_start} steps_per_epoch={steps_per_epoch} total_steps={total_steps}"
+)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
 experiment_stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -456,12 +475,12 @@ for epoch in range(MAX_EPOCHS):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        scheduler.step()
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
@@ -487,11 +506,13 @@ for epoch in range(MAX_EPOCHS):
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+    current_lr = optimizer.param_groups[0]["lr"]
     append_metrics_jsonl(metrics_jsonl_path, {
         "event": "epoch",
         "epoch": epoch + 1,
         "seconds": dt,
         "peak_memory_gb": peak_gb,
+        "lr": current_lr,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
         "val_avg/mae_surf_p": avg_surf_p,
