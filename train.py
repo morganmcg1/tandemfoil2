@@ -400,7 +400,7 @@ DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 # +1 epoch headroom budgets 19 epochs in a 30-min timeout — matching the
 # observed BF16 training duration and letting the schedule anneal to min_lr
 # right as training ends.
-ONECYCLE_PER_EPOCH_SEC_ESTIMATE = 100.0
+ONECYCLE_PER_EPOCH_SEC_ESTIMATE = 125.0  # n_layers=6 actual ~124s/epoch
 ONECYCLE_MAX_LR = 1.2e-3
 ONECYCLE_PCT_START = 0.3
 ONECYCLE_DIV_FACTOR = 25.0
@@ -453,7 +453,7 @@ model_config = dict(
     fun_dim=X_DIM - 2,
     out_dim=3,
     n_hidden=128,
-    n_layers=5,
+    n_layers=6,
     n_head=4,
     slice_num=64,
     mlp_ratio=2,
