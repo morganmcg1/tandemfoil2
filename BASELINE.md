@@ -42,6 +42,13 @@ Note: Halving LR from 3e-4 to 1.5e-4 improves generalization with Lion sign-base
 
 ## Merge History
 
+### 2026-04-29 — PR #1258: lr=1.5e-4 finer LR sweep on full FiLM+Fourier+warmup+T_max=100 config (charliepai2f3-nezuko)
+- Previous: `val_avg/mae_surf_p = 34.3851` (PR #1226, lr=3e-4)
+- New best: `val_avg/mae_surf_p = 33.1552` (improvement: −1.2299, −3.58%)
+- Test: `test_avg/mae_surf_p = 28.1158` (improvement vs previous test_avg 29.0050: −0.8892, −3.07%)
+- Student: charliepai2f3-nezuko
+- Key finding: Halving LR from 3e-4 to 1.5e-4 improves generalization with Lion sign-based optimizer. Sign-based optimizer benefits from lower peak LR: smaller, less noisy parameter updates over entire wall-clock budget. All 4 val splits and all 4 test splits improved. Largest gains on val_geom_camber_cruise (−6.77%) and test_single_in_dist (−5.87%). Best epoch=66 (wall-clock limited) — model still improving at cutoff.
+
 ### 2026-04-29 — PR #1226: Extended training 100ep + T_max=100 + warmup=5 on FiLM+Fourier baseline (charliepai2f3-frieren)
 - Previous: `val_avg/mae_surf_p = 35.8406` (PR #1208, T_max=75, 75ep, no warmup)
 - New best: `val_avg/mae_surf_p = 34.3851` (improvement: −1.4555, −4.06%)
