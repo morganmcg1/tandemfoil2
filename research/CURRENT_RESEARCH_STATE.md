@@ -1,106 +1,81 @@
 # SENPAI Research State
-- 2026-04-29 17:30 (icml-appendix-charlie-pai2f-r3)
+- 2026-04-29 20:45 (icml-appendix-charlie-pai2f-r3)
 - No recent research directives from the human researcher team
+- Current best (merged): `val_avg/mae_surf_p = 34.3851` (PR #1226, charliepai2f3-frieren, 100ep + T_max=100 + warmup=5, best epoch=66/100 — NOT converged, wall-clock timeout)
+- Previous best: `val_avg/mae_surf_p = 35.8406` (PR #1208, T_max=75, 75ep, no warmup)
 
-## Current Best Baseline
+## Current Research Focus and Themes
 
-**val_avg/mae_surf_p = 35.8406** (PR #1208 frieren, merged 2026-04-29)
+Round 3 of the charlie-pai2f series. Progress chain:
+compound baseline (47.3987) → Fourier pos enc (44.4154) → extended freqs (43.9575) → FiLM conditioning (39.9450) → LR warmup + single-decay cosine (37.0739) → extended training 75ep T_max=75 (35.8406) → extended training 100ep T_max=100 warmup=5 (34.3851)
 
-Configuration: Lion + L1 + EMA(0.995) + bf16 + n_layers=1 + surf_weight=28 + cosine T_max=75 (single full-cycle decay, **no warmup**) + clip_grad=1.0 + n_hidden=128 + n_head=4 + slice_num=64 + mlp_ratio=2 + batch_size=4 + 75 epochs + Fourier pos enc on (x,z) freqs=(1,2,4,8,16,32,64) + FiLM global conditioning (Re/AoA/NACA scale+shift per TransolverBlock, DiT/AdaLN-Zero init).
+The dominant theme is **training horizon and schedule**: every increase in T_max and epoch budget has yielded improvement, and the model has never plateaued — best epoch always equals the last epoch reached. The model is consistently training-limited by wall-clock timeout, not by convergence. The natural next step is to push beyond 100ep — testing T_max=150 or T_max=200 — though we are approaching physical limits on the 30-min wall-clock budget.
 
-Training: ~30.33 min wall-clock, **truncated at ep57/75** (still improving). Best epoch = 57 = last epoch reached. Peak VRAM 9.89 GB, n_params 252,487.
+Key mechanism update: The model was cut at ep66/100 under T_max=100. This means the full 100-epoch decay horizon was never realized. T_max=150 or 200 would keep LR even higher at ep66 cutoff, potentially yielding further improvement.
 
-Per-split val:
-| Split | mae_surf_p |
-|-------|-----------|
-| val_single_in_dist | 33.7806 |
-| val_geom_camber_rc | 51.6584 |
-| val_geom_camber_cruise | 19.6970 |
-| val_re_rand | 38.2266 |
-| **val_avg** | **35.8406** |
+Additionally, PR #1209 (Lion LR sweep) identified lr=2e-4 as marginally better than lr=3e-4 on an equivalent (stale) config — this signal needs validation on the current best config (100ep + T_max=100 + warmup=5).
 
-Per-split test:
-| Split | mae_surf_p |
-|-------|-----------|
-| test_single_in_dist | 29.8002 |
-| test_geom_camber_rc | 44.5661 |
-| test_geom_camber_cruise | 16.0529 |
-| test_re_rand | 29.2713 |
-| **test_avg** | **29.9226** |
+The primary metric is `val_avg/mae_surf_p` (lower is better), averaged across 4 validation splits: single_in_dist, geom_camber_rc, geom_camber_cruise, re_rand. Current test_avg=29.0050.
 
-Key observations:
-- `val_geom_camber_rc` (51.66) is by far the dominant error split — 1.5× the avg, 2.6× the cruise split. This is the biggest remaining lever for val_avg.
-- Best epoch = final reached epoch (wall-clock truncation). Training-dynamics levers (LR horizon, warmup, scheduling) still have headroom.
-- T_max=75 single-decay was the primary driver of the −3.33% gain over PR #1175 (warmup+T_max=45). At ep49 alone, PR #1208 already achieved 37.21 vs PR #1175's 37.07 — the LR-horizon decision is what matters, not the longer epoch budget.
+## Consolidated Key Signals from All Experiments
 
-## Current Research Focus
+- **Model NEVER converges at budget cap**: Best epoch = last epoch in every run. Extended training ALWAYS helps. Top priority: push horizon further.
+- **T_max = epochs (single full-cycle decay) is optimal**: LR slow decay over the full training horizon >> multi-cycle cosine. Do not use restarts.
+- **Warmup critical for Lion**: 5-epoch linear warmup (start_factor=1/30) is essential for stable initialization.
+- **FiLM global conditioning (STRONG, MERGED)**: PR #1104 −9.13% improvement. Re/AoA/NACA regime conditioning via scale+shift per TransolverBlock.
+- **Fourier pos enc (x,z) optimal at freqs=(1,2,4,8,16,32,64)**: PR #1106, PR #1148. Adding freq=128 regresses. Do not change this.
+- **lr=2e-4 vs 3e-4 (weak signal, stale config)**: PR #1209 — lr=2e-4 beat 3e-4 by 1.33% on old T_max=50 config. Needs revalidation on current best config (T_max=100 + warmup=5 + 100ep).
+- **SAF Fourier encoding is NEGATIVE**: PR #1210 — saf (arc-length, dims 2-3) Fourier encoding regresses +12.4%. Do not revisit.
+- **dsdf Fourier encoding is NEGATIVE**: PR #1169 — shape descriptor dims 4-11 Fourier encoding +11-13% regression. Do not revisit.
+- **n_hidden width scaling is NEGATIVE on early configs**: 128 < 192 < 256 under n_layers=1 without warmup+full schedule. n_hidden=192 + warmup+T_max=100 is still untested.
+- **Per-channel pressure weighting is NEGATIVE**: W_p in {2,3,5} did not beat baseline. Do not revisit.
+- **surf_weight=28 confirmed optimal**: PRs #1173, #1141.
+- **Batch size sweep {8,16,32}**: Being tested in PR #1234 (alphonse).
+- **Extended Fourier freqs octave sweep**: Being tested in PR #1174 (tanjiro).
 
-The FiLM + Fourier + extended single-decay cosine recipe is now the floor. Active levers being explored:
+## Active WIP Experiments
 
-1. **Training dynamics / horizon composition** — extended training (PR #1226 100ep+T_max=100), warmup composition (PR #1231 askeladd 60ep+T_max=60+warmup=5), Lion LR sweep (PR #1209).
-2. **Capacity scaling** — n_hidden=192 with current cosine (PR #1228), older n_hidden=192 trial (PR #1202), n_layers=2 with warmup (PR #1216). Note: PR #1108/#1170 closed prior depth/width sweeps as negative on the pre-FiLM baseline; these in-flight runs re-test on the FiLM frontier.
-3. **Input representation** — extended Fourier freqs sweep L∈{5,6,7,8} octaves (PR #1174).
-4. **Optimization-batch coupling** — bs sweep {8,16,32} with sqrt-scaled LR (PR #1234 alphonse, fresh assignment).
+NOTE: All experiments below must beat current best baseline (**34.3851**, PR #1226) to be mergeable.
 
-**Primary metric**: `val_avg/mae_surf_p` (lower is better; 4-split mean over single_in_dist, geom_camber_rc, geom_camber_cruise, re_rand).
-
-## Active Experiments (WIP)
-
-| PR    | Student   | Hypothesis                                                                          |
-|-------|-----------|-------------------------------------------------------------------------------------|
-| #1226 | frieren   | Extended training 100ep + T_max=100 + warmup=5 on FiLM+Fourier baseline             |
-| #1228 | edward    | Width scaling: n_hidden=192 with T_max=75 + warmup=5 on FiLM+Fourier baseline       |
-| #1216 | thorfinn  | Depth: n_layers=2 on FiLM+Fourier+warmup baseline                                   |
-| #1209 | nezuko    | Lion LR sweep {1e-4,2e-4,3e-4,5e-4} on FiLM+Fourier baseline                        |
-| #1202 | fern      | Width scaling: n_hidden=192 on FiLM+Fourier (older config, may overlap #1228)        |
-| #1174 | tanjiro   | Extended Fourier freqs sweep L in {5,6,7,8} octaves on (x,z)                        |
-| #1231 | askeladd  | Compose warmup=5 + T_max=60 single-decay (60ep) on FiLM+Fourier baseline (NEW)      |
-| #1234 | alphonse  | Batch size sweep {8,16,32} with sqrt-scaled LR on FiLM+Fourier+warmup baseline (NEW)|
-
-## Recently Closed (this advisor session)
-
-- PR #1218 (askeladd, SWA late-epoch averaging) — EMA val_avg=36.3455, SWA val_avg=36.7199; neither beats baseline 35.8406. Confirmed under cycling cosine annealing without SWALR, EMA dominates equal-weight SWA. Mechanism analysis valuable; reassigned.
-- PR #1167 (alphonse, FiLM+Fourier on best baseline) — superseded chain (now subsumed by PR #1104 / #1175 / #1208 merge sequence). Final result 38.0015 well above current baseline. Reassigned.
-- PR #1232 (alphonse, surf_weight sweep {20,32,40,48}) — closed before student picked up; duplicate of PR #1173 nezuko (sw=28-32 already established as optimum on Fourier-only baseline). Reassigned to batch size sweep instead (#1234).
+| PR | Student | Hypothesis | Status |
+|----|---------|------------|--------|
+| #1234 | alphonse | Batch size sweep {8,16,32} with sqrt-scaled LR on FiLM+Fourier+warmup baseline | Running |
+| #1174 | tanjiro | Extended Fourier freqs on (x,z): sweep L in {5,6,7,8} octaves | Running |
+| #1250 | frieren | lr=2e-4 on current best config (T_max=100 + warmup=5 + 100ep) — revalidation of PR #1209 signal | Assigned |
+| #1252 | thorfinn | n_layers=2 on full FiLM+Fourier+warmup+T_max=100 config — first test of depth scaling under current schedule | Assigned |
+| #1254 | edward | T_max=150 to keep LR ~49% of peak at ep66 cutoff vs ~35% under T_max=100 | Assigned |
+| #1255 | askeladd | n_hidden=192 width scaling on full FiLM+Fourier+warmup+T_max=100 config — first test with proper schedule | Assigned |
+| #1257 | fern | T_max=200 extreme slow decay to keep LR ~54% of peak at ep66 cutoff | Assigned |
+| #1258 | nezuko | lr=1.5e-4 finer LR sweep point to bracket optimal LR with frieren's lr=2e-4 | Assigned |
 
 ## Potential Next Research Directions
 
-### Short-term (next idle students)
+### Top Priority (directly motivated by current results)
 
-1. **Attack val_geom_camber_rc directly** — this split (51.66) dominates val_avg. Candidates:
-   - Per-split surface-pressure normalization (separate stats for tandem-camber regime).
-   - One-hot regime label injection into FiLM conditioning vector.
-   - Targeted geometric data augmentation (chord scaling, camber jitter) on training cases overlapping the rc regime.
-   - Higher mlp_ratio in the FiLM conditioner only (let global physics representation widen without touching backbone).
-2. **SWA + SWALR (canonical recipe)** — askeladd's PR #1218 finding suggests SWA fails because cosine LR isn't restarted. The canonical fix: use `SWALR` after `swa_start` to set a flat or restart-cycle LR, then average. Would re-test with proper recipe.
-3. **EMA-of-checkpoints** — average EMA snapshots from late epochs (instead of raw weights as SWA does, or instantaneous EMA as baseline does).
-4. **Fourier on dsdf shape descriptor (dims 4–11)** — multi-scale shape encoding analogous to (x,z) Fourier; was attempted in PR #1169 but on Fourier-only baseline, may need re-test on FiLM frontier.
+1. **Extended training T_max=150 or T_max=200 + 100ep**: Model cut at ep66/100 under T_max=100 with LR still ~0.35× peak. T_max=150+ would keep LR higher at cutoff, extending the productive learning region. Single most promising next direction.
 
-### Medium-term (if current sweeps plateau)
+2. **lr=2e-4 on current best config**: PR #1209 found lr=2e-4 > lr=3e-4 on old config. Must retest on T_max=100 + warmup=5 + 100ep pipeline. This is a low-risk, potentially high-reward experiment.
 
-5. **Relative positional encoding within Physics_Attention slices** — arc-length-based RPE to explicitly model proximity along airfoil surface; targets val_geom_camber_rc.
-6. **Loss reformulation**: Huber/SmoothL1 (robust to outliers in surface pressure) — requires `--loss huber` flag in train.py.
-7. **Learnable random Fourier features (Tancik et al. 2020)** — replace fixed octave grid with trainable Gaussian projection, letting the network learn spatial frequencies.
-8. **Mixup / CutMix on geometry** — interpolate between airfoil meshes for improved OOD generalization.
-9. **Multi-task auxiliary head**: predict boundary-layer thickness or wall-shear from intermediate features as a regularizer.
-10. **Test-time augmentation** — average predictions over geometric symmetries (mirror flip).
+3. **n_layers=2 with current best config**: Depth scaling may benefit from the full warmup+T_max=100 schedule. If depth helps at all, it would show here.
 
-### Longer-term (if plateau persists)
+4. **n_hidden=192 with current best config**: Width scaling on old configs showed regression, but the full schedule (T_max=100 + warmup=5) may change this. Low risk if we include warmup.
 
-11. **GNN backbone variant**: Replace Transolver with mesh-aware GNN to explicitly model connectivity.
-12. **Ensemble of diverse checkpoints**: Average predictions from k models with different seeds or knob variations.
-13. **Physics-informed regularization**: continuity-equation soft constraints or pressure-gradient smoothness terms.
-14. **Curriculum learning**: train single-foil cases first, introduce tandem/camber regimes later.
-15. **Attention temperature tuning**: learnable per-head temperature with bf16-safe clipping.
+5. **Finer LR sweep at current config**: {1.5e-4, 2e-4, 2.5e-4} on the T_max=100 + warmup=5 config, once the lr=2e-4 signal is validated.
 
-## Closed Earlier This Round (Negatives / Superseded)
+### Medium Priority (architecture / regularization)
 
-- PR #1196 (frieren, T_max=50 on Fourier-only) — merged but superseded by FiLM frontier; insight about single-decay cosine adopted.
-- PR #1181 (frieren, wider hidden + FiLM combined) — DECISIVE NEGATIVE: catastrophic train-loss spike at ep31; rules out wider hidden direction.
-- PR #1173 (nezuko, surf_weight {28,32,40,50}) — DEAD END; sw=28-32 confirmed optimal on Fourier baseline.
-- PR #1170 (fern, depth sweep n_layers {2,3} on Fourier-only) — DECISIVE NEGATIVE; depth hurts at this dataset size.
-- PR #1108 (tanjiro, n_hidden width sweep on compound) — DECISIVE NEGATIVE.
-- PR #1107 (nezuko, EMA decay sweep) — within noise; no clear winner.
-- PR #1109 (thorfinn, log(Re×|saf|+ε) BL feature) — NEGATIVE.
-- PR #1105 (fern, W_p per-channel pressure weighting) — NEGATIVE.
-- PR #1103 (askeladd, slice_num sweep) — slice_num=64 Pareto-optimal on compound baseline.
+6. **Gradient accumulation + larger effective batch**: Current batch_size=4; accumulating to effective 16–32 may smooth Lion updates and improve OOD generalization. Requires train.py code change to support --grad_accum_steps.
+
+7. **SWA over last N epochs**: Averaging weights across the end of training to stabilize predictions, especially helpful if LR drops sharply near cutoff.
+
+8. **Relative positional encoding within slices**: Arc-length based RPE inside PhysicsAttention slices to explicitly model proximity along the airfoil surface.
+
+9. **Per-split normalization**: Separate normalization statistics per regime to reduce distributional mismatch across splits, especially geom_camber_rc (consistently the hardest split).
+
+### Longer-term (if current track plateaus)
+
+10. **Graph neural network backbone**: Replace Transolver with a GNN that explicitly models mesh connectivity
+11. **Ensemble of diverse checkpoints**: Average predictions from models with different seeds or hyperparameter variants
+12. **Physics-informed regularization**: Continuity-equation soft constraints or pressure gradient smoothness
+13. **Curriculum learning**: Start on single-foil easy cases before introducing tandem/camber regimes
+14. **Data augmentation**: Geometric perturbations to improve OOD generalization on geom_camber splits
