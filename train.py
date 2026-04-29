@@ -33,6 +33,7 @@ import yaml
 from einops import rearrange
 from timm.layers import trunc_normal_
 from torch.cuda.amp import GradScaler
+from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
@@ -266,6 +267,9 @@ def evaluate_split(model, loader, stats, surf_weight, device,
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
+            if not torch.isfinite(pred).all():
+                pred = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)
+
             err = per_element_loss(pred, y_norm, loss_type, huber_delta)
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
@@ -416,6 +420,8 @@ class Config:
     skip_test: bool = False  # skip end-of-run test evaluation
     loss: str = "mse"  # "mse" or "huber"
     huber_delta: float = 1.0  # delta for Huber loss in normalized target space
+    grad_clip: float = 0.0  # max grad norm (0 disables clipping)
+    ema_decay: float = 0.0  # EMA decay (0 disables EMA tracking)
 
 
 cfg = sp.parse(Config)
@@ -462,6 +468,12 @@ model_config = dict(
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+
+ema_model = None
+if cfg.ema_decay > 0.0:
+    ema_model = AveragedModel(model, multi_avg_fn=get_ema_multi_avg_fn(cfg.ema_decay))
+    print(f"EMA enabled (decay={cfg.ema_decay})")
+val_eval_model = ema_model if ema_model is not None else model
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
@@ -561,8 +573,13 @@ for epoch in range(MAX_EPOCHS):
             loss = vol_loss + cfg.surf_weight * surf_loss
 
         scaler.scale(loss).backward()
+        if cfg.grad_clip > 0.0:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         scaler.step(optimizer)
         scaler.update()
+        if ema_model is not None:
+            ema_model.update_parameters(model)
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
@@ -575,9 +592,9 @@ for epoch in range(MAX_EPOCHS):
     epoch_surf /= max(n_batches, 1)
 
     # --- Validate ---
-    model.eval()
+    val_eval_model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+        name: evaluate_split(val_eval_model, loader, stats, cfg.surf_weight, device,
                              cfg.loss, cfg.huber_delta)
         for name, loader in val_loaders.items()
     }
@@ -609,7 +626,8 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        ckpt_state = ema_model.module.state_dict() if ema_model is not None else model.state_dict()
+        torch.save(ckpt_state, model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
