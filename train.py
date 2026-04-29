@@ -493,6 +493,25 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
+# torch.compile for kernel fusion and Python dispatch elimination.
+# Variable mesh sizes (74K-242K nodes) per batch make shapes highly dynamic;
+# 'reduce-overhead' uses CUDAGraph trees that can thrash on shape recompiles,
+# so we attempt it first as the PR instructs and fall back to 'default' (with
+# dynamic=True to avoid specialization on N) if reduce-overhead errors out.
+compile_mode = "reduce-overhead"
+try:
+    model = torch.compile(model, mode=compile_mode)
+    print(f"torch.compile: mode='{compile_mode}'")
+except Exception as e:
+    print(f"torch.compile mode='{compile_mode}' failed: {e}; falling back to 'default'.")
+    compile_mode = "default"
+    try:
+        model = torch.compile(model, mode=compile_mode, dynamic=True)
+        print(f"torch.compile: mode='{compile_mode}', dynamic=True")
+    except Exception as e2:
+        print(f"torch.compile mode='{compile_mode}' also failed: {e2}; running uncompiled.")
+        compile_mode = "none"
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
 # OneCycleLR schedule fitted to the wall-clock budget. We size total_steps
@@ -556,6 +575,7 @@ append_metrics_jsonl(metrics_jsonl_path, {
     "steps_per_epoch": steps_per_epoch,
     "budgeted_epochs": budgeted_epochs_lr,
     "total_steps": total_steps,
+    "torch_compile_mode": compile_mode,
 })
 
 best_avg_surf_p = float("inf")
