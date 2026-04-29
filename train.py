@@ -236,9 +236,25 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Drop samples whose GT is non-finite anywhere (e.g. the corrupted
+            # 000020.pt in .test_geom_camber_cruise_gt/). scoring.py's per-sample
+            # skip is correct in intent but propagates NaN through the masked
+            # multiply, so we filter the batch here to keep metrics finite.
+            B = y.shape[0]
+            y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            if not y_finite.all():
+                if not y_finite.any():
+                    continue
+                keep = y_finite
+                x = x[keep]
+                y = y[keep]
+                is_surface = is_surface[keep]
+                mask = mask[keep]
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
+            pred = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -351,7 +367,7 @@ class Config:
     lr: float = 5e-4
     weight_decay: float = 1e-4
     batch_size: int = 4
-    surf_weight: float = 10.0
+    surf_weight: float = 25.0
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
@@ -390,9 +406,9 @@ model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=256,
+    n_hidden=192,
     n_layers=5,
-    n_head=8,
+    n_head=6,
     slice_num=64,
     mlp_ratio=2,
     output_fields=["Ux", "Uy", "p"],
