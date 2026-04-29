@@ -448,15 +448,25 @@ print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
-# 1-epoch linear warmup, then cosine to ~0 over T_max=15 epochs.
-WARMUP_EPOCHS = 1
-COSINE_T_MAX = 15  # tuned for SENPAI_TIMEOUT_MINUTES=30 wall-clock cap (~13-14 realized epochs)
-warmup = torch.optim.lr_scheduler.LinearLR(
-    optimizer, start_factor=0.1, end_factor=1.0, total_iters=WARMUP_EPOCHS
+# OneCycleLR (per-step) with sqrt-scaled max_lr from confirmed batch=4 optimum (1e-3).
+# sqrt scaling for adaptive optimizers (AdamW): max_lr = 1e-3 * sqrt(batch_size / 4).
+ONECYCLE_TOTAL_EPOCHS = 15  # tuned for SENPAI_TIMEOUT_MINUTES=30 wall-clock cap
+steps_per_epoch = len(train_loader)
+onecycle_max_lr = 1e-3 * (cfg.batch_size / 4.0) ** 0.5
+onecycle_total_steps = ONECYCLE_TOTAL_EPOCHS * steps_per_epoch
+scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    optimizer,
+    max_lr=onecycle_max_lr,
+    epochs=ONECYCLE_TOTAL_EPOCHS,
+    steps_per_epoch=steps_per_epoch,
+    pct_start=0.3,
+    div_factor=20.0,         # start_lr = max_lr/20
+    final_div_factor=50.0,   # end_lr   = start_lr/50
+    anneal_strategy="cos",
 )
-cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=COSINE_T_MAX, eta_min=1e-6)
-scheduler = torch.optim.lr_scheduler.SequentialLR(
-    optimizer, schedulers=[warmup, cosine], milestones=[WARMUP_EPOCHS]
+print(
+    f"OneCycleLR: max_lr={onecycle_max_lr:.3e} (sqrt-scaled from batch={cfg.batch_size}), "
+    f"total_steps={onecycle_total_steps} ({ONECYCLE_TOTAL_EPOCHS} epochs × {steps_per_epoch} steps)"
 )
 
 run = wandb.init(
@@ -564,6 +574,8 @@ for epoch in range(MAX_EPOCHS):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        if global_step < onecycle_total_steps:
+            scheduler.step()
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
@@ -571,7 +583,6 @@ for epoch in range(MAX_EPOCHS):
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
