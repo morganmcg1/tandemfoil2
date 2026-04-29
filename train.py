@@ -510,6 +510,10 @@ class Config:
     n_re_quintiles: int = 5
     re_stratify_seed: int = 42
     swiglu_ratio: int = 2  # mlp_ratio for SwiGLU intermediate dim (2 = current merged baseline; 1 = parameter-matched ablation)
+    # Per-node surface-pressure quantile reweighting (PR #1029).
+    # If both > 0/!= 1, multiply |err| on chan 2 (p) at top-K% surface nodes (per-sample, mask-aware) by alpha.
+    surf_p_quantile_topk: float = 0.0   # fraction of top-|y_p| surface nodes to up-weight (e.g. 0.10 = top 10%)
+    surf_p_quantile_alpha: float = 1.0  # multiplicative weight applied to top-K nodes (1.0 = byte-equivalent fallback)
 
 
 if __name__ == "__main__":
@@ -619,6 +623,11 @@ if __name__ == "__main__":
     global_step = 0
     train_start = time.time()
 
+    quantile_reweight_active = (
+        cfg.surf_p_quantile_topk > 0.0 and cfg.surf_p_quantile_alpha != 1.0
+    )
+    quantile_sanity_printed = not quantile_reweight_active
+
     for epoch in range(MAX_EPOCHS):
         if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
             print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
@@ -646,7 +655,87 @@ if __name__ == "__main__":
             # torch.where, not multiplication: NaN*0 = NaN would poison the loss.
             zero_norm = torch.zeros((), dtype=sq_err.dtype, device=sq_err.device)
             vol_loss = torch.where(vol_mask.unsqueeze(-1), sq_err, zero_norm).sum() / vol_mask.sum().clamp(min=1)
-            surf_loss = torch.where(surf_mask.unsqueeze(-1), abs_err, zero_norm).sum() / surf_mask.sum().clamp(min=1)
+
+            if quantile_reweight_active:
+                # Per-sample mask-aware quantile reweighting on surface pressure (chan 2).
+                # Top-K% of each sample's surface nodes (by |y_p|) get an alpha multiplier
+                # on their |err_p| contribution; chans 0,1 and non-top nodes stay at weight 1.
+                # Per-sample loop because surface-node count varies per mesh — vectorized
+                # quantile over [B, N] with sentinel fill mixes non-surface mass into the
+                # threshold and is not equivalent to the per-sample surface-only quantile.
+                p_targets = y_norm[..., 2]            # [B, N]
+                abs_p = p_targets.abs()
+                p_weight = torch.ones_like(abs_p)     # [B, N]
+                top_mask_full = torch.zeros_like(surf_mask)
+                first_threshold = None
+                for b in range(abs_p.shape[0]):
+                    surf_b = surf_mask[b]
+                    if not surf_b.any():
+                        continue
+                    surf_p_b = abs_p[b][surf_b]
+                    t = torch.quantile(surf_p_b, 1.0 - cfg.surf_p_quantile_topk)
+                    top_b = (abs_p[b] > t) & surf_b
+                    p_weight[b] = torch.where(
+                        top_b,
+                        torch.full_like(p_weight[b], cfg.surf_p_quantile_alpha),
+                        p_weight[b],
+                    )
+                    top_mask_full[b] = top_b
+                    if first_threshold is None:
+                        first_threshold = t
+                # Build full per-channel weight tensor (chans 0,1 = 1.0, chan 2 = p_weight).
+                weight_full = torch.ones_like(abs_err)
+                weight_full[..., 2] = p_weight
+                weighted_abs_err = abs_err * weight_full
+                surf_loss = torch.where(surf_mask.unsqueeze(-1), weighted_abs_err, zero_norm).sum() / surf_mask.sum().clamp(min=1)
+
+                # Per-batch diagnostics (cheap; help with post-hoc attribution).
+                with torch.no_grad():
+                    n_surf = surf_mask.sum().clamp(min=1)
+                    n_top = top_mask_full.sum().clamp(min=1)
+                    n_rest = (surf_mask & ~top_mask_full).sum().clamp(min=1)
+                    abs_err_p = abs_err[..., 2]
+                    e_top = torch.where(top_mask_full, abs_err_p, zero_norm).sum() / n_top
+                    e_rest = torch.where(surf_mask & ~top_mask_full, abs_err_p, zero_norm).sum() / n_rest
+                    surf_loss_unweighted = torch.where(surf_mask.unsqueeze(-1), abs_err, zero_norm).sum() / n_surf
+                    quantile_diag = {
+                        "train/qr_threshold_b0": first_threshold.item() if first_threshold is not None else 0.0,
+                        "train/qr_frac_surf_upweighted": (n_top.float() / n_surf.float()).item(),
+                        "train/qr_e_top_p": e_top.item(),
+                        "train/qr_e_rest_p": e_rest.item(),
+                        "train/qr_e_top_over_rest": (e_top / e_rest.clamp(min=1e-9)).item(),
+                        "train/qr_surf_loss_unweighted": surf_loss_unweighted.item(),
+                    }
+
+                if not quantile_sanity_printed:
+                    sample0 = surf_mask[0]
+                    sample0_n_surf = int(sample0.sum().item())
+                    sample0_total = int(sample0.numel())
+                    sample0_n_up = int(top_mask_full[0].sum().item())
+                    sample0_frac_surf = sample0_n_up / max(sample0_n_surf, 1)
+                    direct_t = (
+                        torch.quantile(abs_p[0][sample0], 1.0 - cfg.surf_p_quantile_topk).item()
+                        if sample0_n_surf > 0 else 0.0
+                    )
+                    err_p_unweighted = abs_err[..., 2][surf_mask].mean().item() if surf_mask.any() else 0.0
+                    err_p_weighted = weighted_abs_err[..., 2][surf_mask].mean().item() if surf_mask.any() else 0.0
+                    print(
+                        f"[QUANTILE-REWEIGHT SANITY] sample 0: "
+                        f"surf={sample0_n_surf}/{sample0_total} "
+                        f"({100.0*sample0_n_surf/max(sample0_total, 1):.1f}%); "
+                        f"|p|-threshold={first_threshold.item():.4f} "
+                        f"(direct={direct_t:.4f}); "
+                        f"frac_surf_upweighted={sample0_frac_surf:.4f} "
+                        f"(target topk={cfg.surf_p_quantile_topk:.4f}); "
+                        f"chan-p surf |err| unweighted={err_p_unweighted:.4f}, "
+                        f"weighted={err_p_weighted:.4f} "
+                        f"(ratio={err_p_weighted/max(err_p_unweighted, 1e-9):.4f}, "
+                        f"naive_uniform≈{1 + cfg.surf_p_quantile_topk*(cfg.surf_p_quantile_alpha - 1):.4f})"
+                    )
+                    quantile_sanity_printed = True
+            else:
+                surf_loss = torch.where(surf_mask.unsqueeze(-1), abs_err, zero_norm).sum() / surf_mask.sum().clamp(min=1)
+                quantile_diag = None
             loss = vol_loss + cfg.surf_weight * surf_loss
 
             optimizer.zero_grad()
@@ -655,13 +744,16 @@ if __name__ == "__main__":
             global_step += 1
             # Per-batch log(Re) diversity (confirms stratified sampler is doing its job).
             log_re_batch = x[:, 0, 13]
-            wandb.log({
+            log_payload = {
                 "train/loss": loss.item(),
                 "train/batch_log_re_mean": log_re_batch.mean().item(),
                 "train/batch_log_re_std": log_re_batch.std(unbiased=False).item(),
                 "train/batch_log_re_range": (log_re_batch.max() - log_re_batch.min()).item(),
                 "global_step": global_step,
-            })
+            }
+            if quantile_reweight_active and quantile_diag is not None:
+                log_payload.update(quantile_diag)
+            wandb.log(log_payload)
 
             epoch_vol += vol_loss.item()
             epoch_surf += surf_loss.item()
