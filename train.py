@@ -216,6 +216,39 @@ class Transolver(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# EMA (Exponential Moving Average) of model weights
+# ---------------------------------------------------------------------------
+
+class EMA:
+    def __init__(self, model, decay=0.995):
+        self.model = model
+        self.decay = decay
+        self.shadow = {}
+        self.backup = {}
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                self.shadow[name] = param.data.clone()
+
+    def update(self):
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                new_average = self.decay * self.shadow[name] + (1.0 - self.decay) * param.data
+                self.shadow[name] = new_average.clone()
+
+    def apply_shadow(self):
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                self.backup[name] = param.data
+                param.data = self.shadow[name]
+
+    def restore(self):
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                param.data = self.backup[name]
+        self.backup = {}
+
+
+# ---------------------------------------------------------------------------
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
@@ -434,7 +467,9 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = Lion(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=15)
+
+ema = EMA(model, decay=0.995)
 
 _wandb_mode = os.environ.get("WANDB_MODE")
 if _wandb_mode is None and not (os.environ.get("WANDB_API_KEY") or Path.home().joinpath(".netrc").exists()):
@@ -479,6 +514,7 @@ _log_jsonl({
     "optimizer": "Lion",
     "loss": "L1",
     "grad_clip_max_norm": 1.0,
+    "ema_decay": 0.995,
     "config": asdict(cfg),
     "model_config": model_config,
     "n_params": n_params,
@@ -554,6 +590,7 @@ for epoch in range(MAX_EPOCHS):
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
+        ema.update()
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
@@ -565,44 +602,49 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
-    # --- Validate ---
+    # --- Validate (on EMA-averaged weights) ---
     model.eval()
-    split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
-        for name, loader in val_loaders.items()
-    }
-    val_avg = aggregate_splits(split_metrics)
-    avg_surf_p = val_avg["avg/mae_surf_p"]
-    val_loss_mean = sum(m["loss"] for m in split_metrics.values()) / len(split_metrics)
-    dt = time.time() - t0
-
-    log_metrics = {
-        "train/vol_loss": epoch_vol,
-        "train/surf_loss": epoch_surf,
-        "val/loss": val_loss_mean,
-        "lr": scheduler.get_last_lr()[0],
-        "epoch_time_s": dt,
-        "global_step": global_step,
-    }
-    for split_name, m in split_metrics.items():
-        for k, v in m.items():
-            log_metrics[f"{split_name}/{k}"] = v
-    for k, v in val_avg.items():
-        log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
-    wandb.log(log_metrics)
-    with open(metrics_path, "a") as f:
-        f.write(json.dumps({"event": "epoch", "epoch": epoch + 1, **log_metrics}) + "\n")
-
-    tag = ""
-    if avg_surf_p < best_avg_surf_p:
-        best_avg_surf_p = avg_surf_p
-        best_metrics = {
-            "epoch": epoch + 1,
-            "val_avg/mae_surf_p": avg_surf_p,
-            "per_split": split_metrics,
+    ema.apply_shadow()
+    try:
+        split_metrics = {
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            for name, loader in val_loaders.items()
         }
-        torch.save(model.state_dict(), model_path)
-        tag = " *"
+        val_avg = aggregate_splits(split_metrics)
+        avg_surf_p = val_avg["avg/mae_surf_p"]
+        val_loss_mean = sum(m["loss"] for m in split_metrics.values()) / len(split_metrics)
+        dt = time.time() - t0
+
+        log_metrics = {
+            "train/vol_loss": epoch_vol,
+            "train/surf_loss": epoch_surf,
+            "val/loss": val_loss_mean,
+            "lr": scheduler.get_last_lr()[0],
+            "epoch_time_s": dt,
+            "global_step": global_step,
+        }
+        for split_name, m in split_metrics.items():
+            for k, v in m.items():
+                log_metrics[f"{split_name}/{k}"] = v
+        for k, v in val_avg.items():
+            log_metrics[f"val_{k}"] = v  # val_avg/mae_surf_p etc.
+        wandb.log(log_metrics)
+        with open(metrics_path, "a") as f:
+            f.write(json.dumps({"event": "epoch", "epoch": epoch + 1, **log_metrics}) + "\n")
+
+        tag = ""
+        if avg_surf_p < best_avg_surf_p:
+            best_avg_surf_p = avg_surf_p
+            best_metrics = {
+                "epoch": epoch + 1,
+                "val_avg/mae_surf_p": avg_surf_p,
+                "per_split": split_metrics,
+            }
+            # Saved while EMA shadow weights are applied — checkpoint is the EMA model.
+            torch.save(model.state_dict(), model_path)
+            tag = " *"
+    finally:
+        ema.restore()
 
     _log_jsonl({
         "type": "epoch",
