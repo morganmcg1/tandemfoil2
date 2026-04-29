@@ -420,6 +420,8 @@ class Config:
     skip_test: bool = False  # skip end-of-run test evaluation
     loss: str = "mse"  # "mse" or "huber"
     huber_delta: float = 1.0  # delta for Huber loss in normalized target space
+    huber_delta_start: float | None = None  # if set with --huber_delta_end, linearly anneal delta over epochs
+    huber_delta_end: float | None = None  # ending delta for annealing
     grad_clip: float = 0.0  # max grad norm (0 disables clipping)
     ema_decay: float = 0.0  # EMA decay (0 disables EMA tracking)
     per_sample_norm: bool = False  # divide each sample's loss by its per-sample y_norm std
@@ -565,6 +567,12 @@ for epoch in range(MAX_EPOCHS):
         print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
         break
 
+    if cfg.huber_delta_start is not None and cfg.huber_delta_end is not None:
+        frac = epoch / max(MAX_EPOCHS - 1, 1)  # 0.0 at first epoch, 1.0 at last epoch
+        current_delta = cfg.huber_delta_start + frac * (cfg.huber_delta_end - cfg.huber_delta_start)
+    else:
+        current_delta = cfg.huber_delta
+
     t0 = time.time()
     model.train()
     epoch_vol = epoch_surf = 0.0
@@ -599,18 +607,18 @@ for epoch in range(MAX_EPOCHS):
                     per_std = y_norm[i][m_i].std().clamp(min=1e-6)
                     epoch_per_stds.append(per_std.item())
                     vol_err = per_element_loss(pred[i][vol_i], y_norm[i][vol_i],
-                                               cfg.loss, cfg.huber_delta)
+                                               cfg.loss, current_delta)
                     batch_vol_loss = batch_vol_loss + vol_err.mean() / per_std
                     if surf_i.sum() > 0:
                         surf_err = per_element_loss(pred[i][surf_i], y_norm[i][surf_i],
-                                                    cfg.loss, cfg.huber_delta)
+                                                    cfg.loss, current_delta)
                         batch_surf_loss = batch_surf_loss + surf_err.mean() / per_std
                     valid_samples += 1
                 denom = max(valid_samples, 1)
                 vol_loss = batch_vol_loss / denom
                 surf_loss = batch_surf_loss / denom
             else:
-                err = per_element_loss(pred, y_norm, cfg.loss, cfg.huber_delta)
+                err = per_element_loss(pred, y_norm, cfg.loss, current_delta)
                 vol_loss = (err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
                 surf_loss = (err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
             loss = vol_loss + cfg.surf_weight * surf_loss
@@ -638,7 +646,7 @@ for epoch in range(MAX_EPOCHS):
     val_eval_model.eval()
     split_metrics = {
         name: evaluate_split(val_eval_model, loader, stats, cfg.surf_weight, device,
-                             cfg.loss, cfg.huber_delta)
+                             cfg.loss, current_delta)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -649,6 +657,7 @@ for epoch in range(MAX_EPOCHS):
     log_metrics = {
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/huber_delta": current_delta,
         "val/loss": val_loss_mean,
         "lr": scheduler.get_last_lr()[0],
         "epoch_time_s": dt,
@@ -698,6 +707,7 @@ for epoch in range(MAX_EPOCHS):
         "global_step": global_step,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/huber_delta": current_delta,
         "val/loss": val_loss_mean,
         **{f"{n}/{k}": v for n, m in split_metrics.items() for k, v in m.items()},
         **{f"val_{k}": v for k, v in val_avg.items()},
@@ -734,9 +744,10 @@ if best_metrics:
             name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
             for name, ds in test_datasets.items()
         }
+        test_delta = cfg.huber_delta_end if cfg.huber_delta_end is not None else cfg.huber_delta
         test_metrics = {
             name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
-                                 cfg.loss, cfg.huber_delta)
+                                 cfg.loss, test_delta)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
