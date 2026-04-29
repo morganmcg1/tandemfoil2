@@ -197,4 +197,36 @@ For a merge decision: any val_avg below 122.15 merges; gains <5% at single seed 
 
 ---
 
+## 2026-04-29 — PR #961: SwiGLU MLP (replace GELU MLP with Swish-gated linear unit)
+
+**New best — merged 2026-04-29.**
+
+- **val_avg/mae_surf_p: 62.20** (−21.8% vs prior baseline 79.54)
+- **test_avg/mae_surf_p: 55.04** (−21.6% vs prior test 70.26)
+- **W&B run:** `sv9ktfk3` (alphonse, swiglu-mlp v1)
+- **Note:** 12/14 epochs completed (30-min env timeout; +12.6% per-epoch cost). Best checkpoint from epoch 12 — already 25.5% better than baseline at same epoch 12.
+- **Per-split:**
+
+| Split | val surf_p | test surf_p |
+|---|---|---|
+| `single_in_dist` | 74.96 | 65.07 |
+| `geom_camber_rc` | 73.39 | 67.47 |
+| `geom_camber_cruise` | 42.66 | 35.67 |
+| `re_rand` | 57.81 | 51.93 |
+| **avg** | **62.20** | **55.04** |
+
+- **Config:** Default model + SwiGLU MLP (replaces GELU MLP in each TransolverBlock; 3 linear layers: w_gate, w_up, w_down with mlp_ratio=2) + FiLM pre-block + L1 surface loss + Re-stratified sampling. +0.17M params (+24%; total 0.87M). surf_weight=10.0, AdamW lr=5e-4, wd=1e-4, --epochs 14 (12 completed before timeout).
+- **Key finding:** SwiGLU bilinear gating (`silu(gate) * up`) is the largest single-PR improvement in this round (+21.8%). Gains are across all splits but largest on OOD-extrapolation splits (`geom_camber_cruise` −32.8%, `re_rand` −24.9%), consistent with bilinear forms helping the model express higher-order feature interactions needed for out-of-distribution flow regimes. Wall-clock penalty is real (+12.6%/epoch → 12/14 epochs at budget); worth tuning with smaller `mlp_ratio` (4/3) in a follow-up.
+- **Reproduce:**
+  ```bash
+  cd target/ && python train.py \
+    --epochs 14 \
+    --wandb_group swiglu-mlp \
+    --wandb_name v1 \
+    --agent willowpai2e3-alphonse
+  ```
+- **Beat-threshold going forward:** `val_avg/mae_surf_p < 62.20`
+
+---
+
 *This file is updated after each merge. Entries are cumulative — do not delete prior entries.*
