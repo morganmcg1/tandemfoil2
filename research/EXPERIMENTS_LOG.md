@@ -16,6 +16,8 @@
 | #1123 | tanjiro | n_hidden=320 wider model | CLOSED 04-29 | val=68.83 (+11.8%) — compute-bound, only 18 epochs |
 | #1124 | askeladd | weight_decay=0 no L2 | WIP | — |
 | #1125 | frieren | surf_weight=5 reduced surface emphasis | CLOSED 04-29 | val=62.03 (+0.72%); vol_p improved -8% but didn't transfer |
+| #1275 | fern | **lr=8e-4 on beta2=0.985 stack** | **MERGED 04-29** | **val=46.6765 (-1.09% vs PR #1311), test=39.9351 (-2.39%) — COMPETE TARGET BEATEN by -0.9949** |
+| #1316 | frieren | huber_delta=0.15 | CLOSED 04-29 | val=47.48 (+2.77% vs PR #1275), test=42.1594 (+5.58%) — looser delta reverses OOD gains |
 
 ## 2026-04-29 — Round 5 Reviews (4 PRs)
 
@@ -92,6 +94,35 @@
 - **Hypothesis:** Lower surface emphasis lets volume gradients improve flow physics, indirectly helping surface metric. Uncertain prediction.
 - **Result:** val=62.0307 (+0.72%), test=54.5126 (+0.29%). Volume-p improved -8% (val and test). Per-split mixed: cruise & test_single_in_dist improved 1-3%, but rc and re_rand regressed +3-4%.
 - **Analysis:** The internal effect predicted (better volume) did happen but didn't transfer to surface — model simply traded along the Pareto front along surf_weight. Surface and volume MAE are coupled by loss-weight curve, and we were already at (or past) the surface optimum at sw=10. **CLOSED.** Follow-up: surf_weight=15 or 20 (other direction) on the new huber_delta=0.1 baseline; focal-style weighting on hard surface nodes.
+
+### 2026-04-29 22:00 — PR #1275 (MERGED, NEW BASELINE): lr=8e-4 on beta2=0.985 stack
+- Student: charliepai2f5-fern | Branch: `charlie5-fern/lr-8e-4`
+- **Hypothesis:** LR sweep on the beta2=0.985 compound baseline. Previous winner was lr=7e-4 (PR #1242, marginal). Probing whether the sweet spot sits at 8e-4 — higher LR increases effective exploration per epoch, and the cosine schedule naturally decays to low values by termination. The beta2=0.985 slower second-moment tracking makes the optimizer less sensitive to gradient spikes, so higher peak LR is safer.
+- **Result:**
+
+| Metric | Value | vs PR #1311 baseline |
+|---|---|---|
+| `val_avg/mae_surf_p` | **46.6765** | **-1.09%** |
+| `test_avg/mae_surf_p` | **39.9351** | **-2.39%** |
+| `test_single_in_dist/mae_surf_p` | 42.8273 | — |
+| `test_geom_camber_rc/mae_surf_p` | 54.7152 | — |
+| `test_geom_camber_cruise/mae_surf_p` | 24.2136 | — |
+| `test_re_rand/mae_surf_p` | 37.9841 | — |
+
+- **Compete target:** test=39.9351 vs target 40.93 → **BEATEN by -0.9949 (2.43% below target)**
+- **Analysis:** Decisive winner. The lr=8e-4 trial beats lr=7e-4 on both val (-1.09%) and test (-2.39%). Test gap from 40.93 target has grown from -0.0198 (PR #1311 at lr=7e-4) to -0.9949, a 50× improvement in margin. All four test splits improved. The geom_camber_rc OOD split (54.7152) improved from 55.2315 at PR #1311. The LR curve slope at termination still favors slightly higher LR — 9e-4 probe is the natural follow-up. **MERGED — new baseline.**
+
+### 2026-04-29 22:00 — PR #1316 (CLOSED): Huber delta loosened to 0.15
+- Student: charliepai2f5-frieren | Branch: `charlie5-frieren/huber-delta-0.15`
+- **Hypothesis:** The 0.1→0.12 improvement (PR #1311, -2.73% val) suggests the optimal delta may be above 0.12. Testing 0.15 to probe the upper bracket.
+- **Result:**
+
+| Metric | Value | vs PR #1275 (new baseline at 0.1+lr=8e-4) |
+|---|---|---|
+| `val_avg/mae_surf_p` | ~47.48 | **+2.77% regression** |
+| `test_avg/mae_surf_p` | 42.1594 | **+5.58% regression** |
+
+- **Analysis:** Clear regression in both directions. The huber_delta=0.15 loosening reverses the gains made by tightening — at 0.15, too many large residuals fall in the L2 bowl (uncapped quadratic), which re-amplifies the impact of geom_camber_rc OOD outliers. The sweet spot is confirmed between 0.10 and 0.12. The 0.1→0.12 bracket has been thoroughly explored: 0.05 dead end, 0.08 dead end, 0.10 winner, 0.12 winner over 0.10, 0.15 dead end. The huber_delta axis is now closed — 0.10–0.12 is the optimal range. Note: the current PR #1275 baseline uses 0.10 (not 0.12), so combining lr=8e-4 + huber_delta=0.12 is an untested compound that could yield further gains. **CLOSED.**
 
 ## Prior Round Winners (Full History, most recent first)
 
