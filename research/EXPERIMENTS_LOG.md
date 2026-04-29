@@ -245,3 +245,26 @@
   - **C2 PASS**: cruise test = 65.56 / 63.23 finite. The keep-mask substitution in `evaluate_split` is correct and `data/scoring.py` is untouched.
   - **C3 strict-fail**: val_avg 136 / 98 — both above the 90 bar. **But this is on vanilla MSE, not the current rel-MAE baseline.** The wide seed spread (38 pts) suggests lr=2e-3 + cosine is at the edge of stability for vanilla MSE; relative-MAE's per-sample gradient normalization will likely shrink that variance.
   - **Merge blocker**: PR was branched before #840 (rel-MAE) merged → `mergeStateStatus: DIRTY, mergeable: CONFLICTING`. Round-3 ask: rebase onto current advisor branch and re-run two seeds with `--loss_type relative_mae` to confirm the tooling stack preserves the 64.73 / 56.92 baseline. Acceptance bar relaxed to val_avg ≤ 70 on at least one seed (mean ≤ 80).
+
+## 2026-04-29 — PR #900: Loss curriculum Huber warmup → relative MAE (edward)
+
+- Branch: `willowpai2e2-edward/loss-curriculum-warmup` (closed, branch deleted)
+- Hypothesis: Huber warmup for N epochs (stable early gradients) then switch to relative MAE (scale equalization) would outperform pure relative MAE from epoch 0.
+- W&B: `t5p9xzxx` (baseline rerun), `kww8qk48` (10ep warmup), `89683xfe` (20ep warmup)
+
+| metric | baseline `t5p9xzxx` | warmup-10ep `kww8qk48` | warmup-20ep `89683xfe` |
+|---|---:|---:|---:|
+| best `val_avg/mae_surf_p` | 64.16 (ep 32) | 64.54 (+0.38) | 65.70 (+1.54) |
+| `val_single_in_dist` | 77.07 | 74.81 ✓ | 79.42 ✗ |
+| `val_geom_camber_rc` | 84.10 | 80.29 ✓ | 76.87 ✓✓ |
+| `val_geom_camber_cruise` | 36.86 | 43.03 ✗ | 44.01 ✗ |
+| `val_re_rand` | 58.58 | 60.03 ✗ | 62.50 ✗ |
+| `test_avg/mae_surf_p` | **55.73** | 57.46 (+1.73) | 57.68 (+1.95) |
+| `test_geom_camber_cruise` | 30.92 | 35.45 | 37.09 |
+| wall / epochs | 30.4 min / 32 | 30.4 min / 32 | 30.4 min / 32 |
+
+- Outcome: **Closed**. Hard loss curriculum rejected — both variants regress on `test_avg/mae_surf_p` by 1.7–2.0 points.
+- Root cause: (1) optimizer-reset stall at the Huber→rel-MAE switch-over (train loss spikes from 0.13 → 0.97); (2) Huber pre-training builds high-Re biased representations that rel-MAE must then partially undo, costing cruise performance.
+- Interesting side-effect: both warmup variants improved `val_geom_camber_rc` (84.10 → 76.87–80.29), the baseline's worst split. This rc improvement came entirely at cruise/re_rand's expense — a per-domain loss reweighting may capture the rc gain without the cruise regression.
+- Edward's smooth-interpolation follow-up (α-ramp Huber→rel-MAE) unlikely to recover; "more Huber = worse" monotone trend suggests the issue is feature bias, not the switchover mechanics.
+- Next for edward: ε sweep PR #940 — testing `rel_mae_eps` ∈ {1e-3, 1e-2, 1e-1} vs default 1e-6 to soften small-denominator dominance on low-magnitude (cruise) samples.
