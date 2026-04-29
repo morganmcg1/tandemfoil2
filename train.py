@@ -161,7 +161,7 @@ class PhysicsAttention(nn.Module):
         self.to_v = nn.Linear(dim_head, dim_head, bias=False)
         self.to_out = nn.Sequential(nn.Linear(inner_dim, dim), nn.Dropout(dropout))
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
         B, N, _ = x.shape
 
         fx_mid = (
@@ -177,6 +177,11 @@ class PhysicsAttention(nn.Module):
             .contiguous()
         )
         slice_weights = self.softmax(self.in_project_slice(x_mid) / self.temperature)
+        if mask is not None:
+            # Softmax is over slice_num (dim=-1); pre-softmax -inf on padded N
+            # rows would make the whole row NaN (0/0). Post-softmax mult zeros
+            # padded contributions equivalently without the NaN.
+            slice_weights = slice_weights * mask[:, None, :, None].to(slice_weights.dtype)
         slice_norm = slice_weights.sum(2)
         slice_token = torch.einsum("bhnc,bhng->bhgc", fx_mid, slice_weights)
         slice_token = slice_token / ((slice_norm + 1e-5)[:, :, :, None].repeat(1, 1, 1, self.dim_head))
@@ -215,8 +220,8 @@ class TransolverBlock(nn.Module):
                 nn.Linear(hidden_dim, out_dim),
             )
 
-    def forward(self, fx):
-        fx = self.attn(self.ln_1(fx)) + fx
+    def forward(self, fx, mask=None):
+        fx = self.attn(self.ln_1(fx), mask=mask) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
@@ -266,9 +271,10 @@ class Transolver(nn.Module):
 
     def forward(self, data, **kwargs):
         x = data["x"]
+        mask = data.get("mask", None)
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         for block in self.blocks:
-            fx = block(fx)
+            fx = block(fx, mask=mask)
         return {"preds": fx}
 
 
@@ -304,7 +310,7 @@ def evaluate_split(model, loader, stats, surf_weight, device,
             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
                 x_norm = (x - stats["x_mean"]) / stats["x_std"]
                 x_aug = add_derived_features(x_norm, x, is_surface, mask)
-                pred = model({"x": x_aug})["preds"]
+                pred = model({"x": x_aug, "mask": mask})["preds"]
             pred = pred.float()
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
 
@@ -612,7 +618,7 @@ for epoch in range(MAX_EPOCHS):
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             x_aug = add_derived_features(x_norm, x, is_surface, mask)
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_aug})["preds"]
+            pred = model({"x": x_aug, "mask": mask})["preds"]
             huber_err = F.huber_loss(pred, y_norm, reduction="none", delta=cfg.huber_delta)
 
             vol_mask = mask & ~is_surface
