@@ -434,7 +434,15 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = Lion(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=15)
+# Multi-step LR: drop by 0.3x at 50% and 80% of training budget.
+# Budget hardcoded to 14 (matches actual ~14-epoch window under the 30 min timeout,
+# same approach as PR #901's CosineAnnealingLR T_max=15 baseline-align). Yields
+# milestones at epoch 7 and 11 — the values stated in the PR #922 hypothesis.
+_LR_BUDGET_EPOCHS = 14
+_ms_epochs = (max(1, int(_LR_BUDGET_EPOCHS * 0.5)), max(2, int(_LR_BUDGET_EPOCHS * 0.8)))
+scheduler = torch.optim.lr_scheduler.MultiStepLR(
+    optimizer, milestones=list(_ms_epochs), gamma=0.3
+)
 
 _wandb_mode = os.environ.get("WANDB_MODE")
 if _wandb_mode is None and not (os.environ.get("WANDB_API_KEY") or Path.home().joinpath(".netrc").exists()):
