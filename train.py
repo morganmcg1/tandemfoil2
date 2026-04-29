@@ -406,6 +406,7 @@ def write_experiment_summary(
         "weight_decay": cfg.weight_decay,
         "batch_size": cfg.batch_size,
         "surf_weight": cfg.surf_weight,
+        "surf_grad_weight": cfg.surf_grad_weight,
         "epochs_configured": cfg.epochs,
     }
 
@@ -554,7 +555,7 @@ class Config:
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 10.0
-    surf_grad_weight: float = 1.0
+    surf_grad_weight: float = 10.0
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
