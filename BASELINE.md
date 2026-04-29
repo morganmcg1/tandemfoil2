@@ -10,24 +10,24 @@ SPDX-PackageName: senpai
 
 | Metric | Value | PR | Branch | Notes |
 |--------|-------|----|--------|-------|
-| `val_avg/mae_surf_p` | **97.5181** | #911 | `charliepai2e2-fern/combined-lr-clip-fix` | T_max=15 + max_norm=5.0; epoch 14/50 timeout; -6.92% vs prior baseline |
+| `val_avg/mae_surf_p` | **94.7833** | #931 | `charliepai2e2-fern/per-sample-adaptive-clip` | Per-sample Re-weighted loss (downweight high-Re gradients); epoch 14/50 timeout; -2.81% vs prior baseline |
 
-Set by combining two structural fixes: (1) aligning `CosineAnnealingLR(T_max=15, eta_min=1e-6)` to the actual ~14-epoch compute budget so the cosine tail executes fully, and (2) relaxing gradient clipping from `max_norm=1.0` to `max_norm=5.0` to allow richer gradient signal from high-Re samples. The compound fix delivered a clean -7.23 absolute (-6.92%) improvement. The gains were concentrated in `val_geom_camber_cruise` (-23.2) and `val_re_rand` (-27.0); the single-foil splits (`val_single_in_dist`, `val_geom_camber_rc`) regressed by ~10 each, suggesting a capacity redistribution effect from looser clipping.
+Set by per-sample Re-weighting: loss for each sample is divided by its own `log(Re)` before averaging within a batch, so high-Re samples (which produce large raw gradients) contribute proportionally less than low-Re samples. The improvement was concentrated in `val_single_in_dist` (-11.35) and `val_geom_camber_rc` (-1.87), with a small regression in `val_geom_camber_cruise` (+2.16) and near-neutral `val_re_rand` (+0.10). Checkpoint averaging over epochs 12-13-14 (ckpt_avg) added -2.09 vs best single epoch (epoch 13 = 96.87). Built on top of PR #911 (T_max=15 + max_norm=5.0).
 
-Per-split breakdown (best checkpoint, epoch 14):
-- `val_single_in_dist`: mae_surf_p = 116.26
-- `val_geom_camber_rc`: mae_surf_p = 107.36
-- `val_geom_camber_cruise`: mae_surf_p = 75.16
-- `val_re_rand`: mae_surf_p = 91.29
+Per-split breakdown (ckpt_avg epochs 12-13-14):
+- `val_single_in_dist`: mae_surf_p = 104.91
+- `val_geom_camber_rc`: mae_surf_p = 105.49
+- `val_geom_camber_cruise`: mae_surf_p = 77.32
+- `val_re_rand`: mae_surf_p = 91.41
 
-Test metrics (best checkpoint, epoch 14):
-- `test_single_in_dist`: mae_surf_p = 103.06
-- `test_geom_camber_rc`: mae_surf_p = 94.98
-- `test_geom_camber_cruise`: mae_surf_p = 63.63
-- `test_re_rand`: mae_surf_p = 88.38
-- `test_avg`: mae_surf_p = 87.51
+Test metrics (ckpt_avg epochs 12-13-14):
+- `test_single_in_dist`: mae_surf_p = 96.86
+- `test_geom_camber_rc`: mae_surf_p = 93.28
+- `test_geom_camber_cruise`: mae_surf_p = 64.54
+- `test_re_rand`: mae_surf_p = 86.18
+- `test_avg`: mae_surf_p = 85.22
 
-**Reproduce:** `cd target/ && python train.py --agent charliepai2e2-fern --wandb_name charliepai2e2-fern/combined-lr-clip-fix`
+**Reproduce:** `cd target/ && python train.py --agent charliepai2e2-fern --wandb_name charliepai2e2-fern/per-sample-adaptive-clip`
 
 ## Baseline Architecture (stock Transolver from train.py)
 
@@ -51,7 +51,8 @@ Test metrics (best checkpoint, epoch 14):
 
 | Date | PR | val_avg/mae_surf_p | Config | Notes |
 |------|----|--------------------|--------|-------|
-| 2026-04-29 | #911 | **97.5181** | stock + T_max=15 + max_norm=5.0 | Epoch 14/50; -6.92% vs prior; cosine tail executed fully; cruise/re_rand +large, single_in_dist/rc -moderate |
+| 2026-04-28 | #931 | **94.7833** | stock + T_max=15 + max_norm=5.0 + per-sample Re-weighting | Epoch 14/50; ckpt_avg K=3; -2.81% vs prior; single_in_dist/rc improved, cruise minor regression |
+| 2026-04-29 | #911 | 97.5181 | stock + T_max=15 + max_norm=5.0 | Epoch 14/50; -6.92% vs prior; cosine tail executed fully; cruise/re_rand +large, single_in_dist/rc -moderate |
 | 2026-04-28 | #899 | 104.6986 | stock + clip_grad_norm=1.0 + ckpt_avg K=3 | Epoch 14/50; checkpoint average of epochs 12,13,14; tiny margin over prior baseline; technique confirmed effective |
 | 2026-04-28 | #778 | 104.7457 | stock + clip_grad_norm=1.0 | Epoch 14/50; 30-min wall-clock cap; undertrained; clear win — gradient explosion was the dominant issue |
 | 2026-04-28 | #764 | 137.0013 | n_hidden=256 | Epoch 9/50; 30-min wall-clock cap; undertrained; first measured number |
