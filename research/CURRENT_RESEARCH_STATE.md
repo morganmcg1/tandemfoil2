@@ -1,66 +1,66 @@
 # SENPAI Research State
 
-- 2026-04-29 (round 10 active — 8 students, 8 WIP in flight; all students assigned)
+- 2026-04-29 (round 11 winner MERGED; 8 students, all active — PR #1256 alphonse/cosine-tmax12 MERGED round-11 winner; PR #1215 fern/multi-scale-rff sent back for rebase onto round-11; alphonse re-assigned PR #1304 eta-min-sweep)
 - No human researcher directives for this branch.
-- Track: `charlie-pai2f-r1` (icml-appendix), 8 students, 1 GPU each, 30 min/run, ~12 effective epochs per run (n_hidden=192 with AMP bfloat16).
+- Track: `charlie-pai2f-r1` (icml-appendix), 8 students, 1 GPU each, 30 min/run, ~12 effective epochs per run (with AMP bfloat16, n_hidden=192).
 
 ## Current best baseline
 
 | Metric | Value | PR | Notes |
 |---|---|---|---|
-| `val_avg/mae_surf_p` | **59.121** | #1236 (askeladd surface gradient loss) | epoch 12/12, still descending at cap |
-| `test_avg/mae_surf_p` | **51.170** | #1236 | 4 splits, all finite |
+| `val_avg/mae_surf_p` | **58.332** | #1256 (CosineAnnealingLR T_max=12 recalibration) | epoch 12/12, cosine fully completed |
+| `test_avg/mae_surf_p` | **51.802** | #1256 | 4 splits, all finite |
 
-Ten winners merged: schedule (#1101) + RFF n_freq=32 (#1138) + SwiGLU FFN (#1160) + FiLM conditioning (#1158) + AMP/n_hidden=160 (#1197) + online EMA curriculum (#1198) + wider FiLMNet 512 (#1221) + Cautious AdamW (#1183) + n_hidden=192 capacity (#1244) + Sobolev surface gradient loss (#1236, surf_grad_weight=10.0).
-Cumulative improvement: **-55.9% val, -61.3% test** vs starting provisional (133.892 / 132.106).
+Eleven winners merged: schedule (#1101) + RFF n_freq=32 (#1138) + SwiGLU FFN (#1160) + FiLM conditioning (#1158) + AMP/n_hidden=160 (#1197) + online EMA curriculum (#1198) + wider FiLMNet 512 (#1221) + Cautious AdamW (#1183) + n_hidden=192 (#1244) + Sobolev surface gradient loss w=10 (#1236) + CosineAnnealingLR T_max=12 (#1256).
+Cumulative improvement: **-56.6% val, -54.1% test** vs starting provisional (133.892 / 132.106).
 
 Per-split val baseline (epoch 12):
 
 | Split | mae_surf_p |
 |---|---|
-| `val_single_in_dist` | 59.445 |
-| `val_geom_camber_rc` | 71.611 |
-| `val_geom_camber_cruise` | 45.249 |
-| `val_re_rand` | 60.178 |
-| **avg** | **59.121** |
+| `val_single_in_dist` | 56.747 |
+| `val_geom_camber_rc` | 73.626 |
+| `val_geom_camber_cruise` | 44.084 |
+| `val_re_rand` | 58.872 |
+| **avg** | **58.332** |
 
-## Round 10 — active experiments (all WIP, beat target val < 59.321)
+## Round 11 — active experiments (all WIP, beat target val < 58.332)
 
 | PR | Student | Hypothesis | Notes |
 |---|---|---|---|
-| #1142 | nezuko | ema-decay-999 | EMA weight averaging (decay=0.999) for variance reduction |
+| #1304 | alphonse | eta-min-sweep | eta_min sweep {1e-6, 5e-6, 2e-5, 1e-4} — tune cosine floor now that T_max=12 fully completes cycle |
+| #1287 | askeladd | surf-grad-weight-sweep | Sweep surf_grad_weight {2.0, 5.0, 20.0} vs merged baseline of 10.0 |
 | #1165 | frieren | rff-n64 | RFF n_freq=64; tests capacity ceiling above merged n_freq=32 |
-| #1215 | fern | multi-scale-rff | Dual RFF bank sigma={1.0,2.0}; re-run on n_hidden=192 baseline |
+| #1142 | nezuko | ema-decay-999 | EMA weight averaging (decay=0.999); rebased onto round-10 HEAD; prior round-9 best gave val=56.064 (-7.6%) |
 | #1225 | tanjiro | lion-optimizer | Lion (sign-based momentum); three-config sweep A/B/C around lion_lr=1.5e-4 wd=1.0 |
-| #1256 | alphonse | cosine-schedule-recalibration | T_max recalibration (13→11/12) to fix schedule mismatch at 12 epochs/run |
-| #1270 | edward | n-head-slice-sweep | n_head=4→8 on full compound baseline (+ bonus n_head=8/slice_num=128) |
-| #1283 | thorfinn | wider-film-net-768-1024 | FiLMNet hidden 512→768 or 1024; near-free capacity in ~39 GB VRAM headroom |
-| #1287 | askeladd | surf-grad-weight-sweep | surf_grad_weight sweep {2.0, 5.0, 20.0} vs baseline 10.0 (from merged #1236) |
+| #1283 | thorfinn | wider-film-net-768-1024 | FiLMNet hidden 512→768 (Trial A) and 512→1024 (Trial B); zero per-epoch cost, 39 GB VRAM headroom |
+| #1270 | edward | n_head-8-attention | n_head=4→8 double attention heads; also n_head=8/slice_num=128 bonus variant |
+| #1215 | fern | multi-scale-rff | SENT BACK 2026-04-29: v3 result (val=58.719) beat round-10 but not round-11 (58.332). Rebase onto round-11 HEAD and rerun, keep sigma={0.5, 2.0} n_freq=16 each |
 
 ## Current research focus
 
-Nine winners stacked on the baseline (val=59.321, test=51.915). Model still descending at the 30-min/12-epoch cap in all recent runs — the time constraint is the primary binding constraint. Key open questions for round 10:
+Eleven winners stacked on the baseline (val=58.332, test=51.802). Model still descending at the 30-min/12-epoch cap in all recent runs — the time constraint is the primary binding constraint. AMP bfloat16 provides ~12 epochs/run at n_hidden=192; VRAM (57/96 GB) still has headroom. The schedule mismatch is now resolved (T_max=12 matches the actual epoch budget). Key open questions:
 
-1. **Schedule mismatch fix?** alphonse (#1256) — T_max=13 was calibrated for 15 epochs but n_hidden=192 runs only 12; recalibrate T_max to match.
-2. **Next capacity increment?** thorfinn (#1260) — n_hidden=224 (+16.7% width); VRAM ~66-70 GB (within 96 GB budget).
-3. **Optimal surf_weight for current stack?** edward (#1267) — surf_weight=10.0 was never re-evaluated; EMA curriculum changes the effective loss balance.
-4. **Multi-scale RFF (correct baseline)?** fern (#1215) — dual RFF bank sigma={0.5,2.0} re-run on n_hidden=192 stack.
-5. **Surface gradient loss?** askeladd (#1236) — Sobolev-style ∇p penalty on foil surface.
-6. **RFF capacity ceiling?** frieren (#1165) — n_freq=64 vs merged n_freq=32.
-7. **EMA weight averaging?** nezuko (#1142) — post-convergence variance reduction.
-8. **Lion optimizer?** tanjiro (#1225) — sign-based momentum sweep.
+1. **EMA weight averaging.** nezuko (#1142) — prior best (decay=0.997) gave val=56.064 (-7.6%) vs round-9. Highest-confidence bet given magnitude of prior improvement.
+2. **Surf-grad-weight sweep.** askeladd (#1287) — Sobolev loss merged at w=10; sweep {2.0, 5.0, 20.0} to find optimal weight.
+3. **eta_min sweep.** alphonse (#1304) — now that T_max=12 cosine fully completes, tune the floor LR {1e-6, 5e-6, 2e-5, 1e-4}.
+4. **FiLMNet widening.** thorfinn (#1283) — hidden 512→768/1024; zero per-epoch cost.
+5. **Multi-scale RFF (rerun).** fern (#1215) — sent back for rerun on round-11 baseline.
+6. **n_head doubling.** edward (#1270) — n_head=4→8 doubles attention head count.
+7. **RFF capacity ceiling.** frieren (#1165) — n_freq=64 vs. merged n_freq=32.
+8. **Lion optimizer.** tanjiro (#1225) — sign-based momentum; orthogonal to Cautious AdamW.
 
-## Default config at HEAD (post-#1244 merge)
+## Default config at HEAD (post-#1256 merge)
 
 | Setting | Value |
 |---|---|
 | Optimizer | CautiousAdamW, lr=5e-4, wd=1e-4 |
-| Scheduler | LinearLR warmup (1 ep, 5e-7→5e-4) + CosineAnnealingLR (T_max=13, eta_min=5e-6) |
+| Scheduler | LinearLR warmup (1 ep) + CosineAnnealingLR (T_max=12, eta_min=5e-6) |
 | Model | Transolver, n_hidden=192, n_layers=5, n_head=4, slice_num=64, ~3.47M params |
 | Features | RFF on (x,z) n_freq=32 sigma=1.0; SwiGLU FFN; FiLM conditioning (512 hidden) |
-| Training | AMP bfloat16, batch_size=4, surf_weight=10.0, online EMA curriculum (ema_alpha=0.3, temp=0.3, 3-ep warmup) |
+| Training | AMP bfloat16, batch_size=4, surf_weight=10.0, surf_grad_weight=10.0, online EMA curriculum (ema_alpha=0.3, temp=0.3, 3-ep warmup) |
 | VRAM | ~57/96 GB |
-| Throughput | ~12 epochs per 30-min cap (vs 13 at n_hidden=160) |
+| **Schedule** | T_max=12 matched to 12-epoch budget (cosine reaches near eta_min at final epoch) |
 
 ## Rejected / closed experiments (summary)
 
@@ -76,29 +76,42 @@ Nine winners stacked on the baseline (val=59.321, test=51.915). Model still desc
 | #1162 | scale-norm-loss | closed +12.8% | 122.4 |
 | #1176 | re-stratified-sampler | closed +1.6% vs old baseline | 110.263 |
 | #1179 | gradient-norm-loss | closed +16.4% | 114.008 |
+| #1198 | online-loss-importance-sampling | sent back (29.3% regression vs actual baseline) | 109.125 |
 | #1205 | lean-film-conditioner-ablation | closed dead end: +22.8% vs 75.750 | 92.986 |
+| #1214 | n_layers=7 deeper model | closed dead end: +24.4% vs 60.685 | 75.476 |
+| #1235 | film-depth-3layers (3-layer residual FiLMNet) | closed dead end: +5.2% vs 61.114 | 64.298 |
+| #1260 | n-hidden-224-capacity-probe | closed dead end: +13.5% vs 59.321; only 11 epochs/30-min | ~67.3 |
 | #1100 | wider-bs8 (n_hidden=256+bs=8) | closed: superseded by merged #1197 | n/a |
 
 ## Key learnings
 
-1. **30-min budget is the binding constraint.** n_hidden=192 gives 12 epochs; model still descending at timeout in all recent runs — more epochs would directly help.
-2. **Capacity scaling is highly effective.** Three successful capacity PRs merged: n_hidden=160 (#1197, -10.2%), wider FiLMNet-512 (#1221, -8.3%), n_hidden=192 (#1244, -2.2%). Trend still positive.
-3. **Loss reweighting hurts when static.** Both per-sample (#1176) and per-node (#1179, #1162) surface weighting regress significantly. Dynamic EMA curriculum (#1198) works because it adapts.
-4. **Feature representation is high-leverage.** RFF gave -13.5% — biggest single improvement. Multi-scale spectral encoding is the natural next step.
-5. **Architecture activation functions matter.** SwiGLU gave -9.7% with no parameter increase.
-6. **Domain conditioning via FiLM is powerful.** FiLM gave -13.8% stacked on top of SwiGLU+RFF.
-7. **Schedule calibration matters.** T_max=13 was set for 15 epochs; now that n_hidden=192 runs only 12 epochs, the cosine schedule has unsampled headroom — alphonse's T_max recalibration targets this directly.
-8. **surf_weight=10.0 is untuned for the current stack.** Set before EMA curriculum and n_hidden=192 were introduced; may not be optimal now.
+1. **30-min budget is the binding constraint.** AMP now gives ~12 epochs/run at n_hidden=192; T_max=12 now calibrated to match exactly.
+2. **AMP (bfloat16) + capacity scaling is highly effective.** #1197 gave -10.2% val (n_hidden=160); #1244 gives additional -2.2% (n_hidden=192). Width scaling within VRAM budget is still productive.
+3. **Loss reweighting hurts.** Both per-sample (#1176) and per-node (#1179, #1162) surface weighting regress significantly. The Transolver's slot attention already performs implicit spatial adaptation.
+4. **Dynamic curriculum needs redesign for 30-min.** EMA curriculum (#1198) had 86× weight ratio but needed 20+ epochs; redesign to ema_alpha=0.3, temperature=0.3 scaling, 3-ep warmup was successful.
+5. **Feature representation is high-leverage.** RFF gave -13.5% — biggest single improvement. Curvature/arc-length features may compound.
+6. **Architecture activation functions matter.** SwiGLU gave -9.7% with no parameter increase.
+7. **Domain conditioning via FiLM is powerful.** FiLM gave -13.8% stacked on top of SwiGLU+RFF.
+8. **bs↑ does NOT buy more epochs** at default architecture — per-batch time grows linearly, epochs/30-min stays constant.
+9. **Run-to-run variance σ≈7 on val metric** — small-effect hypotheses (<3%) need multi-seed confirmation.
+10. **FiLM conditioner: width > depth at 30-min budget.** #1235 (3-layer residual) regressed +5.2%.
+11. **n_hidden=224 width regression.** n_hidden=224 gets only 11 epochs/30-min; n_hidden=192 is the effective width ceiling.
+12. **Scheduler recalibration compounds with existing wins.** T_max=12 fix gave -1.3% with zero risk. Other scheduler params (eta_min, warm restarts) are natural follow-ups.
 
-## Potential next research directions (post-round-10)
+## Potential next research directions (post-round-11)
 
-- **Gradient clipping tuning.** clip_grad_norm=1.0 is fixed; relax to 2.0 or remove and see if CautiousAdamW handles it natively.
-- **Arc-length / curvature input features.** Surface geometry features for better boundary representation.
-- **Physics-aware auxiliary head.** Soft incompressibility constraint (∇·u ≈ 0) as regularization on volumetric output.
-- **Attention head tuning.** n_head=4 fixed; try n_head=6 with n_hidden=192 (divisible) or n_head=8.
-- **Deeper model (n_layers=7).** Alphonse's #1214 (older run on n_hidden=160) showed promise; revisit on n_hidden=192 stack.
-- **SWA (Stochastic Weight Averaging).** Alternative to EMA decay; SWA averaging over last few epochs.
-- **Layer-wise learning rate decay (LLRD).** Lower LR on earlier transformer layers, higher on final layers — standard in CV fine-tuning.
+- **EMA decay sweep.** nezuko (#1142) — prior best val=56.064 (-7.6%) on round-9; highest priority.
+- **Sobolev weight fine-tuning.** askeladd (#1287) in progress — sweep {2.0, 5.0, 20.0}.
+- **eta_min tuning.** alphonse (#1304) in progress — cosine floor now fully exercised.
+- **FiLMNet widening (512→768/1024).** thorfinn (#1283) in progress.
+- **Multi-scale RFF (rebased).** fern (#1215) sent back.
+- **Cosine warm restarts (CosineAnnealingWarmRestarts).** 2-cycle pattern (T_0=6, T_mult=1) to escape late-training local minima — try after eta_min sweep resolves.
+- **n_layers=6 with n_hidden=192.** n_layers=7 too slow (10 epochs), n_layers=5 current; n_layers=6 untried.
+- **Arc-length / curvature input features.** Explicit curvature feature could help `val_geom_camber_rc` OOD split.
+- **LayerNorm → RMSNorm replacement.** May stabilize training across geometry splits.
+- **Physics-aware auxiliary head.** Soft incompressibility constraint (∇·u ≈ 0) as regularization.
+- **Sobolev for Ux/Uy channels.** Currently only pressure has surface-gradient loss; extend to velocity components.
+- **`val_geom_camber_rc` is the bottleneck split.** Consistently the only val regressor across 5+ rounds (now 73.6 vs ~56–59 avg). Geometry-specific augmentation or domain-conditioned weighting may unlock more progress.
 
 ## Constraints
 
