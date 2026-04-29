@@ -1,5 +1,115 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-29 09:00 — PR #873 (v2): EMA Polyak decay=0.99 retest at T_max=13 — **CLOSED — wash; regime absorption confirmed**
+
+- Branch: `willowpai2e4-edward/ema-weights-polyak` (retest run)
+- Student: willowpai2e4-edward
+- W&B run: [`7v8dngfr`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/7v8dngfr)
+- Status: **CLOSED**
+
+**Hypothesis.** EMA Polyak averaging (decay=0.99) rebase sent back after PR #963 dropped baseline to val=64.91. Original run (T_max=50) showed −10.46% val / −15.06% test — the single largest "first-pass" EMA effect ever measured here. Predicted: gain compounds on post-#963 because orthogonal mechanism (snapshot averaging vs input spectrum). Predicted target post-rebase: val ~40-50 if fully additive, val ≤89.71 threshold stated in advisor comment.
+
+**Results vs T_max=13 baseline 64.91 (run `j8yi780z`):**
+
+| Metric | EMA T_max=13 | Baseline (#963) | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | **65.6351** | 64.9148 | **+1.11%** (wash) |
+| `test_avg/mae_surf_p` | **56.9456** | 57.2466 | **−0.53%** (micro-improvement) |
+| Best epoch | 13/13 | 13/13 | 0 |
+| Wall time | 30.7 min | 30.6 min | ~0 |
+| Params | 661,735 | 661,735 | 0 |
+| `best_from_ema` | True ✓ | — | — |
+
+Per-split val: single +1.67%, camber_rc +0.68%, cruise **+5.42%** (regression), re_rand **−2.11%** (improvement). Mixed sign across splits — consistent with wash, not real effect.
+
+Per-split test: single −2.23%, camber_rc −1.86%, cruise +1.75%, re_rand +1.50%. Mixed.
+
+**Per-epoch EMA val curve (strictly monotonic — EMA signature intact):**
+
+```
+ep1: 168.09  ep2: 131.38  ep3: 113.89  ep4: 103.76  ep5: 96.83
+ep6: 88.52   ep7: 81.76   ep8: 77.30   ep9: 72.95   ep10: 69.46
+ep11: 68.11  ep12: 66.20  ep13: 65.64 (best)
+```
+
+**Comparison: T_max=50 vs T_max=13:**
+
+| Regime | Run | val_avg | vs regime baseline | Direction |
+|---|---|---:|---:|---|
+| T_max=50 | `6vl5yguo` (v1) | 88.85 | −10.46% vs 99.23 | **win** |
+| T_max=13 | `7v8dngfr` (v2) | 65.64 | **+1.11% vs 64.91** | **wash** |
+
+**Mechanism — "**#963 stole EMA's lunch**" (student's diagnosis):**
+
+Under T_max=50, training cut at E14 with LR still at ~85% of peak → large per-step weight noise → EMA decay=0.99 (effective horizon ~100 steps ≈ 0.27 epoch) extracted real signal. Under T_max=13, LR decays to ~5e-7 by E13 → per-step weight updates are negligible → raw final weights ≈ average of last 100 steps → EMA averaging redundant with cosine tail. **Both mechanisms do "smooth out late-training noise" — they compete, not compound.**
+
+This extends the pattern observed in #949 (LayerScale, regime-flip) and #1002/#929 (DropPath, budget-binding): **mechanisms that smooth or dampen late-training noise compete with cosine tail under T_max=13.** All share the same precondition for revival: more epochs of meaningful gradient updates (= throughput gain or larger budget).
+
+**What this rules out:**
+- EMA decay=0.99 at T_max=13 — wash.
+- Decay sweep {0.995, 0.97} at T_max=13 — same regime absorption regardless of decay value.
+- SWA at T_max=13 — same mechanism family.
+- General "snapshot averaging at evaluation" lever family — closed at T_max=13.
+
+**What's preserved from #873 v1 (historical T_max=50 reference, kept in log):**
+
+| Metric | T_max=50 run | Δ vs T_max=50 baseline (99.23) |
+|---|---:|---:|
+| val_avg/mae_surf_p | 88.85 | **−10.46%** |
+| test_avg/mae_surf_p | 78.67 | **−15.06%** |
+
+The T_max=50 result remains paper-valid as a historical reference documenting EMA's value under under-trained models. Not forward-facing for T_max=13 era.
+
+**Decision: CLOSED.** Val metric regressed +1.11%. SNAPSHOT-AVERAGING lever family exhausted at T_max=13. Edward reassigned to weight_decay sweep (#1033).
+
+---
+
+## 2026-04-29 09:00 — PR #1007: RFF hybrid concat (axis-aligned + σ=10 at T_max=13) — **CLOSED — clean negative; RFF family fully exhausted**
+
+- Branch: `willowpai2e4-tanjiro/rff-hybrid-tmax13`
+- Student: willowpai2e4-tanjiro
+- W&B run: [`tlxlua6f`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/tlxlua6f)
+- Status: **CLOSED**
+
+**Hypothesis.** Keep axis-aligned PE (log-uniform spectral backbone) and *add* 8 σ=10 RFF channels (16 extra dims) for angular isotropy that won cruise as replacement mode. space_dim 18 → 34. Predicted neutral-floor based on "model gates useless RFF channels to zero."
+
+**Results vs baseline 64.91 (run `j8yi780z`):**
+
+| Metric | RFF Hybrid | Baseline (#963) | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | **66.9550** | 64.9148 | **+3.14%** ✗ |
+| `test_avg/mae_surf_p` | **58.2813** | 57.2466 | **+1.81%** ✗ |
+| Best epoch | 13/13 | 13/13 | — |
+| encoding/space_dim | **34** ✓ | 18 | +16 |
+| Params | ~664K | 661,735 | +~2K |
+
+**Per-split val:**
+
+| Split | Hybrid | Baseline | Δ | Prediction | Hit? |
+|---|---:|---:|---:|---|---|
+| single_in_dist | 76.31 | 71.86 | **+6.2%** ✗ | neutral-to-gain | ✗ |
+| geom_camber_rc | 75.58 | 76.45 | **−1.1%** ✓ | neutral | ✓ slight |
+| geom_camber_cruise | 50.05 | 46.54 | **+7.5%** ✗ | gain | ✗ worst prediction failure |
+| re_rand | 65.88 | 64.81 | +1.6% ✗ | neutral-to-gain | ✗ |
+
+**The critical prediction failure:** σ=10 won cruise by −6.6% val as a *replacement* (`dip7o4ej`); in concat mode, **cruise is the worst regression (+7.5%)**. Same RFF channels, same σ, different mode.
+
+**Mechanism — projection bandwidth dilution (student's excellent analysis):**
+1. **The "model gates useless features to zero" intuition was wrong.** Kaiming-initialized projection weights contribute immediately from step 1; RFF channels can't be silently suppressed without gradient budget to explicitly push their weights toward zero.
+2. **Per-feature gradient signal diluted.** Replacement mode: σ=10 carries the full 16-dim spectral budget alone, gets full gradient concentration. Concat mode: RFF dims split gradient budget with 18 axis-aligned dims → weaker per-feature signal, incomplete suppression in 13 epochs.
+3. **"Replacement gain → concat gain" transfer didn't hold.** σ=10 as replacement operated alone; in concat, it competes for projection bandwidth with axis-aligned PE that's already well-conditioned. Spectral coverage uniformity (axis-aligned) beats angular isotropy addition (RFF) in this budget.
+
+**Cross-PR mechanistic closure:** Combined with #938 (σ sweep, +2-7% worse as replacement) and this: **RFF family exhausted across replacement + concat modes.** The axis-aligned dyadic grid (Fourier PE K=4) is the settled spectral encoding at T_max=13.
+
+**What this rules out:**
+- RFF-AS-REPLACEMENT — settled negative (#938).
+- RFF-AS-ADDITION (concat) — settled negative (#1007).
+- The full RFF family at T_max=13 is exhausted.
+
+**Decision: CLOSED.** Lever family RFF-ENCODING exhausted. Tanjiro reassigned to mlp_ratio sweep at T_max=13 (#1032).
+
+---
+
 ## 2026-04-29 08:30 — PR #949 (v2): LayerScale γ_init=1e-4 retest at T_max=13 — **CLOSED — regime-flip negative; soft-start competes with cosine annealing**
 
 - Branch: `willowpai2e4-fern/layerscale-1e-4` (retest run)

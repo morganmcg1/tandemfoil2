@@ -1,7 +1,9 @@
 # SENPAI Research State — willow-pai2e-r4
 
-- **As of:** 2026-04-29 ~08:30
+- **As of:** 2026-04-29 ~09:00
 - **#963 MERGED** — T_max=13 schedule fix: val 81.81 → **64.91** (−20.66%), test 73.04 → **57.25** (−21.62%); largest single-PR win; run `j8yi780z`
+- **#1007 CLOSED** — RFF hybrid concat clean negative (+3.14% val); projection-bandwidth-dilution; RFF-ENCODING family fully exhausted; tanjiro→#1032 mlp_ratio sweep
+- **#873 CLOSED** — EMA decay=0.99 wash (+1.11% val, −0.53% test); #963 stole EMA's lunch; SNAPSHOT-AVERAGING family exhausted at T_max=13; edward→#1033 wd sweep
 - **#1006 CLOSED** — n_layers=6 retest at T_max=11 clean negative (+9.16% val, +8.26% test); 30-min budget binds depth choice
 - **#972 CLOSED** — 3-seed mean at T_max=50 methodology valid but obsolete regime; seed=2 beats unseeded best 4.3%; askeladd→#1022 retest at T_max=13
 - **#949 CLOSED** — LayerScale γ_init=1e-4 regime-flip: −4.58% val at T_max=50 → **+9.56% val at T_max=13**; soft-start competes with cosine annealing; SOFT-START-REGULARIZATION exhausted; fern→#1026 n_head sweep
@@ -64,7 +66,7 @@ on L1-only baseline). The compounding mechanism is well-understood.
 | #920 | fern | Per-block coord skip-connection | +4.1% actual | **CLOSED — COORD-INJECTION exhausted** |
 | #872 | nezuko | Domain-ID 3-class additive | +3.1% actual | **CLOSED — additive categorical fights LN** |
 | #929 | nezuko | DropPath rate=0.1 linear | +9.5–19.6% actual | **CLOSED — budget-binding; nezuko→#1002 DropPath@0.05+T_max=13** |
-| #873 | edward | EMA Polyak decay=0.99 | −10.46% val on pre-#820 | **needs rebase onto post-#963; predicted compound val ≈ 40-50** |
+| #873 | edward | EMA Polyak decay=0.99 | +1.11% val at T_max=13 (wash) | **CLOSED — #963 stole EMA's lunch; SNAPSHOT-AVERAGING exhausted; edward→#1033** |
 | #880 | tanjiro | LinearNO ELU+1 | +6.92% actual | **CLOSED — attention-kernel-substitution exhausted** |
 | #914 | tanjiro | SwiGLU MLP swap | **−8.81% val** | **MERGED — val 81.81** |
 | #938 | tanjiro | RFF σ sweep {2,5,10} | +2.4–7.3% actual | **CLOSED — RFF-as-replacement settled negative; tanjiro→#1007 hybrid concat** |
@@ -79,10 +81,12 @@ on L1-only baseline). The compounding mechanism is well-understood.
 | #1002 | nezuko | DropPath@0.05 + T_max=13 | +2.0% actual | **CLOSED — convergence drag; DROPPATH exhausted; nezuko→#1017** |
 | #1017 | nezuko | Channel-weight re-tune: p-weight sweep {2,4,6} at T_max=13 | 0 to −3% | **WIP** |
 | #1006 | thorfinn | n_layers=6 retest at T_max=11 | +9.16% actual | **CLOSED — compute-starved at 30-min; DEPTH-VIA-MORE-BLOCKS exhausted; thorfinn→#1023** |
-| #1007 | tanjiro | RFF hybrid: axis-aligned + σ=10 RFF concat at T_max=13 | 0 to −3% | **WIP** |
+| #1007 | tanjiro | RFF hybrid: axis-aligned + σ=10 RFF concat at T_max=13 | +3.14% actual | **CLOSED — projection-bandwidth-dilution; RFF-ENCODING exhausted; tanjiro→#1032** |
 | #1022 | askeladd | 3-seed mean at T_max=13 (paper-facing canonical, current regime) | std ↓ vs T_max=50 | **WIP (just assigned)** |
 | #1023 | thorfinn | Peak LR sweep at T_max=13: lr ∈ {3e-4, 5e-4, 7.5e-4, 1e-3} | 0 to −7% | **WIP (just assigned)** |
-| #1026 | fern | n_head sweep at T_max=13: n_head ∈ {2, 4, 8} | 0 to −3% | **WIP (just assigned)** |
+| #1026 | fern | n_head sweep at T_max=13: n_head ∈ {2, 4, 8} | 0 to −3% | **WIP** |
+| #1032 | tanjiro | mlp_ratio sweep at T_max=13: ratio ∈ {1, 2, 3, 4} | 0 to −7% | **WIP (just assigned)** |
+| #1033 | edward | weight_decay sweep at T_max=13: wd ∈ {0, 1e-5, 1e-4, 1e-3, 1e-2} | 0 to −5% | **WIP (just assigned)** |
 
 **Round 3 candidates (queued):**
 
@@ -123,8 +127,10 @@ on L1-only baseline). The compounding mechanism is well-understood.
   frieren #1000 (T_max sweep).
 - **DropPath@0.05 × T_max=13** — CLOSED (#1002, +2.0% regression). Lever family DROPPATH-AT-N-LAYERS-5 exhausted. n_layers=6 retest also closed (#1006), so no headroom to revisit.
 - **Channel-weight re-tune at T_max=13** — IN FLIGHT as nezuko #1017. ch=[1,1,3] was tuned under T_max=50; p-weight sweep {2,4,6} at T_max=13 re-validates.
-- **RFF hybrid concat (axis-aligned + σ=10 RFF)** — IN FLIGHT as tanjiro #1007. σ=10 won cruise (−6.6%) and re_rand in replacement mode; concat mode lets axis-aligned hold structured backbone.
-- **EMA decay sweep {0.995, 0.97}** at T_max=13 — once #873 lands.
+- **RFF hybrid concat (axis-aligned + σ=10 RFF)** — **CLOSED #1007 +3.14% val / +1.81% test.** Projection-bandwidth-dilution: cruise/re_rand replacement gain didn't transfer to concat; RFF channels inject high-freq noise model can't gate away in 13 epochs. **RFF-ENCODING family fully exhausted** (replacement + concat).
+- **mlp_ratio sweep at T_max=13** — **IN FLIGHT as tanjiro #1032.** ratio ∈ {1, 2, 3, 4} at seed=0. mlp_ratio=2 (current) may be under-capacity vs typical transformer (4). Fern's #949 γ_mlp uniformity finding suggests FFN saturation. Predicted winner: mlp_ratio=3.
+- **weight_decay sweep at T_max=13** — **IN FLIGHT as edward #1033.** wd ∈ {0, 1e-5, 1e-4, 1e-3, 1e-2}. Generic default 1e-4 never tuned. Under T_max=13, cosine decay reduces cumulative WD contribution → higher WD may compensate. Predicted winner: wd=1e-3.
+- **EMA decay sweep** at T_max=13 — **CANCELLED.** EMA decay=0.99 washed (#873 v2); regime absorption mechanism rules out all decay values.
 - **Categorical-FiLM (multiplicative)** at T_max=13 — round-3 follow-up once #816 lands.
 - **RFF σ sweep {2, 5}** — in flight as #938 rebase #2 (compare vs T_max=13 baseline).
 - **Hybrid axis-aligned + RFF concatenation** (round-3 candidate; only if
