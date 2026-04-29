@@ -20,21 +20,24 @@ Config: Transolver(n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2
 
 ## Round 4 in flight (8 of 8 GPUs active)
 
-| PR  | Student   | Hypothesis                                                           |
-|-----|-----------|----------------------------------------------------------------------|
-| 916 | alphonse  | surf_weight=25 on MAE baseline (vs current 10)                      |
-| 919 | fern      | Per-sample Re-aware loss normalization (gradient equity)            |
-| 905 | askeladd  | Signed-log pressure target normalization for heavy-tail Re          |
-| 903 | edward    | slice_num=128 + bf16 AMP + NaN-safe eval on MAE baseline            |
-| 895 | thorfinn  | EMA of model weights (decay=0.999) for evaluation                   |
-| 892 | tanjiro   | OneCycleLR (max_lr=1e-3) for short-budget super-convergence         |
-| 891 | nezuko    | Smooth-L1/Huber loss (δ=1.0) extending MAE baseline                 |
-| 890 | frieren   | Random Fourier features on (x,z) for camber generalization          |
+| PR  | Student   | Hypothesis                                                           | Status       |
+|-----|-----------|----------------------------------------------------------------------|--------------|
+| 916 | alphonse  | surf_weight=25 on MAE baseline (vs current 10)                      | WIP          |
+| 919 | fern      | Per-sample Re-aware loss normalization (gradient equity)            | WIP          |
+| 905 | askeladd  | Signed-log pressure target normalization for heavy-tail Re          | WIP          |
+| 903 | edward    | slice_num=128 + bf16 AMP + NaN-safe eval on MAE baseline            | WIP          |
+| 895 | thorfinn  | EMA of model weights (decay=0.999) for evaluation                   | WIP          |
+| 892 | tanjiro   | OneCycleLR (max_lr=1e-3) for short-budget super-convergence         | WIP          |
+| 890 | frieren   | Random Fourier features on (x,z) for camber generalization          | WIP          |
+| 925 | nezuko    | FiLM conditioning on log(Re) for Re-aware representations           | WIP (new)    |
+
+Closed this review cycle:
+- PR #891 (nezuko, Smooth-L1 δ=1.0): CLOSED — val_avg 109.065, +15.5% vs baseline. L2-like quadratic regime dominates in normalized space; re-introduces MSE's high-Re tail pathology.
 
 Round 4 spans 3 core themes:
-1. **Loss function engineering**: surf_weight tuning (#916), per-sample Re normalization (#919), Huber/Smooth-L1 (#891), signed-log pressure transform (#905).
+1. **Loss function engineering**: surf_weight tuning (#916), per-sample Re normalization (#919), signed-log pressure transform (#905).
 2. **LR scheduling and optimization**: OneCycleLR (#892), EMA weights (#895).
-3. **Architecture/capacity**: slice_num=128 with AMP (#903), Fourier coordinate features (#890).
+3. **Architecture/conditioning**: slice_num=128 with AMP (#903), Fourier coordinate features (#890), FiLM log(Re) conditioning (#925).
 
 ## Themes for round 5+
 
