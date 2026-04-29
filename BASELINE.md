@@ -182,3 +182,33 @@ Primary metric: `val_avg/mae_surf_p` (lower is better)
 - Test results: `test_geom_camber_cruise` p NaN (pre-existing scoring pipeline overflow); `test_single_in_dist` p=99.98; `test_geom_camber_rc` p=92.41; `test_re_rand` p=85.15.
 - Architecture unchanged: `n_hidden=128`, `n_layers=5`, `n_head=4`, `slice_num=64`, `mlp_ratio=2`, 662K params.
 - Optimizer: AdamW, `lr=2e-4`, `weight_decay=1e-4`, `surf_weight=20.0`, `grad_clip=1.0`, cosine T_max=14.
+
+---
+
+## 2026-04-29 — PR #935: Extended epochs=18, T_max=18 on current best: per_sample_norm_mse + lr=2e-4
+
+- **Branch:** charliepai2e4-frieren/extended-epochs-18-per-sample-norm-lr-2e-4
+- **Best epoch:** 14 of 18 (30-min wall-clock timeout; best=last — model still improving at cutoff)
+- **Surface MAE (val, best ckpt):** Ux=1.2913, Uy=0.6843, **p=94.6918**
+- **Volume MAE (val, best ckpt):** Ux=4.3653, Uy=1.9829, p=110.2781
+- **val_avg/mae_surf_p: 94.6918** ← current best (was 95.6617, **−1.01%**)
+- **Metric summary:** `target/metrics/charliepai2e4-frieren-extended-epochs-18-per-sample-norm-lr-2e-4-alsxfigk.jsonl`
+- **Reproduce:** `cd target/ && python train.py --surf_weight 20.0 --lr 2e-4 --grad_clip 1.0 --weight_decay 1e-4 --epochs 18`
+
+### Per-split breakdown
+
+| Split | surf Ux | surf Uy | surf p | vol Ux | vol Uy | vol p |
+|---|---:|---:|---:|---:|---:|---:|
+| val_single_in_dist     | 1.2984 | 0.6816 | 109.0267 | 4.9698 | 2.1102 | 144.2117 |
+| val_geom_camber_rc     | 1.9591 | 0.8680 | 108.3369 | 5.1580 | 2.7046 | 115.3989 |
+| val_geom_camber_cruise | 0.7416 | 0.4688 |  73.1648 | 3.1743 | 1.2715 |  79.3267 |
+| val_re_rand            | 1.1660 | 0.7089 |  88.2387 | 4.1590 | 1.8454 |  92.1751 |
+| **avg**                | **1.2913** | **0.6843** | **94.6918** | **4.3653** | **1.9829** | **110.2781** |
+
+### Notes
+- Architecture change: spatial_bias input dimension 2D→4D (`nn.Linear(4, 32)` and `raw_xy = x[:,:,:4]`), adding saf_0 and saf_1 airfoil shape coordinates for richer spatial context.
+- **Key gain mechanism:** T_max=18 with epochs≤18 means the LR has not fully decayed to 0 at epoch 14 (timeout cutoff). PR #871 used T_max=14, which parks LR≈0 at epoch 14. The longer cosine cycle keeps a positive LR through the timeout, yielding continued gradient flow.
+- Best epoch = last epoch: model still improving at 30-min wall-clock cap — further gains expected with longer budget.
+- `test_geom_camber_cruise` p NaN is pre-existing scoring pipeline issue (degenerate target std → div-by-zero).
+- Architecture: `n_hidden=128`, `n_layers=5`, `n_head=4`, `slice_num=64`, `mlp_ratio=2`, spatial_bias 4D.
+- Optimizer: AdamW, `lr=2e-4`, `weight_decay=1e-4`, `surf_weight=20.0`, `grad_clip=1.0`, cosine T_max=18.
