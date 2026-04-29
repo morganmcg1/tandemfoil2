@@ -434,6 +434,26 @@ def print_split_metrics(split_name: str, m: dict[str, float]) -> None:
     )
 
 
+class IndexedDataset(torch.utils.data.Dataset):
+    """Wrap a dataset so __getitem__ returns ((sample), idx)."""
+
+    def __init__(self, dataset):
+        self.dataset = dataset
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        return self.dataset[idx], idx
+
+
+def indexed_pad_collate(batch):
+    """Pad collate variant that also returns per-sample dataset indices."""
+    samples, indices = zip(*batch)
+    x, y, is_surface, mask = pad_collate(samples)
+    return x, y, is_surface, mask, torch.tensor(indices, dtype=torch.long)
+
+
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
@@ -468,13 +488,35 @@ stats = {k: v.to(device) for k, v in stats.items()}
 loader_kwargs = dict(collate_fn=pad_collate, num_workers=4, pin_memory=True,
                      persistent_workers=True, prefetch_factor=2)
 
+# Online importance sampling state.
+# Per-sample EMA of surface MAE in normalized space; used to derive temperature-
+# scaled per-sample loss weights (NOT a sampler) once the curriculum activates.
+# Domain-balanced WeightedRandomSampler is preserved.
+train_ds_indexed = IndexedDataset(train_ds)
+sample_loss_ema = torch.ones(len(train_ds), dtype=torch.float32)
+ema_alpha = 0.3              # new = alpha*old + (1-alpha)*current — fast adapt
+curriculum_warmup_epochs = 3 # epochs 1..N use unweighted loss (uniform curriculum)
+weight_temperature = 0.3     # weights = (ema/ema.mean()).pow(temperature)
+
+# Per-sample domain id for diagnostics.
+with open(Path(cfg.splits_dir) / "meta.json") as _f:
+    _meta = json.load(_f)
+_idx_to_group = {i: name for name, idxs in _meta["domain_groups"].items() for i in idxs}
+domain_names = sorted(set(_idx_to_group.values()))
+sample_domain = torch.tensor(
+    [domain_names.index(_idx_to_group[i]) for i in range(len(train_ds))],
+    dtype=torch.long,
+)
+
+indexed_loader_kwargs = {**loader_kwargs, "collate_fn": indexed_pad_collate}
+
 if cfg.debug:
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
-                              shuffle=True, **loader_kwargs)
+    train_loader = DataLoader(train_ds_indexed, batch_size=cfg.batch_size,
+                              shuffle=True, **indexed_loader_kwargs)
 else:
     sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_ds), replacement=True)
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size,
-                              sampler=sampler, **loader_kwargs)
+    train_loader = DataLoader(train_ds_indexed, batch_size=cfg.batch_size,
+                              sampler=sampler, **indexed_loader_kwargs)
 
 val_loaders = {
     name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
@@ -543,7 +585,10 @@ for epoch in range(MAX_EPOCHS):
     n_batches = 0
 
     n_skipped_steps = 0
-    for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
+    curriculum_active = epoch >= curriculum_warmup_epochs
+    for x, y, is_surface, mask, batch_indices in tqdm(
+        train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False
+    ):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
@@ -559,7 +604,21 @@ for epoch in range(MAX_EPOCHS):
             surf_mask = mask & is_surface
             vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
             surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-            loss = vol_loss + cfg.surf_weight * surf_loss
+
+            if curriculum_active:
+                # Per-sample loss with EMA-derived importance weights.
+                vol_count = vol_mask.sum(dim=1).clamp(min=1).to(sq_err.dtype) * sq_err.shape[-1]
+                surf_count = surf_mask.sum(dim=1).clamp(min=1).to(sq_err.dtype) * sq_err.shape[-1]
+                ps_vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum(dim=(1, 2)) / vol_count
+                ps_surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum(dim=(1, 2)) / surf_count
+                ps_loss = ps_vol_loss + cfg.surf_weight * ps_surf_loss
+
+                ema_batch = sample_loss_ema[batch_indices].to(device).to(ps_loss.dtype)
+                ema_global_mean = sample_loss_ema.mean().to(device).to(ps_loss.dtype).clamp(min=1e-8)
+                ema_weights = (ema_batch / ema_global_mean).pow(weight_temperature)
+                loss = (ema_weights * ps_loss).mean()
+            else:
+                loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
         scaler.scale(loss).backward()
@@ -570,6 +629,21 @@ for epoch in range(MAX_EPOCHS):
         scaler.update()
         if scaler.get_scale() < prev_scale:
             n_skipped_steps += 1
+
+        # Update per-sample surface MAE EMA (in normalized space).
+        with torch.no_grad():
+            abs_err = (pred - y_norm).abs()
+            n_surf_per_sample = surf_mask.sum(dim=1).clamp(min=1).to(abs_err.dtype)
+            per_sample_surf_mae = (
+                (abs_err * surf_mask.unsqueeze(-1).to(abs_err.dtype)).sum(dim=(1, 2))
+                / (n_surf_per_sample * abs_err.shape[-1])
+            ).cpu().to(torch.float32)
+        for b in range(per_sample_surf_mae.shape[0]):
+            sample_idx = int(batch_indices[b].item())
+            sample_loss_ema[sample_idx] = (
+                ema_alpha * sample_loss_ema[sample_idx]
+                + (1.0 - ema_alpha) * per_sample_surf_mae[b]
+            )
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
@@ -602,6 +676,16 @@ for epoch in range(MAX_EPOCHS):
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
+
+    # EMA stats (overall + per-domain) for online importance weighting diagnostics.
+    ema_min = float(sample_loss_ema.min().item())
+    ema_max = float(sample_loss_ema.max().item())
+    ema_mean = float(sample_loss_ema.mean().item())
+    ema_per_domain = {
+        domain_names[d]: float(sample_loss_ema[sample_domain == d].mean().item())
+        for d in range(len(domain_names))
+    }
+
     append_metrics_jsonl(metrics_jsonl_path, {
         "event": "epoch",
         "epoch": epoch + 1,
@@ -615,12 +699,25 @@ for epoch in range(MAX_EPOCHS):
         "is_best": tag == " *",
         "amp_skipped_steps": n_skipped_steps,
         "amp_scale": scaler.get_scale(),
+        "ema/min": ema_min,
+        "ema/max": ema_max,
+        "ema/mean": ema_mean,
+        "ema/per_domain_mean": ema_per_domain,
+        "curriculum/active": curriculum_active,
+        "curriculum/warmup_epochs": curriculum_warmup_epochs,
+        "curriculum/ema_alpha": ema_alpha,
+        "curriculum/weight_temperature": weight_temperature,
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  lr={current_lr:.2e}  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}  "
-        f"amp[skip={n_skipped_steps} scale={scaler.get_scale():.0f}]"
+        f"amp[skip={n_skipped_steps} scale={scaler.get_scale():.0f}]  "
+        f"curriculum={'on' if curriculum_active else 'off'}"
+    )
+    print(
+        f"    ema[min={ema_min:.4f} mean={ema_mean:.4f} max={ema_max:.4f}]  "
+        + "  ".join(f"{name}={v:.4f}" for name, v in ema_per_domain.items())
     )
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
