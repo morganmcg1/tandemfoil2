@@ -138,9 +138,9 @@ class FiLMNet(nn.Module):
         self.n_hidden = n_hidden
         out_dim = n_layers * n_norms_per_block * 2 * n_hidden
         self.net = nn.Sequential(
-            nn.Linear(cond_dim, 512),
+            nn.Linear(cond_dim, 768),
             nn.GELU(),
-            nn.Linear(512, out_dim),
+            nn.Linear(768, out_dim),
         )
         last_linear = self.net[-1]
         nn.init.zeros_(last_linear.weight)
