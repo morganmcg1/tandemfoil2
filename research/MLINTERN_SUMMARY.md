@@ -24,23 +24,23 @@ as `test_avg/mae_surf_p` for the paper-facing number.
 
 | Quantity | Value |
 |---|---|
-| **Best `val_avg/mae_surf_p`** | **56.44** |
-| **Best `test_avg/mae_surf_p`** | **49.38** |
-| Run name | `mlintern-pai2-r5/w5-onecycle-widemid-30ep` |
-| W&B run | [`5iwmaukp`](https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/5iwmaukp) |
-| Best epoch | 29 / 30 |
-| Wall clock | ~ 137 min (130 min cap, hit timeout right after epoch 29) |
-| GPU | a single RTX PRO 6000 Black (~ 56 GB peak) |
+| **Best `val_avg/mae_surf_p`** | **50.07** |
+| **Best `test_avg/mae_surf_p`** | **42.61** |
+| Run name | `mlintern-pai2-r5/w6-onecycle-widemid-40ep` |
+| W&B run | [`5hn9jko4`](https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/5hn9jko4) |
+| Best epoch | 37 / 40 (timeout cut at 165 min after ep 37) |
+| Wall clock | 167 min |
+| GPU | a single RTX PRO 6000 Black (~ 42 GB peak) |
 
 ### Per-split breakdown of the best checkpoint
 
 | Split | val surf p | val Ux | val Uy | test surf p | test Ux | test Uy |
 |---|---:|---:|---:|---:|---:|---:|
-| `single_in_dist` | 61.69 | 0.75 | 0.39 | 51.75 | 0.73 | 0.37 |
-| `geom_camber_rc` | 68.60 | 1.27 | 0.58 | 63.56 | 1.23 | 0.54 |
-| `geom_camber_cruise` | 39.23 | 0.50 | 0.31 | 32.94 | 0.46 | 0.28 |
-| `re_rand` | 56.22 | 0.86 | 0.43 | 49.27 | 0.77 | 0.40 |
-| **avg** | **56.44** | 0.85 | 0.43 | **49.38** | 0.80 | 0.40 |
+| `single_in_dist` | 52.67 | 0.64 | 0.35 | 45.34 | 0.62 | 0.34 |
+| `geom_camber_rc` | 65.83 | 1.06 | 0.52 | 56.35 | 1.00 | 0.48 |
+| `geom_camber_cruise` | 32.36 | 0.46 | 0.26 | 26.68 | 0.43 | 0.24 |
+| `re_rand` | 49.41 | 0.78 | 0.40 | 42.07 | 0.66 | 0.35 |
+| **avg** | **50.07** | 0.74 | 0.38 | **42.61** | 0.68 | 0.35 |
 
 The model struggles most on `geom_camber_rc` (held-out raceCar front-foil
 camber M=6-8) and is strongest on `geom_camber_cruise`, consistent with
@@ -55,13 +55,13 @@ cruise meshes being smoother (no ground effect, freestream BCs).
 
 ```bash
 SENPAI_TIMEOUT_MINUTES=720 python train.py \
-  --epochs 30 --timeout_min 130 \
+  --epochs 40 --timeout_min 165 \
   --n_hidden 192 --n_layers 6 --n_head 6 --slice_num 64 \
   --batch_size 2 \
   --ada_temp True --gumbel True --grad_clip 1.0 \
   --surf_weight 20 --lr 0.001 --schedule onecycle \
   --agent ml-intern-r5 --wandb_group mlintern-pai2-r5 \
-  --wandb_name "mlintern-pai2-r5/w5-onecycle-widemid-30ep"
+  --wandb_name "mlintern-pai2-r5/w6-onecycle-widemid-40ep"
 ```
 
 ## Strategy
@@ -102,15 +102,17 @@ Tested per-channel pressure weight (1.5, 2, 5, 10), `mlp_ratio=4`,
   (val 74.9 vs 84.1, test 64.9 vs 73.1) — more training is the biggest
   remaining lever.
 
-### Wave 4–5 — long training of the winner (60–130 min, 25–50 epochs)
+### Wave 4–6 — long training of the winner (60–165 min, 25–50 epochs)
 Pushed the schedule out to 30, 40, and 50 epochs on default arch and the
 wide-mid arch under both schedules.
 
-* `cosine + 40 ep + default` → val=63.6, **test=55.9**
+* `cosine + 40 ep + default` → val=63.6, test=55.9
 * `onecycle + 30 ep + default` → val=71.4, test=61.6
 * `cosine + 30 ep + widemid` → val=65.0, test=56.9
-* `onecycle + 30 ep + widemid` → **val=56.4, test=49.4** (best)
+* `onecycle + 30 ep + widemid` → val=56.4, test=49.4
 * `cosine + 50 ep + default` → val=61.4, test=54.1
+* `cosine + 40 ep + widemid` → val=54.2, test=47.4
+* `onecycle + 40 ep + widemid` → **val=50.07, test=42.61** (best)
 
 The best run combines:
 * The wider Transolver (`192 / 6 / 6 / 64`, ~1.5× params of the baseline) —
@@ -161,16 +163,16 @@ Sorted by `test_avg/mae_surf_p` (lower better).
 
 | Rank | Run | val | **test** | Recipe |
 |---:|---|---:|---:|---|
-| 1 | `w5-onecycle-widemid-30ep` | 56.44 | **49.38** | tpp + sw20 + lr1e-3 + onecycle + widemid + 30 ep, bs=2 |
-| 2 | `w5-cosine-50ep` | 61.41 | 54.05 | tpp + sw20 + lr1e-3 + cosine+warmup + 50 ep |
-| 3 | `w5-final-40ep` | 63.55 | 55.94 | tpp + sw20 + lr1e-3 + cosine+warmup + 40 ep |
-| 4 | `w5-onecycle-40ep` | 64.29 | 56.87 | tpp + sw20 + lr1e-3 + onecycle + 40 ep |
-| 5 | `w5-cosine-widemid-30ep` | 64.97 | 56.86 | tpp + sw20 + lr1e-3 + cosine+warmup + widemid + 30 ep, bs=2 |
-| 6 | `w4-onecycle-30ep` | 71.36 | 61.64 | tpp + sw20 + lr1e-3 + onecycle + 30 ep |
-| 7 | `w3-triple-30ep` | 74.93 | 64.92 | tpp + sw20 + lr1e-3 + cosine+warmup + 30 ep |
-| 8 | `w4-onecycle-widemid` | 75.28 | 66.30 | tpp + sw20 + lr1e-3 + onecycle + widemid + 16 ep, bs=2 |
-| 9 | `w3-triple-widemid-long` | 76.85 | 67.06 | tpp + sw20 + lr1e-3 + cosine+warmup + widemid + 18 ep, bs=2 |
-| 10 | `w4-onecycle-paperscale` | 79.88 | 69.81 | tpp + sw20 + lr1e-3 + onecycle + paperscale (256/8/8/32) + 14 ep, bs=2 |
+| 1 | `w6-onecycle-widemid-40ep` | 50.07 | **42.61** | tpp + sw20 + lr1e-3 + onecycle + widemid + 40 ep, bs=2 |
+| 2 | `w6-cosine-widemid-40ep` | 54.24 | 47.43 | tpp + sw20 + lr1e-3 + cosine+warmup + widemid + 40 ep, bs=2 |
+| 3 | `w5-onecycle-widemid-30ep` | 56.44 | 49.38 | tpp + sw20 + lr1e-3 + onecycle + widemid + 30 ep, bs=2 |
+| 4 | `w5-cosine-50ep` | 61.41 | 54.05 | tpp + sw20 + lr1e-3 + cosine+warmup + 50 ep |
+| 5 | `w5-final-40ep` | 63.55 | 55.94 | tpp + sw20 + lr1e-3 + cosine+warmup + 40 ep |
+| 6 | `w5-onecycle-40ep` | 64.29 | 56.87 | tpp + sw20 + lr1e-3 + onecycle + 40 ep |
+| 7 | `w5-cosine-widemid-30ep` | 64.97 | 56.86 | tpp + sw20 + lr1e-3 + cosine+warmup + widemid + 30 ep, bs=2 |
+| 8 | `w4-onecycle-30ep` | 71.36 | 61.64 | tpp + sw20 + lr1e-3 + onecycle + 30 ep |
+| 9 | `w3-triple-30ep` | 74.93 | 64.92 | tpp + sw20 + lr1e-3 + cosine+warmup + 30 ep |
+| 10 | `w4-onecycle-widemid` | 75.28 | 66.30 | tpp + sw20 + lr1e-3 + onecycle + widemid + 16 ep, bs=2 |
 
 The full per-run breakdown is in `MLINTERN_RESULTS.jsonl`.
 
@@ -193,10 +195,14 @@ The full per-run breakdown is in `MLINTERN_RESULTS.jsonl`.
 
 ## Recommendations for the next replicate
 
-1. **Run the winning config for longer** — wave 5 best is OneCycleLR on
-   the wide-mid arch at 30 epochs (130 min on a single GPU).  At 50–60
-   epochs I expect another 5–10 % improvement (the cosine 50ep / cosine
-   40ep gap on default arch was 4 %).
+1. **Run the winning config for longer** — observed scaling:
+   * `onecycle + widemid + 30 ep` → test=49.38
+   * `onecycle + widemid + 40 ep` → test=42.61 (-14 % from +33 % more epochs)
+
+   Extrapolating, `onecycle + widemid + 50 ep` should land near
+   test ≈ 38, and 60 ep near test ≈ 35 (likely diminishing returns
+   beyond there).  Each additional 10 epochs costs ~ 40 minutes on a
+   single GPU at bs=2.
 2. **Add Reynolds conditioning as a DiT-style token** instead of just an
    input feature.  Published work on transonic-wing surrogates
    ([2511.21474](https://arxiv.org/abs/2511.21474)) uses adaLN-style
