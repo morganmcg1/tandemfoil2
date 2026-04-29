@@ -81,6 +81,33 @@ class MLP(nn.Module):
         return self.linear_post(x)
 
 
+class FiLMGenerator(nn.Module):
+    """Generates per-channel scale (gamma) and shift (beta) from a scalar log(Re) condition.
+
+    Initialized so FiLM starts as identity (gamma=1, beta=0): the second linear
+    has zero weight and bias, with the first half of the bias set to 1. The
+    network only deviates from identity once it learns useful Re-conditional
+    modulations.
+    """
+
+    def __init__(self, n_hidden: int):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(1, n_hidden),
+            nn.SiLU(),
+            nn.Linear(n_hidden, 2 * n_hidden),
+        )
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
+        with torch.no_grad():
+            self.net[-1].bias[:n_hidden] = 1.0
+
+    def forward(self, log_re: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        out = self.net(log_re)
+        gamma, beta = out.chunk(2, dim=-1)
+        return gamma, beta
+
+
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
@@ -158,8 +185,10 @@ class TransolverBlock(nn.Module):
                 nn.Linear(hidden_dim, out_dim),
             )
 
-    def forward(self, fx):
+    def forward(self, fx, gamma=None, beta=None):
         fx = self.drop_path(self.attn(self.ln_1(fx))) + fx
+        if gamma is not None and beta is not None:
+            fx = fx * gamma + beta
         fx = self.drop_path(self.mlp(self.ln_2(fx))) + fx
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
@@ -200,6 +229,9 @@ class Transolver(nn.Module):
         ])
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
+        self.film_generators = nn.ModuleList([
+            FiLMGenerator(n_hidden) for _ in range(n_layers)
+        ])
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -212,9 +244,13 @@ class Transolver(nn.Module):
 
     def forward(self, data, **kwargs):
         x = data["x"]
+        # Extract per-sample log(Re) condition. Index 0 is always a real node
+        # (pad_collate appends padding), so we avoid contamination from zeros.
+        log_re = x[:, 0:1, 13:14]  # [B, 1, 1]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        for block in self.blocks:
-            fx = block(fx)
+        for block, film_gen in zip(self.blocks, self.film_generators):
+            gamma, beta = film_gen(log_re)  # each [B, 1, n_hidden]
+            fx = block(fx, gamma=gamma, beta=beta)
         return {"preds": fx}
 
 
