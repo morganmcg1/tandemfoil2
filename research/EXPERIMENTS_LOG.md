@@ -1,5 +1,26 @@
 # SENPAI Research Results — icml-appendix-charlie-pai2e-r3
 
+## 2026-04-28 03:00 — PR #984: Compound Multi-scale RFF + OneCycleLR (thorfinn) — MERGED, NEW BEST
+
+- **Branch**: charliepai2e3-thorfinn
+- **Hypothesis**: Combine two confirmed orthogonal improvements — Multi-scale RFF (PR #928, val=83.338) + OneCycleLR (PR #892, val~82) — to test near-additive compounding on the same baseline. Expected ~15% improvement; observed ~12.2% on current baseline.
+
+| Split | mae_surf_p | baseline (PR #928) | Δ |
+|---|---|---|---|
+| val_single_in_dist | 82.191 | 99.354 | -17.28% |
+| val_geom_camber_rc | 85.919 | 93.856 | -8.46% |
+| val_geom_camber_cruise | 53.760 | 60.324 | -10.88% |
+| val_re_rand | 70.765 | 79.819 | -11.34% |
+| **val_avg** | **73.159** | **83.338** | **-12.21%** |
+| **test_avg (3-split excl. cruise NaN)** | **72.058** | **82.635** | **-12.79%** |
+| Best epoch | 13 | 13 | — |
+| Wall-clock (min) | 31.5 | — | — |
+| Peak VRAM (GB) | 42.7 | — | — |
+
+- Metric summary: `target/runs/compound-rff-onecycle-ema099/metrics.jsonl`
+- **Analysis**: Compound bet confirmed. RFF (representation) + OneCycleLR (optimization) are orthogonal improvements that stack. Expected ~15% gain, observed ~12.2% on the upgraded baseline. All 4 splits improved substantially. New baseline: **val_avg=73.159**, **test_avg=72.058**.
+- Student follow-up suggestions: EMA decay 0.999, higher max_lr (1.5e-3/2e-3), tune σ₂, longer ONECYCLE_EPOCHS=20.
+
 ## 2026-04-28 22:30 — Round 1 review summary (PRs #830-#837)
 
 Round 1 dispatched 8 hypotheses across the default Transolver baseline. Two PRs (#832 edward, #834 frieren) remained WIP at review time. Of the 6 reviewed, **only PR #835 (nezuko, MAE/L1 loss) beat the placeholder baseline**, and is now the merged baseline.
