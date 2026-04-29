@@ -156,11 +156,14 @@ class TransolverBlock(nn.Module):
                 nn.Linear(hidden_dim, out_dim),
             )
 
-    def forward(self, fx):
+    def forward(self, fx, return_hidden=False):
         fx = self.attn(self.ln_1(fx)) + fx
         fx = self.mlp(self.ln_2(fx)) + fx
         if self.last_layer:
-            return self.mlp2(self.ln_3(fx))
+            preds = self.mlp2(self.ln_3(fx))
+            if return_hidden:
+                return preds, fx
+            return preds
         return fx
 
 
@@ -205,10 +208,14 @@ class Transolver(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def forward(self, data, **kwargs):
+    def forward(self, data, return_hidden=False, **kwargs):
         x = data["x"]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
-        for block in self.blocks:
+        last_idx = len(self.blocks) - 1
+        for i, block in enumerate(self.blocks):
+            if i == last_idx and return_hidden:
+                preds, hidden = block(fx, return_hidden=True)
+                return {"preds": preds, "hidden": hidden}
             fx = block(fx)
         return {"preds": fx}
 
@@ -401,10 +408,25 @@ model_config = dict(
 )
 
 model = Transolver(**model_config).to(device)
-n_params = sum(p.numel() for p in model.parameters())
-print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+# Auxiliary surface-pressure head: 2-layer MLP on top of shared features.
+# Trains a focused signal for the primary metric (val_avg/mae_surf_p) without
+# competing gradients from Ux and Uy. Inference still uses the main 3-channel head.
+AUX_SURF_WEIGHT = 20.0
+aux_surf_head = nn.Sequential(
+    nn.Linear(model_config["n_hidden"], model_config["n_hidden"]),
+    nn.GELU(),
+    nn.Linear(model_config["n_hidden"], 1),
+).to(device)
+
+n_params = sum(p.numel() for p in model.parameters())
+n_aux_params = sum(p.numel() for p in aux_surf_head.parameters())
+print(f"Model: Transolver ({n_params/1e6:.2f}M params) + aux_surf_head ({n_aux_params/1e3:.1f}K params)")
+
+optimizer = torch.optim.AdamW(
+    list(model.parameters()) + list(aux_surf_head.parameters()),
+    lr=cfg.lr, weight_decay=cfg.weight_decay,
+)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
 
 experiment_label = cfg.experiment_name or cfg.agent or "tandemfoil"
@@ -433,7 +455,8 @@ for epoch in range(MAX_EPOCHS):
 
     t0 = time.time()
     model.train()
-    epoch_vol = epoch_surf = 0.0
+    aux_surf_head.train()
+    epoch_vol = epoch_surf = epoch_aux = 0.0
     n_batches = 0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
@@ -444,14 +467,23 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
+        out = model({"x": x_norm}, return_hidden=True)
+        pred = out["preds"]
+        hidden = out["hidden"]
         sq_err = (pred - y_norm) ** 2
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
         vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
         surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+        main_loss = vol_loss + cfg.surf_weight * surf_loss
+
+        aux_p_pred = aux_surf_head(hidden).squeeze(-1)
+        if surf_mask.any():
+            aux_p_loss = F.mse_loss(aux_p_pred[surf_mask], y_norm[..., 2][surf_mask])
+        else:
+            aux_p_loss = torch.tensor(0.0, device=device)
+        loss = main_loss + AUX_SURF_WEIGHT * aux_p_loss
 
         optimizer.zero_grad()
         loss.backward()
@@ -459,11 +491,13 @@ for epoch in range(MAX_EPOCHS):
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
+        epoch_aux += aux_p_loss.item()
         n_batches += 1
 
     scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
+    epoch_aux /= max(n_batches, 1)
 
     # --- Validate ---
     model.eval()
@@ -494,13 +528,15 @@ for epoch in range(MAX_EPOCHS):
         "peak_memory_gb": peak_gb,
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/aux_p_loss": epoch_aux,
+        "aux_surf_weight": AUX_SURF_WEIGHT,
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
     })
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
-        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
+        f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f} aux_p={epoch_aux:.4f}]  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
     )
     for name in VAL_SPLIT_NAMES:
