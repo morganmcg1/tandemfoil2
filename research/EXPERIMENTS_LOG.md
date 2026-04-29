@@ -1,5 +1,33 @@
 # SENPAI Research Results — willow-pai2e-r3
 
+## 2026-04-29 — PR #962 (CLOSED): EMA model weights on FiLM+L1+Re-stratify (revisit #759 in new regime)
+- **Branch:** `frieren/ema-weights`
+- **Hypothesis:** EMA decay=0.999 shadow weights for evaluation; revisit prior PR #759 close in correct regime (post-L1+FiLM+Re-stratify).
+- **Run:** W&B `qhys5efw`, 13/14 epochs (timeout cut by added raw-val diagnostic at +14s/epoch), 31.3 min, group `ema-weights`, peak 44.7 GB, 0.70M params.
+
+| Split | val baseline | val EMA v1 | Δ_val | test baseline | test EMA v1 | Δ_test |
+|---|---|---|---|---|---|---|
+| `single_in_dist` | 84.70 | 104.58 | **+23.5%** | 73.79 | 91.25 | +23.7% |
+| `geom_camber_rc` | 92.95 | 99.31 | +6.8% | 83.50 | 88.76 | +6.3% |
+| `geom_camber_cruise` | 63.49 | 70.30 | +10.7% | 52.45 | 59.76 | +13.9% |
+| `re_rand` | 77.02 | 85.76 | +11.4% | 71.29 | 80.63 | +13.1% |
+| **avg** | **79.54** | **89.99** | **+13.1%** | **70.26** | **80.10** | **+14.0%** |
+
+### Decision: CLOSED — wrong-regime mechanism (third falsification of "smoothing" mechanism on this stack)
+- val_avg = **89.99**, +13.1% vs old baseline 79.54 (and +44.7% vs new SwiGLU baseline 62.20).
+- **Mechanism analysis (student's own, correct):** decay=0.999 → ~1000-step memory window ≈ 2.7 epochs. Model val_avg improves 108→85 across that window — EMA is averaging *stale weights from a non-stationary trajectory*, not refining a stationary minimum. The "post-convergence smoothing" regime EMA needs **never exists in this 14-epoch schedule** — model still descending steeply at cutoff.
+- EMA-vs-raw gap remained +5.4 mae units at epoch 13, never closed within budget.
+- Faster decay (0.99) would make EMA ≈ raw weights (no smoothing). SWA over last-4 epochs would assume convergence in averaging window (epochs 9–10 are pre-convergence on SwiGLU stack — would pull result up). Neither variant fixes the diagnosed root cause.
+- **Conclusion:** training-time weight smoothing isn't a lever in this short-budget non-converged regime. Pivot to inference-time augmentation (TTA, frieren PR #993).
+- **Follow-up assigned:** frieren → PR #993 (TTA with vertical flip — inference-time symmetry exploitation).
+
+---
+
+## 2026-04-29 — Assignment: PR #993 (frieren TTA with vertical flip)
+- **PR #993** (`frieren/tta-vflip`): test-time augmentation with vertical flip (y → -y, Uy → -Uy at eval). Zero training cost; exploits whatever y-mirror symmetry of incompressible 2D flow the model has approximately learned from un-augmented training data. Orthogonal to nezuko #969 (training-time vflip) — composable. Inference-only forward-pass averaging.
+
+---
+
 ## 2026-04-29 — PR #961 (MERGED): SwiGLU MLP — replace GELU MLP with Swish-gated linear unit
 - **Branch:** `alphonse/swiglu-mlp`
 - **Hypothesis:** SwiGLU's bilinear gating (`silu(gate) * up`) lets each MLP output unit express a learnable bilinear form over its inputs, vs GELU's single-path nonlinear projection. Nat-fit for PDE surrogates due to advection-like bilinear structure in flow physics.

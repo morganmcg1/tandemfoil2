@@ -54,6 +54,7 @@
 | #937 | Dual FiLM (pre-block + post-block per block) | Closed — Re-axis lever saturated, capacity overlap (+3.5%) | 82.36 |
 | #952 | Wider single output head (128→256→3) | Closed — decoder capacity not the lever (+2.5%); two probes now falsified | 81.52 |
 | #917 | Re-input noise σ sweep {0.02, 0.05, 0.10} | Closed — mechanism real but small (+0.4% on old baseline); Re-axis saturated by Re-stratify on current stack | 83.08 |
+| #962 | EMA model weights (decay=0.999) on FiLM+L1+Re-stratify | Closed — wrong-regime smoothing on non-converged trajectory (+13.1% on old baseline; +44.7% vs new SwiGLU best) | 89.99 |
 
 ## Active WIP PRs
 
@@ -65,7 +66,7 @@
 | nezuko | #969 | Vertical-flip data augmentation (geometric symmetry: y → -y, Uy → -Uy) | WIP — new 2026-04-29 |
 | fern | #927 | Per-channel vol loss v2 (rebase onto FiLM+pre-block+Re-stratify; paired A/B) | WIP — sent back 2026-04-29 |
 | edward | #975 | DropPath rate sweep {0.05, 0.10, 0.15} on FiLM+L1+Re-stratify | WIP — new 2026-04-29 |
-| frieren | #962 | EMA model weights on FiLM+L1+Re-stratify (revisit #759 in new regime) | WIP — new 2026-04-29 |
+| frieren | #993 | **TTA (test-time augmentation) with vertical flip — inference-time symmetry exploit** | WIP — new 2026-04-29 |
 | tanjiro | #869 | surf_weight sweep (sw=5 wins on L1 base); v2 rebase onto FiLM+L1 pending | WIP |
 
 ## Cross-cutting findings
@@ -84,6 +85,7 @@
 - **FiLM redistribution attempts saturated** — three independent redistribution probes (PR #934 last-2 FiLM +2.8%, PR #937 dual FiLM +3.5%, PR #756 Fourier +3.0%) all regress vs the current pre-block-FiLM design. **The Re-conditioning lever is architecturally saturated** at this design; future FiLM-axis work should be **rank-reduction** (shared head, PR #970) rather than redistribution.
 - **Re-input-noise saturated by Re-stratify** (PR #917 σ-sweep). Mechanism confirmed (val_re_rand −2.1% at σ=0.05) but small absolute effect; Re-stratify already achieves val_re_rand=77.02 < σ=0.05's 77.58. The Re-axis input-side smoothing lever is gone.
 - **Decoder capacity is not a lever** — two falsifications: PR #924 per-channel heads (+5.8%) and PR #952 wider single head (+2.5%). All 3 channels regress uniformly, decoder isn't bottlenecked at this depth/width budget. **One preserved signal: `geom_camber_rc` improved on PR #952 (−4.2% val).** Suggests rc-bottleneck is representational, not capacity-uniform — open question for future rc-targeted intervention.
+- **Training-time weight smoothing is wrong-regime** for this short-budget schedule (PR #962 EMA decay=0.999 +13.1%). 14-epoch budget never enters a stationary regime; EMA / SWA / warmup variants all fail for the same reason (averaging stale non-converged weights). Pivot: inference-time augmentation (TTA, #993) bypasses the non-stationarity issue.
 - **FiLM input axis is single-variable now; AoA-FiLM probe (PR #976) opens multi-variable conditioning** as a fresh axis. AoA is a primary flow parameter the model has zero conditioning-awareness of. If AoA-FiLM wins, opens 4-d (Re, AoA1, AoA2, gap) and beyond.
 - **SwiGLU is the new canonical MLP architecture** (PR #961, merged 2026-04-29, val 79.54→62.20 −21.8%). All future experiments build on L1 + FiLM-pre + Re-stratify + SwiGLU. Active WIP branches (#869, #927, #962, #969, #970, #975, #976) were cut from the pre-SwiGLU baseline — if any beats old baseline (79.54) but not new (62.20), it will be sent back to rebase onto SwiGLU HEAD.
 - **Off-Re axes underway:** geometric symmetry (vflip #969), regularization (DropPath #975), conditioning multi-variable (AoA-FiLM #976), evaluation smoothing (EMA #962), volume-side per-channel loss (#927), rank-reduction (shared FiLM #970). SwiGLU paper ablation (#983).
@@ -101,7 +103,7 @@
 4. **DropPath rate sweep** — stochastic depth on FiLM+L1+Re-stratify stack {0.05, 0.10, 0.15}. Regularization axis. **Assigned → edward PR #975.**
 5. **SwiGLU MLP** — ~~replace GELU MLP with Swish-gated linear unit~~ **MERGED (PR #961, val=62.20 −21.8%). New canonical architecture.**
 6. **Per-channel volume loss (L1 on p only, MSE on Ux/Uy)** — refined vol-L1. **Assigned → fern PR #927.**
-7. **EMA model weights** — exponential moving average for evaluation; revisit prior close (#759) in correct regime. **Assigned → frieren PR #962.**
+7. **TTA (test-time augmentation) with vertical flip** — inference-time symmetry exploit; zero training cost. Orthogonal to vflip-training (#969). **Assigned → frieren PR #993.**
 8. **surf_weight rebalancing** — test surf_weight=5 on FiLM+L1 (tanjiro PR #869 v2 rebase pending).
 
 ### Off-the-Re-axis ideas (Re-conditioning lever saturated; pivot to fresh axes)
@@ -111,5 +113,5 @@
 12. **Width scaling with bf16** — n_hidden=192 plus mixed precision to fit the wall-clock budget that depth-scaling broke.
 13. **Geometric pre-training / SSL** — pretrain on vflip-augmented data with masked-node reconstruction, fine-tune on pressure prediction.
 14. **4-d FiLM (Re, AoA1, AoA2, gap)** — conditional on PR #976 (AoA-FiLM) result. If multi-variable wins, extend to 4-d.
-15. **Test-time augmentation (TTA) with vflip** — at val/test, run forward on input AND vertical-flipped input, average predictions. Inference-only, zero training cost.
+15. ~~**Test-time augmentation (TTA) with vflip**~~ — **Assigned → frieren PR #993.**
 16. **Compound 4-way stack** — FiLM-pre + Re-stratify + vflip (if #969 wins) + best-of: SwiGLU, EMA, shared-FiLM, DropPath, AoA-FiLM. Round-4 candidate.
