@@ -471,7 +471,7 @@ class Config:
     lr: float = 1e-3  # peak LR after warmup (was 5e-4 baseline; warmup+cosine variant raises peak)
     weight_decay: float = 1e-4
     batch_size: int = 4
-    surf_weight: float = 10.0
+    surf_weight: float = 3.0   # was 10.0; merged from #850 (sw=3 + Huber stack)
     epochs: int = 50
     warmup_epochs: int = 5
     warmup_start_lr: float = 1e-4
