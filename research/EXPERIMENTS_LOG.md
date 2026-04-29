@@ -173,3 +173,31 @@ Note: All three runs WITHOUT `--fourier_pos_enc`. Current baseline is 44.4154 (P
   - `models/model-charliepai2f3-thorfinn-control-no-bl-20260429-114914/metrics.jsonl`
 
 - Commentary: **CLOSED NEGATIVE** — BL feature showed zero gain vs own control (~46.50 vs ~46.22). Ran without `--fourier_pos_enc`, so all results land around 46.2–46.5, far from 44.4154. Re_rand split (Re OOD — primary target of hypothesis) showed no benefit from BL information. Direction closed. Thorfinn reassigned to warmup-cosine-schedule (PR #1155).
+
+## 2026-04-29 — PR #1167: FiLM global conditioning + Fourier pos enc on current best baseline — REBASE PENDING
+
+- Branch: charliepai2f3-alphonse/film-fourier-combined
+- Status: REBASE PENDING — merge conflict detected on `gh pr merge 1167 --squash`; sent back 2026-04-29; alphonse must rebase onto post-#1148 `icml-appendix-charlie-pai2f-r3` tip and re-run.
+- Hypothesis: Stack FiLM global conditioning (Re/AoA/NACA scale+shift on each TransolverBlock attn+MLP, zero-init) on top of the Fourier positional encoding baseline (freqs=(1,2,4,8,16,32,64)). Tests whether the two mechanisms are orthogonal and their benefits compound.
+- Pre-rebase result (val_avg=40.6661, best epoch 50/50 — still descending):
+
+  | Split | Baseline #1148 | FiLM+Fourier (#1167) | Δ |
+  |-------|---------------|---------------------|---|
+  | val_single_in_dist/mae_surf_p | 44.6169 | 38.0071 | −14.7% |
+  | val_geom_camber_rc/mae_surf_p | 57.7367 | 57.5494 | −0.3% |
+  | val_geom_camber_cruise/mae_surf_p | 26.7301 | 23.2424 | −13.0% |
+  | val_re_rand/mae_surf_p | 46.7462 | 43.8654 | −6.2% |
+  | **val_avg/mae_surf_p** | **43.9575** | **40.6661** | **−7.5%** |
+
+  | Test Split | mae_surf_p |
+  |------------|-----------|
+  | test_single_in_dist | 32.9381 |
+  | test_geom_camber_rc | 50.2454 |
+  | test_geom_camber_cruise | 19.1481 |
+  | test_re_rand | 34.2135 |
+  | **test_avg** | **34.1363** |
+
+- Training: ~26.1 min, 50 epochs (best epoch 50 — cap; not converged), Peak VRAM: 10.31 GB, n_params: 250,439, git_commit: 6fc5118
+- Metrics path: (pre-rebase; re-run metrics will be committed post-rebase)
+
+- Commentary: **STRONG WINNER pending rebase** — 7.5% improvement vs current best (43.9575 → 40.6661, delta = −3.2914). Both FiLM and Fourier improvements are confirmed individually; stacking them yielded ~85% of the expected additive gain (FiLM alone was −11.2% vs old baseline; Fourier alone was −6.29% + −1.03%; combined is −7.5% vs post-Fourier baseline), indicating meaningful but not fully additive synergy. Key pattern: `val_geom_camber_rc` improved by only −0.3% vs the baseline's dominant error at 57.74 — the hardest OOD split is only barely responding to FiLM conditioning, suggesting this split needs a more targeted mechanism (domain-explicit conditioning, arc-length RPE, or data augmentation for OOD geometry). The model is NOT converged at epoch 50 — extended training (75 epochs) is expected to push further. Key implementation note: FiLM zero-init (`nn.Linear` final projections set to weight=0, bias=0) MUST be re-applied AFTER `self.apply(self._init_weights)` at lines 246–249 in train.py; otherwise kaiming_uniform_ re-initializes the projections to non-zero and the FiLM conditioning dominates at epoch 0, destabilizing training.

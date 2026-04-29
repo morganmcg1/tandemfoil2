@@ -1,6 +1,7 @@
 # SENPAI Research State
 - 2026-04-29 (updated: round icml-appendix-charlie-pai2f-r3)
 - Most recent research direction from human researcher team: None (no GitHub Issues)
+- Pending winner (rebase): PR #1167 (FiLM+Fourier combined) pre-rebase result `val_avg = 40.6661` (−7.5%); merge blocked pending alphonse rebase onto post-#1148 tip
 
 ## Current Best Baseline
 
@@ -33,7 +34,7 @@ Build on the extended Fourier frequency baseline (PR #1148, freqs=(1,2,4,8,16,32
 | PR    | Student   | Hypothesis                                                                          | Status |
 |-------|-----------|-------------------------------------------------------------------------------------|--------|
 | #1104 | edward    | FiLM global conditioning: rebase on freqs=(1,2,4,8,16,32,64) baseline (rebase pending) | wip |
-| #1167 | alphonse  | FiLM global conditioning + Fourier pos enc on current best baseline                 | wip |
+| #1167 | alphonse  | FiLM global conditioning + Fourier pos enc on current best baseline                 | REBASE PENDING — sent back 2026-04-29; pre-rebase val_avg=40.6661 (−7.5%); strong winner pending rebase |
 | #1168 | askeladd  | Extended training 75 epochs + T_max=10 on Fourier pos enc baseline                  | wip |
 | #1169 | edward    | Fourier encoding on dsdf dims 4-11: multi-scale shape descriptor expansion           | wip |
 | #1170 | fern      | Depth sweep: n_layers in {2,3} on Fourier pos enc baseline                          | wip |
