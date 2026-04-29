@@ -212,3 +212,46 @@ Primary metric: `val_avg/mae_surf_p` (lower is better)
 - `test_geom_camber_cruise` p NaN is pre-existing scoring pipeline issue (degenerate target std → div-by-zero).
 - Architecture: `n_hidden=128`, `n_layers=5`, `n_head=4`, `slice_num=64`, `mlp_ratio=2`, spatial_bias 4D.
 - Optimizer: AdamW, `lr=2e-4`, `weight_decay=1e-4`, `surf_weight=20.0`, `grad_clip=1.0`, cosine T_max=18.
+
+---
+
+## 2026-04-29 — PR #948: n_hidden=192 capacity scaling on full best config (grad_clip+lr2e-4)
+
+- **Branch:** charliepai2e4-nezuko/nhidden-192-full-best-config
+- **Best epoch:** 10 of 12 (30-min wall-clock timeout at epoch 10; cosine didn't fully decay, final lr=1.34e-5)
+- **Surface MAE (val, best ckpt):** Ux=~1.41, Uy=~0.62, **p=93.0126**
+- **Volume MAE (val, best ckpt):** (from JSONL)
+- **val_avg/mae_surf_p: 93.0126** ← current best (was 94.6918, **−1.77%**)
+- **test_avg/mae_surf_p (clean, NaN-workaround applied): 83.8748**
+- **Metric summary:** `metrics/charliepai2e4-nezuko-nhidden-192-full-best-config-8071vhvw.jsonl`
+- **Reproduce:** `cd target/ && python train.py --surf_weight 20.0 --lr 2e-4 --grad_clip 1.0 --epochs 12 --n_hidden 192`
+
+### Per-split breakdown
+
+| Split | surf p (val) | Δ vs baseline |
+|---|---:|---:|
+| val_single_in_dist     | 107.8467 | **−7.41** |
+| val_geom_camber_rc     | 108.7330 | +4.09 |
+| val_geom_camber_cruise |  70.5987 | **−2.92** |
+| val_re_rand            |  84.8721 | **−4.36** |
+| **avg**                | **93.0126** | **−2.65** |
+
+### Per-split test metrics (clean — NaN workaround applied to data/scoring.py)
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---:|---:|---:|
+| test_single_in_dist     | 97.2153 | 1.3792 | 0.6305 |
+| test_geom_camber_rc     | 98.6405 | 2.2122 | 0.8166 |
+| test_geom_camber_cruise | 58.9926 | 0.8075 | 0.4197 |
+| test_re_rand            | 80.6507 | 1.2671 | 0.6257 |
+| **avg**                 | **83.8748** | **1.4165** | **0.6231** |
+
+### Notes
+- First capacity-scaling win: n_hidden=192 (1.47M params, 2.25× baseline 0.66M) with full best config (grad_clip=1.0, lr=2e-4, surf_weight=20.0).
+- 3/4 val splits improved; val_geom_camber_rc regressed slightly (+4.1) — wider model may be over-fitting to in-distribution raceCar-single mode (gained most there: −7.4).
+- Training hit 30-min timeout at epoch 10/12 — cosine schedule still active (lr=1.34e-5 remaining); full 12 epochs or clean 10+T_max=10 schedule may squeeze further gains.
+- Grad clipping remained active: pre-clip norm ~94 (ep1) → ~29 (ep10) — stable but still clipping every batch.
+- Peak GPU memory: 58.0 GB (within 96 GB budget; headroom for n_hidden=224 or batch_size increase).
+- NaN bug in `data/scoring.py` (nan*0=nan in masked multiply) corrupts test_geom_camber_cruise; clean test metrics computed via y_safe workaround.
+- Architecture: `n_hidden=192`, `n_layers=5`, `n_head=4`, `slice_num=64`, `mlp_ratio=2`, spatial_bias 4D, 1.47M params.
+- Optimizer: AdamW, `lr=2e-4`, `weight_decay=1e-4`, `surf_weight=20.0`, `grad_clip=1.0`, cosine T_max=12.
