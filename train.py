@@ -108,6 +108,28 @@ class SharedFiLMGenerator(nn.Module):
         return pairs
 
 
+class FourierPosEncoder(nn.Module):
+    """Sinusoidal Fourier positional encoding for 2D (x,z) node coordinates."""
+
+    def __init__(self, n_octaves: int = 8):
+        super().__init__()
+        self.n_octaves = n_octaves
+        freqs = torch.pow(2.0, torch.arange(n_octaves).float()) * torch.pi
+        self.register_buffer("freqs", freqs)
+
+    @property
+    def out_dim(self) -> int:
+        return self.n_octaves * 4
+
+    def forward(self, xy: torch.Tensor) -> torch.Tensor:
+        args = xy.unsqueeze(-1) * self.freqs
+        sins = torch.sin(args)
+        coss = torch.cos(args)
+        out = torch.stack([sins, coss], dim=-1)
+        B, N = xy.shape[:2]
+        return out.reshape(B, N, -1)
+
+
 class PhysicsAttention(nn.Module):
     """Physics-aware attention for irregular meshes."""
 
@@ -208,11 +230,14 @@ class Transolver(nn.Module):
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
 
+        self.fourier_pos = FourierPosEncoder(n_octaves=8)
+        fourier_pos_dim = self.fourier_pos.out_dim
+
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
                                   n_layers=0, res=False, act=act)
         else:
-            self.preprocess = MLP(fun_dim + space_dim, n_hidden * 2, n_hidden,
+            self.preprocess = MLP(fun_dim + fourier_pos_dim, n_hidden * 2, n_hidden,
                                   n_layers=0, res=False, act=act)
 
         self.n_hidden = n_hidden
@@ -245,7 +270,10 @@ class Transolver(nn.Module):
         x = data["x"]
         log_re_sample = x[:, 0, 13].unsqueeze(-1)  # [B, 1] normalized log(Re) per sample
         film_pairs = self.film_generator(log_re_sample)
-        fx = self.preprocess(x) + self.placeholder[None, None, :]
+        xy = x[:, :, :2]
+        fourier_feats = self.fourier_pos(xy)
+        x_aug = torch.cat([fourier_feats, x[:, :, 2:]], dim=-1)
+        fx = self.preprocess(x_aug) + self.placeholder[None, None, :]
         for i, block in enumerate(self.blocks):
             fx = block(fx, film=film_pairs[i])
         return {"preds": fx}
