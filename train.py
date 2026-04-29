@@ -419,6 +419,7 @@ def save_model_artifact(
         "weight_decay": cfg.weight_decay,
         "batch_size": cfg.batch_size,
         "surf_weight": cfg.surf_weight,
+        "boundary_focus": cfg.boundary_focus,
         "epochs_configured": cfg.epochs,
     }
 
@@ -472,6 +473,7 @@ class Config:
     weight_decay: float = 1e-4
     batch_size: int = 4
     surf_weight: float = 3.0   # was 10.0; merged from #850 (sw=3 + Huber stack)
+    boundary_focus: float = 0.0  # 0=off; >0 weights volume nodes by 1/(1+boundary_focus*dist_to_surf)
     epochs: int = 50
     warmup_epochs: int = 5
     warmup_start_lr: float = 1e-4
@@ -617,7 +619,33 @@ for epoch in range(MAX_EPOCHS):
 
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
-            vol_loss = (huber_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+            boundary_diag: dict[str, float] | None = None
+            if cfg.boundary_focus > 0.0:
+                # x_aug[:, :, 24] is dist_to_surface (normalized position units;
+                # see add_derived_features). Decay volume node loss weights with
+                # distance so the boundary layer dominates the gradient signal.
+                dist = x_aug[..., 24].detach()  # [B, N], no grad needed
+                boundary_w = 1.0 / (1.0 + cfg.boundary_focus * dist)
+                vol_mask_f = vol_mask.float()
+                eff_vol_weights = boundary_w * vol_mask_f
+                vol_count = vol_mask_f.sum().clamp(min=1)
+                vol_loss = (huber_err * eff_vol_weights.unsqueeze(-1)).sum() \
+                           / eff_vol_weights.sum().clamp(min=1)
+                with torch.no_grad():
+                    w_sum = eff_vol_weights.sum()
+                    w_mean = (w_sum / vol_count).item()
+                    # Effective sample size ratio: (sum w)^2 / (n * sum w^2). 1.0 = uniform,
+                    # → 0 as the weighting concentrates on a few nodes.
+                    w_sq_sum = (eff_vol_weights * eff_vol_weights).sum()
+                    ess_ratio = (w_sum * w_sum / (vol_count * w_sq_sum.clamp(min=1e-12))).item()
+                    dist_vol_mean = ((dist * vol_mask_f).sum() / vol_count).item()
+                boundary_diag = {
+                    "train/boundary_w_mean": w_mean,
+                    "train/boundary_ess_ratio": ess_ratio,
+                    "train/dist_vol_mean": dist_vol_mean,
+                }
+            else:
+                vol_loss = (huber_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
             surf_loss = (huber_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
             loss = vol_loss + cfg.surf_weight * surf_loss
 
@@ -630,11 +658,14 @@ for epoch in range(MAX_EPOCHS):
             nan_inf_events += 1
         optimizer.step()
         global_step += 1
-        wandb.log({
+        step_log = {
             "train/loss": loss.item(),
             "train/grad_norm": grad_norm.item(),
             "global_step": global_step,
-        })
+        }
+        if boundary_diag is not None:
+            step_log.update(boundary_diag)
+        wandb.log(step_log)
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
