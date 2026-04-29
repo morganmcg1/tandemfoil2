@@ -2,43 +2,50 @@
 
 ## Current Best Result
 
-**Source:** PR #1148 — Extended Fourier freqs on (x,z): freqs=(1,2,4,8,16,32,64) (charliepai2f3-askeladd)
+**Source:** PR #1104 — FiLM global conditioning: inject Re/AoA/NACA via scale+shift (charliepai2f3-edward)
 
-**Primary metric:** `val_avg/mae_surf_p = 43.9575`
+**Primary metric:** `val_avg/mae_surf_p = 39.9450`
 
-**Configuration:** Lion optimizer + L1 loss + EMA(0.995) + bf16 autocast + n_layers=1 + surf_weight=28 + cosine scheduler (T_max=15) + grad_clip=1.0 + n_hidden=128 + n_head=4 + slice_num=64 + mlp_ratio=2 + Fourier positional encoding on (x,z) with freqs=(1,2,4,8,16,32,64)
+**Configuration:** Lion optimizer + L1 loss + EMA(0.995) + bf16 autocast + n_layers=1 + surf_weight=28 + cosine scheduler (T_max=15) + grad_clip=1.0 + n_hidden=128 + n_head=4 + slice_num=64 + mlp_ratio=2 + Fourier positional encoding on (x,z) with freqs=(1,2,4,8,16,32,64) + FiLM global conditioning (scale+shift per TransolverBlock conditioned on Re/AoA/NACA regime vector, DiT/AdaLN-Zero init)
 
 **Per-split breakdown:**
 | Split | mae_surf_p |
 |-------|-----------|
-| val_single_in_dist | 44.6169 |
-| val_geom_camber_rc | 57.7367 |
-| val_geom_camber_cruise | 26.7301 |
-| val_re_rand | 46.7462 |
-| **val_avg** | **43.9575** |
+| val_single_in_dist | 38.3034 |
+| val_geom_camber_rc | 56.1374 |
+| val_geom_camber_cruise | 22.9918 |
+| val_re_rand | 42.3473 |
+| **val_avg** | **39.9450** |
 
 **Test split breakdown:**
 | Split | mae_surf_p |
 |-------|-----------|
-| test_single_in_dist | 38.1831 |
-| test_geom_camber_rc | 52.2408 |
-| test_geom_camber_cruise | 22.2041 |
-| test_re_rand | 37.1885 |
-| **test_avg** | **37.4541** |
+| test_single_in_dist | 32.0588 |
+| test_geom_camber_rc | 49.6238 |
+| test_geom_camber_cruise | 18.9013 |
+| test_re_rand | 33.7205 |
+| **test_avg** | **33.5761** |
 
-**Training:** ~21.5 min, 50 epochs (best epoch 48), batch_size=4, Peak VRAM: 9.40 GB, n_params: 184,903
+**Training:** ~22.8 min, 50 epochs (best epoch 49), batch_size=4, Peak VRAM: 9.89 GB, n_params: 252,487
 
-**Metrics path:** `target/models/model-charliepai2f3-askeladd-fourier-freqs-7-20260429-121807/metrics.jsonl`
+**Metrics path:** `target/models/model-charliepai2f3-edward-film-extended-fourier-rebased-20260429-140420/metrics.jsonl`
 
 ## Run Command
 
 ```bash
-cd target/ && python train.py --n_layers 1 --bf16 --surf_weight 28.0 --optimizer lion --lr 3e-4 --weight_decay 1e-2 --loss l1 --scheduler cosine --T_max 15 --clip_grad_norm 1.0 --n_hidden 128 --n_head 4 --slice_num 64 --mlp_ratio 2 --batch_size 4 --fourier_pos_enc --fourier_freqs 1 2 4 8 16 32 64
+cd target/ && python train.py --n_layers 1 --bf16 True --surf_weight 28.0 --optimizer lion --lr 3e-4 --weight_decay 1e-2 --loss l1 --scheduler cosine --T_max 15 --clip_grad_norm 1.0 --n_hidden 128 --n_head 4 --slice_num 64 --mlp_ratio 2 --batch_size 4 --fourier_pos_enc --fourier_freqs 1 2 4 8 16 32 64
 ```
 
-Note: The Fourier positional encoding appends `sin(f*pi*xy)` and `cos(f*pi*xy)` for freqs in (1,2,4,8,16,32,64) to the (x,z) dims, expanding the spatial input from 2-dim to 30-dim. Input feature dimension becomes 52. Adding freq=128 regresses sharply (aliasing near mesh-element spacing scale).
+Note: FiLM conditioning injects global physics scalars (dims 13–23 of x: log(Re), AoA1, NACA1(3d), AoA2, NACA2(3d), gap, stagger) as learned scale+shift (γ, β) applied to each TransolverBlock. The FiLMConditioner uses DiT/AdaLN-Zero initialization so all blocks start as identity and FiLM activates gradually. The Fourier positional encoding appends sin(f*pi*xy) and cos(f*pi*xy) for freqs in (1,2,4,8,16,32,64), expanding spatial input from 2-dim to 30-dim. Input feature dim becomes 52. Adding freq=128 regresses (Nyquist aliasing).
 
 ## Merge History
+
+### 2026-04-29 — PR #1104: FiLM global conditioning: inject Re/AoA/NACA via scale+shift (charliepai2f3-edward)
+- Previous: `val_avg/mae_surf_p = 43.9575` (PR #1148, Fourier freqs=(1,2,4,8,16,32,64))
+- New best: `val_avg/mae_surf_p = 39.9450` (improvement: −4.0125, −9.13%)
+- Test: `test_avg/mae_surf_p = 33.5761` (improvement vs previous test_avg 37.4541: −3.8780, −10.35%)
+- Student: charliepai2f3-edward
+- Key finding: FiLM global conditioning (scale+shift per TransolverBlock conditioned on 11-dim physics regime vector) delivers a decisive −9.13% improvement on val and −10.35% on test. Best epoch 49/50 — model not yet converged; extended training is the obvious next direction. All 4 val splits improved. DiT/AdaLN-Zero initialization key to stability. Param count increases from 184,903 to 252,487 (+67,584, +36.5%).
 
 ### 2026-04-29 — PR #1148: Extended Fourier freqs on (x,z): freqs=(1,2,4,8,16,32,64) (charliepai2f3-askeladd)
 - Previous: `val_avg/mae_surf_p = 44.4154` (PR #1106, Fourier pos enc freqs=(1,2,4,8,16))
