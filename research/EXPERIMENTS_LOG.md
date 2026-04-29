@@ -1,5 +1,42 @@
 # SENPAI Research Results
 
+## 2026-04-29 03:50 — PR #959: BF16 mixed precision for throughput ✓ MERGED (new best)
+
+- Branch: `willowpai2e1-tanjiro/bf16-mixed-precision`
+- Hypothesis: BF16 autocast gives ~1.3–1.5× per-epoch speedup → more epochs within 30-min budget → lower val without changing architecture.
+
+| Variant | val_avg/mae_surf_p | test_avg/mae_surf_p | epochs | per-ep (s) | peak VRAM | W&B run |
+|---------|-------------------:|--------------------:|:------:|:----------:|:---------:|---------|
+| fp32-baseline | 90.60 | 80.80 | 14 | 137.4 | 42.1 GB | [jdp5qegc](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/jdp5qegc) |
+| **bf16-baseline** | **79.82** | **70.00** | **18** | **101.6** | **33.0 GB** | [j7zko7ml](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/j7zko7ml) |
+| bf16-layers8 | 95.92 | 86.55 | 12 | 156.6 | 50.9 GB | [umcej8d8](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r1/runs/umcej8d8) |
+
+All runs: `--huber_delta 0.1 --ema_decay 0.99` (PR #881 stack). BF16-layers8 used `--n_layers 8 --lr 3e-4`.
+
+BF16 throughput: **1.353× speedup** (26.1% faster per epoch), **21.6% VRAM reduction**, **14→18 epochs** (+29%).
+
+Per-split test (bf16-baseline): single=83.00, rc=80.46, cruise=48.43, re_rand=68.12
+
+**Analysis and conclusions:**
+
+Hypothesis confirmed — BF16 gives clean +29% epoch budget. Extra 4 epochs translate directly into lower val/test (model was still descending at epoch 14). No NaNs, no precision issues on RTX PRO 6000 Blackwell. Implementation is clean (one `torch.autocast` context, no GradScaler needed).
+
+**Depth=8 with BF16: rejected.** n_layers=8 + BF16 per-epoch time is 156.6s — actually SLOWER than FP32 n=5 (137.4s) because bigger model overwhelms BF16's bandwidth advantage. Reaches only 12 epochs, far worse than BF16 n=5. Confirms PR #776's budget-incompatibility diagnosis.
+
+BF16 n=5 (val=79.82) beats both prior-best stacks:
+- vs PR #862 (slice=32 + 4-way): val=79.82 < 82.64 (−3.4%) — wins on different stack
+- vs PR #881 (δ=0.1 + EMA): val=79.82 < 85.23 (−6.3%)
+
+**Note:** tanjiro's FP32 control (val=90.60) vs PR #881 reported (val=85.23) shows ~6.5-unit run-to-run variance — same pattern as in PR #944's control vs published baseline. The like-for-like within-run comparison (BF16 vs FP32 same code) is load-bearing and unambiguously positive.
+
+Critical implication: **throughput is now the binding constraint.** All models still descend at final epoch. BF16 is now required for all future experiments — it's not an optimization, it's the new default stack component.
+
+**New best: val=79.82, test=70.00. Merged. `--use_bf16` is now a required minimum flag.**
+
+Tanjiro assigned follow-up PR #1025: BF16 + slice=32 + δ=0.1 + EMA (full triple-win combination, predicted val ~75.8).
+
+---
+
 ## 2026-04-29 03:30 — PR #951: Per-channel Huber δ on 4-way stack (slice=64) — sent back
 
 - Branch: `willowpai2e1-edward/per-channel-huber`
