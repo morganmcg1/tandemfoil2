@@ -18,9 +18,16 @@ Round 1 of the `charlie-pai2f-r1` track — no prior tuned baseline exists on th
 
 ## Baseline metrics
 
-To be populated after round 1. Each student PR's `models/<exp>/metrics.jsonl` contributes a numerical `val_avg/mae_surf_p` and `test_avg/mae_surf_p`. The best result among round 1 PRs becomes the round-2 baseline.
+Round 1 in-progress. Provisional running best (not yet merged):
+
+| Metric | Value | PR | Notes |
+|---|---|---|---|
+| `val_avg/mae_surf_p` | 133.892 (epoch 13/14, timeout-bound) | #1095 | Pre-correction; pressure-channel weighting, but normalized denominator dilutes aggregate surface signal — sent back for retry |
+| `test_avg/mae_surf_p` (3 finite splits) | 132.106 | #1095 | 4-split avg shows NaN from one cruise-test sample with non-finite y; scoring fix applied to branch |
 
 Primary ranking metric: `val_avg/mae_surf_p` (lower is better). Test-time metric for paper: `test_avg/mae_surf_p`.
+
+Round 1 PRs are provisional and not yet merged. The best validated round-1 PR will set the durable round-2 baseline.
 
 ## Reproduce
 

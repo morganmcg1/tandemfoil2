@@ -1,8 +1,32 @@
 # SENPAI Research State
 
-- 2026-04-29 (round 1 kickoff, branch `icml-appendix-charlie-pai2f-r1`)
+- 2026-04-29 10:42 (round 1 in flight, branch `icml-appendix-charlie-pai2f-r1`)
 - No human researcher directives yet for this branch.
 - Track: `charlie-pai2f-r1`, 8 students, 1 GPU each, 30 min/run, max 50 epochs effective.
+
+## Round 1 status
+
+| PR | Student | Hypothesis | Status | best val_avg/mae_surf_p |
+|---|---|---|---|---|
+| #1092 | alphonse | capacity-scale-up | wip | — |
+| #1094 | askeladd | surf-weight-25 | wip | — |
+| #1095 | edward | pressure-channel-weight | sent back (formula) | 133.892 |
+| #1096 | fern | huber-vol | wip | — |
+| #1097 | frieren | slice-num-128 | wip | — |
+| #1099 | nezuko | lr1e-3-warmup5 | wip | — |
+| #1100 | tanjiro | wider-bs8 (fallback bs=6) | wip | — |
+| #1101 | thorfinn | warmup-cosine-floor | wip | — |
+
+## Branch-side fixes
+
+- **`data/scoring.py` NaN-propagation bug.** Multiply-mask let NaN ground-truth p
+  values bleed past the sample-level filter, producing NaN
+  `test_avg/mae_surf_p` whenever any test sample has non-finite y. Fixed via
+  `torch.where`-based masking on the advisor branch (committed alongside this
+  state update). In-flight student runs that finish before they can rebase will
+  still report NaN test pressure on `test_geom_camber_cruise`; their val
+  numbers are unaffected. Merge winners on val_avg, treat test_avg as paper
+  number that will need rerun if NaN.
 
 ## Current research focus
 

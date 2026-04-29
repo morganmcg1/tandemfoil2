@@ -45,9 +45,13 @@ def accumulate_batch(
     surf_mask = effective & is_surface
     vol_mask = effective & ~is_surface
 
+    # NaN-safe masking. Multiplying by 0 still propagates NaN through |pred - y|
+    # whenever y has non-finite entries that the sample-level mask is supposed
+    # to exclude. torch.where filters those positions before they enter the sum.
     err = (pred_orig.double() - y.double()).abs()
-    mae_surf += (err * surf_mask.unsqueeze(-1).double()).sum(dim=(0, 1))
-    mae_vol += (err * vol_mask.unsqueeze(-1).double()).sum(dim=(0, 1))
+    zero = torch.zeros_like(err)
+    mae_surf += torch.where(surf_mask.unsqueeze(-1), err, zero).sum(dim=(0, 1))
+    mae_vol += torch.where(vol_mask.unsqueeze(-1), err, zero).sum(dim=(0, 1))
     return int(surf_mask.sum().item()), int(vol_mask.sum().item())
 
 
