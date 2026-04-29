@@ -1,5 +1,53 @@
 # SENPAI Research Results — willow-pai2e-r4
 
+## 2026-04-29 07:15 — PR #1002: DropPath rate=0.05 + T_max=13 — **CLOSED — convergence drag confirmed; DROPPATH-AT-N-LAYERS-5 exhausted**
+
+- Branch: `willowpai2e4-nezuko/droppath-0.05-tmax13`
+- Student: willowpai2e4-nezuko
+- W&B run: [`3q5oqx9j`](https://wandb.ai/wandb-applied-ai-team/senpai-charlie-wilson-willow-e-r4/runs/3q5oqx9j)
+- Status: **CLOSED**
+
+**Hypothesis.** DropPath@0.05 + T_max=13: half the convergence drag of rate=0.1, proper schedule. Predicted: 0 to −5% improvement possible.
+
+**Results vs baseline 64.91 (run `j8yi780z`):**
+
+| Metric | DropPath@0.05 | Baseline | Δ |
+|---|---:|---:|---:|
+| `val_avg/mae_surf_p` | 66.2156 | 64.9148 | **+2.0%** ✗ |
+| `test_avg/mae_surf_p` | 59.0686 | 57.2466 | **+3.2%** ✗ |
+| Params | 661,735 | 661,735 | 0 |
+| Best epoch | 13/13 | 13/13 | — |
+
+**Per-split val:**
+
+| Split | DropPath@0.05 | Baseline | Δ |
+|---|---:|---:|---:|
+| `val_single_in_dist` | 75.0242 | 71.8611 | +4.4% ✗ |
+| `val_geom_camber_cruise` | 49.6138 | 46.5396 | +6.6% ✗ |
+| `val_geom_camber_rc` | 76.6280 | 76.4453 | +0.2% ≈ |
+| `val_re_rand` | 63.5963 | 64.8131 | **−1.9%** ✓ |
+
+**Val curve at epochs 11–13:**
+
+| Epoch | val_avg | Δ | LR |
+|---:|---:|---:|---:|
+| 11 | 70.35 | — | 2.86e-05 |
+| 12 | 67.50 | −2.85 | 7.26e-06 |
+| 13 | **66.22** | **−1.29** | 0 |
+
+Key: still descending at epoch 13 (Δ=−1.29, comparable to baseline −0.70). DropPath slowed convergence enough that the model hadn't reached its operating point before LR hit 0.
+
+**Three-signature failure mode (student's excellent diagnosis):**
+1. Val still descending at epoch 13 — cosine tail closed before optimizer converged.
+2. No OOD/in-dist asymmetry — uniform regression except val_re_rand (−1.9%); real regularization would help OOD more.
+3. Magnitudes coherent: +2.0% val / +3.2% test ≈ ~1 effective epoch of drag.
+
+**Combined with #929 (rate=0.1, +9.5–19.6% regression):** monotone confirmed — DropPath at any rate ≥0.05 hurts on 5-block, 13-epoch budget. Mechanism is sound; the model can't afford the convergence cost.
+
+**Decision: CLOSED.** Lever family DROPPATH-AT-N-LAYERS-5 exhausted. Revisit if n_layers=6 retest (#1006) lands and creates headroom. Nezuko reassigned to channel-weight re-tune (#1017).
+
+---
+
 ## 2026-04-29 06:30 — PR #938: RFF σ sweep {2, 5, 10} — **CLOSED — RFF-as-replacement settled negative; spectral coverage uniformity beats single-σ Gaussian**
 
 - Branch: `willowpai2e4-tanjiro/rff-encoding`

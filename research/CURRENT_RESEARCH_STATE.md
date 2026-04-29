@@ -74,7 +74,8 @@ on L1-only baseline). The compounding mechanism is well-understood.
 | #979 | thorfinn | Pressure-only head (decouple only p) | +0.61% val (seed noise); −2.45% 3-split test | **CLOSED — new baseline supersedes; DECODER-DECOUPLING exhausted; thorfinn→#1006** |
 | #972 | askeladd | 3-seed mean canonical | variance floor | **WIP — must rerun with --t_max 13 for T_max=13 era canonical** |
 | #1000 | frieren | T_max sweep {10,12,13,16} at seed=0 | map LR optimum + seeded canonical | **WIP** |
-| #1002 | nezuko | DropPath@0.05 + T_max=13 | 0 to −5% | **WIP** |
+| #1002 | nezuko | DropPath@0.05 + T_max=13 | +2.0% actual | **CLOSED — convergence drag; DROPPATH exhausted; nezuko→#1017** |
+| #1017 | nezuko | Channel-weight re-tune: p-weight sweep {2,4,6} at T_max=13 | 0 to −3% | **WIP (just assigned)** |
 | #1006 | thorfinn | n_layers=6 retest at T_max=11 | −2 to −7% predicted | **WIP (just assigned)** |
 | #1007 | tanjiro | RFF hybrid: axis-aligned + σ=10 RFF concat at T_max=13 | 0 to −3% | **WIP (just assigned)** |
 
@@ -95,7 +96,8 @@ on L1-only baseline). The compounding mechanism is well-understood.
 - **EMA + FiLM + T_max=13 triple stack** — if both land, combine.
 - **LayerScale × T_max=13** — IN FLIGHT as fern #949 retest. Sent back with
   `--t_max 13 --seed 0` instructions.
-- **DropPath@0.05 × T_max=13** — IN FLIGHT as nezuko #1002.
+- **DropPath@0.05 × T_max=13** — CLOSED (#1002, +2.0% regression). Lever family DROPPATH-AT-N-LAYERS-5 exhausted. Revisit at n_layers=6 if #1006 lands.
+- **Channel-weight re-tune at T_max=13** — IN FLIGHT as nezuko #1017. ch=[1,1,3] was tuned under T_max=50; p-weight sweep {2,4,6} at T_max=13 re-validates.
 - **RFF hybrid concat (axis-aligned + σ=10 RFF)** — IN FLIGHT as tanjiro #1007. σ=10 won cruise (−6.6%) and re_rand in replacement mode; concat mode lets axis-aligned hold structured backbone.
 - **EMA decay sweep {0.995, 0.97}** at T_max=13 — once #873 lands.
 - **Categorical-FiLM (multiplicative)** at T_max=13 — round-3 follow-up once #816 lands.
