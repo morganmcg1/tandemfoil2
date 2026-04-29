@@ -407,6 +407,7 @@ def write_experiment_summary(
         "batch_size": cfg.batch_size,
         "surf_weight": cfg.surf_weight,
         "surf_grad_weight": cfg.surf_grad_weight,
+        "surf_grad_warmup_epochs": cfg.surf_grad_warmup_epochs,
         "epochs_configured": cfg.epochs,
     }
 
@@ -556,6 +557,7 @@ class Config:
     batch_size: int = 4
     surf_weight: float = 10.0
     surf_grad_weight: float = 10.0
+    surf_grad_warmup_epochs: int = 0  # linear warmup of surf_grad_weight from 0 over epochs 1..N
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     experiment_name: str | None = None
@@ -690,6 +692,12 @@ for epoch in range(MAX_EPOCHS):
         print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
         break
 
+    # Linear warmup: epoch 0 = 0.0, epoch (warmup_n - 1) = full weight; held thereafter.
+    if cfg.surf_grad_warmup_epochs > 0:
+        surf_grad_w = cfg.surf_grad_weight * min(1.0, (epoch + 1) / cfg.surf_grad_warmup_epochs)
+    else:
+        surf_grad_w = cfg.surf_grad_weight
+
     t0 = time.time()
     model.train()
     epoch_vol = epoch_surf = epoch_surf_grad = 0.0
@@ -728,9 +736,9 @@ for epoch in range(MAX_EPOCHS):
                 ema_batch = sample_loss_ema[batch_indices].to(device).to(ps_loss.dtype)
                 ema_global_mean = sample_loss_ema.mean().to(device).to(ps_loss.dtype).clamp(min=1e-8)
                 ema_weights = (ema_batch / ema_global_mean).pow(weight_temperature)
-                loss = (ema_weights * ps_loss).mean() + cfg.surf_grad_weight * surf_grad_loss
+                loss = (ema_weights * ps_loss).mean() + surf_grad_w * surf_grad_loss
             else:
-                loss = vol_loss + cfg.surf_weight * surf_loss + cfg.surf_grad_weight * surf_grad_loss
+                loss = vol_loss + cfg.surf_weight * surf_loss + surf_grad_w * surf_grad_loss
 
         optimizer.zero_grad()
         scaler.scale(loss).backward()
@@ -811,7 +819,9 @@ for epoch in range(MAX_EPOCHS):
         "train/surf_loss": epoch_surf,
         "train/surf_grad_loss": epoch_surf_grad,
         "train/avg_mask": avg_mask,
-        "surf_grad_weight": cfg.surf_grad_weight,
+        "surf_grad_weight": surf_grad_w,
+        "surf_grad_weight_final": cfg.surf_grad_weight,
+        "surf_grad_warmup_epochs": cfg.surf_grad_warmup_epochs,
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
