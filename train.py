@@ -31,7 +31,7 @@ import torch.nn.functional as F
 import wandb
 import yaml
 from einops import rearrange
-from timm.layers import trunc_normal_
+from timm.layers import DropPath, trunc_normal_
 from torch.utils.data import DataLoader, Sampler, WeightedRandomSampler
 from tqdm import tqdm
 
@@ -139,7 +139,8 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 drop_path=0.0):
         super().__init__()
         self.last_layer = last_layer
         self.ln_1 = nn.LayerNorm(hidden_dim)
@@ -150,6 +151,8 @@ class TransolverBlock(nn.Module):
         self.ln_2 = nn.LayerNorm(hidden_dim)
         self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
                        n_layers=0, res=False, act=act)
+        self.drop_path1 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
+        self.drop_path2 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         if self.last_layer:
             self.ln_3 = nn.LayerNorm(hidden_dim)
             self.mlp2 = nn.Sequential(
@@ -158,8 +161,8 @@ class TransolverBlock(nn.Module):
             )
 
     def forward(self, fx):
-        fx = self.attn(self.ln_1(fx)) + fx
-        fx = self.mlp(self.ln_2(fx)) + fx
+        fx = self.drop_path1(self.attn(self.ln_1(fx))) + fx
+        fx = self.drop_path2(self.mlp(self.ln_2(fx))) + fx
         if self.last_layer:
             return self.mlp2(self.ln_3(fx))
         return fx
@@ -190,7 +193,8 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 drop_path_rate: float = 0.0):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -206,11 +210,15 @@ class Transolver(nn.Module):
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
+        # Linear ramp drop_path rate from 0 at first block to drop_path_rate at last block.
+        dpr = [drop_path_rate * i / max(n_layers - 1, 1) for i in range(n_layers)]
+        self.drop_path_rates = dpr
         self.blocks = nn.ModuleList([
             TransolverBlock(
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                drop_path=dpr[i],
             )
             for i in range(n_layers)
         ])
@@ -496,6 +504,7 @@ class Config:
     re_stratify: bool = True  # round-robin Re-quintile mini-batches (overrides domain-balanced sampler)
     n_re_quintiles: int = 5
     re_stratify_seed: int = 42
+    drop_path_rate: float = 0.0  # stochastic depth rate at the deepest block; linear ramp 0..rate
 
 
 if __name__ == "__main__":
@@ -561,11 +570,14 @@ if __name__ == "__main__":
         mlp_ratio=2,
         output_fields=["Ux", "Uy", "p"],
         output_dims=[1, 1, 1],
+        drop_path_rate=cfg.drop_path_rate,
     )
 
     model = Transolver(**model_config).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+    if cfg.drop_path_rate > 0.0:
+        print(f"DropPath linear ramp (per block): {[round(r, 4) for r in model.drop_path_rates]}")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
