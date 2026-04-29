@@ -1,6 +1,6 @@
 # Baseline (icml-appendix-charlie-pai2f-r1)
 
-Seven winners merged into `train.py`:
+Eight winners merged into `train.py`:
 - **PR #1101 (thorfinn)** — regime-matched schedule (warmup=1, T_max=13, eta_min=lr/100)
 - **PR #1138 (frieren)** — Random Fourier Features on (x, z), n_freq=32, sigma=1.0
 - **PR #1160 (alphonse)** — SwiGLU FFN replacing GELU MLP in TransolverBlocks (param-matched, ~0.689M)
@@ -8,10 +8,47 @@ Seven winners merged into `train.py`:
 - **PR #1197 (alphonse)** — AMP (bfloat16) + n_hidden=160 capacity scaling: same VRAM, +53% params, +2 epochs/30-min
 - **PR #1198 (askeladd)** — Online loss-weighted curriculum: EMA per-sample importance weighting in loss (not sampler), ema_alpha=0.3, temperature=0.3 pow scaling, 3-epoch warmup
 - **PR #1221 (thorfinn)** — Wider FiLMNet: Linear(11→512)→GELU→Linear(512→3200), 2.70M total params
+- **PR #1183 (edward)** — Cautious AdamW: sign-agreement mask on momentum updates, rescaled by 1/mask.mean() to preserve update norm
 
 All subsequent experiments compare against this stacked baseline.
 
-## Current best (round-7 winner — merged 2026-04-29)
+## Current best (round-8 winner — merged 2026-04-29)
+
+| Metric | Value | PR | Notes |
+|---|---|---|---|
+| `val_avg/mae_surf_p` | **60.685** (epoch 13/13, still descending) | #1183 | Cautious AdamW on round-7 EMA-curriculum baseline |
+| `test_avg/mae_surf_p` | **52.498** (4 splits, all finite MAE) | #1183 | `test_geom_camber_cruise` vol_loss=inf but MAE valid |
+
+Per-split val (best epoch 13):
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---|---|---|
+| `val_single_in_dist` | 62.017 | 0.666 | 0.394 |
+| `val_geom_camber_rc` | 70.391 | 1.255 | 0.581 |
+| `val_geom_camber_cruise` | 49.179 | 0.514 | 0.331 |
+| `val_re_rand` | 61.151 | 0.893 | 0.452 |
+| **avg** | **60.685** | 0.832 | 0.440 |
+
+Per-split test (best epoch 13):
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---|---|---|
+| `test_single_in_dist` | 53.846 | 0.648 | 0.386 |
+| `test_geom_camber_rc` | 61.239 | 1.203 | 0.543 |
+| `test_geom_camber_cruise` | 40.012 | 0.463 | 0.297 |
+| `test_re_rand` | 54.897 | 0.760 | 0.422 |
+| **avg** | **52.498** | 0.769 | 0.412 |
+
+Notes:
+- `test_geom_camber_cruise` vol_loss=inf/surf_loss=nan is a pre-existing dataset issue (extreme residuals in 1 sample); MAE is valid.
+- Best checkpoint is epoch 13 (model still descending under 30-min wall-clock cap).
+- Cautious AdamW: subclasses `torch.optim.AdamW`, overrides `step()` to apply `mask = (u * grad > 0)` sign-agreement filter, then rescales by `1/mask.mean()` to preserve update norm. Mask fraction stabilizes at 0.628–0.644 after warmup.
+- v4 ran on commit `886685f` (post-#1198 EMA curriculum, pre-#1221 wider FiLMNet). Even without #1221 stacked, val=60.685 < 61.114.
+- Improvement vs round-7 baseline: -0.7% on val (60.685 vs 61.114), -0.9% on test (52.498 vs 52.989). All 4 val splits improved.
+- Cautious AdamW super-additive stacking history: v1 -3.5%, v2 -10.5%, v4 -19.9% — consistent pattern.
+- Metric summary: `models/model-charliepai2f1-edward-cautious-adamw-v4-20260429-163908/metrics.yaml`
+
+## Previous best (round-7 winner — merged 2026-04-29)
 
 | Metric | Value | PR | Notes |
 |---|---|---|---|
@@ -156,15 +193,16 @@ Notes:
 | Round-4 winner: FiLM domain conditioning | 84.371 | 75.076 | #1158 ← merged |
 | Round-5 winner: AMP + n_hidden=160 capacity scaling | 75.750 | 64.983 | #1197 ← merged |
 | Round-6 winner: Online loss-weighted curriculum | 66.636 | 57.355 | #1198 ← merged |
-| Round-7 winner: Wider FiLMNet MLP 512 | **61.114** | **52.989** | #1221 ← merged |
+| Round-7 winner: Wider FiLMNet MLP 512 | 61.114 | 52.989 | #1221 ← merged |
+| Round-8 winner: Cautious AdamW | **60.685** | **52.498** | #1183 ← merged |
 
-Round-1→Round-7 cumulative improvement: **-54.2% on val, -59.9% on test**.
+Round-1→Round-8 cumulative improvement: **-54.5% on val, -60.2% on test**.
 
-## Default config (`train.py` at HEAD, post-merge of #1221)
+## Default config (`train.py` at HEAD, post-merge of #1183)
 
 | Setting | Value |
 |---|---|
-| Optimizer | AdamW, lr=5e-4, weight_decay=1e-4 |
+| Optimizer | **CautiousAdamW** (sign-agreement mask + 1/mask.mean() rescale), lr=5e-4, weight_decay=1e-4 |
 | Scheduler | LinearLR warmup (1 ep, 5e-7 → 5e-4) + CosineAnnealingLR (T_max=13, eta_min=5e-6) |
 | Batch size | 4 |
 | Surf weight (loss) | 10.0 |
