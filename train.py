@@ -241,17 +241,31 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]
 
-            abs_err = (pred - y_norm).abs()
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
-            vol_loss_sum += (
-                (abs_err * vol_mask.unsqueeze(-1)).sum()
-                / vol_mask.sum().clamp(min=1)
-            ).item()
-            surf_loss_sum += (
-                (abs_err * surf_mask.unsqueeze(-1)).sum()
-                / surf_mask.sum().clamp(min=1)
-            ).item()
+
+            B = pred.shape[0]
+            vol_losses_b = []
+            surf_losses_b = []
+            for i in range(B):
+                m_i = mask[i]
+                if m_i.sum() == 0:
+                    continue
+                rms_i = y_norm[i][m_i].pow(2).mean().sqrt().clamp(min=1e-3)
+                vm_i = vol_mask[i]
+                sm_i = surf_mask[i]
+                if vm_i.sum() > 0:
+                    vol_losses_b.append(
+                        (pred[i][vm_i] - y_norm[i][vm_i]).abs().mean() / rms_i
+                    )
+                if sm_i.sum() > 0:
+                    surf_losses_b.append(
+                        (pred[i][sm_i] - y_norm[i][sm_i]).abs().mean() / rms_i
+                    )
+            if vol_losses_b:
+                vol_loss_sum += torch.stack(vol_losses_b).mean().item()
+            if surf_losses_b:
+                surf_loss_sum += torch.stack(surf_losses_b).mean().item()
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
@@ -519,12 +533,32 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        abs_err = (pred - y_norm).abs()
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (abs_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (abs_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+
+        # Per-sample Re-aware loss normalization: divide each sample's MAE by
+        # its own y_norm RMS so high-Re and low-Re samples contribute equal
+        # gradient magnitude (analogous to relative-L1 loss in neural operators).
+        B = pred.shape[0]
+        vol_losses = []
+        surf_losses = []
+        for i in range(B):
+            m_i = mask[i]
+            if m_i.sum() == 0:
+                continue
+            rms_i = y_norm[i][m_i].pow(2).mean().sqrt().clamp(min=1e-3).detach()
+            vm_i = vol_mask[i]
+            sm_i = surf_mask[i]
+            if vm_i.sum() > 0:
+                vol_mae_i = (pred[i][vm_i] - y_norm[i][vm_i]).abs().mean() / rms_i
+                vol_losses.append(vol_mae_i)
+            if sm_i.sum() > 0:
+                surf_mae_i = (pred[i][sm_i] - y_norm[i][sm_i]).abs().mean() / rms_i
+                surf_losses.append(surf_mae_i)
+
+        vol_loss = torch.stack(vol_losses).mean() if vol_losses else pred.new_tensor(0.0)
+        surf_loss = torch.stack(surf_losses).mean() if surf_losses else pred.new_tensor(0.0)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
