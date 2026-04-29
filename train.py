@@ -297,6 +297,7 @@ def fourier_pos_enc(xy: torch.Tensor, freqs=FOURIER_FREQS) -> torch.Tensor:
 
 def evaluate_split(model, loader, stats, surf_weight, device,
                    bf16: bool = False, use_fourier: bool = False,
+                   use_fourier_saf: bool = False,
                    fourier_freqs=FOURIER_FREQS) -> dict[str, float]:
     """Evaluate a split and return metrics matching the organizer scorer.
 
@@ -332,10 +333,18 @@ def evaluate_split(model, loader, stats, surf_weight, device,
             # Global conditioning vector — taken from the (normalized) raw x at
             # node 0; pad_collate places real nodes first so node 0 is real.
             cond = x_norm[:, 0, COND_START:COND_END]
-            if use_fourier:
-                xy_norm = x_norm[..., :2]
-                xy_enc = fourier_pos_enc(xy_norm, freqs=fourier_freqs)
-                x_in = torch.cat([xy_enc, x_norm[..., 2:]], dim=-1)
+            if use_fourier or use_fourier_saf:
+                xy_part = (
+                    fourier_pos_enc(x_norm[..., :2], freqs=fourier_freqs)
+                    if use_fourier
+                    else x_norm[..., :2]
+                )
+                saf_part = (
+                    fourier_pos_enc(x_norm[..., 2:4], freqs=fourier_freqs)
+                    if use_fourier_saf
+                    else x_norm[..., 2:4]
+                )
+                x_in = torch.cat([xy_part, saf_part, x_norm[..., 4:]], dim=-1)
             else:
                 x_in = x_norm
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
@@ -515,6 +524,7 @@ class Config:
     scheduler: str = "cosine"     # "cosine" | "none"
     T_max: int = 15               # cosine scheduler T_max
     fourier_pos_enc: bool = False  # apply Fourier features to (x, z) dims
+    fourier_saf_enc: bool = False  # apply Fourier features to saf (dims 2-3)
     fourier_freqs: list[float] = field(default_factory=lambda: [1.0, 2.0, 4.0, 8.0, 16.0])
 
 
@@ -545,9 +555,12 @@ val_loaders = {
 }
 
 pos_enc_dim = 2 + 4 * len(cfg.fourier_freqs) if cfg.fourier_pos_enc else 2
+saf_dim = 2 + 4 * len(cfg.fourier_freqs) if cfg.fourier_saf_enc else 2
+space_dim = pos_enc_dim + saf_dim
+fun_dim = X_DIM - 4
 model_config = dict(
-    space_dim=pos_enc_dim,
-    fun_dim=X_DIM - 2,
+    space_dim=space_dim,
+    fun_dim=fun_dim,
     out_dim=3,
     n_hidden=cfg.n_hidden,
     n_layers=cfg.n_layers,
@@ -563,8 +576,9 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 print(
-    f"  fourier_pos_enc={cfg.fourier_pos_enc} space_dim={pos_enc_dim} "
-    f"input_dim={pos_enc_dim + (X_DIM - 2)}"
+    f"  fourier_pos_enc={cfg.fourier_pos_enc} fourier_saf_enc={cfg.fourier_saf_enc} "
+    f"space_dim={space_dim} (xy={pos_enc_dim} + saf={saf_dim}) "
+    f"fun_dim={fun_dim} input_dim={space_dim + fun_dim}"
 )
 
 if cfg.optimizer == "lion":
@@ -623,10 +637,18 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         cond = x_norm[:, 0, COND_START:COND_END]
-        if cfg.fourier_pos_enc:
-            xy_norm = x_norm[..., :2]
-            xy_enc = fourier_pos_enc(xy_norm, freqs=cfg.fourier_freqs)
-            x_in = torch.cat([xy_enc, x_norm[..., 2:]], dim=-1)
+        if cfg.fourier_pos_enc or cfg.fourier_saf_enc:
+            xy_part = (
+                fourier_pos_enc(x_norm[..., :2], freqs=cfg.fourier_freqs)
+                if cfg.fourier_pos_enc
+                else x_norm[..., :2]
+            )
+            saf_part = (
+                fourier_pos_enc(x_norm[..., 2:4], freqs=cfg.fourier_freqs)
+                if cfg.fourier_saf_enc
+                else x_norm[..., 2:4]
+            )
+            x_in = torch.cat([xy_part, saf_part, x_norm[..., 4:]], dim=-1)
         else:
             x_in = x_norm
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=cfg.bf16):
@@ -669,6 +691,7 @@ for epoch in range(MAX_EPOCHS):
         name: evaluate_split(
             eval_model, loader, stats, cfg.surf_weight, device,
             bf16=cfg.bf16, use_fourier=cfg.fourier_pos_enc,
+            use_fourier_saf=cfg.fourier_saf_enc,
             fourier_freqs=cfg.fourier_freqs,
         )
         for name, loader in val_loaders.items()
@@ -733,6 +756,7 @@ if best_metrics:
             name: evaluate_split(
                 eval_model_for_test, loader, stats, cfg.surf_weight, device,
                 bf16=cfg.bf16, use_fourier=cfg.fourier_pos_enc,
+                use_fourier_saf=cfg.fourier_saf_enc,
                 fourier_freqs=cfg.fourier_freqs,
             )
             for name, loader in test_loaders.items()
