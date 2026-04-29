@@ -386,6 +386,11 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip final test evaluation
+    # Curvature-weighted surf loss: up-weight LE/TE based on per-sample
+    # max-normalized |saf| (dim 2). saf is empirically a signed
+    # mid-chord-centred coordinate, so endpoint proximity = |saf| / max|saf|.
+    curv_weight_alpha: float = 5.0   # peak weight bonus at LE/TE (peak = 1 + alpha)
+    curv_weight_beta: float = 20.0   # exponential concentration sharpness
 
 
 cfg = sp.parse(Config)
@@ -480,6 +485,10 @@ for epoch in range(MAX_EPOCHS):
     epoch_std_max = 0.0
     epoch_w_min = float("inf")
     epoch_w_max = 0.0
+    epoch_curv_w_raw_max = 0.0
+    epoch_curv_w_raw_min_surf = float("inf")
+    epoch_curv_w_max = 0.0
+    epoch_curv_w_min_surf = float("inf")
     n_batches = 0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
@@ -497,6 +506,29 @@ for epoch in range(MAX_EPOCHS):
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
 
+            # Curvature-aware surface weights: up-weight LE/TE where pressure
+            # extrema (suction peak / Kutta condition) concentrate, using the
+            # raw saf feature (dim 2). Empirically saf on surface is a signed
+            # mid-chord-centred coordinate (|saf|≈0 at mid, |saf| max at the
+            # foil endpoints), so we normalize per-sample by the surface max
+            # to get endpoint_proximity ∈ [0,1] (1 at LE/TE, 0 at mid), then
+            # drive an exp-decay weight from endpoint_dist = 1 - proximity.
+            # Mean-1 normalization across each sample's surface preserves the
+            # overall surf_loss scale so cfg.surf_weight remains calibrated.
+            B = sq_err.shape[0]
+            surf_mask_f = surf_mask.float()
+            saf_abs = x[..., 2].abs()                                                  # [B, N]
+            saf_abs_surf = saf_abs * surf_mask_f
+            saf_abs_max = saf_abs_surf.max(dim=1, keepdim=True).values.clamp(min=1e-6) # [B, 1]
+            endpoint_proximity = (saf_abs / saf_abs_max).clamp(0, 1)                   # [B, N]
+            endpoint_dist = 1.0 - endpoint_proximity                                    # [B, N]
+            curv_w_raw = 1.0 + cfg.curv_weight_alpha * torch.exp(
+                -cfg.curv_weight_beta * endpoint_dist
+            )
+            surf_count_f = surf_mask_f.sum(dim=1).clamp(min=1.0)
+            curv_w_mean_surf = (curv_w_raw * surf_mask_f).sum(dim=1) / surf_count_f    # [B]
+            curv_w = curv_w_raw / curv_w_mean_surf.unsqueeze(1).clamp(min=1e-6)        # [B, N]
+
             # Per-sample Re-adaptive loss weighting: 1/σ on GT surface pressure.
             # GT (not pred) avoids gameable-divisor + cold-start collapse;
             # clamp(0.2) is at p25 of normalized GT σ_p — caps weight dynamic
@@ -504,8 +536,6 @@ for epoch in range(MAX_EPOCHS):
             # 1/σ (not 1/σ²) matches heteroscedastic regression and avoids
             # over-stripping gradient from high-σ samples; mean-1 norm keeps
             # the gradient scale comparable to baseline.
-            B = sq_err.shape[0]
-            surf_mask_f = surf_mask.float()
             surf_count = surf_mask.sum(dim=1).clamp(min=1).float()
             surf_p_gt = y_norm[..., 2]
             surf_p_mean = (surf_p_gt * surf_mask_f).sum(dim=1) / surf_count
@@ -518,7 +548,9 @@ for epoch in range(MAX_EPOCHS):
 
             sq_err_w = sq_err * weights.view(B, 1, 1)
             vol_loss = (sq_err_w * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-            surf_loss = (sq_err_w * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+            surf_loss = (
+                sq_err_w * surf_mask.unsqueeze(-1) * curv_w.unsqueeze(-1)
+            ).sum() / surf_mask.sum().clamp(min=1)
             loss = vol_loss + cfg.surf_weight * surf_loss
 
         epoch_std_mean += surf_p_std.mean().item()
@@ -526,6 +558,22 @@ for epoch in range(MAX_EPOCHS):
         epoch_std_max = max(epoch_std_max, surf_p_std.max().item())
         epoch_w_max = max(epoch_w_max, weights.max().item())
         epoch_w_min = min(epoch_w_min, weights.min().item())
+
+        # Curvature-weight sanity stats. Pre-norm peak should saturate near
+        # 1+alpha=6.0 at LE/TE; pre-norm min on surface should approach 1.0
+        # at mid-chord. Post-norm reflects the mean-1 rescaled values that
+        # actually multiply surf_loss.
+        if surf_mask.any():
+            curv_raw_surf = curv_w_raw * surf_mask_f
+            epoch_curv_w_raw_max = max(epoch_curv_w_raw_max, curv_raw_surf.max().item())
+            epoch_curv_w_raw_min_surf = min(
+                epoch_curv_w_raw_min_surf,
+                curv_w_raw[surf_mask].min().item(),
+            )
+            epoch_curv_w_max = max(epoch_curv_w_max, (curv_w * surf_mask_f).max().item())
+            epoch_curv_w_min_surf = min(
+                epoch_curv_w_min_surf, curv_w[surf_mask].min().item()
+            )
 
         optimizer.zero_grad()
         loss.backward()
@@ -577,6 +625,10 @@ for epoch in range(MAX_EPOCHS):
         "train/surf_p_std_max": epoch_std_max,
         "train/weight_min": epoch_w_min,
         "train/weight_max": epoch_w_max,
+        "train/curv_weight_max": epoch_curv_w_max,
+        "train/curv_weight_min": epoch_curv_w_min_surf,
+        "train/curv_weight_raw_max": epoch_curv_w_raw_max,
+        "train/curv_weight_raw_min": epoch_curv_w_raw_min_surf,
         "val_avg/mae_surf_p": avg_surf_p,
         "val_splits": split_metrics,
         "is_best": tag == " *",
@@ -585,7 +637,8 @@ for epoch in range(MAX_EPOCHS):
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f} "
         f"std(mn/mx)={epoch_std_min:.3f}/{epoch_std_max:.3f} "
-        f"w(mn/mx)={epoch_w_min:.3f}/{epoch_w_max:.3f}]  "
+        f"w(mn/mx)={epoch_w_min:.3f}/{epoch_w_max:.3f} "
+        f"curv_raw(mn/mx)={epoch_curv_w_raw_min_surf:.3f}/{epoch_curv_w_raw_max:.3f}]  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
     )
     for name in VAL_SPLIT_NAMES:
