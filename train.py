@@ -518,6 +518,7 @@ class Config:
     warmup_start_factor: float = 1.0 / 30  # LR multiplier at warmup start (lr * start_factor)
     fourier_pos_enc: bool = False  # apply Fourier features to (x, z) dims
     fourier_freqs: list[float] = field(default_factory=lambda: [1.0, 2.0, 4.0, 8.0, 16.0])
+    grad_accum_steps: int = 1     # gradient accumulation (effective_batch = batch_size * grad_accum_steps)
 
 
 cfg = sp.parse(Config)
@@ -633,8 +634,12 @@ for epoch in range(MAX_EPOCHS):
     model.train()
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
+    n_train_batches = len(train_loader)
+    optimizer.zero_grad()
 
-    for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
+    for batch_idx, (x, y, is_surface, mask) in enumerate(
+        tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False)
+    ):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
@@ -661,15 +666,21 @@ for epoch in range(MAX_EPOCHS):
         surf_mask = mask & is_surface
         vol_loss = (err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
         surf_loss = (err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
-
-        optimizer.zero_grad()
+        # Scale by 1/K so accumulated gradient over K micro-batches has the same
+        # magnitude as a single un-accumulated batch — keeps Lion's sign threshold
+        # operating on a comparable-scale gradient estimate.
+        loss = (vol_loss + cfg.surf_weight * surf_loss) / cfg.grad_accum_steps
         loss.backward()
-        if cfg.clip_grad_norm > 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad_norm)
-        optimizer.step()
-        if ema_model is not None:
-            update_ema(model, ema_model, cfg.ema_decay)
+
+        is_step = ((batch_idx + 1) % cfg.grad_accum_steps == 0
+                   or (batch_idx + 1) == n_train_batches)
+        if is_step:
+            if cfg.clip_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad_norm)
+            optimizer.step()
+            optimizer.zero_grad()
+            if ema_model is not None:
+                update_ema(model, ema_model, cfg.ema_decay)
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
