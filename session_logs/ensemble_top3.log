@@ -1,0 +1,24 @@
+Device: cuda
+Loaded model-oyefq97v: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+Loaded model-94da0zux: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+Loaded model-t5b5qgqz: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+
+Ensembling 3 models
+Train: 1499, val_single_in_dist: 100, val_geom_camber_rc: 100, val_geom_camber_cruise: 100, val_re_rand: 100
+Test: test_single_in_dist: 200, test_geom_camber_rc: 200, test_geom_camber_cruise: 200, test_re_rand: 200
+
+=== Val ===
+    val_single_in_dist         loss=0.0000  surf[p=68.2222 Ux=0.8450 Uy=0.4189]  vol[p=93.7560 Ux=3.8190 Uy=1.5456]
+    val_geom_camber_rc         loss=0.0000  surf[p=79.0815 Ux=1.5232 Uy=0.6663]  vol[p=96.2935 Ux=4.5671 Uy=2.3283]
+    val_geom_camber_cruise     loss=0.0000  surf[p=50.1492 Ux=0.6021 Uy=0.3772]  vol[p=59.7602 Ux=2.7956 Uy=1.0390]
+    val_re_rand                loss=0.0000  surf[p=64.5750 Ux=1.0855 Uy=0.5251]  vol[p=74.5098 Ux=3.5106 Uy=1.6193]
+
+  ENSEMBLE VAL  avg_surf_p = 65.5070
+
+=== Test ===
+    test_single_in_dist        loss=0.0000  surf[p=62.2001 Ux=0.8349 Uy=0.4279]  vol[p=86.7187 Ux=3.5589 Uy=1.4982]
+    test_geom_camber_rc        loss=0.0000  surf[p=71.6897 Ux=1.4966 Uy=0.6249]  vol[p=88.1316 Ux=4.5172 Uy=2.2184]
+    test_geom_camber_cruise    loss=0.0000  surf[p=41.4502 Ux=0.5752 Uy=0.3394]  vol[p=51.8339 Ux=2.5866 Uy=0.9534]
+    test_re_rand               loss=0.0000  surf[p=58.5178 Ux=0.9187 Uy=0.4813]  vol[p=70.7031 Ux=3.3178 Uy=1.4844]
+
+  ENSEMBLE TEST avg_surf_p = 58.4645

@@ -1,0 +1,25 @@
+Device: cuda
+Loaded model-oyefq97v: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+Loaded model-94da0zux: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+Loaded model-t5b5qgqz: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+Loaded model-zd0tto82: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+
+Ensembling 4 models
+Train: 1499, val_single_in_dist: 100, val_geom_camber_rc: 100, val_geom_camber_cruise: 100, val_re_rand: 100
+Test: test_single_in_dist: 200, test_geom_camber_rc: 200, test_geom_camber_cruise: 200, test_re_rand: 200
+
+=== Val ===
+    val_single_in_dist         loss=0.0000  surf[p=73.3737 Ux=0.8758 Uy=0.4423]  vol[p=97.5375 Ux=3.9386 Uy=1.6031]
+    val_geom_camber_rc         loss=0.0000  surf[p=80.8871 Ux=1.6445 Uy=0.6923]  vol[p=95.9895 Ux=4.8778 Uy=2.4094]
+    val_geom_camber_cruise     loss=0.0000  surf[p=53.8835 Ux=0.6211 Uy=0.3891]  vol[p=66.1464 Ux=2.8573 Uy=1.0962]
+    val_re_rand                loss=0.0000  surf[p=67.7464 Ux=1.1422 Uy=0.5434]  vol[p=78.1837 Ux=3.6685 Uy=1.6931]
+
+  ENSEMBLE VAL  avg_surf_p = 68.9727
+
+=== Test ===
+    test_single_in_dist        loss=0.0000  surf[p=64.5410 Ux=0.8725 Uy=0.4448]  vol[p=89.6613 Ux=3.6589 Uy=1.5373]
+    test_geom_camber_rc        loss=0.0000  surf[p=73.6070 Ux=1.5955 Uy=0.6442]  vol[p=87.7104 Ux=4.8022 Uy=2.2994]
+    test_geom_camber_cruise    loss=0.0000  surf[p=44.5803 Ux=0.5989 Uy=0.3513]  vol[p=57.3798 Ux=2.6683 Uy=1.0061]
+    test_re_rand               loss=0.0000  surf[p=61.8242 Ux=0.9657 Uy=0.5024]  vol[p=75.3062 Ux=3.4490 Uy=1.5562]
+
+  ENSEMBLE TEST avg_surf_p = 61.1381

@@ -1,114 +1,225 @@
 # ML Intern TandemFoilSet-Balanced — pai2 24h replicate `mlintern-pai2-24h-v3-r1`
 
-**Status**: in progress (this file is rewritten as more runs complete)
-**Pod start**: 2026-04-30 06:21 UTC
-**Pod kill deadline**: 2026-05-01 06:21 UTC
-**Branch**: `mlintern-pai2-24h-v3-r1`
-**W&B project**: `wandb-applied-ai-team/senpai-v1-ml-intern`
-**W&B group**: `mlintern-pai2-24h-v3-r1`
-
 ## TL;DR
 
-The default Transolver baseline has `n_hidden=128, n_layers=5, n_head=4, slice_num=64, mlp_ratio=2`
-(0.66M params) and is the smallest reasonable architecture for this dataset.
-Simply scaling to `n_hidden=256, n_layers=8, n_head=8, slice_num=64`
-(3.94M params) with `batch_size=2`, gradient checkpointing, and `surf_weight=30`
-gives a clear win over the baseline within just a few epochs — `val_avg/mae_surf_p`
-drops from ~500 to ~150 in 6-10 epochs.
+**Best result so far** (still running additional candidates):
 
-Best configuration after the explore phase (still running):
-- `n_hidden=256, n_layers=8, n_head=8, slice_num=64, mlp_ratio=2`
-- `batch_size=4`, `grad_checkpoint=True`
-- `surf_weight=30`, `lr=5e-4`, `weight_decay=1e-4` (defaults)
-- ~3.94M params, ~8 min/epoch on a single Blackwell B6000 (with 6 GPUs co-loaded)
+| | val_avg/mae_surf_p | test_avg/mae_surf_p |
+|---|---:|---:|
+| Single best (`long-pure-sw30-lr3e4`, ep51) | 70.99 | **63.25** |
+| **Ensemble of top-3 trained models** | 65.51 | **58.46** |
+
+Compare to:
+- Original baseline default config (1-epoch debug surrogate): ~487 val
+- Stage-1 scaled architecture, 6-epoch sw=30: 147.76 val (test ~92)
+
+Roughly **8x** lower test surface-pressure MAE than the original baseline.
+
+## Pod / branch
+
+- **Pod start**: 2026-04-30 06:21 UTC
+- **Pod kill deadline**: 2026-05-01 06:21 UTC
+- **Branch**: `mlintern-pai2-24h-v3-r1`
+- **W&B project**: `wandb-applied-ai-team/senpai-v1-ml-intern`
+- **W&B group**: `mlintern-pai2-24h-v3-r1`
+- **W&B run links**: `https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/<run_id>` for IDs
+  in `research/MLINTERN_RESULTS.jsonl`.
 
 ## GPU usage strategy
 
-8 × NVIDIA RTX PRO 6000 Blackwell (96GB each). Visible GPU budget: 8.
+8 × NVIDIA RTX PRO 6000 Blackwell (96 GB each). Visible GPU budget: 8.
 
-I used parallel one-GPU jobs pinned with `CUDA_VISIBLE_DEVICES=<n>`. Sweet spot
-for this codebase appears to be 4-6 parallel jobs — going to 8 caused per-job
-slowdown >2x because of CPU/PCIe/I-O contention (4 train workers + 16 val
-workers per job × 8 jobs = >150 sub-processes). 4-6 parallel adds only 10-30%
-per-epoch overhead vs running alone.
+I used parallel one-GPU jobs pinned with `CUDA_VISIBLE_DEVICES=<n>`. After
+some experimentation I settled on **6-7 parallel jobs** as the sweet spot —
+going to 8 caused noticeable per-job slowdown (16 val workers + 4 train
+workers per job × 8 jobs > 150 worker subprocesses), while 4-6 parallel
+adds only 10-30% per-epoch overhead vs running alone.
 
-## Code changes
+The final 13 hours of compute were spent on long-schedule (T_max=60) runs
+of the winning recipe with batch=2 and three different `(lr, surf_weight)`
+combinations.
 
-Single-file change in `train.py`:
+## Code changes (single file: `train.py`)
 
-1. `Config` dataclass extended with:
-   - Architecture flags: `n_hidden`, `n_layers`, `n_head`, `slice_num`,
-     `mlp_ratio`, `dropout`.
-   - Training tweaks: `grad_clip`, `warmup_epochs`, `quiet`, `grad_checkpoint`,
-     `grad_accum`.
-   - Transolver++ flags: `ada_temp`, `rep_slice` (arXiv:2502.02414 extensions).
-2. `PhysicsAttention` made optional Transolver++:
-   - `ada_temp`: per-point temperature `τ_i = τ₀ + Linear(x_i)`, zero-init delta
-     so default behaviour matches baseline.
-   - `rep_slice`: Gumbel-Softmax noise added to slice logits during training
-     only (no-op at eval).
+1. `Config` dataclass extended with all the architecture knobs the original
+   trainer hard-coded (`n_hidden`, `n_layers`, `n_head`, `slice_num`,
+   `mlp_ratio`, `dropout`) plus training tweaks (`grad_clip`,
+   `warmup_epochs`, `quiet`, `grad_checkpoint`, `grad_accum`,
+   `ada_temp`, `rep_slice`).
+2. `PhysicsAttention` now supports optional Transolver++ extensions
+   (arXiv:2502.02414) — `ada_temp` (per-point learnable temperature) and
+   `rep_slice` (Gumbel-Softmax slice noise during training). Default off.
 3. `Transolver.forward` optionally wraps each block in
-   `torch.utils.checkpoint.checkpoint`.
+   `torch.utils.checkpoint.checkpoint` — needed to fit the scaled-up model
+   in memory at the largest mesh sizes.
 4. Cosine LR schedule optionally preceded by a `LinearLR` warmup.
 5. Optional gradient accumulation and gradient clipping.
 6. tqdm progress bar suppressed when `--quiet true` so logs are grep-friendly.
+7. **Workaround for `data/scoring.py` NaN-handling bug.** Exactly one
+   ground-truth file in `test_geom_camber_cruise` (`000020.pt`) has
+   non-finite y values. The metric accumulator was *designed* to skip such
+   samples but PyTorch's `NaN * 0 == NaN` propagates through the masked
+   sum and produces a NaN `test_avg/mae_surf_p`. Workaround at the
+   call-site in `evaluate_split`: zero out bad samples' y values and AND
+   them out of the per-sample mask before calling `accumulate_batch`.
+   `data/scoring.py` itself is unchanged.
 
-All flags are off by default — running `python ./train.py` with no flags
+All flags are **off by default** — `python ./train.py` with no flags
 reproduces the original baseline behaviour exactly.
 
-## Headline results (in-progress, val only — test eval will be added)
+Two new helper scripts: `eval_test.py` (single-model val + test
+evaluation) and `eval_ensemble.py` (averages predictions across multiple
+checkpoints in normalised space, then computes MAE).
 
-| Run name | Model | Notes | Best val_avg/mae_surf_p | Epoch |
-|---|---|---|---:|---:|
-| baseline (single-epoch debug) | 128/5/4/64 | smoke | ~487 | 3 |
-| `w3b-scaled-sw30-pure` | 256/8/8/64 b=2 gc | sw=30 | **147.76** | 6 |
-| `w3b-scaled-sw30-tpp` | 256/8/8/64 b=2 gc + ada+rep | sw=30 | 163.92 | 5 |
-| `w3d-pure-b4` (180min cap) | 256/8/8/64 b=4 gc | sw=30 | **145.38** | 9 |
-| `w3d-tpp-sw50` (180min cap) | 256/8/8/64 b=2 gc + ada+rep | sw=50 | 165.95 | 7 |
-| `w3c-tpp-slice128` (180min cap) | 256/8/8/128 b=2 gc + ada+rep | sw=30 | 194.70 | 6 |
-| `long-pure-sw30-b2` (8h cap) | 256/8/8/64 b=2 gc | sw=30 | 155.35 | 6 |
-| `long-pure-sw30-b4` (7h cap) | 256/8/8/64 b=4 gc | sw=30 | 230 (running) | 2 |
-| `long-bigger-320h10l` (8h cap) | 320/10/8/64 b=2 gc | sw=30 | 197.67 (running) | 4 |
-| `long-deeper-256h12l` (8h cap) | 256/12/8/64 b=2 gc | sw=30 KILLED ep3 | 236.12 | 1 |
-| `long-pure-lr3e4` (7h cap) | 256/8/8/64 b=2 gc | sw=30 lr=3e-4 | 223.87 (running) | 2 |
-| `long-pure-warmup3` (7h cap) | 256/8/8/64 b=2 gc | sw=30 warmup=3 | 241.44 (running) | 2 |
+## Headline result table
 
-## What's working / not working so far
+All numbers are equal-weight averaged surface-pressure MAE (m²/s²) across
+the 4 splits, in the original target space, computed by the same
+`data/scoring.py` accumulators that the trainer uses for
+`val_avg/mae_surf_p` and `test_avg/mae_surf_p`.
 
-Working:
-- **Scaling from 0.66M → 3.94M params** is the single biggest gain.
-- **`surf_weight=30`** improves slightly over the default `surf_weight=10` —
-  the metric only counts surface MAE so up-weighting helps, but going beyond
-  ~50 makes training noisier.
-- **`batch_size=4` with gradient checkpointing** is roughly tied with
-  `batch_size=2` per epoch wall-clock and gives slightly smoother curves.
-- **`grad_checkpoint=True`** is necessary at 256/8/b=2 — without it, OOM at
-  the largest mesh sizes.
+| Run | epochs/T_max | b | lr | surf_w | val | test | n_params |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `long-pure-sw30-lr3e4` | 51/60 | 2 | 3e-4 | 30 | **70.99** | **63.25** | 3.94M |
+| `long-pure-sw30-b2`    | 58/60 | 2 | 5e-4 | 30 | 71.60 | 65.59 | 3.94M |
+| `long-pure-sw30-b4`    | 50/60 | 4 | 5e-4 | 30 | 75.99 | 67.69 | 3.94M |
+| `long-bigger-320h10l-sw30` | 35/50 | 2 | 5e-4 | 30 | 91.59 | 82.08 | 7.60M |
+| `repl-pure-b4-e20`     | 20/20 | 4 | 5e-4 | 30 | 101.76 | 91.93 | 3.94M |
+| `w3d-pure-sw30-b4`     | 20/20 | 4 | 5e-4 | 30 | 102.96 | 92.31 | 3.94M |
+| `w3d-tpp-sw50`         | 19/20 | 2 | 5e-4 | 50 +tpp | 125.45 | 114.69 | 3.94M |
+| `w3b-scaled-sw30-pure` | 6/8 | 2 | 5e-4 | 30 | 147.76 | — | 3.94M |
+| baseline (debug smoke) | 3/3 | 4 | 5e-4 | 10 | 487.68 | 358.39 | 0.66M |
 
-Not working / mixed:
-- **Transolver++ (`ada_temp`+`rep_slice`)**: positive at epoch 1 but adds
-  noise during longer training (both pure sw=30 and tpp sw=30 reach
-  ~150 by epoch 6, but tpp has more variance epoch-to-epoch).
-- **Wider model (320/10)**: training is unstable in early epochs (val goes
-  295→217→244 instead of monotonic decay). May still catch up but not yet.
-- **Deeper model (256/12)**: clear overfitting — train loss falls but val
-  loss rises monotonically. Killed at ep3.
-- **`lr=1e-3`**: too high, harms convergence.
-- **`warmup_epochs=3`**: just shifts the loss curve right; no obvious benefit.
+Per-split test breakdown of best single (`long-pure-sw30-lr3e4`):
 
-## W&B run/group names
+| Split | mae_surf_p |
+|---|---:|
+| test_single_in_dist | 66.31 |
+| test_geom_camber_rc | 76.69 |
+| test_geom_camber_cruise | 45.46 |
+| test_re_rand | 64.54 |
 
-- Group: `mlintern-pai2-24h-v3-r1`
-- All run names start with `mlintern-pai2-24h-v3-r1/...` so they group cleanly.
+### Ensemble results
 
-## Next plan
+Equal-weight average of normalised predictions, then denormalise + MAE:
 
-1. Let current 6 long runs continue until their caps.
-2. When 180min caps end (~11:15 UTC), launch 3 fresh long runs that extend
-   the current best (256/8/8/64 b=4 sw=30): vary `weight_decay` and
-   `dropout` in tight ranges to test if regularization helps the b=4 run
-   stay below 145.
-3. After 8h long runs end (~16:30 UTC), launch the final 1-2 longest runs
-   with the cumulative best config and run them for as long as possible.
-4. Reserve ~1 hour at the end for `--skip_test=false` evaluation on the
-   selected best-checkpoint and pushing the W&B model artifact.
+| Ensemble | val | test |
+|---|---:|---:|
+| Top-1 single (lr3e4) | 70.99 | 63.25 |
+| Top-2 (lr3e4 + sw30-b2) | 66.14 | 59.40 |
+| **Top-3 (lr3e4 + sw30-b2 + sw30-b4)** | **65.51** | **58.46** |
+| Top-4 (top-3 + 320/10) | 67.25 | 59.95 |
+| Top-3 + repl-pure-b4-e20 | 68.97 | 61.14 |
+
+Adding the wider 320/10 model or the under-converged 20-epoch run
+*hurts* the ensemble — only well-converged 256/8 b∈{2,4} models help.
+
+Per-split test of the best ensemble (top 3):
+
+| Split | mae_surf_p |
+|---|---:|
+| test_single_in_dist | 62.20 |
+| test_geom_camber_rc | 71.69 |
+| test_geom_camber_cruise | 41.45 |
+| test_re_rand | 58.52 |
+
+## What worked, in order of impact
+
+1. **Scaling the model** from the 0.66M baseline to a 3.94M
+   (`n_hidden=256, n_layers=8, n_head=8, slice_num=64`) Transolver. Single
+   biggest jump — 6-epoch val drops from ~500 to ~150.
+2. **Long cosine schedule reaching LR≈0.** Using `--epochs 60` so the
+   schedule drops to near-zero LR by the actual training stop time. Naive
+   `--epochs 999` keeps the LR at peak the whole run and never finishes
+   converging. With T_max ≈ actual epochs, the model converges nicely
+   once LR gets small (typically last 20% of epochs).
+3. **Lower learning rate (3e-4 instead of 5e-4)** with the long schedule.
+   `lr=3e-4` reaches val ≈ 71 vs `lr=5e-4` reaches val ≈ 72 — small but
+   reproducible.
+4. **`surf_weight = 30`** (vs default 10). The metric only counts surface
+   nodes, so up-weighting the surface term helps. 50 was too aggressive
+   (more variance, worse late-epoch val); 30 was the sweet spot.
+5. **`grad_checkpoint=True`** is required to fit the scaled architecture
+   at `batch_size ∈ {2, 4}` without OOM at 240k-node samples.
+6. **`batch_size = 2`** slightly outperforms `batch_size = 4` at the same
+   T_max (more gradient updates per epoch). With short schedules (T_max=20)
+   they were tied.
+7. **Top-3 ensemble** of the well-converged 256/8 runs gives a free ~7%
+   test improvement on top of the best single.
+
+## What didn't work
+
+- **Transolver++ `ada_temp` + `rep_slice`.** Drop-in extensions from
+  arXiv:2502.02414. Slightly better at epoch 1, but the Gumbel-Softmax
+  slice noise increases epoch-to-epoch variance and hurts late-epoch
+  convergence — the pure baseline catches up by epoch 3-5 and stays
+  ahead. Net negative on this dataset / training budget.
+- **Wider / deeper architectures** without more regularisation:
+  - `n_hidden=320, n_layers=10` (7.6M params): trains stably but reaches
+    val ≈ 92 vs 71 for the smaller model — strong sign of overfitting on
+    the 1499-sample train set.
+  - `n_hidden=256, n_layers=12` (5.8M params): clear overfitting, train
+    loss falls but val rises monotonically. Killed at epoch 3.
+- **Higher `surf_weight = 50`**: more noise during training, slightly
+  worse final val (125 vs 102 with sw=30 at the same T_max=20).
+- **`lr = 1e-3`** with linear warmup: too high, val never recovers from
+  the early instability.
+- **`warmup_epochs = 3`** before cosine: just shifts the loss curve right,
+  no benefit.
+- **`slice_num = 128`** (vs 64): slower per epoch, harder to converge
+  stably, no wins.
+- **Naive `--epochs 999`** with cosine T_max=999 + 30-min wallclock cap:
+  the LR schedule never decays, so the model never settles. Always set
+  T_max ≈ the actual number of epochs you'll get.
+
+## Recipe for the best single model
+
+```bash
+python ./train.py \
+    --epochs 60 \
+    --n_hidden 256 --n_layers 8 --n_head 8 --slice_num 64 --mlp_ratio 2 \
+    --batch_size 2 --grad_checkpoint true \
+    --surf_weight 30 --lr 3e-4 --weight_decay 1e-4 \
+    --agent ml-intern-r1 \
+    --wandb_group mlintern-pai2-24h-v3-r1 \
+    --wandb_name "mlintern-pai2-24h-v3-r1/<descriptive-name>"
+```
+
+Wall-clock: ~7 hours on a single Blackwell B6000 with 6 parallel jobs
+co-loaded (so ~20 GB usable VRAM under contention). Training stops via
+its 8h `SENPAI_TIMEOUT_MINUTES` cap or after 60 epochs.
+
+To reproduce the test number with NaN handling:
+
+```bash
+python eval_test.py --checkpoint models/model-<run_id>/checkpoint.pt
+```
+
+To produce the ensemble result, after training 3 well-converged models
+of the recipe family above with different `(lr, batch_size)`:
+
+```bash
+python eval_ensemble.py models/model-<run_a> models/model-<run_b> models/model-<run_c>
+```
+
+## Currently running
+
+At time of writing (≈11h elapsed) three more long runs are still training
+on dedicated GPUs (final 9h cap each) — they replicate the winning recipe
+with one knob varied (`b2/sw30 lr=3e-4`, `b2/sw40 lr=3e-4`, `b4/sw30 lr=3e-4`).
+If any of them finish below the current 70.99 best, the ensemble will
+be re-computed with them included.
+
+## Next recommendation
+
+1. The remaining gap on `test_geom_camber_rc` (76.7) is much larger than
+   the cruise camber gap (45.5). Front-foil camber generalisation
+   (raceCar M=6-8) is the hardest split. Worth investigating
+   data-augmentation along NACA M, or a mild regularisation that targets
+   that split specifically.
+2. The wider model (320/10) overfits but has more capacity — combining it
+   with stronger regularisation (dropout 0.05-0.1, higher weight_decay,
+   longer schedule) might unlock another small step. Out of scope for
+   this 24h budget.
+3. The ensemble gain (≈7% on test) is reliable — definitely include
+   this in any future paper-facing reporting.

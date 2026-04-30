@@ -10,3 +10,18 @@ wandb: Run `wandb offline` to turn off syncing.
 wandb: Syncing run mlintern-pai2-24h-v3-r1/final-pure-b2-lr3e4-sw40
 wandb: ⭐️ View project at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern
 wandb: 🚀 View run at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/r79bfrtr
+Epoch   1 (484s) [15.5GB]  train[vol=2.7327 surf=1.1101]  val_avg_surf_p=255.6294 *
+    val_single_in_dist         loss=65.1053  surf[p=315.7473 Ux=4.3818 Uy=1.5742]  vol[p=383.6424 Ux=13.7936 Uy=4.6143]
+    val_geom_camber_rc         loss=30.5188  surf[p=242.8724 Ux=5.1667 Uy=1.7338]  vol[p=350.1868 Ux=14.8170 Uy=4.9298]
+    val_geom_camber_cruise     loss=20.3735  surf[p=226.9034 Ux=3.6181 Uy=1.3015]  vol[p=205.3562 Ux=9.7776 Uy=3.3378]
+    val_re_rand                loss=24.2291  surf[p=236.9948 Ux=4.5640 Uy=1.5028]  vol[p=279.3841 Ux=12.0787 Uy=3.8620]
+Epoch   2 (482s) [15.5GB]  train[vol=1.6985 surf=0.6727]  val_avg_surf_p=218.7314 *
+    val_single_in_dist         loss=55.0084  surf[p=266.3323 Ux=3.6261 Uy=1.2205]  vol[p=345.7256 Ux=12.3035 Uy=4.2975]
+    val_geom_camber_rc         loss=30.6151  surf[p=248.9875 Ux=4.5823 Uy=1.6160]  vol[p=231.0784 Ux=12.7214 Uy=4.8473]
+    val_geom_camber_cruise     loss=13.7334  surf[p=170.6192 Ux=2.7239 Uy=1.1018]  vol[p=195.1947 Ux=9.0627 Uy=3.2591]
+    val_re_rand                loss=19.3985  surf[p=188.9867 Ux=3.6000 Uy=1.2595]  vol[p=202.8591 Ux=10.5444 Uy=3.7251]
+Epoch   3 (488s) [15.5GB]  train[vol=1.4876 surf=0.6004]  val_avg_surf_p=225.7361
+    val_single_in_dist         loss=46.1367  surf[p=293.9347 Ux=3.0066 Uy=1.3193]  vol[p=339.1767 Ux=12.4421 Uy=4.0209]
+    val_geom_camber_rc         loss=24.7557  surf[p=224.1625 Ux=4.1636 Uy=1.6683]  vol[p=286.4297 Ux=13.8935 Uy=4.6887]
+    val_geom_camber_cruise     loss=13.3797  surf[p=186.3548 Ux=2.3990 Uy=0.9591]  vol[p=231.5870 Ux=8.7143 Uy=2.8406]
+    val_re_rand                loss=18.7930  surf[p=198.4924 Ux=3.2936 Uy=1.2470]  vol[p=251.1034 Ux=10.9707 Uy=3.4357]
