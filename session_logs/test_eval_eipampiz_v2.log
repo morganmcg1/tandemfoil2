@@ -1,0 +1,21 @@
+Model config: {'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+Device: cuda
+Train: 1499, val_single_in_dist: 100, val_geom_camber_rc: 100, val_geom_camber_cruise: 100, val_re_rand: 100
+Test: test_single_in_dist: 200, test_geom_camber_rc: 200, test_geom_camber_cruise: 200, test_re_rand: 200
+Model: Transolver (3.94M params)
+
+=== Val ===
+    val_single_in_dist         loss=7.8956  surf[p=120.8152 Ux=1.5411 Uy=0.7138]  vol[p=139.2331 Ux=5.4012 Uy=2.3833]
+    val_geom_camber_rc         loss=7.1711  surf[p=114.3974 Ux=2.3563 Uy=0.9387]  vol[p=129.4384 Ux=6.3032 Uy=3.1742]
+    val_geom_camber_cruise     loss=2.5574  surf[p=80.9601 Ux=0.9980 Uy=0.5419]  vol[p=105.6651 Ux=3.9899 Uy=1.6909]
+    val_re_rand                loss=5.3273  surf[p=96.7340 Ux=1.6629 Uy=0.7395]  vol[p=114.6057 Ux=5.0020 Uy=2.3305]
+
+  VAL  avg_surf_p = 103.2267
+
+=== Test ===
+    test_single_in_dist        loss=8.7712  surf[p=101.4441 Ux=1.4358 Uy=0.6857]  vol[p=123.0156 Ux=4.9089 Uy=2.2322]
+    test_geom_camber_rc        loss=5.9327  surf[p=105.0714 Ux=2.2745 Uy=0.8891]  vol[p=119.8546 Ux=6.1737 Uy=3.0696]
+    test_geom_camber_cruise    loss=nan  surf[p=68.9259 Ux=0.9937 Uy=0.4993]  vol[p=91.9826 Ux=3.8242 Uy=1.5676]
+    test_re_rand               loss=4.1466  surf[p=93.8107 Ux=1.4760 Uy=0.7086]  vol[p=114.7638 Ux=4.7220 Uy=2.2478]
+
+  TEST avg_surf_p = 92.3130

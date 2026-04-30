@@ -1,0 +1,58 @@
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: W&B API key is configured. Use `wandb login --relogin` to force relogin
+wandb: setting up run d0mm4ev5
+wandb: Tracking run with wandb version 0.26.1
+wandb: Run data is saved locally in /workspace/ml-intern-benchmark/target/wandb/run-20260430_064435-d0mm4ev5
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run mlintern-pai2-24h-v3-r1/timing-256-8-gc-b2
+wandb: ⭐️ View project at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern
+wandb: 🚀 View run at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/d0mm4ev5
+Device: cuda
+Train: 1499, val_single_in_dist: 100, val_geom_camber_rc: 100, val_geom_camber_cruise: 100, val_re_rand: 100
+Model: Transolver (3.94M params)  grad_checkpoint=True
+wandb: updating run metadata; uploading artifact model-mlintern-pai2-24h-v3-r1-timing-256-8-gc-b2-d0mm4ev5
+wandb: uploading artifact model-mlintern-pai2-24h-v3-r1-timing-256-8-gc-b2-d0mm4ev5
+wandb: uploading history steps 750-750, summary, console lines 0-11
+wandb: 
+wandb: Run history:
+wandb:        epoch_time_s ▁
+wandb:         global_step ▁▁▁▁▂▂▂▂▂▂▃▃▃▃▃▃▄▄▅▅▅▅▅▅▅▆▆▇▇▇▇▇▇▇▇▇▇███
+wandb:                  lr ▁
+wandb:          train/loss ▅█▂▅▂▂▆▅▃▁▃▁▂▁▂▁▃▁▁▂▃▄▂▁▂▁▂▁█▁▁▂▂▁▄▂▂▃▂▂
+wandb:     train/surf_loss ▁
+wandb:      train/vol_loss ▁
+wandb:            val/loss ▁
+wandb: val_avg/mae_surf_Ux ▁
+wandb: val_avg/mae_surf_Uy ▁
+wandb:  val_avg/mae_surf_p ▁
+wandb:                 +39 ...
+wandb: 
+wandb: Run summary:
+wandb:              best_epoch 1
+wandb: best_val_avg/mae_surf_p 240.33214
+wandb:            epoch_time_s 492.4283
+wandb:             global_step 750
+wandb:                      lr 0.0005
+wandb:     total_train_minutes 8.20744
+wandb:              train/loss 0.42302
+wandb:         train/surf_loss 0.95376
+wandb:          train/vol_loss 1.77733
+wandb:                val/loss 8.28312
+wandb:                     +42 ...
+wandb: 
+wandb: 🚀 View run mlintern-pai2-24h-v3-r1/timing-256-8-gc-b2 at: https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/d0mm4ev5
+wandb: ⭐️ View project at: https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern
+wandb: Synced 7 W&B file(s), 0 media file(s), 3 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260430_064435-d0mm4ev5/logs
+Epoch   1 (492s) [15.5GB]  train[vol=1.7773 surf=0.9538]  val_avg_surf_p=240.3321 *
+    val_single_in_dist         loss=12.2982  surf[p=278.8146 Ux=3.1179 Uy=1.3149]  vol[p=266.4312 Ux=9.4086 Uy=3.7391]
+    val_geom_camber_rc         loss=10.2771  surf[p=263.8378 Ux=5.7009 Uy=1.6704]  vol[p=247.8031 Ux=11.4731 Uy=4.4600]
+    val_geom_camber_cruise     loss=4.6678  surf[p=213.7142 Ux=2.7213 Uy=1.1818]  vol[p=222.4045 Ux=8.1327 Uy=3.1351]
+    val_re_rand                loss=5.8894  surf[p=204.9619 Ux=3.9539 Uy=1.2866]  vol[p=203.4481 Ux=9.4885 Uy=3.4808]
+Timeout (8.0 min). Stopping.
+
+Training done in 8.2 min
+
+Best val: epoch 1, val_avg/mae_surf_p = 240.3321
+
+Logged model artifact 'model-mlintern-pai2-24h-v3-r1-timing-256-8-gc-b2-d0mm4ev5' (aliases: best, epoch-1)

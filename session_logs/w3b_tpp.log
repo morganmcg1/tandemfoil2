@@ -1,0 +1,78 @@
+Device: cuda
+Train: 1499, val_single_in_dist: 100, val_geom_camber_rc: 100, val_geom_camber_cruise: 100, val_re_rand: 100
+Model: Transolver (3.94M params)  grad_checkpoint=True
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: W&B API key is configured. Use `wandb login --relogin` to force relogin
+wandb: setting up run qbc5fkur
+wandb: Tracking run with wandb version 0.26.1
+wandb: Run data is saved locally in /workspace/ml-intern-benchmark/target/wandb/run-20260430_074947-qbc5fkur
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run mlintern-pai2-24h-v3-r1/w3b-scaled-sw30-tpp
+wandb: ⭐️ View project at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern
+wandb: 🚀 View run at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/qbc5fkur
+Epoch   1 (586s) [15.6GB]  train[vol=2.7551 surf=1.0864]  val_avg_surf_p=262.1520 *
+    val_single_in_dist         loss=45.3178  surf[p=319.2424 Ux=4.7171 Uy=1.6044]  vol[p=377.9981 Ux=13.7806 Uy=4.2894]
+    val_geom_camber_rc         loss=29.1120  surf[p=281.1624 Ux=6.4539 Uy=2.1051]  vol[p=337.4764 Ux=15.6510 Uy=4.8598]
+    val_geom_camber_cruise     loss=15.2343  surf[p=217.1896 Ux=4.1363 Uy=1.2915]  vol[p=226.0395 Ux=11.7251 Uy=3.4099]
+    val_re_rand                loss=20.2507  surf[p=231.0134 Ux=5.2669 Uy=1.5899]  vol[p=258.6250 Ux=13.3803 Uy=3.8513]
+Epoch   2 (588s) [15.6GB]  train[vol=1.4390 surf=0.5779]  val_avg_surf_p=219.8595 *
+    val_single_in_dist         loss=35.7721  surf[p=283.1053 Ux=4.1013 Uy=1.3623]  vol[p=469.9404 Ux=12.5206 Uy=4.6561]
+    val_geom_camber_rc         loss=21.3016  surf[p=231.6100 Ux=5.1647 Uy=1.6557]  vol[p=352.0404 Ux=13.5297 Uy=4.8984]
+    val_geom_camber_cruise     loss=9.7243  surf[p=173.9453 Ux=3.1793 Uy=1.0476]  vol[p=222.2558 Ux=9.2640 Uy=2.6647]
+    val_re_rand                loss=14.2705  surf[p=190.7774 Ux=4.0799 Uy=1.2724]  vol[p=261.0788 Ux=11.0181 Uy=3.4230]
+Epoch   3 (585s) [15.6GB]  train[vol=1.2172 surf=0.5249]  val_avg_surf_p=309.7631
+    val_single_in_dist         loss=40.1563  surf[p=336.4194 Ux=3.5671 Uy=1.6709]  vol[p=355.4311 Ux=11.0047 Uy=3.8667]
+    val_geom_camber_rc         loss=26.2288  surf[p=320.7116 Ux=4.7201 Uy=1.7889]  vol[p=350.1203 Ux=11.5734 Uy=4.8672]
+    val_geom_camber_cruise     loss=15.2087  surf[p=290.9276 Ux=3.4829 Uy=1.3718]  vol[p=281.5187 Ux=10.1153 Uy=2.8705]
+    val_re_rand                loss=19.1324  surf[p=290.9937 Ux=4.2456 Uy=1.5192]  vol[p=299.8957 Ux=10.8666 Uy=3.5549]
+Epoch   4 (584s) [15.6GB]  train[vol=1.0238 surf=0.4751]  val_avg_surf_p=178.3879 *
+    val_single_in_dist         loss=22.7919  surf[p=207.2535 Ux=2.7160 Uy=1.1068]  vol[p=236.3283 Ux=8.7196 Uy=3.2628]
+    val_geom_camber_rc         loss=17.4701  surf[p=190.1379 Ux=4.4468 Uy=1.4943]  vol[p=234.2749 Ux=10.4636 Uy=4.0973]
+    val_geom_camber_cruise     loss=7.1225  surf[p=150.5538 Ux=2.5409 Uy=1.0160]  vol[p=179.2880 Ux=7.1011 Uy=2.5876]
+    val_re_rand                loss=12.3281  surf[p=165.6063 Ux=3.5068 Uy=1.2506]  vol[p=194.3393 Ux=8.6690 Uy=3.1357]
+Epoch   5 (578s) [15.6GB]  train[vol=0.8317 surf=0.3721]  val_avg_surf_p=163.9159 *
+    val_single_in_dist         loss=18.2218  surf[p=186.1361 Ux=2.8601 Uy=1.0957]  vol[p=215.9018 Ux=8.1343 Uy=3.2388]
+    val_geom_camber_rc         loss=15.1363  surf[p=183.3397 Ux=4.4277 Uy=1.4314]  vol[p=211.5006 Ux=9.0817 Uy=4.0501]
+    val_geom_camber_cruise     loss=6.1714  surf[p=134.6068 Ux=2.5625 Uy=0.8242]  vol[p=161.6188 Ux=6.3323 Uy=2.3643]
+    val_re_rand                loss=10.1396  surf[p=151.5808 Ux=3.5039 Uy=1.0916]  vol[p=175.7206 Ux=7.7291 Uy=3.0064]
+Timeout (45.0 min). Stopping.
+
+Training done in 48.7 min
+
+Best val: epoch 5, val_avg/mae_surf_p = 163.9159
+
+Logged model artifact 'model-mlintern-pai2-24h-v3-r1-w3b-scaled-sw30-tpp-qbc5fkur' (aliases: best, epoch-5)
+wandb: updating run metadata; uploading artifact model-mlintern-pai2-24h-v3-r1-w3b-scaled-sw30-tpp-qbc5fkur
+wandb: uploading artifact model-mlintern-pai2-24h-v3-r1-w3b-scaled-sw30-tpp-qbc5fkur
+wandb: uploading output.log; uploading wandb-summary.json; uploading config.yaml
+wandb: 
+wandb: Run history:
+wandb:        epoch_time_s ▇█▆▅▁
+wandb:         global_step ▁▁▁▁▁▂▂▂▂▂▂▃▃▃▃▃▃▄▄▄▄▄▅▅▅▅▅▅▆▆▆▆▆▇▇▇▇███
+wandb:                  lr █▇▅▂▁
+wandb:          train/loss ▃▃▅▇▃▂▂▁▃▃▂▅▂▂▂▂▂▁▁▂▁▂▁▃▂▂▂▂▄▁█▁▂▁▂▂▂▂▂▁
+wandb:     train/surf_loss █▃▂▂▁
+wandb:      train/vol_loss █▃▂▂▁
+wandb:            val/loss █▅▇▂▁
+wandb: val_avg/mae_surf_Ux █▄▄▁▁
+wandb: val_avg/mae_surf_Uy █▄▇▂▁
+wandb:  val_avg/mae_surf_p ▆▄█▂▁
+wandb:                 +39 ...
+wandb: 
+wandb: Run summary:
+wandb:              best_epoch 5
+wandb: best_val_avg/mae_surf_p 163.91587
+wandb:            epoch_time_s 578.26403
+wandb:             global_step 3750
+wandb:                      lr 3e-05
+wandb:     total_train_minutes 48.69
+wandb:              train/loss 5.27886
+wandb:         train/surf_loss 0.37212
+wandb:          train/vol_loss 0.83174
+wandb:                val/loss 12.41725
+wandb:                     +42 ...
+wandb: 
+wandb: 🚀 View run mlintern-pai2-24h-v3-r1/w3b-scaled-sw30-tpp at: https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/qbc5fkur
+wandb: ⭐️ View project at: https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern
+wandb: Synced 7 W&B file(s), 0 media file(s), 3 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260430_074947-qbc5fkur/logs
