@@ -1,0 +1,18 @@
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: W&B API key is configured. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.26.1
+wandb: Run data is saved locally in /workspace/ml-intern-benchmark/target/wandb/run-20260430_204402-pwb431tu
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run mlintern-pai2-72h-v4-r1/r4-onecycle-ema-w192-200
+wandb: ⭐️ View project at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern
+wandb: 🚀 View run at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/pwb431tu
+Device: cuda
+Train: 1499, val_single_in_dist: 100, val_geom_camber_rc: 100, val_geom_camber_cruise: 100, val_re_rand: 100
+Model: Transolver (1.45M params)
+EMA enabled: decay=0.999
+Epoch   1 (146s) [48.8GB]  train[vol=1.2947 surf=0.8549]  val_avg_surf_p=346.7437 *
+    val_single_in_dist         loss=49.1963  surf[p=486.0153 Ux=20.3586 Uy=2.3315]  vol[p=448.5683 Ux=19.4434 Uy=5.8269]
+    val_geom_camber_rc         loss=27.7841  surf[p=402.1954 Ux=16.1308 Uy=2.7352]  vol[p=354.5312 Ux=13.0061 Uy=6.0946]
+    val_geom_camber_cruise     loss=14.5189  surf[p=224.5575 Ux=17.6962 Uy=1.3262]  vol[p=204.1115 Ux=15.2383 Uy=3.3909]
+    val_re_rand                loss=17.9363  surf[p=274.2064 Ux=16.2826 Uy=1.8236]  vol[p=245.6199 Ux=13.5867 Uy=4.3397]
+Epoch   2 (143s) [49.2GB]  train[vol=0.9364 surf=0.5665]  val_avg_surf_p=298.1879 *
