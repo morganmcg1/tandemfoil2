@@ -205,7 +205,7 @@ Lower is better. For paper-facing numbers, the decision-driving quantity is `tes
 ## Constraints
 
 - **VRAM**: GPUs have 96 GB. Don't OOM — meshes can reach 242K nodes.
-- **Timeout**: each training run is capped by `SENPAI_TIMEOUT_MINUTES` (wall clock) and `--epochs`. Do not override these.
+- **Timeout**: each training run is capped by `SENPAI_TIMEOUT_MINUTES` (wall clock) and `--epochs`. These are hard upper bounds, not target durations; choose debug, screening, or longer confirmation runs according to the evidence needed. Do not override these limits.
 - **Simplicity**: all else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it.
 - **Data loaders are read-only.** Don't change the interface in `data/`. If you need a different sampler or feature transform, do it in `train.py`.
 - **No new packages** outside of `pyproject.toml`. If you need one, add it in the same PR that uses it.
