@@ -318,6 +318,54 @@ def compute_loss(
 
 
 # ---------------------------------------------------------------------------
+# EMA (exponential moving average of weights)
+# ---------------------------------------------------------------------------
+
+class WeightEMA:
+    """Track a polyak/EMA copy of model weights (PDE surrogates benefit from
+    this — see AB-UPT 2502.09692 which uses decay=0.9999).
+
+    Light-weight: stores shadow tensors on the same device as the model.
+    Use ``apply_to(model)`` / ``restore(model)`` to swap shadows in for eval.
+    """
+
+    def __init__(self, model: nn.Module, decay: float = 0.9999):
+        self.decay = float(decay)
+        self.shadow: dict[str, torch.Tensor] = {}
+        self.backup: dict[str, torch.Tensor] = {}
+        for name, p in model.named_parameters():
+            if p.requires_grad:
+                self.shadow[name] = p.detach().clone()
+
+    @torch.no_grad()
+    def update(self, model: nn.Module) -> None:
+        d = self.decay
+        for name, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            s = self.shadow[name]
+            s.mul_(d).add_(p.detach(), alpha=1.0 - d)
+
+    @torch.no_grad()
+    def apply_to(self, model: nn.Module) -> None:
+        self.backup.clear()
+        for name, p in model.named_parameters():
+            if name in self.shadow:
+                self.backup[name] = p.detach().clone()
+                p.data.copy_(self.shadow[name])
+
+    @torch.no_grad()
+    def restore(self, model: nn.Module) -> None:
+        for name, p in model.named_parameters():
+            if name in self.backup:
+                p.data.copy_(self.backup[name])
+        self.backup.clear()
+
+    def state_dict(self) -> dict:
+        return {"decay": self.decay, "shadow": {k: v.cpu() for k, v in self.shadow.items()}}
+
+
+# ---------------------------------------------------------------------------
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
@@ -522,6 +570,11 @@ class Config:
     no_progress: bool = False     # disable tqdm progress bar
     seed: int = 0
 
+    # Regularization / advanced
+    ema_decay: float = 0.0        # 0 disables; AB-UPT used 0.9999
+    input_noise_std: float = 0.0  # 0 disables; std on normalized inputs
+    optimizer_name: str = "adamw" # adamw | lion
+
 
 cfg = sp.parse(Config)
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
@@ -574,7 +627,29 @@ model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+
+def _build_optimizer(model_, cfg_):
+    name = (cfg_.optimizer_name or "adamw").lower()
+    if name == "adamw":
+        return torch.optim.AdamW(
+            model_.parameters(), lr=cfg_.lr, weight_decay=cfg_.weight_decay,
+            betas=(0.9, 0.95),
+        )
+    if name == "lion":
+        try:
+            from lion_pytorch import Lion  # type: ignore
+        except ImportError:
+            print("[WARN] lion_pytorch not installed; falling back to AdamW.")
+            return torch.optim.AdamW(model_.parameters(), lr=cfg_.lr, weight_decay=cfg_.weight_decay)
+        return Lion(model_.parameters(), lr=cfg_.lr, weight_decay=cfg_.weight_decay,
+                    betas=(0.9, 0.99))
+    raise ValueError(f"Unknown optimizer_name: {cfg_.optimizer_name}")
+
+
+optimizer = _build_optimizer(model, cfg)
+ema = WeightEMA(model, decay=cfg.ema_decay) if cfg.ema_decay > 0 else None
+if ema is not None:
+    print(f"EMA enabled: decay={cfg.ema_decay}")
 
 # steps_per_epoch is len(train_loader); used by OneCycleLR.
 steps_per_epoch = len(train_loader)
@@ -663,6 +738,11 @@ for epoch in range(MAX_EPOCHS):
         mask = mask.to(device, non_blocking=True)
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
+        if cfg.input_noise_std > 0:
+            # node-wise input noise injection (Sanchez-Gonzalez 2020 style;
+            # used by Donset et al. arxiv 2508.18051). Only on real nodes.
+            noise = torch.randn_like(x_norm) * cfg.input_noise_std
+            x_norm = x_norm + noise * mask.unsqueeze(-1).float()
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         if autocast_dtype is not None:
             with torch.autocast(device_type="cuda", dtype=autocast_dtype):
@@ -683,6 +763,8 @@ for epoch in range(MAX_EPOCHS):
         if cfg.grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
+        if ema is not None:
+            ema.update(model)
         if step_per_batch:
             scheduler.step()
         global_step += 1
@@ -697,8 +779,10 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
-    # --- Validate ---
+    # --- Validate (use EMA weights if available) ---
     model.eval()
+    if ema is not None:
+        ema.apply_to(model)
     split_metrics = {
         name: evaluate_split(
             model, loader, stats, cfg.surf_weight, device,
@@ -706,6 +790,8 @@ for epoch in range(MAX_EPOCHS):
         )
         for name, loader in val_loaders.items()
     }
+    if ema is not None:
+        ema.restore(model)
     val_avg = aggregate_splits(split_metrics)
     avg_surf_p = val_avg["avg/mae_surf_p"]
     val_loss_mean = sum(m["loss"] for m in split_metrics.values()) / len(split_metrics)
@@ -734,7 +820,12 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        if ema is not None:
+            ema.apply_to(model)
+            torch.save(model.state_dict(), model_path)
+            ema.restore(model)
+        else:
+            torch.save(model.state_dict(), model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
