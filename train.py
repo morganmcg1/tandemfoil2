@@ -386,6 +386,25 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    # Model architecture overrides
+    n_hidden: int = 128
+    n_layers: int = 5
+    n_head: int = 4
+    slice_num: int = 64
+    mlp_ratio: int = 2
+    # Optimization extras
+    scheduler: str = "cosine"   # cosine | onecycle | linear_warmup_cosine
+    warmup_frac: float = 0.05    # for onecycle / warmup
+    grad_clip: float = 0.0       # 0.0 = disabled, otherwise max norm
+    # Mesh subsampling at train time (AB-UPT trick): random subsample N nodes per
+    # sample at every step. 0 = disabled (full mesh). Always preserves all surface
+    # nodes, then random-samples volume nodes to reach total = train_subsample.
+    train_subsample: int = 0
+    # Pressure-channel emphasis within both surface and volume losses.
+    # 1.0 = equal weight across (Ux, Uy, p). >1.0 emphasizes pressure.
+    p_weight: float = 1.0
+    # Logging
+    progress_every: int = 50  # print loss every N batches; 0 = disable, use tqdm
 
 
 cfg = sp.parse(Config)
@@ -418,11 +437,11 @@ model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
-    mlp_ratio=2,
+    n_hidden=cfg.n_hidden,
+    n_layers=cfg.n_layers,
+    n_head=cfg.n_head,
+    slice_num=cfg.slice_num,
+    mlp_ratio=cfg.mlp_ratio,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
@@ -432,7 +451,30 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+if cfg.scheduler == "cosine":
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+elif cfg.scheduler == "onecycle":
+    # OneCycle over total steps (per-batch step)
+    _steps_per_epoch = max(1, len(train_ds) // cfg.batch_size)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, max_lr=cfg.lr, epochs=MAX_EPOCHS,
+        steps_per_epoch=_steps_per_epoch, pct_start=cfg.warmup_frac,
+        anneal_strategy="cos", div_factor=25.0, final_div_factor=1e4,
+    )
+elif cfg.scheduler == "linear_warmup_cosine":
+    # Linear warmup -> cosine decay (per-batch step)
+    _steps_per_epoch = max(1, len(train_ds) // cfg.batch_size)
+    _total_steps = max(1, MAX_EPOCHS * _steps_per_epoch)
+    _warmup_steps = max(1, int(cfg.warmup_frac * _total_steps))
+    def _lr_lambda(step):
+        if step < _warmup_steps:
+            return float(step + 1) / float(_warmup_steps)
+        progress = float(step - _warmup_steps) / max(1, _total_steps - _warmup_steps)
+        import math
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, _lr_lambda)
+else:
+    raise ValueError(f"Unknown scheduler: {cfg.scheduler}")
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -478,16 +520,63 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
 
-    for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
+    use_tqdm = cfg.progress_every == 0
+    train_iter = tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False) if use_tqdm else train_loader
+    per_batch_step = cfg.scheduler in ("onecycle", "linear_warmup_cosine")
+    # Channel weighting tensor inside losses: weight on (Ux, Uy, p)
+    chan_w = torch.tensor([1.0, 1.0, cfg.p_weight], device=device)
+    chan_w_norm = chan_w / chan_w.mean()  # normalize so mean is still 1.0
+
+    for batch_idx, (x, y, is_surface, mask) in enumerate(train_iter):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
 
+        # Optional: random-subsample mesh per sample to fit bigger models in VRAM
+        # while also acting as data augmentation (AB-UPT trick).
+        if cfg.train_subsample > 0:
+            B, N_max = x.shape[0], x.shape[1]
+            target = cfg.train_subsample
+            # Build per-sample selected indices (always keep all surface nodes,
+            # subsample volume nodes to reach `target` total).
+            new_x = []
+            new_y = []
+            new_surf = []
+            new_mask = []
+            for b in range(B):
+                m = mask[b]
+                isurf = is_surface[b] & m
+                vol_idx = torch.nonzero((~is_surface[b]) & m, as_tuple=False).squeeze(-1)
+                surf_idx = torch.nonzero(isurf, as_tuple=False).squeeze(-1)
+                n_surf = surf_idx.numel()
+                n_vol_keep = max(0, target - n_surf)
+                if n_vol_keep < vol_idx.numel():
+                    perm = torch.randperm(vol_idx.numel(), device=vol_idx.device)[:n_vol_keep]
+                    vol_idx = vol_idx[perm]
+                idx = torch.cat([surf_idx, vol_idx], dim=0)
+                # Pad to `target` length so all batch entries have same length
+                if idx.numel() < target:
+                    pad = torch.full((target - idx.numel(),), -1, dtype=torch.long, device=idx.device)
+                    idx = torch.cat([idx, pad], dim=0)
+                else:
+                    idx = idx[:target]
+                # gather; for invalid (-1) indices, use 0 then mask out
+                valid = idx >= 0
+                safe_idx = idx.clamp(min=0)
+                new_x.append(x[b, safe_idx])
+                new_y.append(y[b, safe_idx])
+                new_surf.append(is_surface[b, safe_idx] & valid)
+                new_mask.append(valid)
+            x = torch.stack(new_x, dim=0)
+            y = torch.stack(new_y, dim=0)
+            is_surface = torch.stack(new_surf, dim=0)
+            mask = torch.stack(new_mask, dim=0)
+
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+        sq_err = (pred - y_norm) ** 2 * chan_w_norm  # (B, N, 3) elementwise
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
@@ -497,7 +586,11 @@ for epoch in range(MAX_EPOCHS):
 
         optimizer.zero_grad()
         loss.backward()
+        if cfg.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
+        if per_batch_step:
+            scheduler.step()
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
@@ -505,7 +598,12 @@ for epoch in range(MAX_EPOCHS):
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    scheduler.step()
+        if cfg.progress_every and (batch_idx + 1) % cfg.progress_every == 0:
+            cur_lr = scheduler.get_last_lr()[0] if per_batch_step else optimizer.param_groups[0]["lr"]
+            print(f"  ep{epoch+1} step {batch_idx+1}/{len(train_loader)} loss={loss.item():.4f} vol={vol_loss.item():.4f} surf={surf_loss.item():.4f} lr={cur_lr:.2e}", flush=True)
+
+    if not per_batch_step:
+        scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
