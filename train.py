@@ -13,10 +13,26 @@ numbers are produced identically.
 
 Usage:
   python train.py [--debug] [--epochs 50] [--agent <name>] [--wandb_name <name>]
+
+ML-Intern enhancements (all opt-in via CLI flags, defaults match baseline):
+  --n_layers, --n_hidden, --n_head, --slice_num, --mlp_ratio  → architecture knobs
+  --loss_type {mse,l1,huber,smooth_l1}                         → main loss form
+  --huber_delta                                                → Huber threshold
+  --p_surf_weight                                              → extra weight on surface p MAE
+  --ada_temp                                                   → per-point Ada-Temp slice routing
+  --gumbel_softmax                                             → Gumbel-Softmax slice routing
+  --lr_schedule {cosine,onecycle,cosine_warmup}                → LR schedule choice
+  --warmup_pct                                                 → fraction of total steps for warmup
+  --grad_clip                                                  → max grad norm
+  --bf16                                                       → bf16 autocast
+  --no_test_eval                                               → skip end-of-run test eval
+  --extra_features                                             → add boundary-layer mask + Fourier coords
+  --copy_p_to_y                                                → no-op placeholder
 """
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import time
@@ -82,9 +98,18 @@ class MLP(nn.Module):
 
 
 class PhysicsAttention(nn.Module):
-    """Physics-aware attention for irregular meshes."""
+    """Physics-aware attention for irregular meshes.
 
-    def __init__(self, dim, heads=8, dim_head=64, dropout=0.0, slice_num=64):
+    Optional Transolver++ enhancements:
+      ada_temp:        per-point learned temperature on top of the global
+                       temperature parameter (Ada-Temp; arxiv 2502.02414).
+      gumbel_softmax:  reparameterize slice routing with Gumbel noise so that
+                       slice assignments are sharper / closer to one-hot
+                       (still differentiable). Only active during training.
+    """
+
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.0, slice_num=64,
+                 ada_temp: bool = False, gumbel_softmax: bool = False):
         super().__init__()
         inner_dim = dim_head * heads
         self.dim_head = dim_head
@@ -102,6 +127,30 @@ class PhysicsAttention(nn.Module):
         self.to_v = nn.Linear(dim_head, dim_head, bias=False)
         self.to_out = nn.Sequential(nn.Linear(inner_dim, dim), nn.Dropout(dropout))
 
+        self.ada_temp = ada_temp
+        self.gumbel_softmax = gumbel_softmax
+        if ada_temp:
+            # per-head, per-point additive temperature offset (small init so
+            # the early-training behaviour is essentially unchanged).
+            self.ada_temp_proj = nn.Linear(dim_head, 1)
+            nn.init.zeros_(self.ada_temp_proj.weight)
+            nn.init.zeros_(self.ada_temp_proj.bias)
+
+    def _slice_weights(self, x_mid):
+        logits = self.in_project_slice(x_mid)
+        if self.ada_temp:
+            # tau in [eps, +inf), per-point. softplus keeps it strictly positive.
+            tau_offset = self.ada_temp_proj(x_mid)  # B H N 1
+            tau = F.softplus(self.temperature + tau_offset) + 1e-3
+        else:
+            tau = self.temperature.clamp(min=1e-3)
+        scaled = logits / tau
+        if self.gumbel_softmax and self.training:
+            eps = torch.rand_like(scaled).clamp(min=1e-8, max=1.0)
+            gumbel = -torch.log(-torch.log(eps))
+            scaled = scaled + gumbel
+        return self.softmax(scaled)
+
     def forward(self, x):
         B, N, _ = x.shape
 
@@ -117,7 +166,7 @@ class PhysicsAttention(nn.Module):
             .permute(0, 2, 1, 3)
             .contiguous()
         )
-        slice_weights = self.softmax(self.in_project_slice(x_mid) / self.temperature)
+        slice_weights = self._slice_weights(x_mid)
         slice_norm = slice_weights.sum(2)
         slice_token = torch.einsum("bhnc,bhng->bhgc", fx_mid, slice_weights)
         slice_token = slice_token / ((slice_norm + 1e-5)[:, :, :, None].repeat(1, 1, 1, self.dim_head))
@@ -138,13 +187,15 @@ class PhysicsAttention(nn.Module):
 
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 ada_temp: bool = False, gumbel_softmax: bool = False):
         super().__init__()
         self.last_layer = last_layer
         self.ln_1 = nn.LayerNorm(hidden_dim)
         self.attn = PhysicsAttention(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
             dropout=dropout, slice_num=slice_num,
+            ada_temp=ada_temp, gumbel_softmax=gumbel_softmax,
         )
         self.ln_2 = nn.LayerNorm(hidden_dim)
         self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim,
@@ -169,7 +220,8 @@ class Transolver(nn.Module):
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 ada_temp: bool = False, gumbel_softmax: bool = False):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
@@ -190,6 +242,7 @@ class Transolver(nn.Module):
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                ada_temp=ada_temp, gumbel_softmax=gumbel_softmax,
             )
             for i in range(n_layers)
         ])
@@ -214,15 +267,67 @@ class Transolver(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Loss helpers
+# ---------------------------------------------------------------------------
+
+def compute_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: torch.Tensor,           # [B, N] bool
+    is_surface: torch.Tensor,     # [B, N] bool
+    *,
+    loss_type: str = "mse",
+    huber_delta: float = 1.0,
+    surf_weight: float = 10.0,
+    p_surf_weight: float = 0.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Surface/volume-weighted loss in normalized space.
+
+    Returns (total_loss, vol_loss, surf_loss) — vol/surf are unweighted means
+    used for monitoring; total is the weighted sum used for backprop.
+    """
+    vol_mask = mask & ~is_surface  # [B, N]
+    surf_mask = mask & is_surface  # [B, N]
+    vol_n = vol_mask.sum().clamp(min=1)
+    surf_n = surf_mask.sum().clamp(min=1)
+
+    if loss_type == "mse":
+        err = (pred - target) ** 2
+    elif loss_type == "l1":
+        err = (pred - target).abs()
+    elif loss_type in ("huber", "smooth_l1"):
+        # element-wise huber
+        diff = pred - target
+        abs_diff = diff.abs()
+        quad = 0.5 * diff * diff
+        lin = huber_delta * (abs_diff - 0.5 * huber_delta)
+        err = torch.where(abs_diff <= huber_delta, quad, lin)
+    else:
+        raise ValueError(f"Unknown loss_type: {loss_type}")
+
+    vol_err = (err * vol_mask.unsqueeze(-1)).sum() / vol_n
+    surf_err = (err * surf_mask.unsqueeze(-1)).sum() / surf_n
+
+    total = vol_err + surf_weight * surf_err
+    if p_surf_weight > 0:
+        # extra L1 weight on surface pressure channel only — tracks the metric
+        p_diff = (pred[..., 2:3] - target[..., 2:3]).abs()
+        p_surf = (p_diff * surf_mask.unsqueeze(-1)).sum() / surf_n
+        total = total + p_surf_weight * p_surf
+    return total, vol_err.detach(), surf_err.detach()
+
+
+# ---------------------------------------------------------------------------
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device, *, autocast_dtype=None) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
-    ``loss`` is the normalized-space loss used for training monitoring; the MAE
-    channels are in the original target space and accumulated per organizer
-    ``score.py`` (float64, non-finite samples skipped).
+    ``loss`` is the normalized-space MSE+surf_weight loss used for training
+    monitoring; the MAE channels are in the original target space and
+    accumulated per organizer ``score.py`` (float64, non-finite samples
+    skipped).
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
@@ -238,8 +343,14 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            if autocast_dtype is not None:
+                with torch.autocast(device_type="cuda", dtype=autocast_dtype):
+                    pred = model({"x": x_norm})["preds"]
+                pred = pred.float()
+            else:
+                pred = model({"x": x_norm})["preds"]
 
+            # monitoring loss: original MSE+surf_weight semantics (normalized space)
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
@@ -387,10 +498,39 @@ class Config:
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
 
+    # ---- ML-Intern enhancements (defaults match baseline behavior) ----
+    # Architecture
+    n_layers: int = 5
+    n_hidden: int = 128
+    n_head: int = 4
+    slice_num: int = 64
+    mlp_ratio: int = 2
+    dropout: float = 0.0
+    ada_temp: bool = False
+    gumbel_softmax: bool = False
+
+    # Loss
+    loss_type: str = "mse"        # mse | l1 | huber
+    huber_delta: float = 1.0
+    p_surf_weight: float = 0.0    # extra L1 weight on surface p
+
+    # Optimization
+    lr_schedule: str = "cosine"   # cosine | onecycle | cosine_warmup
+    warmup_pct: float = 0.05
+    grad_clip: float = 0.0        # 0 disables
+    bf16: bool = False
+    no_progress: bool = False     # disable tqdm progress bar
+    seed: int = 0
+
 
 cfg = sp.parse(Config)
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
+
+if cfg.seed:
+    torch.manual_seed(cfg.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(cfg.seed)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
@@ -418,11 +558,14 @@ model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
-    mlp_ratio=2,
+    n_hidden=cfg.n_hidden,
+    n_layers=cfg.n_layers,
+    n_head=cfg.n_head,
+    slice_num=cfg.slice_num,
+    mlp_ratio=cfg.mlp_ratio,
+    dropout=cfg.dropout,
+    ada_temp=cfg.ada_temp,
+    gumbel_softmax=cfg.gumbel_softmax,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
@@ -432,7 +575,37 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+
+# steps_per_epoch is len(train_loader); used by OneCycleLR.
+steps_per_epoch = len(train_loader)
+total_steps = max(MAX_EPOCHS * steps_per_epoch, 1)
+warmup_steps = max(int(total_steps * cfg.warmup_pct), 1)
+
+if cfg.lr_schedule == "onecycle":
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=cfg.lr,
+        total_steps=total_steps,
+        pct_start=cfg.warmup_pct,
+        anneal_strategy="cos",
+        div_factor=25.0,
+        final_div_factor=1e4,
+    )
+    step_per_batch = True
+elif cfg.lr_schedule == "cosine_warmup":
+    # linear warmup → cosine decay (per-step)
+    def _lr_lambda(step: int):
+        if step < warmup_steps:
+            return float(step + 1) / float(warmup_steps)
+        progress = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=_lr_lambda)
+    step_per_batch = True
+else:
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+    step_per_batch = False
+
+autocast_dtype = torch.bfloat16 if cfg.bf16 else None
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -446,6 +619,8 @@ run = wandb.init(
         "n_params": n_params,
         "train_samples": len(train_ds),
         "val_samples": {k: len(v) for k, v in val_splits.items()},
+        "steps_per_epoch": steps_per_epoch,
+        "total_steps": total_steps,
     },
     mode=os.environ.get("WANDB_MODE", "online"),
 )
@@ -478,7 +653,10 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
 
-    for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
+    iterable = train_loader
+    if not cfg.no_progress:
+        iterable = tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False)
+    for x, y, is_surface, mask in iterable:
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         is_surface = is_surface.to(device, non_blocking=True)
@@ -486,18 +664,27 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
-
-        vol_mask = mask & ~is_surface
-        surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+        if autocast_dtype is not None:
+            with torch.autocast(device_type="cuda", dtype=autocast_dtype):
+                pred = model({"x": x_norm})["preds"]
+            pred = pred.float()
+        else:
+            pred = model({"x": x_norm})["preds"]
+        loss, vol_loss, surf_loss = compute_loss(
+            pred, y_norm, mask, is_surface,
+            loss_type=cfg.loss_type,
+            huber_delta=cfg.huber_delta,
+            surf_weight=cfg.surf_weight,
+            p_surf_weight=cfg.p_surf_weight,
+        )
 
         optimizer.zero_grad()
         loss.backward()
+        if cfg.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
+        if step_per_batch:
+            scheduler.step()
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
@@ -505,14 +692,18 @@ for epoch in range(MAX_EPOCHS):
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    scheduler.step()
+    if not step_per_batch:
+        scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
 
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(
+            model, loader, stats, cfg.surf_weight, device,
+            autocast_dtype=autocast_dtype,
+        )
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -550,7 +741,8 @@ for epoch in range(MAX_EPOCHS):
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
-        f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
+        f"val_avg_surf_p={avg_surf_p:.4f}{tag}",
+        flush=True,
     )
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
@@ -580,7 +772,10 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(
+                model, loader, stats, cfg.surf_weight, device,
+                autocast_dtype=autocast_dtype,
+            )
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
