@@ -616,7 +616,13 @@ for epoch in range(MAX_EPOCHS):
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
         if per_batch_step:
-            scheduler.step()
+            # OneCycleLR raises ValueError if stepped past total_steps.
+            # Silently keep the final LR (~0) past that point so wallclock
+            # doesn't waste training budget.
+            try:
+                scheduler.step()
+            except ValueError:
+                pass
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
