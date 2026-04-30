@@ -1,0 +1,74 @@
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: W&B API key is configured. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.26.1
+wandb: Run data is saved locally in /workspace/ml-intern-benchmark/target/wandb/run-20260430_100213-z2nm1yqw
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run mlintern-pai2-72h-v4-r2/debug-smoke
+wandb: ⭐️ View project at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern
+wandb: 🚀 View run at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/z2nm1yqw
+Device: cuda [DEBUG]
+Train: 6, val_single_in_dist: 2, val_geom_camber_rc: 2, val_geom_camber_cruise: 2, val_re_rand: 2
+Model: Transolver (0.66M params)
+Epoch 1/3:   0%|          | 0/2 [00:00<?, ?it/s]Epoch 1/3:  50%|█████     | 1/2 [00:00<00:00,  1.81it/s]                                                        Epoch   1 (1s) [15.1GB]  train[vol=2.4992 surf=2.1364]  val_avg_surf_p=516.4261 *
+    val_single_in_dist         loss=228.4203  surf[p=1080.1957 Ux=27.6151 Uy=3.3586]  vol[p=876.2424 Ux=26.7186 Uy=8.0480]
+    val_geom_camber_rc         loss=41.9957  surf[p=574.6171 Ux=19.6908 Uy=3.5049]  vol[p=507.6859 Ux=16.5335 Uy=7.4501]
+    val_geom_camber_cruise     loss=13.3051  surf[p=269.8714 Ux=18.5001 Uy=1.2693]  vol[p=219.3520 Ux=14.5508 Uy=3.0069]
+    val_re_rand                loss=8.4058  surf[p=141.0204 Ux=16.0632 Uy=0.9861]  vol[p=92.5907 Ux=15.5773 Uy=2.5122]
+Epoch 2/3:   0%|          | 0/2 [00:00<?, ?it/s]Epoch 2/3:  50%|█████     | 1/2 [00:00<00:00,  4.59it/s]                                                        Epoch   2 (1s) [15.1GB]  train[vol=2.3724 surf=1.9627]  val_avg_surf_p=502.7424 *
+    val_single_in_dist         loss=228.9063  surf[p=1067.7216 Ux=27.5794 Uy=3.3841]  vol[p=843.1049 Ux=26.0761 Uy=8.0656]
+    val_geom_camber_rc         loss=41.6686  surf[p=564.5321 Ux=19.2202 Uy=3.5342]  vol[p=489.4555 Ux=16.3646 Uy=7.3815]
+    val_geom_camber_cruise     loss=12.6394  surf[p=255.9900 Ux=17.7334 Uy=1.2824]  vol[p=220.8911 Ux=14.0408 Uy=3.0554]
+    val_re_rand                loss=7.2459  surf[p=122.7258 Ux=14.5883 Uy=1.0113]  vol[p=92.7052 Ux=14.8170 Uy=2.4509]
+Epoch 3/3:   0%|          | 0/2 [00:00<?, ?it/s]Epoch 3/3:  50%|█████     | 1/2 [00:00<00:00,  5.01it/s]                                                        Epoch   3 (1s) [15.1GB]  train[vol=2.3427 surf=1.9566]  val_avg_surf_p=498.7092 *
+    val_single_in_dist         loss=228.7297  surf[p=1062.4123 Ux=27.5460 Uy=3.3552]  vol[p=832.2537 Ux=24.9231 Uy=8.0411]
+    val_geom_camber_rc         loss=41.4835  surf[p=560.5875 Ux=19.0604 Uy=3.5057]  vol[p=482.9074 Ux=16.2509 Uy=7.3639]
+    val_geom_camber_cruise     loss=12.4493  surf[p=253.5053 Ux=17.4479 Uy=1.2692]  vol[p=223.1499 Ux=13.9921 Uy=3.0666]
+    val_re_rand                loss=6.8728  surf[p=118.3314 Ux=14.0978 Uy=0.9866]  vol[p=95.0806 Ux=14.6236 Uy=2.4350]
+
+Training done in 0.0 min
+
+Best val: epoch 3, val_avg/mae_surf_p = 498.7092
+
+Evaluating on held-out test splits...
+Test: test_single_in_dist: 2, test_geom_camber_rc: 2, test_geom_camber_cruise: 2, test_re_rand: 2
+wandb: updating run metadata; uploading artifact model-mlintern-pai2-72h-v4-r2-debug-smoke-z2nm1yqw
+wandb: uploading artifact model-mlintern-pai2-72h-v4-r2-debug-smoke-z2nm1yqw
+wandb: 
+wandb: Run history:
+wandb:                             epoch_time_s █▂▁
+wandb:                              global_step ▁▂▂▄▅▅▇██
+wandb:                                       lr █▃▁
+wandb:        test/test_geom_camber_cruise/loss ▁
+wandb: test/test_geom_camber_cruise/mae_surf_Ux ▁
+wandb: test/test_geom_camber_cruise/mae_surf_Uy ▁
+wandb:  test/test_geom_camber_cruise/mae_surf_p ▁
+wandb:  test/test_geom_camber_cruise/mae_vol_Ux ▁
+wandb:  test/test_geom_camber_cruise/mae_vol_Uy ▁
+wandb:   test/test_geom_camber_cruise/mae_vol_p ▁
+wandb:                                      +81 ...
+wandb: 
+wandb: Run summary:
+wandb:                               best_epoch 3
+wandb:                  best_val_avg/mae_surf_p 498.70917
+wandb:                             epoch_time_s 0.6884
+wandb:                              global_step 6
+wandb:                                       lr 0
+wandb:        test/test_geom_camber_cruise/loss 19.78878
+wandb: test/test_geom_camber_cruise/mae_surf_Ux 23.0669
+wandb: test/test_geom_camber_cruise/mae_surf_Uy 1.2932
+wandb:  test/test_geom_camber_cruise/mae_surf_p 290.47984
+wandb:  test/test_geom_camber_cruise/mae_vol_Ux 22.3509
+wandb:                                      +84 ...
+wandb: 
+wandb: 🚀 View run mlintern-pai2-72h-v4-r2/debug-smoke at: https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/z2nm1yqw
+wandb: ⭐️ View project at: https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern
+wandb: Synced 6 W&B file(s), 0 media file(s), 3 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260430_100213-z2nm1yqw/logs
+
+  TEST  avg_surf_p=372.0494
+    test_single_in_dist        loss=22.1963  surf[p=292.4733 Ux=19.1868 Uy=1.2767]  vol[p=217.9113 Ux=16.2240 Uy=2.9618]
+    test_geom_camber_rc        loss=32.4833  surf[p=481.1957 Ux=18.5032 Uy=2.1453]  vol[p=421.5606 Ux=15.0118 Uy=5.3856]
+    test_geom_camber_cruise    loss=19.7888  surf[p=290.4798 Ux=23.0669 Uy=1.2932]  vol[p=248.4959 Ux=22.3509 Uy=3.7228]
+    test_re_rand               loss=24.4520  surf[p=424.0487 Ux=16.8384 Uy=3.4867]  vol[p=346.1076 Ux=11.4008 Uy=7.2404]
+
+Logged model artifact 'model-mlintern-pai2-72h-v4-r2-debug-smoke-z2nm1yqw' (aliases: best, epoch-3)

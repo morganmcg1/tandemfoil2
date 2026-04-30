@@ -236,6 +236,21 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
 
+            # Defensive handling of non-finite ground truth (e.g. inf in
+            # test_geom_camber_cruise/000020.pt). Samples whose y has any
+            # non-finite values should be skipped per data/scoring.py
+            # semantics, but PyTorch's 0*NaN/Inf=NaN/Inf propagation can
+            # contaminate accumulators via mask multiplications. Filter the
+            # whole sample out via `mask` and replace its y with zeros so
+            # downstream arithmetic stays clean.
+            if not torch.isfinite(y).all():
+                B_loc = y.shape[0]
+                sample_finite = torch.isfinite(y.reshape(B_loc, -1)).all(dim=-1)
+                bad_samples = ~sample_finite
+                if bad_samples.any():
+                    mask = mask & ~bad_samples[:, None]
+                y = torch.where(torch.isfinite(y), y, torch.zeros_like(y))
+
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
             pred = model({"x": x_norm})["preds"]

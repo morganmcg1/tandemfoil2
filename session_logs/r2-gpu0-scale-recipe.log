@@ -1,0 +1,15 @@
+Device: cuda
+Train: 1499, val_single_in_dist: 100, val_geom_camber_rc: 100, val_geom_camber_cruise: 100, val_re_rand: 100
+Model: Transolver (3.94M params)
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: W&B API key is configured. Use `wandb login --relogin` to force relogin
+wandb: setting up run r1vp0tyv
+wandb: Tracking run with wandb version 0.26.1
+wandb: Run data is saved locally in /workspace/ml-intern-benchmark/target/wandb/run-20260430_111148-r1vp0tyv
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run mlintern-pai2-72h-v4-r2/r2-scale-h256l8-sub32k-recipe-90m
+wandb: ⭐️ View project at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern
+wandb: 🚀 View run at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/r1vp0tyv
+  ep1 step 100/375 loss=2.9218 vol=1.7726 surf=1.1492 lr=3.00e-04
+  ep1 step 200/375 loss=1.1584 vol=0.7953 surf=0.3631 lr=3.00e-04
+  ep1 step 300/375 loss=2.4922 vol=1.3943 surf=1.0979 lr=3.00e-04
