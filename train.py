@@ -1,4 +1,4 @@
-"""Train a Transolver surrogate on TandemFoilSet.
+"""Train a Transolver / Transolver++ surrogate on TandemFoilSet.
 
 Four validation tracks with one pinned test track each:
   val_single_in_dist      / test_single_in_dist      — in-distribution sanity
@@ -11,12 +11,28 @@ pressure MAE across the four splits, computed in the original (denormalized)
 target space. Train/val/test MAE all flow through ``data.scoring`` so the
 numbers are produced identically.
 
+Editable trainer for ML-Intern-r5 experiments. Improvements over the original
+Transolver baseline (all configurable via CLI flags, default = baseline):
+
+  --use_eidetic        Replace Physics_Attention slice softmax with Gumbel-Softmax
+                       + per-point Ada-Temp (Transolver++, ICML'25, arxiv:2502.02414).
+  --use_global_cond    Embed global parameters (log Re, AoA, NACA, gap, stagger)
+                       and add to fx after preprocessing (T++ pattern).
+  --scheduler          cosine | onecycle (default cosine for back-compat).
+  --max_grad_norm      Gradient clipping value (default 1.0, set to 0 to disable).
+  --use_ema            Maintain an EMA of the weights for evaluation/checkpoint.
+  --ema_decay          EMA decay (default 0.999).
+  --n_hidden, --n_layers, --n_head, --slice_num, --mlp_ratio
+                       Model size knobs.
+  --max_minutes        Wall-clock cap (override SENPAI_TIMEOUT_MINUTES).
+
 Usage:
-  python train.py [--debug] [--epochs 50] [--agent <name>] [--wandb_name <name>]
+  python train.py [--epochs 999] [--agent <name>] [--wandb_name <name>]
 """
 
 from __future__ import annotations
 
+import copy
 import os
 import subprocess
 import time
@@ -47,7 +63,7 @@ from data import (
 )
 
 # ---------------------------------------------------------------------------
-# Transolver model
+# Transolver / Transolver++ model
 # ---------------------------------------------------------------------------
 
 ACTIVATION = {
@@ -81,8 +97,18 @@ class MLP(nn.Module):
         return self.linear_post(x)
 
 
+def _gumbel_softmax(logits: torch.Tensor, tau: torch.Tensor) -> torch.Tensor:
+    """Gumbel-Softmax with per-element temperature `tau`.
+
+    `tau` may be a scalar or have a broadcastable shape over `logits`.
+    """
+    u = torch.rand_like(logits)
+    gumbel_noise = -torch.log(-torch.log(u + 1e-8) + 1e-8)
+    return F.softmax((logits + gumbel_noise) / tau, dim=-1)
+
+
 class PhysicsAttention(nn.Module):
-    """Physics-aware attention for irregular meshes."""
+    """Physics-aware attention for irregular meshes (original Transolver)."""
 
     def __init__(self, dim, heads=8, dim_head=64, dropout=0.0, slice_num=64):
         super().__init__()
@@ -136,13 +162,82 @@ class PhysicsAttention(nn.Module):
         return self.to_out(out_x)
 
 
+class PhysicsAttentionEidetic(nn.Module):
+    """Transolver++ Eidetic-state attention.
+
+    Replaces the temperature-scaled softmax slicing with Gumbel-Softmax and a
+    per-point Ada-Temp that learns the sharpness of each point's slice
+    assignment. Avoids degenerate uniform slice weights on small datasets.
+    Single-GPU variant: drops the distributed all_reduce calls used in T++ for
+    multi-GPU eidetic-state synchronisation.
+    """
+
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.0, slice_num=64):
+        super().__init__()
+        inner_dim = dim_head * heads
+        self.dim_head = dim_head
+        self.heads = heads
+        self.dropout = nn.Dropout(dropout)
+        self.bias = nn.Parameter(torch.ones([1, heads, 1, 1]) * 0.5)
+        self.proj_temperature = nn.Sequential(
+            nn.Linear(dim_head, slice_num),
+            nn.GELU(),
+            nn.Linear(slice_num, 1),
+            nn.GELU(),
+        )
+
+        self.in_project_x = nn.Linear(dim, inner_dim)
+        self.in_project_slice = nn.Linear(dim_head, slice_num)
+        torch.nn.init.orthogonal_(self.in_project_slice.weight)
+        self.to_q = nn.Linear(dim_head, dim_head, bias=False)
+        self.to_k = nn.Linear(dim_head, dim_head, bias=False)
+        self.to_v = nn.Linear(dim_head, dim_head, bias=False)
+        self.to_out = nn.Sequential(nn.Linear(inner_dim, dim), nn.Dropout(dropout))
+
+    def forward(self, x):
+        B, N, _ = x.shape
+        # x_mid: B H N C
+        x_mid = (
+            self.in_project_x(x)
+            .reshape(B, N, self.heads, self.dim_head)
+            .permute(0, 2, 1, 3)
+            .contiguous()
+        )
+
+        # Per-point temperature (Ada-Temp): proj head dim → 1 + scalar bias.
+        # Shape: [B, H, N, 1] — broadcasts across slice dim during softmax.
+        temperature = self.proj_temperature(x_mid) + self.bias
+        temperature = torch.clamp(temperature, min=0.01)
+
+        slice_weights = _gumbel_softmax(self.in_project_slice(x_mid), temperature)
+        slice_norm = slice_weights.sum(2)
+        # Use x_mid as the value for slice tokenization (no separate fx_mid in T++).
+        slice_token = torch.einsum("bhnc,bhng->bhgc", x_mid, slice_weights)
+        slice_token = slice_token / ((slice_norm + 1e-5)[:, :, :, None].repeat(1, 1, 1, self.dim_head))
+
+        q = self.to_q(slice_token)
+        k = self.to_k(slice_token)
+        v = self.to_v(slice_token)
+        out_slice = F.scaled_dot_product_attention(
+            q, k, v,
+            dropout_p=self.dropout.p if self.training else 0.0,
+            is_causal=False,
+        )
+
+        out_x = torch.einsum("bhgc,bhng->bhnc", out_slice, slice_weights)
+        out_x = rearrange(out_x, "b h n d -> b n (h d)")
+        return self.to_out(out_x)
+
+
 class TransolverBlock(nn.Module):
     def __init__(self, num_heads, hidden_dim, dropout, act="gelu",
-                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32):
+                 mlp_ratio=4, last_layer=False, out_dim=1, slice_num=32,
+                 use_eidetic=False):
         super().__init__()
         self.last_layer = last_layer
         self.ln_1 = nn.LayerNorm(hidden_dim)
-        self.attn = PhysicsAttention(
+        attn_cls = PhysicsAttentionEidetic if use_eidetic else PhysicsAttention
+        self.attn = attn_cls(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
             dropout=dropout, slice_num=slice_num,
         )
@@ -165,16 +260,27 @@ class TransolverBlock(nn.Module):
 
 
 class Transolver(nn.Module):
+    """Transolver / Transolver++ for irregular 2D CFD meshes.
+
+    `use_eidetic`: swap PhysicsAttention for Gumbel-Softmax + Ada-Temp variant.
+    `cond_dim`: if > 0, builds a global-conditioning embedding that the trainer
+        injects via `data["cond"]` and which is added to fx after preprocess.
+    """
+
     def __init__(self, space_dim=1, n_layers=5, n_hidden=256, dropout=0.0,
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 use_eidetic=False,
+                 cond_dim=0):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
+        self.use_eidetic = use_eidetic
+        self.cond_dim = cond_dim
 
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
@@ -183,6 +289,12 @@ class Transolver(nn.Module):
             self.preprocess = MLP(fun_dim + space_dim, n_hidden * 2, n_hidden,
                                   n_layers=0, res=False, act=act)
 
+        if cond_dim > 0:
+            self.cond_embedding = MLP(cond_dim, n_hidden, n_hidden,
+                                      n_layers=0, res=False, act=act)
+        else:
+            self.cond_embedding = None
+
         self.n_hidden = n_hidden
         self.space_dim = space_dim
         self.blocks = nn.ModuleList([
@@ -190,6 +302,7 @@ class Transolver(nn.Module):
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
                 slice_num=slice_num, last_layer=(i == n_layers - 1),
+                use_eidetic=use_eidetic,
             )
             for i in range(n_layers)
         ])
@@ -208,16 +321,47 @@ class Transolver(nn.Module):
     def forward(self, data, **kwargs):
         x = data["x"]
         fx = self.preprocess(x) + self.placeholder[None, None, :]
+        if self.cond_embedding is not None and "cond" in data:
+            cond = self.cond_embedding(data["cond"]).unsqueeze(1)  # [B, 1, n_hidden]
+            fx = fx + cond
         for block in self.blocks:
             fx = block(fx)
         return {"preds": fx}
 
 
 # ---------------------------------------------------------------------------
+# Global conditioning helpers
+# ---------------------------------------------------------------------------
+
+# Indices in the per-node feature vector that are global per-sample (constant
+# across nodes in a single sample). Used to extract a global-conditioning
+# vector for Transolver++ style global parameter injection.
+# Layout (from program.md):
+#   13 log(Re), 14 AoA1, 15-17 NACA1, 18 AoA2, 19-21 NACA2, 22 gap, 23 stagger
+GLOBAL_COND_DIMS = list(range(13, 24))  # 11 dims
+COND_DIM = len(GLOBAL_COND_DIMS)
+
+
+def extract_cond(x_norm: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Pick the global-conditioning slice from the first valid node of each sample.
+
+    ``x_norm``: [B, N, X_DIM] normalised input features (constants per-sample).
+    ``mask``:   [B, N] real-vs-padding mask.
+    Returns: [B, COND_DIM]
+    """
+    # First valid node index per sample (mask is True on real nodes).
+    first_idx = mask.float().argmax(dim=1)  # [B]
+    B = x_norm.shape[0]
+    rows = x_norm[torch.arange(B, device=x_norm.device), first_idx]  # [B, X_DIM]
+    return rows[:, GLOBAL_COND_DIMS]
+
+
+# ---------------------------------------------------------------------------
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device,
+                    use_global_cond=False) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
@@ -238,7 +382,10 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred = model({"x": x_norm})["preds"]
+            inputs = {"x": x_norm}
+            if use_global_cond:
+                inputs["cond"] = extract_cond(x_norm, mask)
+            pred = model(inputs)["preds"]
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -375,6 +522,7 @@ DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 
 @dataclass
 class Config:
+    # Optimisation
     lr: float = 5e-4
     weight_decay: float = 1e-4
     batch_size: int = 4
@@ -386,14 +534,45 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    # Trainer-level extensions
+    scheduler: str = "cosine"        # cosine | onecycle
+    pct_start: float = 0.3           # for onecycle
+    max_grad_norm: float = 0.0       # 0 disables clipping
+    use_ema: bool = False
+    ema_decay: float = 0.999
+    max_minutes: float = -1.0        # -1 = use SENPAI_TIMEOUT_MINUTES env var
+    seed: int = 0
+    # Model knobs
+    n_hidden: int = 128
+    n_layers: int = 5
+    n_head: int = 4
+    slice_num: int = 64
+    mlp_ratio: int = 2
+    dropout: float = 0.0
+    use_eidetic: bool = False
+    use_global_cond: bool = False
 
 
 cfg = sp.parse(Config)
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
-MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
+MAX_TIMEOUT_MIN = cfg.max_minutes if cfg.max_minutes > 0 else DEFAULT_TIMEOUT_MIN
+
+if cfg.seed is not None:
+    torch.manual_seed(cfg.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(cfg.seed)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
+print(
+    f"Trainer config: scheduler={cfg.scheduler} pct_start={cfg.pct_start} "
+    f"max_grad_norm={cfg.max_grad_norm} use_ema={cfg.use_ema} ema_decay={cfg.ema_decay} "
+    f"max_min={MAX_TIMEOUT_MIN} use_eidetic={cfg.use_eidetic} use_global_cond={cfg.use_global_cond}"
+)
+print(
+    f"Model config:   n_hidden={cfg.n_hidden} n_layers={cfg.n_layers} n_head={cfg.n_head} "
+    f"slice_num={cfg.slice_num} mlp_ratio={cfg.mlp_ratio} dropout={cfg.dropout}"
+)
 
 train_ds, val_splits, stats, sample_weights = load_data(cfg.splits_dir, debug=cfg.debug)
 stats = {k: v.to(device) for k, v in stats.items()}
@@ -418,21 +597,40 @@ model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
-    mlp_ratio=2,
+    n_hidden=cfg.n_hidden,
+    n_layers=cfg.n_layers,
+    n_head=cfg.n_head,
+    slice_num=cfg.slice_num,
+    mlp_ratio=cfg.mlp_ratio,
+    dropout=cfg.dropout,
+    use_eidetic=cfg.use_eidetic,
+    cond_dim=COND_DIM if cfg.use_global_cond else 0,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
 
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
-print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+print(f"Model: Transolver{'_plus' if cfg.use_eidetic else ''} ({n_params/1e6:.2f}M params)")
+
+if cfg.use_ema:
+    ema_model = copy.deepcopy(model).eval()
+    for p in ema_model.parameters():
+        p.requires_grad_(False)
+else:
+    ema_model = None
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+
+if cfg.scheduler == "onecycle":
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, max_lr=cfg.lr, epochs=MAX_EPOCHS,
+        steps_per_epoch=len(train_loader), pct_start=cfg.pct_start,
+    )
+elif cfg.scheduler == "cosine":
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+else:
+    raise ValueError(f"Unknown scheduler {cfg.scheduler}")
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -468,6 +666,21 @@ best_metrics: dict = {}
 global_step = 0
 train_start = time.time()
 
+
+def _ema_update(target: nn.Module, src: nn.Module, decay: float) -> None:
+    """In-place EMA update of `target` parameters from `src`."""
+    with torch.no_grad():
+        sp_iter = src.state_dict()
+        tp_iter = target.state_dict()
+        for k in tp_iter:
+            t = tp_iter[k]
+            s = sp_iter[k]
+            if t.dtype.is_floating_point:
+                t.mul_(decay).add_(s.detach(), alpha=1.0 - decay)
+            else:
+                t.copy_(s)
+
+
 for epoch in range(MAX_EPOCHS):
     if (time.time() - train_start) / 60.0 >= MAX_TIMEOUT_MIN:
         print(f"Timeout ({MAX_TIMEOUT_MIN} min). Stopping.")
@@ -477,6 +690,7 @@ for epoch in range(MAX_EPOCHS):
     model.train()
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
+    grad_norm_sum = 0.0
 
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
         x = x.to(device, non_blocking=True)
@@ -486,7 +700,10 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
+        inputs = {"x": x_norm}
+        if cfg.use_global_cond:
+            inputs["cond"] = extract_cond(x_norm, mask)
+        pred = model(inputs)["preds"]
         sq_err = (pred - y_norm) ** 2
 
         vol_mask = mask & ~is_surface
@@ -497,7 +714,15 @@ for epoch in range(MAX_EPOCHS):
 
         optimizer.zero_grad()
         loss.backward()
+        if cfg.max_grad_norm > 0:
+            gn = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
+            grad_norm_sum += gn.item() if torch.isfinite(gn) else 0.0
         optimizer.step()
+        if cfg.scheduler == "onecycle":
+            scheduler.step()
+        if ema_model is not None:
+            _ema_update(ema_model, model, cfg.ema_decay)
+
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
@@ -505,14 +730,18 @@ for epoch in range(MAX_EPOCHS):
         epoch_surf += surf_loss.item()
         n_batches += 1
 
-    scheduler.step()
+    if cfg.scheduler == "cosine":
+        scheduler.step()
     epoch_vol /= max(n_batches, 1)
     epoch_surf /= max(n_batches, 1)
+    grad_norm_avg = grad_norm_sum / max(n_batches, 1)
 
     # --- Validate ---
-    model.eval()
+    eval_model = ema_model if (ema_model is not None) else model
+    eval_model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(eval_model, loader, stats, cfg.surf_weight, device,
+                              use_global_cond=cfg.use_global_cond)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -523,8 +752,9 @@ for epoch in range(MAX_EPOCHS):
     log_metrics = {
         "train/vol_loss": epoch_vol,
         "train/surf_loss": epoch_surf,
+        "train/grad_norm": grad_norm_avg,
         "val/loss": val_loss_mean,
-        "lr": scheduler.get_last_lr()[0],
+        "lr": optimizer.param_groups[0]["lr"],
         "epoch_time_s": dt,
         "global_step": global_step,
     }
@@ -543,13 +773,15 @@ for epoch in range(MAX_EPOCHS):
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
         }
-        torch.save(model.state_dict(), model_path)
+        save_state = eval_model.state_dict()
+        torch.save(save_state, model_path)
         tag = " *"
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
+        f"lr={optimizer.param_groups[0]['lr']:.2e}  "
         f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
     )
     for name in VAL_SPLIT_NAMES:
@@ -567,8 +799,11 @@ if best_metrics:
         "total_train_minutes": total_time,
     })
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-    model.eval()
+    # The on-disk best checkpoint is already either EMA or live weights. Load
+    # back into the eval model (ema_model if EMA in use, else `model`).
+    eval_model = ema_model if (ema_model is not None) else model
+    eval_model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    eval_model.eval()
 
     test_metrics = None
     test_avg = None
@@ -580,7 +815,8 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(eval_model, loader, stats, cfg.surf_weight, device,
+                                  use_global_cond=cfg.use_global_cond)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
