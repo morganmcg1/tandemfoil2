@@ -164,24 +164,71 @@ class TransolverBlock(nn.Module):
         return fx
 
 
+class FourierFeatures(nn.Module):
+    """Fixed-random Fourier features projecting (x, z) coords to sin/cos features.
+
+    Implementation of Tancik et al. NeurIPS 2020 (arxiv:2006.10739).
+    Input: tensor with last-dim coord(s); selects given `coord_dims` slice.
+    Output: ``2 * B_size`` dims (sin then cos) — appended to original features.
+    """
+
+    def __init__(self, in_dim: int = 2, B_size: int = 16, sigma: float = 1.0):
+        super().__init__()
+        B = torch.randn(in_dim, B_size) * sigma
+        self.register_buffer("B", B, persistent=True)
+        self.in_dim = in_dim
+        self.B_size = B_size
+
+    def forward(self, coords: torch.Tensor) -> torch.Tensor:
+        # coords: [..., in_dim] — already normalized
+        proj = 2 * torch.pi * (coords @ self.B)  # [..., B_size]
+        return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
+
+
 class Transolver(nn.Module):
     def __init__(self, space_dim=1, n_layers=5, n_hidden=256, dropout=0.0,
                  n_head=8, act="gelu", mlp_ratio=1, fun_dim=1, out_dim=1,
                  slice_num=32, ref=8, unified_pos=False,
                  output_fields: list[str] | None = None,
-                 output_dims: list[int] | None = None):
+                 output_dims: list[int] | None = None,
+                 slice_nums: list[int] | None = None,
+                 rff_sigma: float = 0.0, rff_B_size: int = 16,
+                 rff_coord_dims: int = 2):
         super().__init__()
         self.ref = ref
         self.unified_pos = unified_pos
         self.output_fields = output_fields or []
         self.output_dims = output_dims or []
+        self.rff_sigma = float(rff_sigma)
+        self.rff_coord_dims = int(rff_coord_dims)
+        self.rff_B_size = int(rff_B_size)
+
+        # Optional Random Fourier Features for the spatial coords.
+        # Augments the input with 2*B_size sin/cos features.
+        rff_extra = 0
+        if self.rff_sigma > 0:
+            self.fourier = FourierFeatures(
+                in_dim=self.rff_coord_dims, B_size=self.rff_B_size,
+                sigma=self.rff_sigma,
+            )
+            rff_extra = 2 * self.rff_B_size
+        else:
+            self.fourier = None
 
         if self.unified_pos:
             self.preprocess = MLP(fun_dim + ref**3, n_hidden * 2, n_hidden,
                                   n_layers=0, res=False, act=act)
         else:
-            self.preprocess = MLP(fun_dim + space_dim, n_hidden * 2, n_hidden,
-                                  n_layers=0, res=False, act=act)
+            self.preprocess = MLP(fun_dim + space_dim + rff_extra, n_hidden * 2,
+                                  n_hidden, n_layers=0, res=False, act=act)
+
+        # Per-layer slice_num — list overrides the scalar.
+        if slice_nums is None:
+            slice_nums = [slice_num] * n_layers
+        if len(slice_nums) != n_layers:
+            raise ValueError(
+                f"slice_nums length {len(slice_nums)} != n_layers {n_layers}"
+            )
 
         self.n_hidden = n_hidden
         self.space_dim = space_dim
@@ -189,7 +236,7 @@ class Transolver(nn.Module):
             TransolverBlock(
                 num_heads=n_head, hidden_dim=n_hidden, dropout=dropout,
                 act=act, mlp_ratio=mlp_ratio, out_dim=out_dim,
-                slice_num=slice_num, last_layer=(i == n_layers - 1),
+                slice_num=slice_nums[i], last_layer=(i == n_layers - 1),
             )
             for i in range(n_layers)
         ])
@@ -207,6 +254,10 @@ class Transolver(nn.Module):
 
     def forward(self, data, **kwargs):
         x = data["x"]
+        if self.fourier is not None:
+            coords = x[..., :self.rff_coord_dims]
+            f_feats = self.fourier(coords)
+            x = torch.cat([x, f_feats], dim=-1)
         fx = self.preprocess(x) + self.placeholder[None, None, :]
         for block in self.blocks:
             fx = block(fx)
@@ -217,12 +268,56 @@ class Transolver(nn.Module):
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
+def _accumulate_batch_safe(
+    pred_orig: torch.Tensor,
+    y: torch.Tensor,
+    is_surface: torch.Tensor,
+    mask: torch.Tensor,
+    mae_surf: torch.Tensor,
+    mae_vol: torch.Tensor,
+) -> tuple[int, int]:
+    """NaN-safe drop-in for ``data.scoring.accumulate_batch``.
+
+    Numerically identical to the original on NaN-free data. On batches where
+    any node of a sample has non-finite ``y``, the entire sample is excluded
+    (matching the original organizer semantics) BUT we sanitize the absolute
+    error tensor with ``torch.nan_to_num`` after multiplying by the per-node
+    surface/volume mask. This avoids the ``0 * NaN = NaN`` PyTorch quirk that
+    silently turns the channel sum into NaN when a single y value is non-finite.
+    """
+    B = y.shape[0]
+    y_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)  # [B]
+    if not y_finite.any():
+        return 0, 0
+
+    sample_mask = y_finite.unsqueeze(-1).expand(-1, mask.shape[-1])  # [B, N]
+    effective = mask & sample_mask
+    surf_mask = effective & is_surface
+    vol_mask = effective & ~is_surface
+
+    err = (pred_orig.double() - y.double()).abs()  # may contain NaN/inf
+    err_surf = err * surf_mask.unsqueeze(-1).double()
+    err_vol = err * vol_mask.unsqueeze(-1).double()
+    # Replace any NaN/inf that arose from 0 * non-finite at masked-out positions
+    err_surf = torch.nan_to_num(err_surf, nan=0.0, posinf=0.0, neginf=0.0)
+    err_vol = torch.nan_to_num(err_vol, nan=0.0, posinf=0.0, neginf=0.0)
+    mae_surf += err_surf.sum(dim=(0, 1))
+    mae_vol += err_vol.sum(dim=(0, 1))
+    return int(surf_mask.sum().item()), int(vol_mask.sum().item())
+
+
 def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
     ``score.py`` (float64, non-finite samples skipped).
+
+    Uses a NaN-safe local accumulator so that test splits with stray NaN-valued
+    ground truth (e.g. ``test_geom_camber_cruise/000020.pt`` has NaN pressure
+    at ~0.34% of nodes) still report a finite per-channel MAE for the kept
+    samples. Result is bit-identical to ``data/scoring.accumulate_batch`` on
+    NaN-free batches.
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
@@ -243,18 +338,21 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
             surf_mask = mask & is_surface
+            sq_err_safe = torch.nan_to_num(sq_err, nan=0.0, posinf=0.0, neginf=0.0)
             vol_loss_sum += (
-                (sq_err * vol_mask.unsqueeze(-1)).sum()
+                (sq_err_safe * vol_mask.unsqueeze(-1)).sum()
                 / vol_mask.sum().clamp(min=1)
             ).item()
             surf_loss_sum += (
-                (sq_err * surf_mask.unsqueeze(-1)).sum()
+                (sq_err_safe * surf_mask.unsqueeze(-1)).sum()
                 / surf_mask.sum().clamp(min=1)
             ).item()
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            ds, dv = _accumulate_batch_safe(
+                pred_orig, y, is_surface, mask, mae_surf, mae_vol
+            )
             n_surf += ds
             n_vol += dv
 
@@ -386,11 +484,39 @@ class Config:
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    # --- model architecture (override defaults from README baseline) ---
+    n_layers: int = 5
+    n_hidden: int = 128
+    n_head: int = 4
+    slice_num: int = 64
+    mlp_ratio: int = 2
+    dropout: float = 0.0
+    # --- loss / training options ---
+    loss_type: str = "mse"          # one of: mse, l1, huber
+    p_weight: float = 1.0           # extra weight on pressure channel (channel idx 2)
+    huber_delta: float = 1.0        # delta for huber loss (only used when loss_type=huber)
+    grad_clip: float = 0.0          # 0 disables gradient clipping
+    warmup_epochs: int = 0          # linear warmup epochs
+    timeout_min: float = -1.0       # if >0 overrides SENPAI_TIMEOUT_MINUTES per-run cap
+    seed: int = 0
+    # --- data augmentation ---
+    use_amp: bool = False           # enable mixed precision training (bfloat16)
+    # --- random fourier features for (x, z) ---
+    rff_sigma: float = 0.0          # 0 disables; recommended 1.0-4.0
+    rff_B_size: int = 16            # number of frequency components
+    # --- EMA ---
+    ema_decay: float = 0.0          # 0 disables; 0.999 recommended
+    ema_eval_after_epoch: int = 5   # start using EMA for val from this epoch
+    # --- multiscale slices ---
+    slice_nums: str = ""            # comma-separated overrides slice_num scalar
 
 
 cfg = sp.parse(Config)
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
-MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
+MAX_TIMEOUT_MIN = cfg.timeout_min if cfg.timeout_min > 0 else DEFAULT_TIMEOUT_MIN
+
+# Reproducibility
+torch.manual_seed(cfg.seed)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
@@ -414,25 +540,72 @@ val_loaders = {
     for name, ds in val_splits.items()
 }
 
+_slice_nums = None
+if cfg.slice_nums.strip():
+    _slice_nums = [int(s) for s in cfg.slice_nums.split(",") if s.strip()]
+
 model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
-    mlp_ratio=2,
+    n_hidden=cfg.n_hidden,
+    n_layers=cfg.n_layers,
+    n_head=cfg.n_head,
+    slice_num=cfg.slice_num,
+    mlp_ratio=cfg.mlp_ratio,
+    dropout=cfg.dropout,
+    rff_sigma=cfg.rff_sigma,
+    rff_B_size=cfg.rff_B_size,
+    rff_coord_dims=2,
+    slice_nums=_slice_nums,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
 
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
-print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+print(f"Model: Transolver ({n_params/1e6:.2f}M params, rff_sigma={cfg.rff_sigma}, "
+      f"slice_nums={_slice_nums or [cfg.slice_num]*cfg.n_layers}, ema_decay={cfg.ema_decay})")
+
+# Optional EMA model — used for val/eval; saved as best checkpoint when used
+ema_model = None
+if cfg.ema_decay > 0:
+    ema_model = torch.optim.swa_utils.AveragedModel(
+        model,
+        multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(cfg.ema_decay),
+    )
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+
+if cfg.warmup_epochs > 0:
+    warmup = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.01, end_factor=1.0, total_iters=cfg.warmup_epochs
+    )
+    cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(1, MAX_EPOCHS - cfg.warmup_epochs)
+    )
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer, schedulers=[warmup, cosine], milestones=[cfg.warmup_epochs]
+    )
+else:
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+
+
+def loss_per_node(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Per-node, per-channel loss in normalized space. Shape preserved [B,N,3]."""
+    if cfg.loss_type == "mse":
+        per = (pred - target) ** 2
+    elif cfg.loss_type == "l1":
+        per = (pred - target).abs()
+    elif cfg.loss_type == "huber":
+        per = F.huber_loss(pred, target, delta=cfg.huber_delta, reduction="none")
+    else:
+        raise ValueError(f"Unknown loss_type {cfg.loss_type}")
+    if cfg.p_weight != 1.0:
+        # Reweight pressure channel (index 2)
+        w = torch.tensor([1.0, 1.0, cfg.p_weight], device=per.device, dtype=per.dtype)
+        per = per * w
+    return per
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -478,6 +651,7 @@ for epoch in range(MAX_EPOCHS):
     epoch_vol = epoch_surf = 0.0
     n_batches = 0
 
+    amp_dtype = torch.bfloat16 if cfg.use_amp else None
     for x, y, is_surface, mask in tqdm(train_loader, desc=f"Epoch {epoch+1}/{MAX_EPOCHS}", leave=False):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
@@ -486,18 +660,30 @@ for epoch in range(MAX_EPOCHS):
 
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
-        pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
+
+        if cfg.use_amp:
+            with torch.amp.autocast("cuda", dtype=amp_dtype):
+                pred = model({"x": x_norm})["preds"]
+                # Compute loss in fp32 for stability of small differences
+                pred_f32 = pred.float()
+                per = loss_per_node(pred_f32, y_norm)
+        else:
+            pred = model({"x": x_norm})["preds"]
+            per = loss_per_node(pred, y_norm)
 
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
+        vol_loss = (per * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
+        surf_loss = (per * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
         loss = vol_loss + cfg.surf_weight * surf_loss
 
         optimizer.zero_grad()
         loss.backward()
+        if cfg.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
+        if ema_model is not None:
+            ema_model.update_parameters(model)
         global_step += 1
         wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
@@ -510,9 +696,15 @@ for epoch in range(MAX_EPOCHS):
     epoch_surf /= max(n_batches, 1)
 
     # --- Validate ---
-    model.eval()
+    # Use EMA weights for validation if available and past warmup epochs.
+    # (EMA needs some warmup to stabilize; before then, use raw model.)
+    use_ema_for_eval = (
+        ema_model is not None and (epoch + 1) >= cfg.ema_eval_after_epoch
+    )
+    eval_model = ema_model.module if use_ema_for_eval else model
+    eval_model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(eval_model, loader, stats, cfg.surf_weight, device)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -542,9 +734,14 @@ for epoch in range(MAX_EPOCHS):
             "epoch": epoch + 1,
             "val_avg/mae_surf_p": avg_surf_p,
             "per_split": split_metrics,
+            "used_ema": use_ema_for_eval,
         }
-        torch.save(model.state_dict(), model_path)
-        tag = " *"
+        # Save the model used for eval (raw or EMA)
+        save_state = (
+            ema_model.module.state_dict() if use_ema_for_eval else model.state_dict()
+        )
+        torch.save(save_state, model_path)
+        tag = " *" + (" [EMA]" if use_ema_for_eval else "")
 
     peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
     print(
