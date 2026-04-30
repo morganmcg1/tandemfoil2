@@ -17,31 +17,40 @@ Lower is better; primary ranking metric is `test_avg/mae_surf_p` (paper-facing).
 
 | Run | val_avg/mae_surf_p | test_avg/mae_surf_p | Params | Epochs |
 |---|---:|---:|---:|---:|
-| `p4-bf16+huber+nl2+e150` | 45.20 | **40.22** | 0.30 M | 150 |
-| `p2-bf16+huber+nl2` | 49.95 | 43.77 | 0.30 M | 100 |
+| `p3-bf16+huber+nl3+e200` | 41.67 | **35.95** | 0.42 M | 200 |
+| `p4-bf16+huber+nl2+e150` | 45.20 | 40.22 | 0.30 M | 150 |
 | `p4-bf16+huber+nl2+ema999` | 50.44 | 43.53 | 0.30 M | 100 |
+| `p2-bf16+huber+nl2` | 49.95 | 43.77 | 0.30 M | 100 |
 | `p4-bf16+huber+nl2+seed1234` | 49.77 | 43.91 | 0.30 M | 100 |
 | `p3-bf16+huber+nl3+ema999` | 49.36 | 44.06 | 0.42 M | 100 |
+| `p5-bf16+huber+nl2+seed2024` | 51.07 | 44.32 | 0.30 M | 100 |
 | `p4-bf16+huber+nl2+seed42` | 51.15 | 44.46 | 0.30 M | 100 |
 | `p2-bf16+huber+nl3` | 51.28 | 45.38 | 0.42 M | 80 |
 | `p3-eidetic+bf16+huber+nl3` | 51.53 | 46.95 | 0.42 M | 100 |
+| `p4-bf16+huber+nl2+h96` | 52.98 | 47.05 | 0.17 M | 100 |
 | `p4-bf16+huber+nl1` | 55.07 | 48.65 | 0.18 M | 100 |
 
 ### Ensembles (test eval is fp32, no autocast)
 
 | Ensemble | Members | val_avg | test_avg |
 |---|---:|---:|---:|
-| `eval_ensemble_nl2_5` | 5 (nl2 base + ema999 + seed42 + seed1234 + e150) | 42.87 | **37.13** |
+| `eval_ensemble_2model_top` | 2 (nl3-e200 + nl2-e150) | 39.36 | **34.37** |
+| `eval_ensemble_nl2_5_plus_nl3e200` | 6 (5 nl2 + 1 nl3-e200) | 41.03 | 35.40 |
+| `eval_ensemble_nl2_6_plus_nl3e200` | 7 (6 nl2 + 1 nl3-e200) | 41.42 | 35.60 |
+| `eval_ensemble_nl3_4` | 4 (1 nl3-e200 + 1 nl3-ema + 1 nl3-eidetic + 1 nl3-80ep) | 41.53 | 36.58 |
+| `eval_ensemble_nl2_5` | 5 (nl2 base + ema999 + seed42 + seed1234 + e150) | 42.87 | 37.13 |
 | `eval_ensemble_nl2_4` | 4 (nl2 base + ema999 + seed42 + seed1234) | 44.57 | 38.51 |
 
-**Best so far**: 5-model nl2 ensemble — `test_avg/mae_surf_p = 37.13`. Per-split test:
-- `test_single_in_dist` = 40.75
-- `test_geom_camber_rc` = 49.84
-- `test_geom_camber_cruise` = 22.16
-- `test_re_rand` = 35.75
+**Best so far**: 2-model top ensemble (`nl3-e200` + `nl2-e150`) — `test_avg/mae_surf_p = 34.37`. Per-split test:
+- `test_single_in_dist` = 37.84
+- `test_geom_camber_rc` = 47.18
+- `test_geom_camber_cruise` = 19.76
+- `test_re_rand` = 32.72
 
-A 200-epoch n_layers=3 run is still in flight at val=41.77 (epoch 187/200) and
-will join a follow-up cross-architecture ensemble.
+Five additional 200-epoch nl3 runs with different seeds and one EMA variant
+are still training; once they converge we'll re-evaluate strong-only
+ensembles to see if 4-5 high-quality nl3 models beat the current 2-model
+top mix. A 300-epoch nl3 just kicked off as well.
 
 ---
 
