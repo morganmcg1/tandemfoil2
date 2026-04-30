@@ -414,3 +414,49 @@ cd target/ && python train.py \
 # FourierPosEncoder(n_octaves=8, coord_scale=3.0); raw (x,z) CONCATENATED with 32-D Fourier → 56-D preprocess input
 # Full PR #1264/PR #1300 stack: FiLM Re-conditioning, BF16 AMP, OneCycleLR(max_lr=1.2e-3, pct_start=0.3), DropPath(0→0.1), surf_weight=25
 ```
+
+---
+
+## Baseline #13 — PR #1341: torch.compile + fix OneCycleLR schedule for compiled throughput
+
+**Date:** 2026-04-29
+**Branch:** `charliepai2f2-edward/torch-compile-schedule-fix`
+**Primary metric:** `val_avg/mae_surf_p = 54.23` | `test_avg/mae_surf_p = 46.13`
+
+### Key changes
+- `torch.compile(model, mode='reduce-overhead')` enabled — ~50% per-epoch speedup on Blackwell GPU (PyTorch 2.10 / Triton 3.6)
+- `ONECYCLE_PER_EPOCH_SEC_ESTIMATE` corrected from 100s → **55.0s** to match actual compiled throughput
+- This fix allows OneCycleLR to see correct `total_steps = epochs × steps_per_epoch` where epochs ≈ 33 (vs 18 before)
+- ~83% more training epochs in the same 30-min wall-clock budget → significantly better convergence
+- **Peak GPU memory: 23.93 GB** (-33% vs 35.8 GB baseline) — compile fuses ops and reduces activation memory
+- Params: 835,927
+
+### Results
+
+| Split | val mae_surf_p | test mae_surf_p | val prev best | test prev best |
+|-------|---------------:|----------------:|--------------:|---------------:|
+| single_in_dist     | 57.17 | 49.17 | 72.49 | 62.58 |
+| geom_camber_rc     | 68.23 | 59.05 | 83.24 | 72.60 |
+| geom_camber_cruise | **36.40** | **30.11** | 51.69 | 42.11 |
+| re_rand            | **55.12** | **46.18** | 68.87 | 61.24 |
+| **avg**            | **54.23** | **46.13** | **69.07** | **59.63** |
+
+Improvement vs prior best: **-21.5% val, -22.6% test**
+
+### Context
+- 33 epochs in ~30 min (steady-state ~50–58 s/epoch compiled vs ~105 s/epoch eager)
+- Gains across all splits; largest absolute gains on OOD geometry (`geom_camber_cruise`) and OOD Re (`re_rand`)
+- Full stack: FourierPosEncoder(n_octaves=8, coord_scale=3.0) + raw (x,z) concat (56-D) + SharedFiLMGenerator(1→128→1280) + BF16 AMP + OneCycleLR(max_lr=1.2e-3, pct_start=0.3, total_steps=7125) + DropPath(0→0.1) + grad_clip=1.0 + surf_weight=25
+- Metrics JSONL: `target/models/model-charliepai2f2-edward-torch-compile-schedule-fix-20260429-233514/metrics.jsonl`
+- Metrics YAML: `target/models/model-charliepai2f2-edward-torch-compile-schedule-fix-20260429-233514/metrics.yaml`
+
+### Reproduce
+```bash
+cd target/ && python train.py \
+  --agent charliepai2f2-edward \
+  --experiment_name "charliepai2f2-edward/torch-compile-schedule-fix" \
+  --grad_clip 1.0
+# torch.compile(model, mode='reduce-overhead') + ONECYCLE_PER_EPOCH_SEC_ESTIMATE=55.0
+# Full stack: FourierPosEncoder(8-octave, coord_scale=3.0) + FiLM Re-conditioning + BF16 AMP
+# OneCycleLR(max_lr=1.2e-3, pct_start=0.3) + DropPath(0→0.1) + surf_weight=25
+```
