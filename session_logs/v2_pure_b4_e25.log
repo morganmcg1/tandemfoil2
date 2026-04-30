@@ -114,3 +114,48 @@ Epoch  21 (501s) [31.1GB]  train[vol=0.4379 surf=0.1914]  val_avg_surf_p=100.574
     val_geom_camber_rc         loss=6.4596  surf[p=108.2032 Ux=2.0899 Uy=0.9272]  vol[p=120.0310 Ux=5.9101 Uy=3.0573]
     val_geom_camber_cruise     loss=2.5826  surf[p=80.0020 Ux=1.0514 Uy=0.5421]  vol[p=102.6128 Ux=3.8454 Uy=1.5851]
     val_re_rand                loss=5.3254  surf[p=96.1808 Ux=1.6019 Uy=0.7548]  vol[p=109.8311 Ux=4.8530 Uy=2.2568]
+Epoch  22 (513s) [31.1GB]  train[vol=0.3915 surf=0.1533]  val_avg_surf_p=100.1392 *
+    val_single_in_dist         loss=8.2090  surf[p=114.3550 Ux=1.3558 Uy=0.6812]  vol[p=143.6760 Ux=5.3738 Uy=2.2646]
+    val_geom_camber_rc         loss=6.3761  surf[p=111.2124 Ux=2.2310 Uy=0.9141]  vol[p=121.2969 Ux=6.0808 Uy=3.0207]
+    val_geom_camber_cruise     loss=2.5179  surf[p=78.6047 Ux=1.0352 Uy=0.5369]  vol[p=101.8553 Ux=3.8003 Uy=1.5991]
+    val_re_rand                loss=5.6939  surf[p=96.3846 Ux=1.6078 Uy=0.7443]  vol[p=109.3458 Ux=4.8853 Uy=2.2403]
+Timeout (180.0 min). Stopping.
+
+Training done in 186.4 min
+
+Best val: epoch 22, val_avg/mae_surf_p = 100.1392
+
+Logged model artifact 'model-mlintern-pai2-24h-v3-r1-v2-pure-b4-e25-vw4roxhd' (aliases: best, epoch-22)
+wandb: updating run metadata; uploading artifact model-mlintern-pai2-24h-v3-r1-v2-pure-b4-e25-vw4roxhd
+wandb: uploading artifact model-mlintern-pai2-24h-v3-r1-v2-pure-b4-e25-vw4roxhd
+wandb: 
+wandb: Run history:
+wandb:        epoch_time_s ▃▃▃▄▂▃▄▅▃▅▄▇▅▄▄▄▅█▂▇▁▆
+wandb:         global_step ▁▁▁▁▁▂▂▃▃▃▃▃▃▄▄▄▄▄▄▄▅▅▅▅▅▅▅▆▆▆▆▆▆▆▆▇▇▇██
+wandb:                  lr ████▇▇▇▆▆▆▅▅▄▄▃▃▂▂▂▁▁▁
+wandb:          train/loss ▂▅▂█▁▂▁▁▁▁▁▁▁▃▁▂▁▂▁▂▂▁▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:     train/surf_loss █▅▄▄▄▂▃▄▃▃▂▂▂▂▁▂▂▁▁▁▁▁
+wandb:      train/vol_loss █▅▄▄▃▂▃▃▃▂▂▂▂▁▁▁▁▁▁▁▁▁
+wandb:            val/loss █▇▆█▅▆▄▃▅▃▂▂▂▂▂▂▁▁▁▁▁▁
+wandb: val_avg/mae_surf_Ux █▇▇▇▅▆▅▃▄▄▃▂▃▃▃▂▂▂▂▁▁▁
+wandb: val_avg/mae_surf_Uy █▆▅▆▃▅▃▃▄▃▂▂▂▂▂▂▂▁▁▁▁▁
+wandb:  val_avg/mae_surf_p █▇▆▇▅█▄▄▆▃▃▃▃▂▃▂▂▂▁▁▁▁
+wandb:                 +39 ...
+wandb: 
+wandb: Run summary:
+wandb:              best_epoch 22
+wandb: best_val_avg/mae_surf_p 100.13916
+wandb:            epoch_time_s 512.9001
+wandb:             global_step 8250
+wandb:                      lr 2e-05
+wandb:     total_train_minutes 186.38502
+wandb:              train/loss 6.31914
+wandb:         train/surf_loss 0.15327
+wandb:          train/vol_loss 0.39151
+wandb:                val/loss 5.69923
+wandb:                     +42 ...
+wandb: 
+wandb: 🚀 View run mlintern-pai2-24h-v3-r1/v2-pure-b4-e25 at: https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/vw4roxhd
+wandb: ⭐️ View project at: https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern
+wandb: Synced 6 W&B file(s), 0 media file(s), 3 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260430_110703-vw4roxhd/logs
