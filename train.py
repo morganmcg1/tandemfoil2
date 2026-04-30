@@ -293,7 +293,24 @@ def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            # Workaround for ``data/scoring.py`` non-finite handling: PyTorch's
+            # ``NaN * 0 == NaN``, so a single non-finite sample in the batch
+            # propagates NaN through the metric accumulator even though
+            # ``accumulate_batch`` zeroes it via ``surf_mask``. We replace
+            # bad-sample y values with zero (any finite value works) and
+            # AND-out the per-sample mask so those samples don't contribute.
+            # ``test_geom_camber_cruise`` has 1/200 such files; all other
+            # splits are clean so this is a no-op for them.
+            y_finite_b = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)
+            if not y_finite_b.all():
+                y_clean = torch.where(
+                    y_finite_b.view(-1, 1, 1).expand_as(y), y, torch.zeros_like(y)
+                )
+                mask_clean = mask & y_finite_b.unsqueeze(-1)
+            else:
+                y_clean, mask_clean = y, mask
+            ds, dv = accumulate_batch(pred_orig, y_clean, is_surface, mask_clean,
+                                       mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
 
