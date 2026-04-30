@@ -401,7 +401,18 @@ def evaluate_split(model, loader, stats, surf_weight, device,
             n_batches += 1
 
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            # Sanitize: scoring.accumulate_batch multiplies err by mask after
+            # err = abs(pred - y), and `nan * 0 == nan` propagates to the
+            # accumulator. Some test samples (e.g. test_geom_camber_cruise/20)
+            # have non-finite y values inside the otherwise-valid sample. We
+            # both (a) zero out NaN/Inf y values so err stays finite and (b)
+            # exclude the entire bad sample from the loader-level mask so it
+            # contributes nothing to the MAE — matching the documented
+            # "skip non-finite ground-truth samples" semantics.
+            y_finite_per_sample = torch.isfinite(y.reshape(y.shape[0], -1)).all(dim=-1)
+            y_safe = torch.where(torch.isfinite(y), y, torch.zeros_like(y))
+            mask_safe = mask & y_finite_per_sample.unsqueeze(-1)
+            ds, dv = accumulate_batch(pred_orig, y_safe, is_surface, mask_safe, mae_surf, mae_vol)
             n_surf += ds
             n_vol += dv
 
@@ -537,6 +548,7 @@ class Config:
     # Trainer-level extensions
     scheduler: str = "cosine"        # cosine | onecycle
     pct_start: float = 0.3           # for onecycle
+    lr_schedule_epochs: int = -1     # OneCycle/Cosine schedule length; -1 = use --epochs
     max_grad_norm: float = 0.0       # 0 disables clipping
     use_ema: bool = False
     ema_decay: float = 0.999
@@ -622,15 +634,17 @@ else:
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
+SCHEDULE_EPOCHS = cfg.lr_schedule_epochs if cfg.lr_schedule_epochs > 0 else MAX_EPOCHS
 if cfg.scheduler == "onecycle":
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer, max_lr=cfg.lr, epochs=MAX_EPOCHS,
+        optimizer, max_lr=cfg.lr, epochs=SCHEDULE_EPOCHS,
         steps_per_epoch=len(train_loader), pct_start=cfg.pct_start,
     )
 elif cfg.scheduler == "cosine":
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=SCHEDULE_EPOCHS)
 else:
     raise ValueError(f"Unknown scheduler {cfg.scheduler}")
+print(f"LR schedule: {cfg.scheduler}  schedule_epochs={SCHEDULE_EPOCHS}")
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -719,7 +733,10 @@ for epoch in range(MAX_EPOCHS):
             grad_norm_sum += gn.item() if torch.isfinite(gn) else 0.0
         optimizer.step()
         if cfg.scheduler == "onecycle":
-            scheduler.step()
+            try:
+                scheduler.step()
+            except ValueError:
+                pass  # OneCycleLR exhausted, hold final LR
         if ema_model is not None:
             _ema_update(ema_model, model, cfg.ema_decay)
 
