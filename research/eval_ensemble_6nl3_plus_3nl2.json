@@ -1,0 +1,121 @@
+{
+  "models": [
+    "models/model-ejvimr8w",
+    "models/model-6pproozv",
+    "models/model-u2phuy10",
+    "models/model-wpj9rltw",
+    "models/model-91gsowe3",
+    "models/model-o5mpb9wu",
+    "models/model-c3aaqyun",
+    "models/model-zyqt699b",
+    "models/model-d1s8ok00"
+  ],
+  "val_per_split": {
+    "val_single_in_dist": {
+      "vol_loss": 0.09230633459985256,
+      "surf_loss": 0.07823198448168114,
+      "loss": 0.874626179416664,
+      "mae_surf_Ux": 0.365408277377494,
+      "mae_vol_Ux": 1.9763753838538227,
+      "mae_surf_Uy": 0.23809043793629134,
+      "mae_vol_Uy": 0.67798298563159,
+      "mae_surf_p": 34.72441453273876,
+      "mae_vol_p": 39.04640329904471
+    },
+    "val_geom_camber_rc": {
+      "vol_loss": 0.13513894215226174,
+      "surf_loss": 0.053933237940073014,
+      "loss": 0.6744713215529918,
+      "mae_surf_Ux": 0.7418088385046409,
+      "mae_vol_Ux": 2.6387176923453244,
+      "mae_surf_Uy": 0.39401193617648694,
+      "mae_vol_Uy": 1.176720217389445,
+      "mae_surf_p": 49.29709977840527,
+      "mae_vol_p": 52.10826580839438
+    },
+    "val_geom_camber_cruise": {
+      "vol_loss": 0.03379131654277444,
+      "surf_loss": 0.011522639638278633,
+      "loss": 0.14901771292556076,
+      "mae_surf_Ux": 0.28873827314771505,
+      "mae_vol_Ux": 1.4758657758784866,
+      "mae_surf_Uy": 0.1705544116175447,
+      "mae_vol_Uy": 0.46204532050915215,
+      "mae_surf_p": 21.48698864591799,
+      "mae_vol_p": 23.056737403349626
+    },
+    "val_re_rand": {
+      "vol_loss": 0.10145237781107426,
+      "surf_loss": 0.050534949786961075,
+      "loss": 0.606801875680685,
+      "mae_surf_Ux": 0.5390857871306716,
+      "mae_vol_Ux": 1.9669889271870193,
+      "mae_surf_Uy": 0.28378354405135825,
+      "mae_vol_Uy": 0.7960951087198748,
+      "mae_surf_p": 37.76013585568918,
+      "mae_vol_p": 38.21699125875026
+    }
+  },
+  "val_avg": {
+    "avg/mae_surf_Ux": 0.4837602940401304,
+    "avg/mae_surf_Uy": 0.2716100824454203,
+    "avg/mae_surf_p": 35.8171597031878,
+    "avg/mae_vol_Ux": 2.0144869448161633,
+    "avg/mae_vol_Uy": 0.7782109080625155,
+    "avg/mae_vol_p": 38.107099442384744
+  },
+  "test_per_split": {
+    "test_single_in_dist": {
+      "vol_loss": 0.11502667874097824,
+      "surf_loss": 0.10168680411414244,
+      "loss": 1.1318947198824025,
+      "mae_surf_Ux": 0.4520438549772066,
+      "mae_vol_Ux": 1.9480444241753538,
+      "mae_surf_Uy": 0.2587523425348223,
+      "mae_vol_Uy": 0.6989905669709561,
+      "mae_surf_p": 35.73888987430619,
+      "mae_vol_p": 39.597577358414874
+    },
+    "test_geom_camber_rc": {
+      "vol_loss": 0.11840877160429955,
+      "surf_loss": 0.04578851417638361,
+      "loss": 0.5762939133681356,
+      "mae_surf_Ux": 0.7047729032715802,
+      "mae_vol_Ux": 2.5554209596049065,
+      "mae_surf_Uy": 0.3652070947439614,
+      "mae_vol_Uy": 1.0915317684990475,
+      "mae_surf_p": 42.99064346990333,
+      "mae_vol_p": 46.78633765167004
+    },
+    "test_geom_camber_cruise": {
+      "vol_loss": 0.027368170199915765,
+      "surf_loss": 0.006940139451762662,
+      "loss": 0.09676956471754238,
+      "mae_surf_Ux": 0.26252736840974855,
+      "mae_vol_Ux": 1.3815444140812694,
+      "mae_surf_Uy": 0.1517749887314655,
+      "mae_vol_Uy": 0.41979359918955833,
+      "mae_surf_p": 17.09628198378725,
+      "mae_vol_p": 19.23786447199002
+    },
+    "test_re_rand": {
+      "vol_loss": 0.05755090445280075,
+      "surf_loss": 0.023246680065058173,
+      "loss": 0.2900177051033825,
+      "mae_surf_Ux": 0.4248355904334728,
+      "mae_vol_Ux": 1.778602389502864,
+      "mae_surf_Uy": 0.24123135499403842,
+      "mae_vol_Uy": 0.6749186412998461,
+      "mae_surf_p": 29.14046557478189,
+      "mae_vol_p": 31.097503782782926
+    }
+  },
+  "test_avg": {
+    "avg/mae_surf_Ux": 0.461044929273002,
+    "avg/mae_surf_Uy": 0.2542414452510719,
+    "avg/mae_surf_p": 31.241570225694666,
+    "avg/mae_vol_Ux": 1.9159030468410985,
+    "avg/mae_vol_Uy": 0.7213086439898521,
+    "avg/mae_vol_p": 34.179820816214466
+  }
+}
