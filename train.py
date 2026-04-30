@@ -83,22 +83,23 @@ class MLP(nn.Module):
 
 
 class SharedFiLMGenerator(nn.Module):
-    """Single shared FiLM generator: scalar log(Re) → (gamma, beta) for all layers."""
+    """Single shared FiLM generator: Re features → (gamma, beta) for all layers."""
 
-    def __init__(self, n_hidden: int, n_layers: int):
+    def __init__(self, n_hidden: int, n_layers: int, re_feat_dim: int = 1):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(1, n_hidden),
+            nn.Linear(re_feat_dim, n_hidden),
             nn.GELU(),
             nn.Linear(n_hidden, n_hidden * 2 * n_layers),
         )
         self.n_hidden = n_hidden
         self.n_layers = n_layers
+        self.re_feat_dim = re_feat_dim
 
-    def forward(self, log_re: torch.Tensor) -> list[tuple[torch.Tensor, torch.Tensor]]:
-        if log_re.dim() == 1:
-            log_re = log_re.unsqueeze(-1)
-        out = self.net(log_re)
+    def forward(self, re_feat: torch.Tensor) -> list[tuple[torch.Tensor, torch.Tensor]]:
+        if re_feat.dim() == 1:
+            re_feat = re_feat.unsqueeze(-1)
+        out = self.net(re_feat)
         pairs = []
         for i in range(self.n_layers):
             offset = i * self.n_hidden * 2
@@ -106,6 +107,28 @@ class SharedFiLMGenerator(nn.Module):
             beta = out[:, offset + self.n_hidden : offset + self.n_hidden * 2]
             pairs.append((gamma, beta))
         return pairs
+
+
+class ScalarFourierEncoder(nn.Module):
+    """Fourier positional encoding for a scalar value (e.g., standardized log Re).
+
+    Multi-scale sinusoidal features at geometric frequencies ``base_freq * 2^k``.
+    Input ``x`` of shape ``(B, 1)`` → output ``(B, 2*n_octaves)`` with sin then cos.
+    """
+
+    def __init__(self, n_octaves: int = 4, base_freq: float = 1.0):
+        super().__init__()
+        self.n_octaves = n_octaves
+        freqs = base_freq * torch.pow(2.0, torch.arange(n_octaves).float())
+        self.register_buffer("freqs", freqs)
+
+    @property
+    def out_dim(self) -> int:
+        return 2 * self.n_octaves
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        angles = x * self.freqs.unsqueeze(0)
+        return torch.cat([torch.sin(angles), torch.cos(angles)], dim=-1)
 
 
 class FourierPosEncoder(nn.Module):
@@ -259,7 +282,10 @@ class Transolver(nn.Module):
             )
             for i in range(n_layers)
         ])
-        self.film_generator = SharedFiLMGenerator(n_hidden=n_hidden, n_layers=n_layers)
+        self.re_fourier = ScalarFourierEncoder(n_octaves=4, base_freq=1.0)
+        self.film_generator = SharedFiLMGenerator(
+            n_hidden=n_hidden, n_layers=n_layers, re_feat_dim=self.re_fourier.out_dim,
+        )
         self.placeholder = nn.Parameter((1 / n_hidden) * torch.rand(n_hidden))
         self.apply(self._init_weights)
 
@@ -275,7 +301,8 @@ class Transolver(nn.Module):
     def forward(self, data, **kwargs):
         x = data["x"]
         log_re_sample = x[:, 0, 13].unsqueeze(-1)  # [B, 1] normalized log(Re) per sample
-        film_pairs = self.film_generator(log_re_sample)
+        re_feats = self.re_fourier(log_re_sample)  # [B, 2*n_octaves] sinusoidal features
+        film_pairs = self.film_generator(re_feats)
         xy = x[:, :, :2]
         fourier_feats = self.fourier_pos(xy)
         x_aug = torch.cat([xy, fourier_feats, x[:, :, 2:]], dim=-1)
