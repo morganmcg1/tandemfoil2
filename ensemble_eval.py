@@ -200,6 +200,9 @@ def main():
                         help="Comma-separated checkpoint paths")
     parser.add_argument("--config_paths", required=True, type=str,
                         help="Comma-separated config paths")
+    parser.add_argument("--weights", default=None, type=str,
+                        help="Comma-separated per-model weights (e.g. inverse val MAE). "
+                             "If omitted, uniform.")
     parser.add_argument("--splits_dir", default="/mnt/new-pvc/datasets/tandemfoil/splits_v2")
     parser.add_argument("--batch_size", default=4, type=int)
     parser.add_argument("--skip_test", action="store_true")
@@ -209,8 +212,17 @@ def main():
     cfgs = args.config_paths.split(",")
     assert len(ckpts) == len(cfgs), "checkpoint_paths and config_paths must have same length"
 
+    if args.weights:
+        weights = [float(w) for w in args.weights.split(",")]
+        assert len(weights) == len(ckpts), "weights must have same length as checkpoints"
+        # Normalize weights to sum to 1
+        s = sum(weights)
+        weights = [w / s for w in weights]
+    else:
+        weights = [1.0 / len(ckpts)] * len(ckpts)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}, ensemble size: {len(ckpts)}")
+    print(f"Device: {device}, ensemble size: {len(ckpts)}, weights: {[round(w, 3) for w in weights]}")
 
     # Load data
     train_ds, val_splits, stats, _ = load_data(args.splits_dir, debug=False)
@@ -260,12 +272,11 @@ def main():
                     mask = mask[good]
 
                 x_norm = (x - stats["x_mean"]) / stats["x_std"]
-                # Average predictions across models in normalized space
-                pred_sum = None
-                for m in models:
-                    p = m({"x": x_norm})["preds"]
-                    pred_sum = p if pred_sum is None else pred_sum + p
-                pred = pred_sum / len(models)
+                # Weighted average of predictions in normalized space
+                pred = None
+                for m, w in zip(models, weights):
+                    p = m({"x": x_norm})["preds"] * w
+                    pred = p if pred is None else pred + p
                 pred_orig = pred * stats["y_std"] + stats["y_mean"]
                 ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
                 n_surf += ds
