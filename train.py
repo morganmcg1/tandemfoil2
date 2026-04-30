@@ -53,7 +53,18 @@ def evaluate_split(model, loader, stats, surf_weight, device, autocast_dtype=Non
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
-    ``score.py`` (float64, non-finite samples skipped).
+    ``data/scoring.py`` semantics: float64, surface vs volume node split,
+    skip samples whose ground truth contains any non-finite values.
+
+    NaN-in-y workaround: at least one test sample (sample 20 in
+    test_geom_camber_cruise has 761 non-finite ``y[p]`` entries) trips a
+    nan-propagation bug in ``accumulate_batch``: it builds an ``err`` tensor
+    *before* applying the sample mask, and ``nan * 0 == nan`` under IEEE 754
+    so the masked-out contribution still poisons the accumulator. We can't
+    edit ``data/scoring.py`` (read-only contract), so we drop those samples
+    from ``mask`` here and zero out ``y`` for them before calling the
+    accumulator. The dropped sample's surface/volume node count is also zero
+    in the returned counts, matching the scorer's intended skip behaviour.
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
@@ -66,6 +77,17 @@ def evaluate_split(model, loader, stats, surf_weight, device, autocast_dtype=Non
             y = y.to(device, non_blocking=True)
             is_surface = is_surface.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
+
+            # Drop samples with any non-finite GT entry — same semantics as
+            # data/scoring.accumulate_batch's y_finite check, but we apply it
+            # to the mask up front so masked positions never see ``nan*0``.
+            B = y.shape[0]
+            sample_finite = torch.isfinite(y.reshape(B, -1)).all(dim=-1)  # [B]
+            if not sample_finite.all():
+                mask = mask & sample_finite[:, None]
+                # Replace non-finite y entries with 0 so subsequent products
+                # like ``err * mask`` don't propagate nan from the dead nodes.
+                y = torch.where(torch.isfinite(y), y, torch.zeros_like(y))
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
@@ -490,8 +512,11 @@ def main() -> None:
                 name: DataLoader(ds, batch_size=cfg.batch_size, shuffle=False, **loader_kwargs)
                 for name, ds in test_datasets.items()
             }
+            # Use fp32 for the paper-facing test eval to avoid bf16
+            # overflow on the largest cruise meshes (val_geom_camber_cruise
+            # max ~242K nodes), which can flip pred_p to inf/nan.
             test_metrics = {
-                name: evaluate_split(model, loader, stats, cfg.surf_weight, device, autocast_dtype)
+                name: evaluate_split(model, loader, stats, cfg.surf_weight, device, autocast_dtype=None)
                 for name, loader in test_loaders.items()
             }
             test_avg = aggregate_splits(test_metrics)
