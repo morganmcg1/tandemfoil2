@@ -211,6 +211,7 @@ class Config:
     epochs: int = 50
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     grad_clip: float = 0.0  # 0 disables; >0 clips by global norm
+    seed: int = -1  # >=0 sets torch.manual_seed for reproducibility / ensemble
     # --- model ---
     n_hidden: int = 128
     n_layers: int = 5
@@ -224,6 +225,7 @@ class Config:
     scheduler: str = "cosine"  # cosine | onecycle | none
     loss: str = "mse"  # mse | huber
     huber_delta: float = 1.0
+    ema_decay: float = 0.0  # 0 disables; e.g. 0.999 for EMA of weights
     # --- bookkeeping ---
     wandb_group: str | None = None
     wandb_name: str | None = None
@@ -236,6 +238,10 @@ def main() -> None:
     cfg = sp.parse(Config)
     MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
     MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
+
+    if cfg.seed >= 0:
+        torch.manual_seed(cfg.seed)
+        torch.cuda.manual_seed_all(cfg.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
@@ -278,6 +284,11 @@ def main() -> None:
     model = Transolver(**model_config).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model: Transolver ({n_params/1e6:.2f}M params, eidetic={cfg.use_eidetic})")
+
+    # Optional EMA shadow weights for evaluation.
+    ema_state = None
+    if cfg.ema_decay > 0:
+        ema_state = {k: v.detach().clone() for k, v in model.state_dict().items() if v.is_floating_point()}
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     if cfg.scheduler == "cosine":
@@ -374,6 +385,12 @@ def main() -> None:
             optimizer.step()
             if cfg.scheduler == "onecycle" and scheduler is not None:
                 scheduler.step()
+            if ema_state is not None:
+                d = cfg.ema_decay
+                with torch.no_grad():
+                    for k, v in model.state_dict().items():
+                        if k in ema_state:
+                            ema_state[k].mul_(d).add_(v.detach(), alpha=1 - d)
             global_step += 1
             wandb.log({"train/loss": loss.item(), "global_step": global_step})
 
@@ -387,6 +404,14 @@ def main() -> None:
         epoch_surf /= max(n_batches, 1)
 
         # --- Validate ---
+        # If EMA is on, swap in shadow weights for evaluation, restore after.
+        backup_state = None
+        if ema_state is not None:
+            backup_state = {k: v.detach().clone() for k, v in model.state_dict().items() if k in ema_state}
+            with torch.no_grad():
+                msd = model.state_dict()
+                for k, v in ema_state.items():
+                    msd[k].copy_(v)
         model.eval()
         split_metrics = {
             name: evaluate_split(model, loader, stats, cfg.surf_weight, device, autocast_dtype)
@@ -421,8 +446,16 @@ def main() -> None:
                 "val_avg/mae_surf_p": avg_surf_p,
                 "per_split": split_metrics,
             }
+            # Save the weights that produced this val (EMA if active).
             torch.save(model.state_dict(), model_path)
             tag = " *"
+
+        # Restore live weights after EMA eval.
+        if backup_state is not None:
+            with torch.no_grad():
+                msd = model.state_dict()
+                for k, v in backup_state.items():
+                    msd[k].copy_(v)
 
         peak_gb = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0.0
         print(
