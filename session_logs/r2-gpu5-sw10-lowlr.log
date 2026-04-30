@@ -1,0 +1,284 @@
+Device: cuda
+Train: 1499, val_single_in_dist: 100, val_geom_camber_rc: 100, val_geom_camber_cruise: 100, val_re_rand: 100
+Model: Transolver (0.66M params)
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: W&B API key is configured. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.26.1
+wandb: Run data is saved locally in /workspace/ml-intern-benchmark/target/wandb/run-20260430_112939-0yt67tio
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run mlintern-pai2-72h-v4-r2/r2-baseline-sw10-lowlr-90m
+wandb: ⭐️ View project at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern
+wandb: 🚀 View run at https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/0yt67tio
+  ep1 step 100/375 loss=16.2559 vol=2.8276 surf=1.3428 lr=3.00e-04
+  ep1 step 200/375 loss=4.8969 vol=0.8751 surf=0.4022 lr=3.00e-04
+  ep1 step 300/375 loss=2.9112 vol=0.5298 surf=0.2381 lr=3.00e-04
+Epoch   1 (134s) [42.1GB]  train[vol=1.8603 surf=1.0216]  val_avg_surf_p=221.7881 *
+    val_single_in_dist         loss=15.2631  surf[p=274.4662 Ux=4.0562 Uy=1.8181]  vol[p=290.5212 Ux=9.6495 Uy=4.4382]
+    val_geom_camber_rc         loss=8.1849  surf[p=240.4656 Ux=5.5070 Uy=1.9793]  vol[p=263.4287 Ux=10.0065 Uy=4.4984]
+    val_geom_camber_cruise     loss=4.1861  surf[p=174.0124 Ux=2.7870 Uy=1.1447]  vol[p=184.2311 Ux=7.9936 Uy=3.3582]
+    val_re_rand                loss=5.6690  surf[p=198.2080 Ux=3.9713 Uy=1.4873]  vol[p=204.4535 Ux=8.7873 Uy=3.6508]
+  ep2 step 100/375 loss=14.0991 vol=1.5418 surf=1.2557 lr=3.00e-04
+  ep2 step 200/375 loss=1.4747 vol=0.2823 surf=0.1192 lr=3.00e-04
+  ep2 step 300/375 loss=3.8504 vol=0.7949 surf=0.3056 lr=3.00e-04
+Epoch   2 (131s) [42.1GB]  train[vol=1.0915 surf=0.5996]  val_avg_surf_p=213.8885 *
+    val_single_in_dist         loss=14.8641  surf[p=252.5419 Ux=4.4524 Uy=1.2691]  vol[p=248.3154 Ux=9.8082 Uy=3.5388]
+    val_geom_camber_rc         loss=8.0550  surf[p=224.4117 Ux=4.8929 Uy=1.6151]  vol[p=199.9575 Ux=9.3874 Uy=4.0472]
+    val_geom_camber_cruise     loss=4.0648  surf[p=197.4346 Ux=3.1090 Uy=1.0594]  vol[p=201.8368 Ux=6.5862 Uy=2.9227]
+    val_re_rand                loss=4.9571  surf[p=181.1660 Ux=3.9861 Uy=1.2015]  vol[p=181.7752 Ux=8.0478 Uy=3.2175]
+  ep3 step 100/375 loss=2.7122 vol=0.3787 surf=0.2333 lr=3.00e-04
+  ep3 step 200/375 loss=2.3284 vol=0.3829 surf=0.1946 lr=3.00e-04
+  ep3 step 300/375 loss=9.4918 vol=1.1094 surf=0.8382 lr=3.00e-04
+Epoch   3 (133s) [42.1GB]  train[vol=0.7722 surf=0.4727]  val_avg_surf_p=197.2838 *
+    val_single_in_dist         loss=12.2829  surf[p=265.1097 Ux=3.2934 Uy=1.2248]  vol[p=245.0070 Ux=7.4463 Uy=3.0420]
+    val_geom_camber_rc         loss=6.6128  surf[p=218.0913 Ux=4.0816 Uy=1.4907]  vol[p=193.0886 Ux=7.5568 Uy=3.5526]
+    val_geom_camber_cruise     loss=2.4836  surf[p=139.5690 Ux=1.7656 Uy=0.9031]  vol[p=132.0927 Ux=5.1218 Uy=2.3567]
+    val_re_rand                loss=4.3141  surf[p=166.3654 Ux=2.8418 Uy=1.1431]  vol[p=153.4920 Ux=6.2531 Uy=2.8356]
+  ep4 step 100/375 loss=17.8934 vol=1.6192 surf=1.6274 lr=3.00e-04
+  ep4 step 200/375 loss=2.6210 vol=0.6076 surf=0.2013 lr=3.00e-04
+  ep4 step 300/375 loss=13.8576 vol=1.3511 surf=1.2506 lr=3.00e-04
+Epoch   4 (132s) [42.1GB]  train[vol=0.8709 surf=0.5600]  val_avg_surf_p=214.0436
+    val_single_in_dist         loss=12.9072  surf[p=281.9832 Ux=3.3335 Uy=1.6785]  vol[p=257.8749 Ux=7.7477 Uy=3.8965]
+    val_geom_camber_rc         loss=6.9312  surf[p=235.3607 Ux=4.0293 Uy=1.7496]  vol[p=200.7084 Ux=7.9538 Uy=3.7853]
+    val_geom_camber_cruise     loss=2.9706  surf[p=155.2078 Ux=3.0061 Uy=1.1120]  vol[p=147.5044 Ux=5.4121 Uy=2.6280]
+    val_re_rand                loss=4.8543  surf[p=183.6228 Ux=3.7818 Uy=1.3463]  vol[p=167.0702 Ux=6.9366 Uy=3.0092]
+  ep5 step 100/375 loss=3.2589 vol=0.4498 surf=0.2809 lr=3.00e-04
+  ep5 step 200/375 loss=0.3094 vol=0.0829 surf=0.0226 lr=3.00e-04
+  ep5 step 300/375 loss=3.8441 vol=0.5238 surf=0.3320 lr=3.00e-04
+Epoch   5 (132s) [42.1GB]  train[vol=0.6404 surf=0.4137]  val_avg_surf_p=178.3034 *
+    val_single_in_dist         loss=9.8307  surf[p=242.3267 Ux=3.4455 Uy=1.2231]  vol[p=222.8238 Ux=7.5630 Uy=3.1574]
+    val_geom_camber_rc         loss=5.1328  surf[p=180.2212 Ux=3.6091 Uy=1.3702]  vol[p=172.5231 Ux=6.7992 Uy=3.5995]
+    val_geom_camber_cruise     loss=2.6903  surf[p=142.9882 Ux=2.9961 Uy=0.9361]  vol[p=123.4989 Ux=5.7003 Uy=2.1038]
+    val_re_rand                loss=3.4549  surf[p=147.6775 Ux=3.0883 Uy=1.1035]  vol[p=142.7891 Ux=5.9849 Uy=2.6606]
+  ep6 step 100/375 loss=4.4705 vol=0.7528 surf=0.3718 lr=3.00e-04
+  ep6 step 200/375 loss=1.4136 vol=0.3151 surf=0.1098 lr=3.00e-04
+  ep6 step 300/375 loss=1.0286 vol=0.2106 surf=0.0818 lr=3.00e-04
+Epoch   6 (130s) [42.1GB]  train[vol=0.5932 surf=0.3798]  val_avg_surf_p=173.9450 *
+    val_single_in_dist         loss=10.4958  surf[p=215.9711 Ux=2.2211 Uy=1.0704]  vol[p=210.4958 Ux=6.6331 Uy=2.6763]
+    val_geom_camber_rc         loss=7.0721  surf[p=211.1720 Ux=3.7664 Uy=1.3354]  vol[p=186.2102 Ux=6.9663 Uy=3.4557]
+    val_geom_camber_cruise     loss=1.8981  surf[p=124.1127 Ux=1.5555 Uy=0.7596]  vol[p=116.1604 Ux=4.6383 Uy=1.8223]
+    val_re_rand                loss=3.6757  surf[p=144.5242 Ux=2.4311 Uy=0.9771]  vol[p=136.0833 Ux=5.5593 Uy=2.4475]
+  ep7 step 100/375 loss=1.5047 vol=0.3175 surf=0.1187 lr=3.00e-04
+  ep7 step 200/375 loss=1.7802 vol=0.3061 surf=0.1474 lr=3.00e-04
+  ep7 step 300/375 loss=3.4617 vol=0.5568 surf=0.2905 lr=3.00e-04
+Epoch   7 (133s) [42.1GB]  train[vol=0.5898 surf=0.3901]  val_avg_surf_p=173.0058 *
+    val_single_in_dist         loss=8.3001  surf[p=222.9796 Ux=2.3916 Uy=1.0020]  vol[p=214.1107 Ux=6.8051 Uy=2.6326]
+    val_geom_camber_rc         loss=5.1636  surf[p=185.3882 Ux=3.6239 Uy=1.3258]  vol[p=178.1618 Ux=6.7167 Uy=3.2795]
+    val_geom_camber_cruise     loss=2.2064  surf[p=140.6343 Ux=1.9789 Uy=0.7351]  vol[p=127.3895 Ux=4.7699 Uy=1.8592]
+    val_re_rand                loss=3.1583  surf[p=143.0209 Ux=2.5587 Uy=0.9778]  vol[p=139.5785 Ux=5.3402 Uy=2.3689]
+  ep8 step 100/375 loss=1.3723 vol=0.2107 surf=0.1162 lr=3.00e-04
+  ep8 step 200/375 loss=7.9441 vol=1.1308 surf=0.6813 lr=3.00e-04
+  ep8 step 300/375 loss=11.2139 vol=1.0769 surf=1.0137 lr=3.00e-04
+Epoch   8 (134s) [42.1GB]  train[vol=0.6020 surf=0.3745]  val_avg_surf_p=150.0657 *
+    val_single_in_dist         loss=7.8763  surf[p=206.7865 Ux=2.4209 Uy=1.0496]  vol[p=187.4533 Ux=6.6334 Uy=2.5986]
+    val_geom_camber_rc         loss=4.3074  surf[p=155.2034 Ux=3.1400 Uy=1.2301]  vol[p=157.6343 Ux=6.2762 Uy=3.2009]
+    val_geom_camber_cruise     loss=1.6350  surf[p=108.9784 Ux=1.4019 Uy=0.6529]  vol[p=112.8969 Ux=4.3813 Uy=1.7628]
+    val_re_rand                loss=2.9527  surf[p=129.2943 Ux=2.1087 Uy=0.8888]  vol[p=131.9257 Ux=5.1159 Uy=2.3293]
+  ep9 step 100/375 loss=1.4793 vol=0.2968 surf=0.1182 lr=3.00e-04
+  ep9 step 200/375 loss=2.4920 vol=0.3665 surf=0.2126 lr=3.00e-04
+  ep9 step 300/375 loss=2.0825 vol=0.2624 surf=0.1820 lr=3.00e-04
+Epoch   9 (133s) [42.1GB]  train[vol=0.5866 surf=0.3603]  val_avg_surf_p=149.9480 *
+    val_single_in_dist         loss=6.6504  surf[p=180.1197 Ux=2.0433 Uy=0.9276]  vol[p=180.6803 Ux=5.9801 Uy=2.5386]
+    val_geom_camber_rc         loss=4.2049  surf[p=161.5849 Ux=3.0169 Uy=1.2005]  vol[p=168.0034 Ux=6.0940 Uy=3.2291]
+    val_geom_camber_cruise     loss=1.7565  surf[p=120.2664 Ux=1.7975 Uy=0.6890]  vol[p=115.5134 Ux=4.6328 Uy=1.6865]
+    val_re_rand                loss=3.0036  surf[p=137.8212 Ux=2.5557 Uy=0.9164]  vol[p=135.1795 Ux=5.4154 Uy=2.3317]
+  ep10 step 100/375 loss=5.0560 vol=0.6433 surf=0.4413 lr=3.00e-04
+  ep10 step 200/375 loss=0.8879 vol=0.1415 surf=0.0746 lr=3.00e-04
+  ep10 step 300/375 loss=1.0767 vol=0.2824 surf=0.0794 lr=3.00e-04
+Epoch  10 (132s) [42.1GB]  train[vol=0.7110 surf=0.4646]  val_avg_surf_p=172.2270
+    val_single_in_dist         loss=9.0874  surf[p=219.8139 Ux=2.7518 Uy=1.1330]  vol[p=207.0871 Ux=7.1752 Uy=2.9198]
+    val_geom_camber_rc         loss=5.3611  surf[p=199.6905 Ux=3.8513 Uy=1.2521]  vol[p=184.1660 Ux=6.5178 Uy=3.3942]
+    val_geom_camber_cruise     loss=1.8398  surf[p=124.6321 Ux=1.9957 Uy=0.7641]  vol[p=116.5221 Ux=4.4819 Uy=1.8126]
+    val_re_rand                loss=3.1634  surf[p=144.7717 Ux=2.7537 Uy=0.9922]  vol[p=136.3165 Ux=5.2805 Uy=2.4730]
+  ep11 step 100/375 loss=5.9551 vol=0.6185 surf=0.5337 lr=3.00e-04
+  ep11 step 200/375 loss=3.1306 vol=0.3458 surf=0.2785 lr=3.00e-04
+  ep11 step 300/375 loss=3.1007 vol=0.4159 surf=0.2685 lr=3.00e-04
+Epoch  11 (131s) [42.1GB]  train[vol=0.4988 surf=0.3103]  val_avg_surf_p=165.7677
+    val_single_in_dist         loss=6.2544  surf[p=186.7448 Ux=1.8717 Uy=0.9577]  vol[p=194.5585 Ux=6.1206 Uy=2.4681]
+    val_geom_camber_rc         loss=4.5706  surf[p=170.8275 Ux=2.8521 Uy=1.1468]  vol[p=168.9984 Ux=5.9807 Uy=3.2357]
+    val_geom_camber_cruise     loss=2.4088  surf[p=145.5622 Ux=2.1315 Uy=0.8202]  vol[p=112.9654 Ux=4.8298 Uy=1.7581]
+    val_re_rand                loss=3.5915  surf[p=159.9361 Ux=2.5037 Uy=0.9945]  vol[p=142.2822 Ux=5.3104 Uy=2.3642]
+  ep12 step 100/375 loss=1.6290 vol=0.1980 surf=0.1431 lr=3.00e-04
+  ep12 step 200/375 loss=7.3565 vol=0.6532 surf=0.6703 lr=3.00e-04
+  ep12 step 300/375 loss=1.2264 vol=0.2121 surf=0.1014 lr=3.00e-04
+Epoch  12 (131s) [42.1GB]  train[vol=0.4792 surf=0.3054]  val_avg_surf_p=137.9060 *
+    val_single_in_dist         loss=5.2104  surf[p=167.3833 Ux=1.8728 Uy=0.9150]  vol[p=173.0827 Ux=5.5661 Uy=2.3701]
+    val_geom_camber_rc         loss=3.9319  surf[p=142.8176 Ux=2.8811 Uy=1.1336]  vol[p=146.3266 Ux=5.9911 Uy=3.0999]
+    val_geom_camber_cruise     loss=1.6335  surf[p=114.1333 Ux=1.3077 Uy=0.6488]  vol[p=106.1747 Ux=4.0735 Uy=1.6212]
+    val_re_rand                loss=2.7568  surf[p=127.2896 Ux=2.0866 Uy=0.9026]  vol[p=121.9192 Ux=4.9657 Uy=2.2204]
+  ep13 step 100/375 loss=2.4865 vol=0.3197 surf=0.2167 lr=3.00e-04
+  ep13 step 200/375 loss=0.7555 vol=0.1664 surf=0.0589 lr=3.00e-04
+  ep13 step 300/375 loss=0.3450 vol=0.0957 surf=0.0249 lr=3.00e-04
+Epoch  13 (132s) [42.1GB]  train[vol=0.5325 surf=0.3501]  val_avg_surf_p=134.1541 *
+    val_single_in_dist         loss=5.4311  surf[p=165.7004 Ux=2.4792 Uy=0.9229]  vol[p=169.3259 Ux=6.0970 Uy=2.3610]
+    val_geom_camber_rc         loss=3.8751  surf[p=142.7541 Ux=2.8988 Uy=1.1545]  vol[p=149.0792 Ux=6.0075 Uy=2.9751]
+    val_geom_camber_cruise     loss=1.6129  surf[p=105.5319 Ux=1.4493 Uy=0.6675]  vol[p=103.0997 Ux=4.0916 Uy=1.5817]
+    val_re_rand                loss=2.6991  surf[p=122.6301 Ux=1.9764 Uy=0.9211]  vol[p=120.2920 Ux=4.7821 Uy=2.1876]
+  ep14 step 100/375 loss=0.9797 vol=0.1609 surf=0.0819 lr=3.00e-04
+  ep14 step 200/375 loss=10.4498 vol=1.3835 surf=0.9066 lr=3.00e-04
+  ep14 step 300/375 loss=2.4913 vol=0.3548 surf=0.2136 lr=3.00e-04
+Epoch  14 (134s) [42.1GB]  train[vol=0.5102 surf=0.3277]  val_avg_surf_p=122.7517 *
+    val_single_in_dist         loss=4.4556  surf[p=150.0793 Ux=2.1691 Uy=0.8908]  vol[p=159.7038 Ux=6.1778 Uy=2.3266]
+    val_geom_camber_rc         loss=3.4310  surf[p=131.1196 Ux=2.7097 Uy=1.0320]  vol[p=138.4833 Ux=5.8814 Uy=2.9109]
+    val_geom_camber_cruise     loss=1.3491  surf[p=96.5128 Ux=1.5487 Uy=0.6070]  vol[p=93.6618 Ux=4.0541 Uy=1.5495]
+    val_re_rand                loss=2.3947  surf[p=113.2952 Ux=2.0923 Uy=0.8463]  vol[p=116.1627 Ux=4.7671 Uy=2.1636]
+  ep15 step 100/375 loss=1.8021 vol=0.3161 surf=0.1486 lr=3.00e-04
+  ep15 step 200/375 loss=3.4889 vol=0.4679 surf=0.3021 lr=3.00e-04
+  ep15 step 300/375 loss=0.6812 vol=0.1408 surf=0.0540 lr=3.00e-04
+Epoch  15 (134s) [42.1GB]  train[vol=0.4223 surf=0.2498]  val_avg_surf_p=146.7836
+    val_single_in_dist         loss=4.9839  surf[p=169.1941 Ux=2.5503 Uy=0.8372]  vol[p=159.1101 Ux=6.6494 Uy=2.2826]
+    val_geom_camber_rc         loss=4.9645  surf[p=191.6811 Ux=4.3034 Uy=1.2242]  vol[p=161.8591 Ux=7.1995 Uy=3.0912]
+    val_geom_camber_cruise     loss=1.2536  surf[p=101.5865 Ux=1.2900 Uy=0.5957]  vol[p=97.3337 Ux=3.7525 Uy=1.4980]
+    val_re_rand                loss=2.7463  surf[p=124.6726 Ux=2.2927 Uy=0.8397]  vol[p=116.1675 Ux=4.8284 Uy=2.0962]
+  ep16 step 100/375 loss=1.0603 vol=0.2340 surf=0.0826 lr=3.00e-04
+  ep16 step 200/375 loss=2.8809 vol=0.4952 surf=0.2386 lr=3.00e-04
+  ep16 step 300/375 loss=1.8846 vol=0.3091 surf=0.1576 lr=3.00e-04
+Epoch  16 (132s) [42.1GB]  train[vol=0.4529 surf=0.2744]  val_avg_surf_p=153.6900
+    val_single_in_dist         loss=8.4889  surf[p=194.2021 Ux=2.3424 Uy=1.0283]  vol[p=191.2144 Ux=6.1991 Uy=2.3815]
+    val_geom_camber_rc         loss=5.8463  surf[p=183.8423 Ux=3.1115 Uy=1.3597]  vol[p=171.6670 Ux=6.4191 Uy=3.1626]
+    val_geom_camber_cruise     loss=1.8024  surf[p=112.1068 Ux=2.8970 Uy=0.6073]  vol[p=107.4514 Ux=5.6297 Uy=1.5477]
+    val_re_rand                loss=3.2278  surf[p=124.6088 Ux=2.9422 Uy=0.8693]  vol[p=120.1822 Ux=5.7188 Uy=2.1210]
+  ep17 step 100/375 loss=5.6528 vol=0.7399 surf=0.4913 lr=3.00e-04
+  ep17 step 200/375 loss=6.2103 vol=0.5977 surf=0.5613 lr=3.00e-04
+  ep17 step 300/375 loss=1.9275 vol=0.2970 surf=0.1630 lr=3.00e-04
+Epoch  17 (132s) [42.1GB]  train[vol=0.4220 surf=0.2542]  val_avg_surf_p=128.2676
+    val_single_in_dist         loss=3.7489  surf[p=137.2645 Ux=1.8081 Uy=0.8168]  vol[p=150.7174 Ux=5.8470 Uy=2.1357]
+    val_geom_camber_rc         loss=3.2818  surf[p=142.1832 Ux=2.4346 Uy=1.0322]  vol[p=134.6043 Ux=5.8185 Uy=2.7197]
+    val_geom_camber_cruise     loss=1.4278  surf[p=107.6775 Ux=1.3880 Uy=0.5908]  vol[p=97.4600 Ux=3.8952 Uy=1.5329]
+    val_re_rand                loss=2.3825  surf[p=125.9453 Ux=1.8629 Uy=0.7869]  vol[p=115.3243 Ux=4.5709 Uy=2.0268]
+  ep18 step 100/375 loss=0.6164 vol=0.1463 surf=0.0470 lr=3.00e-04
+  ep18 step 200/375 loss=2.9919 vol=0.3930 surf=0.2599 lr=3.00e-04
+  ep18 step 300/375 loss=4.5847 vol=0.5101 surf=0.4075 lr=3.00e-04
+Epoch  18 (132s) [42.1GB]  train[vol=0.3384 surf=0.1945]  val_avg_surf_p=119.1215 *
+    val_single_in_dist         loss=4.2557  surf[p=136.8848 Ux=1.7571 Uy=0.8441]  vol[p=147.7010 Ux=5.2842 Uy=2.4564]
+    val_geom_camber_rc         loss=3.7143  surf[p=140.7714 Ux=3.0782 Uy=1.0828]  vol[p=140.5620 Ux=6.3244 Uy=2.9771]
+    val_geom_camber_cruise     loss=1.2522  surf[p=90.7838 Ux=1.7623 Uy=0.5846]  vol[p=88.7453 Ux=4.2801 Uy=1.5050]
+    val_re_rand                loss=2.4445  surf[p=108.0461 Ux=2.2574 Uy=0.7808]  vol[p=106.5674 Ux=4.9032 Uy=2.1018]
+  ep19 step 100/375 loss=3.0844 vol=0.3661 surf=0.2718 lr=3.00e-04
+  ep19 step 200/375 loss=3.0955 vol=0.4543 surf=0.2641 lr=3.00e-04
+  ep19 step 300/375 loss=1.6626 vol=0.2524 surf=0.1410 lr=3.00e-04
+Epoch  19 (131s) [42.1GB]  train[vol=0.3792 surf=0.2291]  val_avg_surf_p=138.0369
+    val_single_in_dist         loss=6.6353  surf[p=168.6281 Ux=1.6465 Uy=1.0861]  vol[p=165.8567 Ux=5.5161 Uy=2.4177]
+    val_geom_camber_rc         loss=3.6185  surf[p=148.1790 Ux=2.3879 Uy=1.1368]  vol[p=143.8280 Ux=5.6188 Uy=2.7852]
+    val_geom_camber_cruise     loss=1.7999  surf[p=110.4828 Ux=1.3357 Uy=0.7042]  vol[p=93.5711 Ux=4.1145 Uy=1.5993]
+    val_re_rand                loss=2.6128  surf[p=124.8576 Ux=1.8588 Uy=0.8915]  vol[p=114.7717 Ux=4.7067 Uy=2.1175]
+  ep20 step 100/375 loss=4.6056 vol=0.7862 surf=0.3819 lr=3.00e-04
+  ep20 step 200/375 loss=2.3564 vol=0.2696 surf=0.2087 lr=3.00e-04
+  ep20 step 300/375 loss=0.8109 vol=0.1813 surf=0.0630 lr=3.00e-04
+Epoch  20 (132s) [42.1GB]  train[vol=0.5045 surf=0.3219]  val_avg_surf_p=144.8077
+    val_single_in_dist         loss=4.9262  surf[p=171.3673 Ux=2.2418 Uy=0.9819]  vol[p=181.3855 Ux=6.1310 Uy=2.3827]
+    val_geom_camber_rc         loss=4.0707  surf[p=163.7772 Ux=3.2822 Uy=1.0912]  vol[p=162.6200 Ux=6.5147 Uy=2.9365]
+    val_geom_camber_cruise     loss=1.5847  surf[p=110.9621 Ux=1.3306 Uy=0.6891]  vol[p=102.7850 Ux=3.9231 Uy=1.6059]
+    val_re_rand                loss=2.8579  surf[p=133.1244 Ux=2.2508 Uy=0.8509]  vol[p=125.5376 Ux=4.8945 Uy=2.1734]
+  ep21 step 100/375 loss=0.6677 vol=0.1612 surf=0.0507 lr=3.00e-04
+  ep21 step 200/375 loss=2.6073 vol=0.3099 surf=0.2297 lr=3.00e-04
+  ep21 step 300/375 loss=0.2822 vol=0.0827 surf=0.0200 lr=3.00e-04
+Epoch  21 (132s) [42.1GB]  train[vol=0.3351 surf=0.1836]  val_avg_surf_p=144.8566
+    val_single_in_dist         loss=4.1088  surf[p=149.2279 Ux=1.8830 Uy=0.7657]  vol[p=151.4210 Ux=5.3863 Uy=2.1461]
+    val_geom_camber_rc         loss=4.8848  surf[p=187.7141 Ux=2.7940 Uy=1.0304]  vol[p=166.5952 Ux=5.9862 Uy=2.9343]
+    val_geom_camber_cruise     loss=1.5725  surf[p=115.2915 Ux=1.3050 Uy=0.5925]  vol[p=114.1574 Ux=4.0971 Uy=1.5721]
+    val_re_rand                loss=2.6522  surf[p=127.1927 Ux=1.8489 Uy=0.7566]  vol[p=122.6185 Ux=4.6683 Uy=2.1027]
+  ep22 step 100/375 loss=1.6245 vol=0.3281 surf=0.1296 lr=3.00e-04
+  ep22 step 200/375 loss=2.1929 vol=0.3464 surf=0.1847 lr=3.00e-04
+  ep22 step 300/375 loss=1.8667 vol=0.4449 surf=0.1422 lr=3.00e-04
+Epoch  22 (132s) [42.1GB]  train[vol=0.5234 surf=0.3273]  val_avg_surf_p=124.1412
+    val_single_in_dist         loss=4.4199  surf[p=153.6076 Ux=1.7065 Uy=0.8910]  vol[p=155.1951 Ux=5.3672 Uy=2.1912]
+    val_geom_camber_rc         loss=3.2301  surf[p=140.3573 Ux=2.5430 Uy=0.9987]  vol[p=128.2862 Ux=5.8228 Uy=2.7477]
+    val_geom_camber_cruise     loss=1.2822  surf[p=93.7717 Ux=1.2902 Uy=0.6195]  vol[p=95.0841 Ux=3.8583 Uy=1.4171]
+    val_re_rand                loss=2.1836  surf[p=108.8281 Ux=1.8076 Uy=0.7992]  vol[p=105.4790 Ux=4.5769 Uy=2.0256]
+  ep23 step 100/375 loss=0.3283 vol=0.0711 surf=0.0257 lr=3.00e-04
+  ep23 step 200/375 loss=3.2939 vol=0.4692 surf=0.2825 lr=3.00e-04
+  ep23 step 300/375 loss=0.9721 vol=0.1445 surf=0.0828 lr=3.00e-04
+Epoch  23 (134s) [42.1GB]  train[vol=0.3329 surf=0.1878]  val_avg_surf_p=128.3160
+    val_single_in_dist         loss=5.4068  surf[p=179.8281 Ux=2.2196 Uy=0.8863]  vol[p=170.6407 Ux=5.7430 Uy=2.3043]
+    val_geom_camber_rc         loss=2.6903  surf[p=124.3040 Ux=2.5523 Uy=0.9476]  vol[p=129.3739 Ux=5.5522 Uy=2.6715]
+    val_geom_camber_cruise     loss=1.3200  surf[p=92.6486 Ux=1.7931 Uy=0.5864]  vol[p=92.5483 Ux=4.3875 Uy=1.6025]
+    val_re_rand                loss=2.5443  surf[p=116.4832 Ux=2.3589 Uy=0.7572]  vol[p=114.1766 Ux=5.0681 Uy=2.0871]
+  ep24 step 100/375 loss=1.4346 vol=0.2582 surf=0.1176 lr=3.00e-04
+  ep24 step 200/375 loss=1.3574 vol=0.2674 surf=0.1090 lr=3.00e-04
+  ep24 step 300/375 loss=3.7375 vol=0.4079 surf=0.3330 lr=3.00e-04
+Epoch  24 (132s) [42.1GB]  train[vol=0.4441 surf=0.2924]  val_avg_surf_p=126.5056
+    val_single_in_dist         loss=4.3350  surf[p=154.4648 Ux=2.0854 Uy=0.8495]  vol[p=160.0050 Ux=5.5122 Uy=2.3689]
+    val_geom_camber_rc         loss=2.8046  surf[p=126.4995 Ux=2.5444 Uy=1.0140]  vol[p=127.8052 Ux=5.4295 Uy=2.8898]
+    val_geom_camber_cruise     loss=1.3311  surf[p=105.1895 Ux=1.4002 Uy=0.6840]  vol[p=95.5091 Ux=3.5159 Uy=1.6187]
+    val_re_rand                loss=2.3994  surf[p=119.8686 Ux=1.9434 Uy=0.8648]  vol[p=113.5313 Ux=4.3002 Uy=2.1814]
+  ep25 step 100/375 loss=2.5348 vol=0.4458 surf=0.2089 lr=3.00e-04
+  ep25 step 200/375 loss=0.4109 vol=0.0889 surf=0.0322 lr=3.00e-04
+  ep25 step 300/375 loss=0.8226 vol=0.1645 surf=0.0658 lr=3.00e-04
+Epoch  25 (130s) [42.1GB]  train[vol=0.4458 surf=0.2489]  val_avg_surf_p=107.1497 *
+    val_single_in_dist         loss=3.7284  surf[p=129.3073 Ux=1.6470 Uy=0.8214]  vol[p=143.0348 Ux=4.9841 Uy=2.2250]
+    val_geom_camber_rc         loss=2.4405  surf[p=112.1056 Ux=2.1489 Uy=0.8879]  vol[p=115.5619 Ux=5.0991 Uy=2.5762]
+    val_geom_camber_cruise     loss=1.1345  surf[p=89.6357 Ux=1.0400 Uy=0.5922]  vol[p=85.5576 Ux=3.4168 Uy=1.4667]
+    val_re_rand                loss=1.8891  surf[p=97.5501 Ux=1.5859 Uy=0.7422]  vol[p=97.5775 Ux=4.0524 Uy=1.9529]
+  ep26 step 100/375 loss=1.2356 vol=0.2784 surf=0.0957 lr=3.00e-04
+  ep26 step 200/375 loss=2.4561 vol=0.3846 surf=0.2071 lr=3.00e-04
+  ep26 step 300/375 loss=8.1212 vol=1.4063 surf=0.6715 lr=3.00e-04
+Epoch  26 (133s) [42.1GB]  train[vol=0.3783 surf=0.2322]  val_avg_surf_p=121.9769
+    val_single_in_dist         loss=4.9120  surf[p=161.8413 Ux=1.6344 Uy=0.7723]  vol[p=156.7487 Ux=4.9830 Uy=2.0702]
+    val_geom_camber_rc         loss=2.7608  surf[p=129.0834 Ux=2.3230 Uy=0.8860]  vol[p=126.4800 Ux=5.5125 Uy=2.6078]
+    val_geom_camber_cruise     loss=1.1012  surf[p=89.0385 Ux=1.2220 Uy=0.6060]  vol[p=86.4365 Ux=3.6391 Uy=1.4623]
+    val_re_rand                loss=2.2668  surf[p=107.9445 Ux=1.7661 Uy=0.7515]  vol[p=105.5415 Ux=4.3936 Uy=2.0088]
+  ep27 step 100/375 loss=2.2283 vol=0.3630 surf=0.1865 lr=2.99e-04
+  ep27 step 200/375 loss=1.2980 vol=0.2478 surf=0.1050 lr=2.99e-04
+  ep27 step 300/375 loss=1.0217 vol=0.1865 surf=0.0835 lr=2.99e-04
+Epoch  27 (132s) [42.1GB]  train[vol=0.3577 surf=0.1971]  val_avg_surf_p=106.2441 *
+    val_single_in_dist         loss=3.5371  surf[p=119.4350 Ux=1.4443 Uy=0.7013]  vol[p=128.6275 Ux=4.8072 Uy=1.9511]
+    val_geom_camber_rc         loss=2.6103  surf[p=127.1306 Ux=2.3743 Uy=0.9245]  vol[p=122.2611 Ux=5.1466 Uy=2.6016]
+    val_geom_camber_cruise     loss=0.9654  surf[p=79.7165 Ux=1.0422 Uy=0.5763]  vol[p=74.4168 Ux=3.2910 Uy=1.3182]
+    val_re_rand                loss=1.8667  surf[p=98.6944 Ux=1.6496 Uy=0.7503]  vol[p=93.6867 Ux=4.0034 Uy=1.8751]
+  ep28 step 100/375 loss=1.4187 vol=0.2477 surf=0.1171 lr=2.99e-04
+  ep28 step 200/375 loss=0.5750 vol=0.1393 surf=0.0436 lr=2.99e-04
+  ep28 step 300/375 loss=0.4707 vol=0.1145 surf=0.0356 lr=2.99e-04
+Epoch  28 (132s) [42.1GB]  train[vol=0.2827 surf=0.1561]  val_avg_surf_p=105.8980 *
+    val_single_in_dist         loss=4.1982  surf[p=135.1510 Ux=2.5891 Uy=0.8602]  vol[p=142.4810 Ux=5.7911 Uy=2.2447]
+    val_geom_camber_rc         loss=2.3960  surf[p=108.6024 Ux=2.6467 Uy=0.9109]  vol[p=121.3693 Ux=5.1097 Uy=2.6291]
+    val_geom_camber_cruise     loss=1.1046  surf[p=81.7730 Ux=1.5083 Uy=0.5622]  vol[p=86.2411 Ux=3.6362 Uy=1.3435]
+    val_re_rand                loss=2.0440  surf[p=98.0656 Ux=2.0549 Uy=0.7287]  vol[p=102.9962 Ux=4.1844 Uy=1.8986]
+  ep29 step 100/375 loss=6.4313 vol=0.6177 surf=0.5814 lr=2.99e-04
+  ep29 step 200/375 loss=0.5180 vol=0.1168 surf=0.0401 lr=2.99e-04
+  ep29 step 300/375 loss=3.5775 vol=0.4474 surf=0.3130 lr=2.99e-04
+Epoch  29 (132s) [42.1GB]  train[vol=0.3694 surf=0.2090]  val_avg_surf_p=102.0944 *
+    val_single_in_dist         loss=3.0247  surf[p=121.5666 Ux=1.3456 Uy=0.7032]  vol[p=127.1680 Ux=4.5212 Uy=1.8655]
+    val_geom_camber_rc         loss=2.5086  surf[p=110.4502 Ux=2.3470 Uy=0.8776]  vol[p=113.9901 Ux=5.2524 Uy=2.4530]
+    val_geom_camber_cruise     loss=0.9549  surf[p=80.1548 Ux=1.0897 Uy=0.5518]  vol[p=75.8793 Ux=3.2193 Uy=1.3197]
+    val_re_rand                loss=1.8271  surf[p=96.2062 Ux=1.6813 Uy=0.7141]  vol[p=94.7750 Ux=3.9552 Uy=1.8517]
+  ep30 step 100/375 loss=0.8482 vol=0.1734 surf=0.0675 lr=2.99e-04
+  ep30 step 200/375 loss=0.6470 vol=0.1398 surf=0.0507 lr=2.99e-04
+  ep30 step 300/375 loss=1.1495 vol=0.1709 surf=0.0979 lr=2.99e-04
+Epoch  30 (131s) [42.1GB]  train[vol=0.4561 surf=0.2772]  val_avg_surf_p=117.7196
+    val_single_in_dist         loss=3.9949  surf[p=156.8733 Ux=1.8981 Uy=0.7656]  vol[p=153.2825 Ux=5.4065 Uy=2.1614]
+    val_geom_camber_rc         loss=2.7147  surf[p=125.6597 Ux=2.4936 Uy=0.9048]  vol[p=125.0750 Ux=5.4438 Uy=2.7178]
+    val_geom_camber_cruise     loss=1.0798  surf[p=84.1264 Ux=1.1986 Uy=0.5464]  vol[p=80.3792 Ux=3.7182 Uy=1.3820]
+    val_re_rand                loss=2.0744  surf[p=104.2188 Ux=1.7913 Uy=0.7380]  vol[p=99.2436 Ux=4.2935 Uy=2.0039]
+  ep31 step 100/375 loss=2.0532 vol=0.3849 surf=0.1668 lr=2.99e-04
+  ep31 step 200/375 loss=1.9277 vol=0.3067 surf=0.1621 lr=2.99e-04
+  ep31 step 300/375 loss=0.9837 vol=0.1805 surf=0.0803 lr=2.99e-04
+Epoch  31 (131s) [42.1GB]  train[vol=0.3095 surf=0.1734]  val_avg_surf_p=105.9747
+    val_single_in_dist         loss=2.9576  surf[p=114.8717 Ux=1.2961 Uy=0.6614]  vol[p=123.6513 Ux=4.5230 Uy=1.8975]
+    val_geom_camber_rc         loss=2.7070  surf[p=123.3896 Ux=2.2637 Uy=0.9568]  vol[p=120.9655 Ux=5.1379 Uy=2.5763]
+    val_geom_camber_cruise     loss=1.1306  surf[p=86.8075 Ux=1.1760 Uy=0.5668]  vol[p=82.3749 Ux=3.7186 Uy=1.3329]
+    val_re_rand                loss=2.1156  surf[p=98.8302 Ux=1.6508 Uy=0.7383]  vol[p=97.4357 Ux=4.1753 Uy=1.8932]
+  ep32 step 100/375 loss=0.2076 vol=0.0586 surf=0.0149 lr=2.99e-04
+  ep32 step 200/375 loss=3.5758 vol=0.4390 surf=0.3137 lr=2.99e-04
+  ep32 step 300/375 loss=1.0680 vol=0.2276 surf=0.0840 lr=2.99e-04
+Epoch  32 (133s) [42.1GB]  train[vol=0.3162 surf=0.1796]  val_avg_surf_p=127.1290
+    val_single_in_dist         loss=3.8386  surf[p=144.4918 Ux=2.6218 Uy=0.8607]  vol[p=139.5472 Ux=5.6486 Uy=2.1932]
+    val_geom_camber_rc         loss=2.9879  surf[p=135.8725 Ux=2.9778 Uy=0.9802]  vol[p=129.3923 Ux=5.7383 Uy=2.6092]
+    val_geom_camber_cruise     loss=1.4916  surf[p=106.2002 Ux=2.1898 Uy=0.6230]  vol[p=88.0637 Ux=4.6658 Uy=1.5830]
+    val_re_rand                loss=2.5952  surf[p=121.9516 Ux=2.7816 Uy=0.8088]  vol[p=107.0592 Ux=5.4097 Uy=2.0636]
+  ep33 step 100/375 loss=0.8252 vol=0.2087 surf=0.0617 lr=2.99e-04
+  ep33 step 200/375 loss=0.5752 vol=0.1119 surf=0.0463 lr=2.99e-04
+  ep33 step 300/375 loss=2.3205 vol=0.3416 surf=0.1979 lr=2.99e-04
+Epoch  33 (129s) [42.1GB]  train[vol=0.3399 surf=0.2010]  val_avg_surf_p=142.1752
+    val_single_in_dist         loss=5.3841  surf[p=209.3233 Ux=2.4944 Uy=0.9929]  vol[p=166.3536 Ux=5.6743 Uy=2.2878]
+    val_geom_camber_rc         loss=2.7716  surf[p=131.6147 Ux=2.4267 Uy=0.9767]  vol[p=126.0688 Ux=5.3136 Uy=2.7031]
+    val_geom_camber_cruise     loss=1.5784  surf[p=111.8077 Ux=1.4720 Uy=0.7401]  vol[p=92.7993 Ux=3.8154 Uy=1.4799]
+    val_re_rand                loss=2.3115  surf[p=115.9551 Ux=1.8608 Uy=0.8224]  vol[p=105.3649 Ux=4.3742 Uy=2.0140]
+  ep34 step 100/375 loss=2.7353 vol=0.3616 surf=0.2374 lr=2.99e-04
+  ep34 step 200/375 loss=1.9561 vol=0.2808 surf=0.1675 lr=2.99e-04
+  ep34 step 300/375 loss=2.0874 vol=0.3710 surf=0.1716 lr=2.99e-04
+Epoch  34 (132s) [42.1GB]  train[vol=0.2527 surf=0.1332]  val_avg_surf_p=118.9378
+    val_single_in_dist         loss=4.3625  surf[p=141.7423 Ux=1.4602 Uy=0.6547]  vol[p=150.6061 Ux=4.6277 Uy=1.8602]
+    val_geom_camber_rc         loss=3.2113  surf[p=149.9064 Ux=2.7450 Uy=1.0513]  vol[p=142.2851 Ux=5.6724 Uy=2.7566]
+    val_geom_camber_cruise     loss=0.9917  surf[p=82.5654 Ux=1.0347 Uy=0.5502]  vol[p=75.0813 Ux=3.3038 Uy=1.3006]
+    val_re_rand                loss=2.0782  surf[p=101.5371 Ux=1.6861 Uy=0.7441]  vol[p=95.8034 Ux=4.1550 Uy=1.8974]
+  ep35 step 100/375 loss=0.7980 vol=0.1503 surf=0.0648 lr=2.99e-04

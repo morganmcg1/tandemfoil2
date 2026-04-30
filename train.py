@@ -418,6 +418,8 @@ class Config:
     # Pressure-channel emphasis within both surface and volume losses.
     # 1.0 = equal weight across (Ux, Uy, p). >1.0 emphasizes pressure.
     p_weight: float = 1.0
+    # Random seed (None = no explicit seeding, prior behavior).
+    seed: int = -1
     # Logging
     progress_every: int = 50  # print loss every N batches; 0 = disable, use tqdm
 
@@ -425,6 +427,15 @@ class Config:
 cfg = sp.parse(Config)
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
+
+if cfg.seed is not None and cfg.seed >= 0:
+    import random
+    import numpy as np
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
+    torch.cuda.manual_seed_all(cfg.seed)
+    print(f"Seeded with {cfg.seed}")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))

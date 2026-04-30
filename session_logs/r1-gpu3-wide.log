@@ -98,3 +98,76 @@ Epoch  11 (261s) [83.9GB]  train[vol=0.5063 surf=0.3068]  val_avg_surf_p=142.975
     val_geom_camber_rc         loss=3.8428  surf[p=153.7859 Ux=3.2671 Uy=1.1201]  vol[p=149.9602 Ux=6.0240 Uy=3.0471]
     val_geom_camber_cruise     loss=1.5746  surf[p=113.2561 Ux=1.6935 Uy=0.7005]  vol[p=108.1174 Ux=4.1001 Uy=1.6712]
     val_re_rand                loss=2.4917  surf[p=117.4174 Ux=2.3755 Uy=0.8773]  vol[p=117.3682 Ux=4.7475 Uy=2.2040]
+  ep12 step 100/375 loss=1.6271 vol=0.2583 surf=0.1369 lr=5.00e-04
+  ep12 step 200/375 loss=1.7920 vol=0.2972 surf=0.1495 lr=5.00e-04
+  ep12 step 300/375 loss=1.5860 vol=0.2955 surf=0.1290 lr=5.00e-04
+Epoch  12 (259s) [83.9GB]  train[vol=0.5054 surf=0.3137]  val_avg_surf_p=146.7700
+    val_single_in_dist         loss=6.3497  surf[p=177.3276 Ux=1.8743 Uy=0.9851]  vol[p=178.4734 Ux=5.4680 Uy=2.3905]
+    val_geom_camber_rc         loss=4.8707  surf[p=162.5777 Ux=2.7733 Uy=1.2034]  vol[p=173.6660 Ux=5.9330 Uy=3.1250]
+    val_geom_camber_cruise     loss=1.6715  surf[p=115.0578 Ux=1.3855 Uy=0.6764]  vol[p=107.4977 Ux=4.2289 Uy=1.7160]
+    val_re_rand                loss=3.1256  surf[p=132.1170 Ux=1.9376 Uy=0.9469]  vol[p=129.6453 Ux=4.7024 Uy=2.3340]
+  ep13 step 100/375 loss=10.4096 vol=1.1776 surf=0.9232 lr=5.00e-04
+  ep13 step 200/375 loss=2.2289 vol=0.3555 surf=0.1873 lr=5.00e-04
+  ep13 step 300/375 loss=6.0944 vol=0.7942 surf=0.5300 lr=5.00e-04
+Epoch  13 (260s) [83.9GB]  train[vol=0.5515 surf=0.3520]  val_avg_surf_p=135.6292 *
+    val_single_in_dist         loss=4.2760  surf[p=144.8895 Ux=1.9405 Uy=0.8427]  vol[p=155.5043 Ux=5.4514 Uy=2.2327]
+    val_geom_camber_rc         loss=3.8665  surf[p=149.4957 Ux=3.3808 Uy=1.0736]  vol[p=147.6599 Ux=6.1255 Uy=2.8242]
+    val_geom_camber_cruise     loss=1.7080  surf[p=121.7825 Ux=1.7345 Uy=0.7054]  vol[p=113.7195 Ux=3.9712 Uy=1.5347]
+    val_re_rand                loss=2.5345  surf[p=126.3490 Ux=2.2822 Uy=0.8699]  vol[p=121.9212 Ux=4.6820 Uy=2.0953]
+  ep14 step 100/375 loss=3.9444 vol=0.5090 surf=0.3435 lr=5.00e-04
+  ep14 step 200/375 loss=2.6264 vol=0.3630 surf=0.2263 lr=5.00e-04
+  ep14 step 300/375 loss=0.3585 vol=0.1005 surf=0.0258 lr=5.00e-04
+Epoch  14 (263s) [83.9GB]  train[vol=0.4506 surf=0.2890]  val_avg_surf_p=126.5062 *
+    val_single_in_dist         loss=4.8097  surf[p=153.9537 Ux=2.1178 Uy=1.0832]  vol[p=165.1280 Ux=5.8566 Uy=2.5368]
+    val_geom_camber_rc         loss=3.3083  surf[p=134.8974 Ux=2.8643 Uy=1.3145]  vol[p=136.1279 Ux=5.9537 Uy=3.1377]
+    val_geom_camber_cruise     loss=1.3223  surf[p=97.7884 Ux=1.7117 Uy=0.7231]  vol[p=90.0273 Ux=4.2000 Uy=1.6441]
+    val_re_rand                loss=2.5413  surf[p=119.3853 Ux=2.1211 Uy=1.0132]  vol[p=110.1220 Ux=4.8219 Uy=2.2503]
+Timeout (60.0 min). Stopping.
+
+Training done in 61.0 min
+
+Best val: epoch 14, val_avg/mae_surf_p = 126.5062
+
+Evaluating on held-out test splits...
+Test: test_single_in_dist: 200, test_geom_camber_rc: 200, test_geom_camber_cruise: 200, test_re_rand: 200
+
+  TEST  avg_surf_p=nan
+    test_single_in_dist        loss=3.9480  surf[p=129.6955 Ux=1.8372 Uy=0.9817]  vol[p=142.7558 Ux=5.1666 Uy=2.2951]
+    test_geom_camber_rc        loss=2.7993  surf[p=124.7216 Ux=2.8319 Uy=1.2810]  vol[p=123.6911 Ux=5.9123 Uy=3.0426]
+    test_geom_camber_cruise    loss=nan  surf[p=nan Ux=1.5200 Uy=0.6672]  vol[p=nan Ux=3.9021 Uy=1.5065]
+    test_re_rand               loss=2.0864  surf[p=113.9332 Ux=2.0400 Uy=0.9508]  vol[p=106.9737 Ux=4.7193 Uy=2.1100]
+
+Logged model artifact 'model-mlintern-pai2-72h-v4-r2-r1-wide-h256-l5-rwmkslvg' (aliases: best, epoch-14)
+wandb: uploading artifact model-mlintern-pai2-72h-v4-r2-r1-wide-h256-l5-rwmkslvg; updating run metadata
+wandb: uploading artifact model-mlintern-pai2-72h-v4-r2-r1-wide-h256-l5-rwmkslvg
+wandb: 
+wandb: Run history:
+wandb:                             epoch_time_s ██▅▆▃▁▂▄▁▇▅▁▂▇
+wandb:                              global_step ▁▁▁▁▁▁▁▁▂▂▂▂▂▂▂▃▃▃▃▄▄▄▄▄▅▅▅▆▆▆▆▇▇▇▇█████
+wandb:                                       lr ███▇▇▇▆▆▅▄▄▃▂▁
+wandb: test/test_geom_camber_cruise/mae_surf_Ux ▁
+wandb: test/test_geom_camber_cruise/mae_surf_Uy ▁
+wandb:  test/test_geom_camber_cruise/mae_vol_Ux ▁
+wandb:  test/test_geom_camber_cruise/mae_vol_Uy ▁
+wandb:            test/test_geom_camber_rc/loss ▁
+wandb:     test/test_geom_camber_rc/mae_surf_Ux ▁
+wandb:     test/test_geom_camber_rc/mae_surf_Uy ▁
+wandb:                                      +81 ...
+wandb: 
+wandb: Run summary:
+wandb:                               best_epoch 14
+wandb:                  best_val_avg/mae_surf_p 126.50621
+wandb:                             epoch_time_s 263.20541
+wandb:                              global_step 5250
+wandb:                                       lr 0.0005
+wandb: test/test_geom_camber_cruise/mae_surf_Ux 1.52
+wandb: test/test_geom_camber_cruise/mae_surf_Uy 0.66718
+wandb:  test/test_geom_camber_cruise/mae_vol_Ux 3.90213
+wandb:  test/test_geom_camber_cruise/mae_vol_Uy 1.50649
+wandb:    test/test_geom_camber_cruise/vol_loss inf
+wandb:                                      +78 ...
+wandb: 
+wandb: 🚀 View run mlintern-pai2-72h-v4-r2/r1-wide-h256-l5 at: https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs/rwmkslvg
+wandb: ⭐️ View project at: https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern
+wandb: Synced 7 W&B file(s), 0 media file(s), 3 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260430_102510-rwmkslvg/logs
