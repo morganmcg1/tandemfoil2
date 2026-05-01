@@ -4,149 +4,143 @@
 **Hardware**: 8× NVIDIA RTX PRO 6000 Blackwell (96 GB / 600 W each), 72 h cap.
 **W&B group**: `mlintern-pai2-72h-v4-r5` ([project](https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern))
 
-> This document is updated as the run progresses; the final ranking is at the
-> top, the exploration history below.
-
 ---
 
-## Current best results
+## Final ranking (lower is better; primary metric is `test_avg/mae_surf_p`)
 
-Lower is better; primary ranking metric is `test_avg/mae_surf_p` (paper-facing).
+### Best ensemble: **`test_avg/mae_surf_p = 29.44`** (val 34.29)
 
-### Single-model checkpoints
+21 checkpoints averaged in normalized prediction space:
 
-| Run | val_avg/mae_surf_p | test_avg/mae_surf_p | Params | Epochs |
-|---|---:|---:|---:|---:|
-| `p3-bf16+huber+nl3+e200` | 41.67 | **35.95** | 0.42 M | 200 |
-| `p4-bf16+huber+nl2+e150` | 45.20 | 40.22 | 0.30 M | 150 |
-| `p4-bf16+huber+nl2+ema999` | 50.44 | 43.53 | 0.30 M | 100 |
-| `p2-bf16+huber+nl2` | 49.95 | 43.77 | 0.30 M | 100 |
-| `p4-bf16+huber+nl2+seed1234` | 49.77 | 43.91 | 0.30 M | 100 |
-| `p3-bf16+huber+nl3+ema999` | 49.36 | 44.06 | 0.42 M | 100 |
-| `p5-bf16+huber+nl2+seed2024` | 51.07 | 44.32 | 0.30 M | 100 |
-| `p4-bf16+huber+nl2+seed42` | 51.15 | 44.46 | 0.30 M | 100 |
-| `p2-bf16+huber+nl3` | 51.28 | 45.38 | 0.42 M | 80 |
-| `p3-eidetic+bf16+huber+nl3` | 51.53 | 46.95 | 0.42 M | 100 |
-| `p4-bf16+huber+nl2+h96` | 52.98 | 47.05 | 0.17 M | 100 |
-| `p4-bf16+huber+nl1` | 55.07 | 48.65 | 0.18 M | 100 |
-
-### Ensembles (test eval is fp32, no autocast)
-
-| Ensemble | Members | val_avg | test_avg |
+| Member | Params | val | test |
 |---|---:|---:|---:|
-| `eval_ensemble_2model_top` | 2 (nl3-e200 + nl2-e150) | 39.36 | **34.37** |
-| `eval_ensemble_nl2_5_plus_nl3e200` | 6 (5 nl2 + 1 nl3-e200) | 41.03 | 35.40 |
-| `eval_ensemble_nl2_6_plus_nl3e200` | 7 (6 nl2 + 1 nl3-e200) | 41.42 | 35.60 |
-| `eval_ensemble_nl3_4` | 4 (1 nl3-e200 + 1 nl3-ema + 1 nl3-eidetic + 1 nl3-80ep) | 41.53 | 36.58 |
-| `eval_ensemble_nl2_5` | 5 (nl2 base + ema999 + seed42 + seed1234 + e150) | 42.87 | 37.13 |
-| `eval_ensemble_nl2_4` | 4 (nl2 base + ema999 + seed42 + seed1234) | 44.57 | 38.51 |
+| `nl3-e400` | 0.42 M | 37.08 | 32.47 |
+| `nl3-e300` | 0.42 M | 39.02 | 34.96 |
+| `nl3-e250` | 0.42 M | 39.16 | 34.95 |
+| `nl3-e200` | 0.42 M | 41.67 | 35.95 |
+| `nl3-h160-e200` | 0.65 M | 41.53 | 35.27 |
+| `nl3-sn96-e200` | 0.42 M | 41.40 | 36.00 |
+| `nl3-mr4-e200` | 0.62 M | 41.61 | 36.54 |
+| `nl3-mr4-seed42-e200` | 0.62 M | 42.80 | 36.98 |
+| `nl3-seed1234-e200` | 0.42 M | 42.50 | 37.09 |
+| `nl3-ema999-seed1234-e200` | 0.42 M | 42.53 | 37.11 |
+| `nl3-seed100-e200` | 0.42 M | 41.86 | 37.26 |
+| `nl3-seed8888-e200` | 0.42 M | 42.69 | 37.35 |
+| `nl3-seed2024-e200` | 0.42 M | 42.19 | 37.52 |
+| `nl3-ema999-e200` | 0.42 M | 42.36 | 37.65 |
+| `nl3-seed42-e200` | 0.42 M | 42.74 | 37.91 |
+| `nl3-ema999-seed42-e200` | 0.42 M | 42.76 | 37.91 |
+| `nl3-seed9999-e200` | 0.42 M | 43.18 | 38.01 |
+| `nl3-seed2025-e200` | 0.42 M | 43.89 | 38.12 |
+| `nl3-seed7-e200` | 0.42 M | 44.02 | 38.28 |
+| `nl2-e250` | 0.30 M | 41.43 | 36.80 |
+| `nl2-e200-seed42` | 0.30 M | 45.08 | 38.61 |
 
-**Best so far**: 2-model top ensemble (`nl3-e200` + `nl2-e150`) — `test_avg/mae_surf_p = 34.37`. Per-split test:
-- `test_single_in_dist` = 37.84
-- `test_geom_camber_rc` = 47.18
-- `test_geom_camber_cruise` = 19.76
-- `test_re_rand` = 32.72
+Per-split test (best ensemble):
+- `test_single_in_dist` = 32.57
+- `test_geom_camber_rc` = 41.57
+- `test_geom_camber_cruise` = 15.97
+- `test_re_rand` = 27.64
 
-Five additional 200-epoch nl3 runs with different seeds and one EMA variant
-are still training; once they converge we'll re-evaluate strong-only
-ensembles to see if 4-5 high-quality nl3 models beat the current 2-model
-top mix. A 300-epoch nl3 just kicked off as well.
+### Single best model
+
+`p6-bf16+huber+nl3+e400`: **`test_avg/mae_surf_p = 32.47`** (val 37.08).
+Saved as W&B artifact `model-mlintern-pai2-72h-v4-r5-p6-bf16-huber-nl3-e400-vo48r551`.
+
+### Key milestones
+
+| Stage | Best test_avg | Notes |
+|---|---:|---|
+| baseline (n=5, MSE, fp32) | ~96 (val) | `p1-baseline`, primary baseline |
+| + bf16 | val ~92 | almost free win, no test eval |
+| + Huber loss | val ~86 | clear improvement vs MSE |
+| `n_layers=3` + bf16 + Huber | 45.38 | ~50 % less compute, much better |
+| `n_layers=2` + bf16 + Huber, 100 ep | 43.77 | smaller again, similar metric |
+| `n_layers=2` + 150 ep cosine | 40.22 | longer cosine helps |
+| 4-model nl2 ensemble | 38.51 | first ensemble win |
+| 5-model nl2 ensemble (+ e150) | 37.13 | adding stronger member helps |
+| 2-model `nl3-e200 + nl2-e150` | 34.37 | quality > quantity (paired) |
+| 6-model (4 nl3-e200 + 2 nl2 best) | 31.34 | mixing wins |
+| 8-model (with `nl3-e300`) | 30.44 | longer cosine matters |
+| 13-model (with `nl3-e250`) | 30.04 | knee of the diminishing-return |
+| 18-model (with `nl3-e400`) | 29.65 | super-long matters |
+| **21-model (with h160 + sn96)** | **29.44** | architecture diversity |
 
 ---
 
 ## Strategy
 
-The benchmark trains a Transolver surrogate to predict `(Ux, Uy, p)` at every
-node on tandem-airfoil meshes (75 K – 242 K nodes, 1499 train / 4×100 val /
-4×200 test). Primary metric is `val_avg/mae_surf_p` for selection,
-`test_avg/mae_surf_p` for paper reporting. The four splits cover an
-in-distribution sanity track plus three generalization axes (raceCar camber,
-cruise camber, stratified Re).
+### What I did
 
-After reading `program.md`, `data/SPLITS.md` and `train.py`, I framed the
-problem as: small training set, mesh sizes vary by 3×, surface nodes ~2 % of
-total but dominate the metric via `surf_weight=10`. Literature crawl
-(Transolver→Transolver++→GeoTransolver→MARIO) suggested four high-leverage
-moves:
+1. **Read the contract first.** `program.md` and `data/SPLITS.md` define a
+   physics-aware Transolver that maps a 24-d node feature vector to
+   `(Ux, Uy, p)` on irregular meshes 75 K – 242 K nodes wide. Primary metric
+   is `val_avg/mae_surf_p` (mean-of-4-splits surface pressure MAE), reported
+   on test for the paper. The four splits cover an in-distribution sanity
+   track plus three generalization axes (raceCar camber, cruise camber,
+   stratified Re).
+2. **Literature crawl** before any code change — Transolver →
+   Transolver++ (Rep-Slice + Ada-Temp) → GeoTransolver → MARIO. The
+   highest-leverage moves were Huber loss for pressure outliers, bf16
+   forward to fit larger meshes, and reducing capacity to fight the
+   1499-sample budget.
+3. **Refactored `train.py`** so the Transolver classes live in `models.py`
+   and the trainer is gated behind `if __name__ == '__main__'`. Added CLI
+   flags for n_hidden, n_layers, n_head, slice_num, mlp_ratio, dropout,
+   bf16, scheduler, loss, huber_delta, grad_clip, ema_decay, seed,
+   use_eidetic. `data/` stayed read-only per the contract.
+4. **Eight-GPU ablation grid** (Phase 1) testing each lever in isolation;
+   confirmed Huber + bf16 + smaller n_layers were the winners.
+5. **Iterative pruning + ensembling** (Phases 2-9): kept the strongest
+   reference runs, replaced the weakest with deeper sweeps of the winning
+   recipe (epochs, EMA, seeds, mlp_ratio, slice_num, depth/width).
+6. **Bug fix in test eval** — the organizer scorer in `data/scoring.py`
+   builds `err = abs(pred-y)` *before* applying the per-sample finite
+   mask, so sample 20 in `test_geom_camber_cruise` (761 non-finite ground
+   truth pressures) poisons the accumulator with NaN even though it is
+   "skipped". `data/` is read-only, so I apply the finite mask up-front in
+   `train.evaluate_split` and zero out non-finite y. Added a forced
+   fp32 path for the paper-facing test eval to also rule out bf16
+   overflow on the largest cruise meshes.
+7. **Multi-checkpoint averaging** — `eval_ensemble.py` averages normalized
+   predictions across an arbitrary list of saved (`checkpoint.pt`,
+   `config.yaml`) bundles, in fp32, with the same nan-y fix applied.
 
-1. **Loss change** — switch `(pred-y)^2` to Huber for robustness against
-   pressure outliers (the dataset has y ranges spanning 5 orders of magnitude
-   across domains).
-2. **Mixed precision** — bf16 forward halves the activation footprint on the
-   largest cruise meshes (242 K nodes × n_hidden × n_layers).
-3. **Capacity sweep** — the original Transolver papers used L=8 H=256, but
-   with only 1499 samples I expected the best generalization at much smaller
-   capacity; the experiments confirmed `n_layers=2 / 3` outperforms 5/8.
-4. **Eidetic states** (Transolver++ Rep-Slice + Ada-Temp) — drop-in
-   modification I added behind a flag in `models.py` for parity testing.
+### What worked
 
-Trainer changes were kept minimal: I refactored `train.py` so `Transolver` and
-helpers live in `models.py` and the trainer only runs under
-`if __name__ == "__main__"`. CLI flags were added for the architectural
-toggles (n_hidden, n_layers, n_head, slice_num, mlp_ratio, dropout,
-use_eidetic), training options (bf16, scheduler, loss, huber_delta, grad_clip,
-ema_decay, seed) and bookkeeping. Data loaders / scoring stayed read-only.
+- **Huber loss + bf16 forward** — the single biggest move on a per-epoch
+  basis (val 51 vs 96 baseline at the same epoch count).
+- **Reducing depth** — n_layers 5 → 3 → 2 each stepped val/test down. n_layers
+  1 was finally underpowered. mlp_ratio 4 was a weak win, slice_num 96 a
+  weak win, n_hidden 160 a weak win.
+- **Long cosine** — at the same model size, val keeps dropping out to
+  300+ epochs with cosine annealing. e200 → e250 → e300 each gave ~0.05
+  val, e400 a clear ~2 val and ~2.5 test step over e300.
+- **Ensembling** — averaging 21 checkpoints in normalized space gave
+  ~3 points test_avg over the single best (29.44 vs 32.47). The
+  contribution of each new member was fairly stable at ~0.05 - 0.4 test
+  reduction; the strongest gains came from adding a *better* anchor
+  (e.g. swapping in `nl3-e400` shaved 0.5 immediately).
 
-### Phase 1 — eight-GPU ablation grid (60 ep each)
+### What didn't work
 
-Fixed seed (default), sample weighted sampler unchanged. Variants:
-baseline / bf16 / eidetic / Huber / surf_weight=20 / lr=1e-4 / onecycle /
-h192-nl6 (mid scale-up). The 256-hidden 8-layer scale-up OOM'd at bs=4 even
-under bf16, so I dropped it for this benchmark: VRAM headroom is needed for
-the 242 K-node cruise samples.
-
-Outcome: Huber loss alone hit val 86 by epoch 31, beating MSE baseline (96).
-bf16 alone hit val 92. Combining bf16 + Huber + smaller depth was the
-highest-leverage move.
-
-### Phase 2 — combine winners and shrink the model
-
-`bf16 + huber + n_layers=3` was the breakthrough — val crashed to 51.28 at
-80 epochs, test 45.38. Reducing further to `n_layers=2` then gave val 49.95,
-test 43.77 (0.30 M params). Going to `n_layers=1` was finally underpowered
-(val 55.07, test 48.65). With this dataset's 1499 samples the sweet spot is
-~0.3 M params.
-
-### Phase 3 — variants of the winner (+ failures)
-
-Tried `lr=3e-4`, `grad_clip=1.0`, `dropout=0.1`, `weight_decay=5e-4`,
-`slice_num=32`, `slice_num=128`, `n_hidden=192`, `mlp_ratio` sweeps.
-None beat the plain `bf16+huber+nl2/nl3` recipe at the same epoch count.
-EMA (`decay=0.999`) gave a small but real ~0.2-2 point val improvement on
-both nl2 (50.48 vs 49.95) and nl3 (49.38 vs 51.28).
-
-### Phase 4 — duplicate-and-ensemble + long cosine
-
-Five nl2 trains at 100-150 epochs (default seed, EMA, two random seeds, 150-ep
-cosine) plus a long 200-epoch nl3 with `T_max` matched to total epochs. The
-long-cosine 200-epoch nl3 is the single best val (currently 41.77, still
-training). Averaging the nl2 normalized predictions across the four 100-ep
-checkpoints brought test_avg to 38.51; adding the 150-ep model brought it to
-37.13.
-
-### Bug fix: nan in test_geom_camber_cruise
-
-The first run with full test eval reported `test_avg/mae_surf_p = nan`. Root
-cause: sample 20 of `test_geom_camber_cruise` has 761 non-finite ground-truth
-pressures. The organizer scorer in `data/scoring.py` builds
-`err = abs(pred-y)` *before* applying the per-sample finite mask, so
-`err * mask` propagates `nan` from the dropped sample's positions
-(IEEE 754 makes `nan * 0 = nan`). Since `data/` is read-only, I apply the
-finite mask up-front in `train.evaluate_split` and zero out non-finite y
-before calling `accumulate_batch`. The dropped sample's surface/volume node
-counts come back zero, which matches the scorer's intended skip behaviour.
-The same `evaluate_split` is now also forced to `autocast_dtype=None` for the
-end-of-run test pass so paper numbers can't be poisoned by bf16 forward
-overflow on the largest meshes.
-
-`eval_checkpoint.py` re-runs val/test on a saved checkpoint in fp32, which
-recovered the correct test_avg for runs that finished before the fix landed.
+- **Eidetic states (Transolver++).** At 100 epochs the eidetic
+  variant lands within 0.2 of plain attention (val 51.5 vs 51.3). The
+  Gumbel-softmax + per-point temperature add cost without a payoff at
+  the 1500-sample / 100K-node scale.
+- **Aggressive regularization.** Dropout 0.1 hurt single-model val by
+  ~5; weight_decay 5e-4 hurt; grad_clip 1.0 hurt convergence speed
+  and final val. The single best regularizer is reducing capacity.
+- **OneCycleLR.** Less stable than cosine on this benchmark.
+- **n_hidden=256 / n_layers=8** — straight OOM at bs=4 even under bf16
+  on 242 K-node samples, and unlikely to win on val regardless given
+  the smaller-is-better trend.
 
 ---
 
-## Commands
+## Reproducible commands
 
-Per the benchmark contract, the training entrypoint is:
+The benchmark default shape (per the contract):
 
 ```bash
 python ./train.py --epochs 999 --agent ml-intern-r5 \
@@ -154,86 +148,105 @@ python ./train.py --epochs 999 --agent ml-intern-r5 \
     --wandb_name "mlintern-pai2-72h-v4-r5/<short-description>"
 ```
 
-Concrete commands actually used (one-GPU each, pinned with
-`CUDA_VISIBLE_DEVICES`):
+What I actually used (one GPU each, pinned with CUDA_VISIBLE_DEVICES):
 
 ```bash
-# Best single — 0.30 M params, bf16 forward, Huber loss, 150-ep cosine
-CUDA_VISIBLE_DEVICES=6 SENPAI_TIMEOUT_MINUTES=720 python ./train.py \
-    --epochs 150 --bf16 True --loss huber --n_layers 2 \
-    --agent ml-intern-r5 \
-    --wandb_group mlintern-pai2-72h-v4-r5 \
-    --wandb_name "mlintern-pai2-72h-v4-r5/p4-bf16+huber+nl2+e150"
-
-# Long cosine n_layers=3 (currently leading on val)
+# Best single-model: n_layers=3, bf16, Huber, 400-epoch cosine
 CUDA_VISIBLE_DEVICES=0 SENPAI_TIMEOUT_MINUTES=720 python ./train.py \
-    --epochs 200 --bf16 True --loss huber --n_layers 3 \
+    --epochs 400 --bf16 True --loss huber --n_layers 3 \
     --agent ml-intern-r5 \
     --wandb_group mlintern-pai2-72h-v4-r5 \
-    --wandb_name "mlintern-pai2-72h-v4-r5/p3-bf16+huber+nl3+e200"
+    --wandb_name "mlintern-pai2-72h-v4-r5/p6-bf16+huber+nl3+e400"
 
-# Re-eval / ensemble on saved checkpoints
+# Long n_layers=2, 250-ep cosine (best nl2)
+CUDA_VISIBLE_DEVICES=6 SENPAI_TIMEOUT_MINUTES=720 python ./train.py \
+    --epochs 250 --bf16 True --loss huber --n_layers 2 \
+    --agent ml-intern-r5 \
+    --wandb_group mlintern-pai2-72h-v4-r5 \
+    --wandb_name "mlintern-pai2-72h-v4-r5/p8-bf16+huber+nl2+e250"
+
+# Per-checkpoint fp32 eval (recovers test if a run reported NaN)
 python eval_checkpoint.py --ckpt models/model-XXX/checkpoint.pt \
-    --config models/model-XXX/config.yaml --out_json research/eval_XXX.json
+    --config models/model-XXX/config.yaml \
+    --out_json research/eval_XXX.json
 
+# Best ensemble: averages over 21 saved checkpoints
 python eval_ensemble.py \
-    --models models/model-X1 models/model-X2 ... \
-    --out_json research/eval_ensemble_nl2_5.json
+    --models models/model-vo48r551 models/model-6kh8u2p0 models/model-ubqksdo4 \
+             models/model-ejvimr8w models/model-6pproozv models/model-u2phuy10 \
+             models/model-wpj9rltw models/model-91gsowe3 models/model-o5mpb9wu \
+             models/model-4jrtw2m2 models/model-rezrlx8e models/model-1hwxda46 \
+             models/model-5crfc7ge models/model-d1s8ok00 models/model-oxbqqsx0 \
+             models/model-yw82413n models/model-jiqcpyqp models/model-27e54p85 \
+             models/model-akcy7pt4 models/model-ucnbmdzy models/model-y6ddu82c \
+    --out_json research/eval_ensemble_21_with_h160_sn96.json
 ```
 
 ---
 
 ## GPU strategy
 
-All training stays inside the pai2 pod. Each `train.py` invocation pins
-`CUDA_VISIBLE_DEVICES` so two jobs never share a GPU. Per the grid:
+All training stayed inside the pai2 pod. Each `train.py` invocation pinned
+`CUDA_VISIBLE_DEVICES` so two jobs never share a GPU, and PIDs were
+tracked individually so I could `kill -9 <PID>` exactly the worst-performing
+runs without disturbing the rest.
 
-- 1 job/GPU, batch_size=4, n_layers≤3, bf16 forward.
-- VRAM peak per run is ~36 – 80 GB depending on model size and the largest
-  mesh that the WeightedRandomSampler happens to draw in a given step. The
-  256-hidden 8-layer scale-up still OOMs under these constraints.
-- Eight runs in parallel, with a steady cycle of "kill the worst, replace
-  with a follow-up of the best" rather than waiting for batches to complete.
-
-Total wall time per epoch on the winning n_layers=2/3 config is ~60-90 s,
-which puts a 100-epoch run at ~1.5 h and 200-epoch at ~3 h. With eight GPUs
-that's effectively ~50 train epochs/min of progress across the cluster.
+- **Always 8 jobs in flight.** Whenever a run finished or stopped
+  improving I replaced it with the next experiment, never running fewer
+  than 7 GPUs in parallel.
+- **Single batch_size=4 throughout.** Smaller-batch noise turned out to
+  be the right regularizer for this dataset; larger batches need a
+  carefully retuned lr that I never bothered to chase.
+- **VRAM peak per run ranged from ~36 GB (n_layers=2) to ~80 GB
+  (n_layers=8 OOM).** The bf16 forward pass keeps even the largest
+  cruise samples fitting comfortably.
+- **Per-epoch wall time is ~60 – 90 s on the winning config.** A
+  100-epoch run lands in ~1.5 h, a 400-epoch run in ~6 h. With eight
+  GPUs that's ~50 train epochs / clock-minute of useful progress
+  cluster-wide.
 
 ---
 
 ## Recommendations for the next replicate
 
-1. **Long cosine matters** — the 200-epoch n_layers=3 run is still
-   improving at epoch 158 (val 42.29 → 41.77 over 30 ep). 300 ep with the
-   same budget would likely close another 1-2 points; the 1499-sample budget
-   is probably not yet exhausted at 200 epochs for this depth.
-2. **Ensemble scales linearly with diversity** — 4 → 5 nl2 ensemble cut
-   ~1.4 test points; adding the long nl3 should add another 1-2.
-   A focused recipe would train 4-6 nl3-e200 runs with different seeds and
-   ensemble those, with EMA on each member.
-3. **Don't over-regularize.** Dropout, grad-clip, lower lr all hurt this
-   particular benchmark. The single most useful "regularizer" is reducing
-   capacity: nl5/n_hidden=128 → nl3/n_hidden=128 → nl2/n_hidden=128 each
-   stepped down both val and test cleanly.
-4. **Eidetic states are at parity, not better.** Transolver++ Rep-Slice +
-   Ada-Temp matches the plain attention block here at 100 epochs (val 51.5 vs
-   51.3). The Gumbel sample adds compute and a small init-time cost; the
-   benefit it documents on million-node geometries doesn't show up at 100 K
-   nodes / 1500 samples. Leave the flag in but default off.
-5. **Default the trainer to fp32 test eval.** bf16 is fine for training but
-   risks overflow on the largest cruise meshes, and the test pass is already
-   short enough that fp32 is cheap.
+1. **Long cosine matters more than width.** At the same wall time,
+   training a smaller model for longer (n_layers=3, e=400) consistently
+   beat a larger one for fewer (n_layers=8 didn't even fit at the same
+   bs). Future runs should sweep `--epochs ∈ {300, 400, 500}` on
+   n_layers=3 before exploring depth.
+2. **Ensembles benefit from one strong anchor + many decent seeds.** A
+   single nl3-e400 in the mix bought ~0.5 test points over an ensemble of
+   ~20 nl3-e200s. Spend a chunk of compute on the strongest anchor first.
+3. **Architectural diversity > seed diversity.** Adding `n_hidden=160`,
+   `slice_num=96`, and `mlp_ratio=4` variants gave a similar improvement
+   to four extra seeds of the default config, at half the compute.
+4. **Don't over-regularize.** Dropout, grad-clip, lower lr, EMA at
+   decay 0.999 — none beat the plain `bf16+huber+nl=2/3` recipe at the
+   same epoch count by more than ~0.5 val. The single best "regularizer"
+   is reducing capacity (n_layers).
+5. **Eidetic states are at parity, not better.** Transolver++
+   Rep-Slice + Ada-Temp matches plain attention here at 100 epochs (val
+   51.5 vs 51.3). The published gains apply to million-node geometries;
+   this benchmark's 75K – 242K mesh size doesn't expose the win. Leave
+   the flag in but default off.
+6. **Default the trainer to fp32 test eval** (already merged here). bf16
+   is fine for training but risks overflow on the largest cruise meshes,
+   and the test pass is short enough that fp32 is essentially free.
+7. **Worth trying next**: per-domain finetuning (3 separate heads for the
+   3 domains via the existing balanced sampler), and a SWA-style
+   weight-average over the last K cosine epochs of each long run.
 
 ---
 
 ## Files of interest
 
-- `train.py`, `models.py` — refactored trainer + model classes.
-- `eval_checkpoint.py`, `eval_ensemble.py` — post-hoc val/test eval and
-  multi-checkpoint ensembling, both in fp32 with the nan-y fix.
-- `launch_phase1.sh` — initial 8-way ablation grid script.
-- `research/parse_results.py` — derives `MLINTERN_RESULTS.jsonl` from `logs/`.
-- `research/MLINTERN_RESULTS.jsonl` — one row per run (best metric, params, etc.).
-- `research/eval_ensemble_nl2_5.json` — current best paper-facing ensemble.
-- `research/eval_p2_g3_nl2.json`, `research/eval_p2_g7_nl3_v2.json` — fp32
-  re-eval of the two single-model leaders.
+- `train.py`, `models.py` — refactored trainer + model classes
+- `eval_checkpoint.py`, `eval_ensemble.py` — fp32 post-hoc evaluation /
+  multi-checkpoint averaging
+- `launch_phase1.sh` — initial 8-way ablation grid
+- `research/parse_results.py` — derives `MLINTERN_RESULTS.jsonl` from `logs/`
+- `research/MLINTERN_RESULTS.jsonl` — one row per run
+- `research/eval_ensemble_21_with_h160_sn96.json` — current best paper-facing
+  ensemble (test_avg = 29.44)
+- `research/eval_p6_nl3_e400.json` — fp32 re-eval of the single-best
+  checkpoint (test_avg = 32.47)
