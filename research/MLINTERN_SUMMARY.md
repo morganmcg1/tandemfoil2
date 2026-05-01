@@ -8,23 +8,28 @@
 
 ## Final ranking (lower is better; primary metric is `test_avg/mae_surf_p`)
 
-### Best ensemble: **`test_avg/mae_surf_p = 29.44`** (val 34.29)
+### Best ensemble: **`test_avg/mae_surf_p = 28.79`** (val 33.70)
 
-21 checkpoints averaged in normalized prediction space:
+28 checkpoints averaged in normalized prediction space:
 
 | Member | Params | val | test |
 |---|---:|---:|---:|
+| `nl3-e500` | 0.42 M | 35.14 | 30.46 |
 | `nl3-e400` | 0.42 M | 37.08 | 32.47 |
+| `nl3-h160-e300` | 0.65 M | 37.60 | 32.71 |
+| `nl3-mr4-e300` | 0.62 M | 38.44 | 33.33 |
 | `nl3-e300` | 0.42 M | 39.02 | 34.96 |
 | `nl3-e250` | 0.42 M | 39.16 | 34.95 |
 | `nl3-e200` | 0.42 M | 41.67 | 35.95 |
 | `nl3-h160-e200` | 0.65 M | 41.53 | 35.27 |
 | `nl3-sn96-e200` | 0.42 M | 41.40 | 36.00 |
 | `nl3-mr4-e200` | 0.62 M | 41.61 | 36.54 |
+| `nl2-e300` | 0.30 M | 40.96 | 35.20 |
 | `nl3-mr4-seed42-e200` | 0.62 M | 42.80 | 36.98 |
 | `nl3-seed1234-e200` | 0.42 M | 42.50 | 37.09 |
 | `nl3-ema999-seed1234-e200` | 0.42 M | 42.53 | 37.11 |
 | `nl3-seed100-e200` | 0.42 M | 41.86 | 37.26 |
+| `nl3-seed42424-e200` | 0.42 M | 42.56 | 37.09 |
 | `nl3-seed8888-e200` | 0.42 M | 42.69 | 37.35 |
 | `nl3-seed2024-e200` | 0.42 M | 42.19 | 37.52 |
 | `nl3-ema999-e200` | 0.42 M | 42.36 | 37.65 |
@@ -32,20 +37,22 @@
 | `nl3-ema999-seed42-e200` | 0.42 M | 42.76 | 37.91 |
 | `nl3-seed9999-e200` | 0.42 M | 43.18 | 38.01 |
 | `nl3-seed2025-e200` | 0.42 M | 43.89 | 38.12 |
+| `nl3-seed11111-e200` | 0.42 M | 42.81 | 37.15 |
+| `nl3-seed99999-e200` | 0.42 M | 43.10 | 37.17 |
 | `nl3-seed7-e200` | 0.42 M | 44.02 | 38.28 |
 | `nl2-e250` | 0.30 M | 41.43 | 36.80 |
 | `nl2-e200-seed42` | 0.30 M | 45.08 | 38.61 |
 
 Per-split test (best ensemble):
-- `test_single_in_dist` = 32.57
-- `test_geom_camber_rc` = 41.57
-- `test_geom_camber_cruise` = 15.97
-- `test_re_rand` = 27.64
+- `test_single_in_dist` = 31.92
+- `test_geom_camber_rc` = 40.75
+- `test_geom_camber_cruise` = 15.49
+- `test_re_rand` = 27.02
 
 ### Single best model
 
-`p6-bf16+huber+nl3+e400`: **`test_avg/mae_surf_p = 32.47`** (val 37.08).
-Saved as W&B artifact `model-mlintern-pai2-72h-v4-r5-p6-bf16-huber-nl3-e400-vo48r551`.
+`p9-bf16+huber+nl3+e500`: **`test_avg/mae_surf_p = 30.46`** (val 35.14).
+Saved as W&B artifact `model-mlintern-pai2-72h-v4-r5-p9-bf16-huber-nl3-e500-ypb07aty`.
 
 ### Key milestones
 
@@ -64,7 +71,12 @@ Saved as W&B artifact `model-mlintern-pai2-72h-v4-r5-p6-bf16-huber-nl3-e400-vo48
 | 8-model (with `nl3-e300`) | 30.44 | longer cosine matters |
 | 13-model (with `nl3-e250`) | 30.04 | knee of the diminishing-return |
 | 18-model (with `nl3-e400`) | 29.65 | super-long matters |
-| **21-model (with h160 + sn96)** | **29.44** | architecture diversity |
+| 21-model (with h160 + sn96) | 29.44 | architecture diversity |
+| 24-model (3 more seeds) | 29.38 | seed diversity continues to help |
+| 25-model (with nl2-e300) | 29.27 | nl2 long anchor |
+| 26-model (with nl3-mr4-e300) | 29.15 | mr4 long-cosine wins |
+| 27-model (with nl3-h160-e300) | 29.02 | bigger hidden + long-cosine |
+| **28-model (with nl3-e500)** | **28.79** | the new single-best landmark |
 
 ---
 
