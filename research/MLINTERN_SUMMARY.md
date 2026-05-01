@@ -23,7 +23,12 @@ Hill-climb on the Transolver baseline by running quick parallel sweeps across al
 | s6-best-6h-seed3 | 27.5 | **24.27** | 6 h |
 | s6-best-6h-seed0/seed1/seed2 (multi-seed) | 28.3-28.6 | 24.32-25.68 | 6 h each |
 | **Ensemble of 4 sweep-6 seeds** | **25.28** | **21.77** | inference only |
-| s7-* (8 runs, 12 h each) — running | TBD | TBD | 12 h |
+| s7-12h-clip1-warmup10 | 26.26 | **23.14** | 12 h |
+| s7-12h-seed4/seed5/seed6 (multi-seed) | 26.88-27.79 | 23.78-24.89 | 12 h each |
+| s7-12h-seed7 (overfit outlier) | 27.43 | 28.31 | 12 h |
+| s7-12h-warmup15 / s7-12h-lr3e4 / s7-12h-lr7e4 | 27.0-28.6 | 24.35-25.37 | 12 h each |
+| **Ensemble of 11 sweep-6+sweep-7 (excl. seed7 outlier)** | **23.87** | **20.90** | inference only |
+| s8-* (8 runs, 12 h each, mixed seeds + arch variants) — running | TBD | TBD | 12 h |
 
 ## What works (in order discovered)
 
