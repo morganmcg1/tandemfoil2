@@ -1,16 +1,28 @@
-# Top 10 ensemble (best test_avg = 24.87, val_avg = 29.07)
-# Models sorted by val_avg/mae_surf_p ascending
-# r6e_relL2_d005_w10_e200_s24    val=31.79  test=28.35
-# r6a_relL2_d005_w10_e150_s20    val=33.57  test=29.52
-# r6f_relL2_d005_w10_e150_s25    val=33.74  test=28.95
-# r6d_relL2_d005_w10_e150_s23    val=33.76  test=29.35
-# r5f_relL2_d01_w10_e150_s17     val=33.78  test=28.75
-# r6g_relL2_d0025_w10_e150_s26   val=33.78  test=28.85
-# r6c_relL2_d005_w10_e150_s22    val=34.52  test=29.01
-# r5e_relL2_d005_w10_e120_s16    val=34.65  test=31.28
-# r6b_relL2_d005_w10_e150_s21    val=34.80  test=29.54
-# r5a_relL2_d005_e120_s12        val=35.24  test=30.90
+# Ensemble model checkpoints — sorted by best val_avg/mae_surf_p ascending.
+# All Transolver 5L/128H/4head/sn64, ~0.66M params, trained with relative-L2 loss
+# on the TandemFoilSet-Balanced training split.
+#
+# Recommended ensembles:
+#   * TOP-6 ensemble: best val_avg/mae_surf_p = 29.06, test_avg/mae_surf_p = 24.89
+#   * TOP-7 ensemble: val_avg/mae_surf_p = 29.13, test_avg/mae_surf_p = 24.76 (best test)
+#
+# Single-model results:
+#   r6e_relL2_d005_w10_e200_s24    val=31.79  test=28.35
+#   r6a_relL2_d005_w10_e150_s20    val=33.57  test=29.52
+#   r6f_relL2_d005_w10_e150_s25    val=33.74  test=28.95
+#   r6d_relL2_d005_w10_e150_s23    val=33.76  test=29.35
+#   r5f_relL2_d01_w10_e150_s17     val=33.78  test=28.75
+#   r6g_relL2_d0025_w10_e150_s26   val=33.78  test=28.85
+#   r6c_relL2_d005_w10_e150_s22    val=34.52  test=29.01
+#   r5e_relL2_d005_w10_e120_s16    val=34.65  test=31.28
+#   r6b_relL2_d005_w10_e150_s21    val=34.80  test=29.54
+#   r5a_relL2_d005_e120_s12        val=35.24  test=30.90
 
-CHECKPOINTS="models/model-bdq5fhv4/checkpoint.pt,models/model-jyrqrvat/checkpoint.pt,models/model-o7r8790m/checkpoint.pt,models/model-0yrxshzg/checkpoint.pt,models/model-aznhx3l7/checkpoint.pt,models/model-okqha5m2/checkpoint.pt,models/model-k2t53d3p/checkpoint.pt,models/model-w9mfv4ds/checkpoint.pt,models/model-8yelrsuq/checkpoint.pt,models/model-uwa7qq38/checkpoint.pt"
+TOP6_CHECKPOINTS="models/model-bdq5fhv4/checkpoint.pt,models/model-jyrqrvat/checkpoint.pt,models/model-o7r8790m/checkpoint.pt,models/model-0yrxshzg/checkpoint.pt,models/model-aznhx3l7/checkpoint.pt,models/model-okqha5m2/checkpoint.pt"
+TOP6_CONFIGS="models/model-bdq5fhv4/config.yaml,models/model-jyrqrvat/config.yaml,models/model-o7r8790m/config.yaml,models/model-0yrxshzg/config.yaml,models/model-aznhx3l7/config.yaml,models/model-okqha5m2/config.yaml"
 
-CONFIGS="models/model-bdq5fhv4/config.yaml,models/model-jyrqrvat/config.yaml,models/model-o7r8790m/config.yaml,models/model-0yrxshzg/config.yaml,models/model-aznhx3l7/config.yaml,models/model-okqha5m2/config.yaml,models/model-k2t53d3p/config.yaml,models/model-w9mfv4ds/config.yaml,models/model-8yelrsuq/config.yaml,models/model-uwa7qq38/config.yaml"
+TOP7_CHECKPOINTS="models/model-bdq5fhv4/checkpoint.pt,models/model-jyrqrvat/checkpoint.pt,models/model-o7r8790m/checkpoint.pt,models/model-0yrxshzg/checkpoint.pt,models/model-aznhx3l7/checkpoint.pt,models/model-okqha5m2/checkpoint.pt,models/model-k2t53d3p/checkpoint.pt"
+TOP7_CONFIGS="models/model-bdq5fhv4/config.yaml,models/model-jyrqrvat/config.yaml,models/model-o7r8790m/config.yaml,models/model-0yrxshzg/config.yaml,models/model-aznhx3l7/config.yaml,models/model-okqha5m2/config.yaml,models/model-k2t53d3p/config.yaml"
+
+TOP10_CHECKPOINTS="models/model-bdq5fhv4/checkpoint.pt,models/model-jyrqrvat/checkpoint.pt,models/model-o7r8790m/checkpoint.pt,models/model-0yrxshzg/checkpoint.pt,models/model-aznhx3l7/checkpoint.pt,models/model-okqha5m2/checkpoint.pt,models/model-k2t53d3p/checkpoint.pt,models/model-w9mfv4ds/checkpoint.pt,models/model-8yelrsuq/checkpoint.pt,models/model-uwa7qq38/checkpoint.pt"
+TOP10_CONFIGS="models/model-bdq5fhv4/config.yaml,models/model-jyrqrvat/config.yaml,models/model-o7r8790m/config.yaml,models/model-0yrxshzg/config.yaml,models/model-aznhx3l7/config.yaml,models/model-okqha5m2/config.yaml,models/model-k2t53d3p/config.yaml,models/model-w9mfv4ds/config.yaml,models/model-8yelrsuq/config.yaml,models/model-uwa7qq38/config.yaml"

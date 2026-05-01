@@ -6,22 +6,39 @@
 |---|---:|---:|
 | Original train.py baseline (5L/128H, MSE, flat LR via `--epochs 999`) | ~140 | ~120 (estimated) |
 | **Best single model — `r6e`** (5L/128H, relL2, drop=0.05, warmup=0.10, `--epochs 200`) | **31.79** | **28.35** |
-| **Best ensemble — top-10** (10 single-model checkpoints, average of normalized predictions) | **29.07** | **24.87** |
+| **Best ensemble — top-6** (6 single-model checkpoints, average of normalized predictions) | **29.06** | **24.89** |
+| Top-7 ensemble (best test, marginally higher val) | 29.13 | **24.76** |
 
-Best ensemble breakdown:
+Top-6 ensemble breakdown (best val):
 
 ```
-val_avg/mae_surf_p = 29.07
-  val_single_in_dist        surf_p = 26.38   vol_p = 30.76
-  val_geom_camber_rc        surf_p = 42.38   vol_p = 44.80
-  val_geom_camber_cruise    surf_p = 15.94   vol_p = 17.38
-  val_re_rand               surf_p = 31.58   vol_p = 31.74
+val_avg/mae_surf_p = 29.06
+  val_single_in_dist        surf_p = 26.31   vol_p = 30.85
+  val_geom_camber_rc        surf_p = 42.09   vol_p = 44.55
+  val_geom_camber_cruise    surf_p = 15.84   vol_p = 17.44
+  val_re_rand               surf_p = 32.01   vol_p = 32.22
 
-test_avg/mae_surf_p = 24.87
-  test_single_in_dist       surf_p = 25.39   vol_p = 29.91
-  test_geom_camber_rc       surf_p = 38.36   vol_p = 41.28
-  test_geom_camber_cruise   surf_p = 12.68   vol_p = 14.56
-  test_re_rand              surf_p = 23.03   vol_p = 24.57
+test_avg/mae_surf_p = 24.89
+  test_single_in_dist       surf_p = 25.61   vol_p = 29.92
+  test_geom_camber_rc       surf_p = 38.19   vol_p = 41.15
+  test_geom_camber_cruise   surf_p = 12.58   vol_p = 14.63
+  test_re_rand              surf_p = 23.17   vol_p = 24.82
+```
+
+Top-7 ensemble breakdown (best test):
+
+```
+val_avg/mae_surf_p = 29.13
+  val_single_in_dist        surf_p = 26.85   vol_p = 30.86
+  val_geom_camber_rc        surf_p = 42.28   vol_p = 44.46
+  val_geom_camber_cruise    surf_p = 15.71   vol_p = 17.26
+  val_re_rand               surf_p = 31.68   vol_p = 31.77
+
+test_avg/mae_surf_p = 24.76
+  test_single_in_dist       surf_p = 25.48   vol_p = 29.71
+  test_geom_camber_rc       surf_p = 38.12   vol_p = 40.96
+  test_geom_camber_cruise   surf_p = 12.50   vol_p = 14.50
+  test_re_rand              surf_p = 22.95   vol_p = 24.56
 ```
 
 ## Strategy summary
@@ -119,21 +136,32 @@ Six rounds of experiments, each informed by the prior round's results:
 
 ## Ensemble sweep
 
-| Ensemble | val_avg/mae_surf_p | test_avg/mae_surf_p |
-|---|---:|---:|
-| 3 models  | 34.53 | 30.33 |
-| 5 models  | 34.55 | 30.11 |
-| **6 models**  | **29.06** | **24.89** |
-| **8 models**  | **29.08** | **24.88** |
-| **10 models** | **29.07** | **24.87** ← best |
-| 14 models | 30.13 | 25.87 |
-| 16 models | 29.89 | 25.57 |
-| 17 models | 29.67 | 25.41 |
+Top-K ensemble (uniform-weight prediction averaging) by best-val ranking:
+
+| K | val_avg/mae_surf_p | test_avg/mae_surf_p |
+|---:|---:|---:|
+| 1 (single best `r6e`) | 31.79 | 28.35 |
+| 3 | 29.60 | 25.78 |
+| 4 | 29.35 | 25.43 |
+| 5 | 29.21 | 25.13 |
+| **6** | **29.06** | **24.89** ← best val |
+| 7 | 29.13 | **24.76** ← best test |
+| 8 | 29.08 | 24.88 |
+| 9 | 29.10 | 24.85 |
+| 10 | 29.07 | 24.87 |
+| 14 | 30.13 | 25.87 |
+| 16 | 29.89 | 25.57 |
+| 17 | 29.67 | 25.41 |
 
 Optimal ensemble size is K≈6–10 strong models; beyond that, adding weaker
 models (val > 36) adds variance faster than it adds signal. Inverse-val
 weighting on top-8 gave essentially the same result as uniform weighting
 (test 24.87 vs 24.88), so uniform-weight averaging is fine.
+
+For the headline number we report **top-6** as the best ensemble per the
+benchmark's `val_avg/mae_surf_p` ranking metric. **Top-7** is reported as
+secondary because it has marginally lower test (24.76 vs 24.89) and the
+contract asks for paper-facing test reporting.
 
 ## Compute / GPU strategy
 
