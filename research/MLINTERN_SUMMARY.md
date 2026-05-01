@@ -12,7 +12,9 @@ W&B group:   `mlintern-pai2-72h-v4-r2`
 |---|---|---|
 | Original baseline (`baseline-60m`)      | 102.52 | 94.27 |
 | Best single ML-Intern model (`r5-recipe-cosine160-360m-s35`) | **49.85** | **45.40** |
-| **Best ensemble** (10 models, R5 + R6 cosine160)       | n/a   | **39.28** |
+| **Final ensemble** (all 13 R5+R6 cosine160 baseline-arch seeds)  | n/a   | **39.29** |
+| Same ensemble narrowed to top 10 (5 R5 + 5 R6) | n/a | 39.28 |
+| Same ensemble + 2 R5 pw2 (15 models) | n/a | 39.37 |
 
 The unmodified `train.py` baseline reports `test_avg/mae_surf_p = nan` due to one
 non-finite ground-truth sample in `test_geom_camber_cruise/000020.pt`; with the
