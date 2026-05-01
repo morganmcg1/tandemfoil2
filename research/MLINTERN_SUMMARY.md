@@ -12,6 +12,8 @@
 | Submission | val_avg/mae_surf_p | test_avg/mae_surf_p |
 |---|---:|---:|
 | **8-model Phase 5 ensemble** (best) | — | **23.56** |
+| 8-model Phase 5 ensemble, inverse-val weights | — | 23.56 |
+| 9-model: P5 + p6G (best Phase 6 model) | — | 23.77 |
 | 6-model ensemble (drop deeper/h160 variants) | — | 23.72 |
 | 4-model seed ensemble (slice16+EMA, decays 0.999/0.9995) | — | 24.62 |
 | 12-model ensemble (8 P5 + 4 best P6) | — | 24.38 |
