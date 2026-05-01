@@ -6,7 +6,7 @@
 |---|---|---|
 | Original repo baseline (Transolver 1M, MSE, 30 min cap, leaderboard ref) | ~38–80 (varied) | 39–90 |
 | **Best single model** (`baseline-l1-200-s4`, phase 3, 191 epochs) | **29.000** | **29.946** |
-| **Best 8-model ensemble** (`ensemble_top8`, mixed phase 2 + 3 baselines) | **25.313** | **25.681** |
+| **Best 10-model ensemble** (`ensemble_top10`, mixed phase 2 + 3 baselines) | **25.246** | **25.647** |
 
 \*The `test_geom_camber_cruise` split has one ground-truth file
 (`000020.pt`) with 761 `+inf` values in the pressure channel. The shared
@@ -91,35 +91,42 @@ Best single test_3: `baseline-l1-200-lr1e3` at **29.215**.
 
 ## Ensemble eval
 
-Top-8 by val score, averaged in the model's normalized output space
+Top-10 by val score, averaged in the model's normalized output space
 before denormalization (matches the organizer's scorer):
 
 | Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
 |---|---|---|---|
-| val_single_in_dist | 22.404 | 0.202 | 0.172 |
-| val_geom_camber_rc | 38.586 | 0.529 | 0.305 |
-| val_geom_camber_cruise | 12.617 | 0.164 | 0.110 |
-| val_re_rand | 27.646 | 0.359 | 0.207 |
-| **val_avg** | **25.313** | 0.313 | 0.198 |
-| test_single_in_dist | 22.568 | 0.237 | 0.174 |
-| test_geom_camber_rc | 35.430 | 0.509 | 0.286 |
+| val_single_in_dist | 22.524 | 0.203 | 0.172 |
+| val_geom_camber_rc | 38.387 | 0.527 | 0.305 |
+| val_geom_camber_cruise | 12.593 | 0.164 | 0.110 |
+| val_re_rand | 27.483 | 0.360 | 0.206 |
+| **val_avg** | **25.246** | 0.313 | 0.198 |
+| test_single_in_dist | 22.494 | 0.238 | 0.174 |
+| test_geom_camber_rc | 35.392 | 0.509 | 0.286 |
 | test_geom_camber_cruise | nan (data) | 0.146 | 0.095 |
-| test_re_rand | 19.048 | 0.265 | 0.169 |
-| **test_avg_3splits** | **25.681** | 0.289 | 0.181 |
+| test_re_rand | 19.057 | 0.265 | 0.169 |
+| **test_avg_3splits** | **25.647** | 0.289 | 0.181 |
 
-Comparison: bigger doesn't help.
+Comparison across ensemble sizes (sorted by val score):
 
 | Ensemble size | val_avg/mae_surf_p |
 |---|---|
 | 1 (best single) | 29.000 |
 | Top-3 | 26.000 |
 | Top-5 | 25.590 |
-| **Top-8** | **25.313** |
+| Top-6 | 25.465 |
+| Top-7 | 25.367 |
+| Top-8 | 25.313 |
+| Top-9 | 25.328 |
+| **Top-10** | **25.246** |
+| Top-11 | 25.278 |
+| Top-12 | 25.305 |
 | All-15 (more variance) | 25.398 |
 | Diverse-7 (L1+Huber mix) | 25.468 |
 
-Best 8-model ensemble checkpoints (W&B run IDs):
-`e36a6sul, w3wv0vn4, nllydbsv, nqhtgwvl, wgpoz0z2, 8vjis52t, 8jljpawl, w3xtde7o`.
+Best 10-model ensemble checkpoints (W&B run IDs):
+`e36a6sul, w3wv0vn4, nllydbsv, nqhtgwvl, wgpoz0z2, 8vjis52t, 8jljpawl,
+ w3xtde7o, b61jmlhb, 0ea0kv59`.
 
 ## Code changes I want credited
 
@@ -170,22 +177,18 @@ on-disk checkpoints are what `ensemble_eval.py` consumes.
 ## How to reproduce
 
 ```bash
-# 1. Train 8 phase-3 baseline-L1 seeds (≈7 h on 8× 96 GB GPUs)
+# 1. Train phase-2 + phase-3 baseline-L1 seeds (≈9 h + 7 h on 8× 96 GB GPUs)
+bash launchers/phase2.sh
+# wait ~9 hours, until phase 2 jobs are done
 bash launchers/phase3.sh
+# wait ~7 hours, until phase 3 jobs are done
 
-# 2. Pick top 8 checkpoints by val and run ensemble eval
-python launchers/find_best_checkpoints.py --top 8 --arch baseline > best.json
+# 2. Pick top 10 baseline checkpoints by val and run ensemble eval
+python launchers/find_best_checkpoints.py --top 10 --arch baseline > best.json
+CKPTS=$(python -c "import json; print(' '.join(r['ckpt'] for r in json.load(open('best.json'))))")
 CUDA_VISIBLE_DEVICES=0 python launchers/ensemble_eval.py \
-  --checkpoints \
-    models/model-e36a6sul/checkpoint.pt \
-    models/model-w3wv0vn4/checkpoint.pt \
-    models/model-nllydbsv/checkpoint.pt \
-    models/model-nqhtgwvl/checkpoint.pt \
-    models/model-wgpoz0z2/checkpoint.pt \
-    models/model-8vjis52t/checkpoint.pt \
-    models/model-8jljpawl/checkpoint.pt \
-    models/model-w3xtde7o/checkpoint.pt \
-  --batch_size 4 --out_json ensemble_top8.json
+  --checkpoints $CKPTS \
+  --batch_size 4 --out_json ensemble_top10.json
 ```
 
 ## Caveats
@@ -211,15 +214,18 @@ CUDA_VISIBLE_DEVICES=0 python launchers/ensemble_eval.py \
 
 ## Best validation metric
 
-**val_avg/mae_surf_p = 25.313** (top-8 ensemble of 1M-param Transolver
+**val_avg/mae_surf_p = 25.246** (top-10 ensemble of 1M-param Transolver
 baselines, all `n_hidden=128 n_layers=5 n_head=4 slice_num=64 mlp_ratio=2`).
+Best single seed `baseline-l1-200-s4` reached val 29.000 — ensembling
+buys 3.75 points on val (~13% relative).
 
 ## Best test metric
 
-**test_avg/mae_surf_p (3 clean splits) = 25.681**, ensemble.
-Single best test_3 was `baseline-l1-200-lr1e3` at **29.215** — shows
-ensembling buys ~3.5 points on test. The 4-split
-`test_avg/mae_surf_p` is `nan` for all configurations because of the
+**test_avg/mae_surf_p (3 clean splits) = 25.647**, top-10 ensemble.
+Best single test_3 was `baseline-l1-200-lr1e3` at **29.215** — ensembling
+buys ~3.6 points on test (~12% relative). The 4-split
+`test_avg/mae_surf_p` (which the repo's `aggregate_splits` would print
+in W&B) is `nan` for *every* trained model in this repo because of the
 `+inf` pressure values in `test_geom_camber_cruise/000020.pt`.
 
 ## Next recommendation
