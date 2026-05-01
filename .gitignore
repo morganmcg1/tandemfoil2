@@ -16,6 +16,11 @@ run*.log
 wandb/
 models/
 
+# ML Intern session/launch logs (harvested separately by pod entrypoint)
+session_logs/
+launch_logs/*.log
+launch_logs/*.tsv
+
 # Editor / OS
 .vscode/
 .idea/
