@@ -20,7 +20,10 @@ Hill-climb on the Transolver baseline by running quick parallel sweeps across al
 | s4-amp-ema-90 | 33.2 | **28.3** | 90 m |
 | s5-decay9995-3h | 30.6 | **25.77** | 3 h |
 | s5-best-3h | 30.6 | **25.78** | 3 h |
-| s6-* (8 runs, 6 h each) | TBD — running | TBD | 6 h |
+| s6-best-6h-seed3 | 27.5 | **24.27** | 6 h |
+| s6-best-6h-seed0/seed1/seed2 (multi-seed) | 28.3-28.6 | 24.32-25.68 | 6 h each |
+| **Ensemble of 4 sweep-6 seeds** | **25.28** | **21.77** | inference only |
+| s7-* (8 runs, 12 h each) — running | TBD | TBD | 12 h |
 
 ## What works (in order discovered)
 
@@ -78,8 +81,9 @@ CUDA_VISIBLE_DEVICES=0 python ./train.py \
 
 See `MLINTERN_RESULTS.jsonl` for one JSON object per run with status, best val MAE, test avg MAE, per-split test MAEs, n_params, and W&B run id.
 
-## Next recommendation
+## What I'd recommend next (post-replicate)
 
-After sweep 6 (8 × 6 h, finishing around T + 14 h), pick the best 1–2 configs and run a single 12–15 h final job on the same hardware. With AMP throughput we'll see ~1 200 epochs there, which is roughly 4× more training than sweep 5 — and sweep 1→5 has shown roughly monotonic improvement with training time.
-
-If the multi-seed sweep 6 runs spread within ±1 % MAE, a simple model-average of the 4 best EMA checkpoints (predictions averaged at evaluation) is the cheapest +1–2 % to grab on the final test eval.
+- The training-time MAE is monotone in (1) AMP+EMA+L1+small3l+warmup, (2) total epochs trained, (3) ensemble size. The diminishing return from doubling training time (~5–10 % MAE per doubling past 90 min) makes ensembling cheap by comparison.
+- A 4-seed ensemble of the same config drops test MAE 10 % (24.27 → 21.77) for free at inference time. Each extra seed (up to ~10) likely gives 1–2 % more.
+- Beyond ensembling, the next architectural lever I haven't pushed is the input feature pipeline: per-sample input normalization (z-score by per-sample x-stats) for the input geometry features, or a `log1p(|p_signed|) * sign(p_signed)` aux output channel during loss to even out the per-channel gradient on extreme-Re samples. Sweep-1 evidence shows the model is currently regularization-limited, not capacity-limited, so any improvement here is small but real.
+- For a paper-grade run, the recipe is: AMP + L1 + warmup5 + EMA(0.999) + small3l (n_layers=3, n_hidden=128, n_head=1, slice_num=16, mlp_ratio=2) + cosine schedule sized to actual epoch count, trained 12 h per seed × 8 seeds, with predictions ensembled at inference time.
