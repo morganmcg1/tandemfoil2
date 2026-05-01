@@ -1,0 +1,19 @@
+[INFO] Loaded config from models/model-jy3qdhhm/config.yaml: {'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'gumbel_softmax': False, 'mlp_ratio': 2, 'n_head': 4, 'n_hidden': 128, 'n_layers': 5, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'slice_num': 64, 'space_dim': 2}
+Train: 1499, val_single_in_dist: 100, val_geom_camber_rc: 100, val_geom_camber_cruise: 100, val_re_rand: 100
+
+=== Validation ===
+    val_single_in_dist         loss=1.7942  surf[p=39.9518 Ux=0.4431 Uy=0.2580]  vol[p=51.1470 Ux=2.3640 Uy=0.9052]
+    val_geom_camber_rc         loss=0.9134  surf[p=53.3866 Ux=0.8767 Uy=0.4338]  vol[p=60.7380 Ux=3.1044 Uy=1.4079]
+    val_geom_camber_cruise     loss=0.1872  surf[p=23.5434 Ux=0.2831 Uy=0.1747]  vol[p=26.6008 Ux=1.5489 Uy=0.5517]
+    val_re_rand                loss=0.8220  surf[p=40.4552 Ux=0.5634 Uy=0.2932]  vol[p=43.6459 Ux=2.1822 Uy=0.9314]
+  VAL  avg_surf_p=39.3342
+
+=== Test ===
+Test: test_single_in_dist: 200, test_geom_camber_rc: 200, test_geom_camber_cruise: 200, test_re_rand: 200
+    test_single_in_dist        loss=1.3720  surf[p=34.9765 Ux=0.4468 Uy=0.2502]  vol[p=46.0598 Ux=2.2050 Uy=0.8550]
+    test_geom_camber_rc        loss=0.7885  surf[p=47.3421 Ux=0.8280 Uy=0.3980]  vol[p=55.2493 Ux=3.0119 Uy=1.3352]
+    test_geom_camber_cruise    loss=0.1338  surf[p=19.2783 Ux=0.2544 Uy=0.1529]  vol[p=22.8693 Ux=1.4299 Uy=0.4976]
+    test_re_rand               loss=0.3929  surf[p=31.8006 Ux=0.4452 Uy=0.2524]  vol[p=36.1400 Ux=1.9699 Uy=0.8075]
+  TEST  avg_surf_p=33.3494
+
+Wrote research/eval_outputs/r2-l1-onecycle-ema.json

@@ -1,0 +1,19 @@
+[INFO] Loaded config from models/model-ns6s7av2/config.yaml: {'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'gumbel_softmax': False, 'mlp_ratio': 2, 'n_head': 6, 'n_hidden': 192, 'n_layers': 5, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'slice_num': 64, 'space_dim': 2}
+Train: 1499, val_single_in_dist: 100, val_geom_camber_rc: 100, val_geom_camber_cruise: 100, val_re_rand: 100
+
+=== Validation ===
+    val_single_in_dist         loss=0.7238  surf[p=28.0152 Ux=0.3089 Uy=0.2074]  vol[p=36.0443 Ux=1.8037 Uy=0.6239]
+    val_geom_camber_rc         loss=0.6299  surf[p=43.8769 Ux=0.6476 Uy=0.3525]  vol[p=48.5371 Ux=2.5120 Uy=1.1395]
+    val_geom_camber_cruise     loss=0.1351  surf[p=16.9402 Ux=0.2333 Uy=0.1394]  vol[p=19.6801 Ux=1.2095 Uy=0.4197]
+    val_re_rand                loss=0.7641  surf[p=34.7142 Ux=0.4533 Uy=0.2548]  vol[p=35.7114 Ux=1.7413 Uy=0.7488]
+  VAL  avg_surf_p=30.8866
+
+=== Test ===
+Test: test_single_in_dist: 200, test_geom_camber_rc: 200, test_geom_camber_cruise: 200, test_re_rand: 200
+    test_single_in_dist        loss=0.8887  surf[p=27.6658 Ux=0.3315 Uy=0.2092]  vol[p=33.6996 Ux=1.6704 Uy=0.6163]
+    test_geom_camber_rc        loss=0.5914  surf[p=40.9406 Ux=0.6043 Uy=0.3255]  vol[p=45.7480 Ux=2.4175 Uy=1.0612]
+    test_geom_camber_cruise    loss=0.0948  surf[p=13.9397 Ux=0.2169 Uy=0.1216]  vol[p=16.5327 Ux=1.1198 Uy=0.3820]
+    test_re_rand               loss=0.2884  surf[p=24.9126 Ux=0.3538 Uy=0.2069]  vol[p=27.8975 Ux=1.5381 Uy=0.6282]
+  TEST  avg_surf_p=26.8647
+
+Wrote research/eval_outputs/r3-onecycle-ema-w192-150.json
