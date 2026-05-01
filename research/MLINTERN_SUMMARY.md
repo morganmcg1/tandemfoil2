@@ -65,8 +65,9 @@ Grew the seed bank for ensembling: 5 more L1 baseline seeds (s2, s3, s4,
 s5, s7), 2 more Huber seeds, 1 lr1e3 seed.
 
 **Result:** new best single seed: `baseline-l1-200-s4` at val 29.000.
-Top-8 ensemble (best 8 baseline checkpoints across phase 2 + phase 3)
-reached val **25.313**.
+Top-10 ensemble (best 10 baseline checkpoints across phase 2 + phase 3)
+reached val **25.246** with simple mean and **25.211** with inverse-val
+weighting (α=30).
 
 ## Single-model leaderboard
 
@@ -237,7 +238,7 @@ CUDA_VISIBLE_DEVICES=0 python launchers/ensemble_eval.py \
 2. `baseline-l1-300` was killed at epoch 211 (val 29.076) so I could
    reuse its GPU for phase 3 — its inline test eval did not run, hence
    `test_3 = n/a`. The checkpoint is still on disk and is included in
-   the top-8 ensemble.
+   the top-10 ensemble.
 3. `parse_runs.py`'s split-line regex didn't match `nan`/`inf`, so its
    per-split test averages quietly excluded the cruise split. The
    numbers I report under `test_3` are computed by re-aggregating only
