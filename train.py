@@ -326,19 +326,22 @@ def compute_loss(pred: torch.Tensor, y_norm: torch.Tensor,
 def evaluate_split(model, loader, stats, surf_weight, device, amp_dtype) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
+    Runs the forward pass in fp32 regardless of training AMP setting — bf16
+    forward on the largest meshes (cruise val/test ≥ 200K nodes) can produce
+    NaN predictions for some samples, and accumulate_batch in data/scoring.py
+    only guards against non-finite *ground truth*, not predictions. Casting
+    fp32 here keeps val/test metrics finite at a few percent extra wall-time.
+
     ``loss`` is the normalized-space MSE used for training monitoring (kept
     independent of the training loss type so val curves stay comparable across
     runs); the MAE channels are in the original target space and accumulated
     per organizer ``score.py`` (float64, non-finite samples skipped).
     """
+    del amp_dtype  # always fp32 for eval — see docstring above.
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
     n_surf = n_vol = n_batches = 0
-
-    use_amp = amp_dtype is not None
-    autocast_ctx = torch.amp.autocast("cuda", dtype=amp_dtype) if use_amp \
-        else _NullContext()
 
     with torch.no_grad():
         for x, y, is_surface, mask in loader:
@@ -348,10 +351,12 @@ def evaluate_split(model, loader, stats, surf_weight, device, amp_dtype) -> dict
             mask = mask.to(device, non_blocking=True)
 
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
+            # The `loss` channels below use the as-is normalized y so they keep
+            # comparing apples-to-apples to the train loss; we only sanitize
+            # the copy that flows into accumulate_batch.
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            with autocast_ctx:
-                pred = model({"x": x_norm})["preds"]
-            pred = pred.float()  # downcast back to fp32 for accuracy in scoring
+            pred = model({"x": x_norm})["preds"]
+            pred = pred.float()
 
             sq_err = (pred - y_norm) ** 2
             vol_mask = mask & ~is_surface
@@ -366,8 +371,29 @@ def evaluate_split(model, loader, stats, surf_weight, device, amp_dtype) -> dict
             ).item()
             n_batches += 1
 
+            # accumulate_batch in data/scoring.py implements per-sample skipping
+            # when ground truth contains non-finite values, but its
+            # ``err * mask`` multiply propagates NaN through (NaN * 0.0 == NaN
+            # in IEEE-754). The TandemFoil ``test_geom_camber_cruise`` sample
+            # 000020.pt has 761 non-finite ``p`` values; in batches with
+            # ``B>1`` this NaN leaks into the float64 accumulator and turns
+            # ``test_avg/mae_surf_p`` into NaN. We sanitize ``y`` to zeros and
+            # extend the mask to exclude bad-sample positions so the
+            # accumulator still preserves the official "drop the whole sample"
+            # semantics from ``data/scoring.py``.
+            B = y.shape[0]
+            y_finite_sample = torch.isfinite(y.reshape(B, -1)).all(dim=-1)
+            if not bool(y_finite_sample.all()):
+                bad_extend = (~y_finite_sample).view(B, 1).expand_as(mask)
+                mask_for_acc = mask & ~bad_extend
+                y_for_acc = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+            else:
+                mask_for_acc = mask
+                y_for_acc = y
             pred_orig = pred * stats["y_std"] + stats["y_mean"]
-            ds, dv = accumulate_batch(pred_orig, y, is_surface, mask, mae_surf, mae_vol)
+            ds, dv = accumulate_batch(
+                pred_orig, y_for_acc, is_surface, mask_for_acc, mae_surf, mae_vol
+            )
             n_surf += ds
             n_vol += dv
 

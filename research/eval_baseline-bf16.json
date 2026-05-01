@@ -1,0 +1,129 @@
+{
+  "model_dir": "models/model-tvrze48x",
+  "ckpt_path": "models/model-tvrze48x/checkpoint.pt",
+  "n_params": 662359,
+  "model_config": {
+    "ada_temp": false,
+    "dropout": 0.0,
+    "fun_dim": 22,
+    "grad_checkpoint": false,
+    "gumbel": false,
+    "mlp_ratio": 2,
+    "n_head": 4,
+    "n_hidden": 128,
+    "n_layers": 5,
+    "out_dim": 3,
+    "ref": 8,
+    "slice_num": 64,
+    "space_dim": 2,
+    "unified_pos": false
+  },
+  "val_per_split": {
+    "val_single_in_dist": {
+      "vol_loss": 0.1941752752661705,
+      "surf_loss": 0.12109304619953036,
+      "loss": 1.4051057372614741,
+      "mae_surf_Ux": 0.8996396535032439,
+      "mae_vol_Ux": 3.348082685468023,
+      "mae_surf_Uy": 0.46003509577520635,
+      "mae_vol_Uy": 1.3088280725865509,
+      "mae_surf_p": 70.51358515835983,
+      "mae_vol_p": 84.73718320874586
+    },
+    "val_geom_camber_rc": {
+      "vol_loss": 0.258875914812088,
+      "surf_loss": 0.09553695347160102,
+      "loss": 1.214245449528098,
+      "mae_surf_Ux": 1.4966432507014094,
+      "mae_vol_Ux": 3.879729915547483,
+      "mae_surf_Uy": 0.644475987375628,
+      "mae_vol_Uy": 1.8531469126316462,
+      "mae_surf_p": 74.62148480241817,
+      "mae_vol_p": 84.25949754442998
+    },
+    "val_geom_camber_cruise": {
+      "vol_loss": 0.0842137299105525,
+      "surf_loss": 0.03400207670405507,
+      "loss": 0.4242344969511032,
+      "mae_surf_Ux": 0.7631309894385866,
+      "mae_vol_Ux": 2.5439420966587964,
+      "mae_surf_Uy": 0.3413944377335301,
+      "mae_vol_Uy": 0.8562061021004576,
+      "mae_surf_p": 46.107471826781754,
+      "mae_vol_p": 49.145475645546234
+    },
+    "val_re_rand": {
+      "vol_loss": 0.1916876308619976,
+      "surf_loss": 0.08476782001554967,
+      "loss": 1.0393658310174942,
+      "mae_surf_Ux": 1.1314184893987946,
+      "mae_vol_Ux": 3.095136513721493,
+      "mae_surf_Uy": 0.4817787084178655,
+      "mae_vol_Uy": 1.2859368362786903,
+      "mae_surf_p": 63.903868649828425,
+      "mae_vol_p": 66.95690699655779
+    }
+  },
+  "val_avg": {
+    "avg/mae_surf_Ux": 1.0727080957605086,
+    "avg/mae_surf_Uy": 0.48192105732555746,
+    "avg/mae_surf_p": 63.78660260934704,
+    "avg/mae_vol_Ux": 3.216722802848949,
+    "avg/mae_vol_Uy": 1.3260294808993363,
+    "avg/mae_vol_p": 71.27476584881997
+  },
+  "test_per_split": {
+    "test_single_in_dist": {
+      "vol_loss": 0.21995898082852364,
+      "surf_loss": 0.14774536633398383,
+      "loss": 1.697412644168362,
+      "mae_surf_Ux": 0.8872847394502912,
+      "mae_vol_Ux": 3.0590472019896686,
+      "mae_surf_Uy": 0.45454955234892036,
+      "mae_vol_Uy": 1.2532053787904325,
+      "mae_surf_p": 66.09378826313481,
+      "mae_vol_p": 76.93487112932506
+    },
+    "test_geom_camber_rc": {
+      "vol_loss": 0.22112248301506043,
+      "surf_loss": 0.08342261042445898,
+      "loss": 1.0553485872596502,
+      "mae_surf_Ux": 1.5065867760320653,
+      "mae_vol_Ux": 3.8322172978432993,
+      "mae_surf_Uy": 0.5922885222470315,
+      "mae_vol_Uy": 1.758509541570047,
+      "mae_surf_p": 69.39527357240065,
+      "mae_vol_p": 78.19385864762509
+    },
+    "test_geom_camber_cruise": {
+      "vol_loss": Infinity,
+      "surf_loss": NaN,
+      "loss": NaN,
+      "mae_surf_Ux": 0.716176194995123,
+      "mae_vol_Ux": 2.3757980587390026,
+      "mae_surf_Uy": 0.3064529759580272,
+      "mae_vol_Uy": 0.7871354503943339,
+      "mae_surf_p": NaN,
+      "mae_vol_p": NaN
+    },
+    "test_re_rand": {
+      "vol_loss": 0.12865980982780456,
+      "surf_loss": 0.051840824149549006,
+      "loss": 0.6470680513232946,
+      "mae_surf_Ux": 0.9997517826178397,
+      "mae_vol_Ux": 2.896910995407477,
+      "mae_surf_Uy": 0.4377470001817991,
+      "mae_vol_Uy": 1.1628324635743925,
+      "mae_surf_p": 55.650711429973136,
+      "mae_vol_p": 59.927515752731395
+    }
+  },
+  "test_avg": {
+    "avg/mae_surf_Ux": 1.0274498732738298,
+    "avg/mae_surf_Uy": 0.44775951268394454,
+    "avg/mae_surf_p": NaN,
+    "avg/mae_vol_Ux": 3.040993388494862,
+    "avg/mae_vol_Uy": 1.2404207085823014,
+    "avg/mae_vol_p": NaN
+  }
+}
