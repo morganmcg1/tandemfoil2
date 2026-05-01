@@ -1,0 +1,22 @@
+PHASE 1 RESULTS (30 min cap, 8 parallel runs)
+=============================================
+| Run | Config | Best val_avg/mae_surf_p | Epochs |
+|---|---|---:|---:|
+| p1D-tplus | eidetic + gcond + grad_clip=0.1 + onecycle + lr=1e-3 | **106.48** | 12 |
+| p1H-lr1e3-clip | lr=1e-3 + grad_clip=0.5 + cosine | 113.63 | 14 |
+| p1E-slice16 | slice_num=16 only | 118.77 | 18 |
+| p1F-head8 | n_head=8 only | 137.34 | 11 |
+| p1A-baseline | original config (lr=5e-4, cosine, no clip) | 138.72 | 14 |
+| p1G-surfw20 | surf_weight=20 only | 138.88 | 14 |
+| p1C-globalcond | gcond only | 140.38 | 14 |
+| p1B-eidetic | eidetic only | 148.37 | 12 |
+
+KEY FINDINGS
+- The BIG win is the training recipe (lr=1e-3 + grad clipping + LR schedule with decay).
+  - p1H (just lr=1e-3 + grad_clip=0.5 + cosine) gets within 7 pts of full T++ (113 vs 106)
+  - p1A (original lr=5e-4) is 32 pts worse than p1D
+- Eidetic alone is WORSE than baseline (148 vs 138) — only helps when combined with high LR
+- Global conditioning alone is barely better than baseline (140 vs 138)
+- Slice_num=16 is faster but converges similar quality (118)
+- N_head=8 (with hidden=128, dim_head=16) is mediocre
+- Surf_weight=20 alone doesn't help much

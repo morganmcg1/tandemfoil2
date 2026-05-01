@@ -1,0 +1,49 @@
+{
+  "ensemble_test_avg": {
+    "avg/mae_surf_Ux": 0.3550752527719867,
+    "avg/mae_surf_Uy": 0.20234019715187015,
+    "avg/mae_surf_p": 25.513196934059547,
+    "avg/mae_vol_Ux": 1.3885741417691382,
+    "avg/mae_vol_Uy": 0.5324797099326374,
+    "avg/mae_vol_p": 26.65870672123672
+  },
+  "ensemble_test_per_split": {
+    "test_single_in_dist": {
+      "mae_surf_Ux": 0.29596298062621573,
+      "mae_vol_Ux": 1.2983511798063583,
+      "mae_surf_Uy": 0.18944484702310055,
+      "mae_vol_Uy": 0.47317088482415437,
+      "mae_surf_p": 25.785694510414864,
+      "mae_vol_p": 28.750796875718063
+    },
+    "test_geom_camber_rc": {
+      "mae_surf_Ux": 0.5928943098336872,
+      "mae_vol_Ux": 2.034377244374123,
+      "mae_surf_Uy": 0.315235138267936,
+      "mae_vol_Uy": 0.8665534822063968,
+      "mae_surf_p": 40.31557228260216,
+      "mae_vol_p": 40.83249956512274
+    },
+    "test_geom_camber_cruise": {
+      "mae_surf_Ux": 0.1950999170243305,
+      "mae_vol_Ux": 0.9456124123030386,
+      "mae_surf_Uy": 0.11191208028233073,
+      "mae_vol_Uy": 0.2996506868072997,
+      "mae_surf_p": 12.349425560576483,
+      "mae_vol_p": 13.362572401587586
+    },
+    "test_re_rand": {
+      "mae_surf_Ux": 0.33634380360371346,
+      "mae_vol_Ux": 1.2759557305930327,
+      "mae_surf_Uy": 0.19276872303411335,
+      "mae_vol_Uy": 0.49054378589269854,
+      "mae_surf_p": 23.602095382644674,
+      "mae_vol_p": 23.688958042518482
+    }
+  },
+  "model_dirs": [
+    "models/model-h3k1r6xw",
+    "models/model-528incwd",
+    "models/model-90tpik15"
+  ]
+}
