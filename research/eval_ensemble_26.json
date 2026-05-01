@@ -1,0 +1,138 @@
+{
+  "models": [
+    "models/model-vo48r551",
+    "models/model-6kh8u2p0",
+    "models/model-ubqksdo4",
+    "models/model-ejvimr8w",
+    "models/model-6pproozv",
+    "models/model-u2phuy10",
+    "models/model-wpj9rltw",
+    "models/model-91gsowe3",
+    "models/model-o5mpb9wu",
+    "models/model-4jrtw2m2",
+    "models/model-rezrlx8e",
+    "models/model-1hwxda46",
+    "models/model-5crfc7ge",
+    "models/model-d1s8ok00",
+    "models/model-oxbqqsx0",
+    "models/model-yw82413n",
+    "models/model-jiqcpyqp",
+    "models/model-27e54p85",
+    "models/model-akcy7pt4",
+    "models/model-ucnbmdzy",
+    "models/model-y6ddu82c",
+    "models/model-0yd64u9t",
+    "models/model-l752z5n9",
+    "models/model-pqq1djw9",
+    "models/model-czkg9dos",
+    "models/model-fjllis51"
+  ],
+  "val_per_split": {
+    "val_single_in_dist": {
+      "vol_loss": 0.08910195389762521,
+      "surf_loss": 0.07948355210246519,
+      "loss": 0.883937474922277,
+      "mae_surf_Ux": 0.32838556653014067,
+      "mae_vol_Ux": 1.8474416211650386,
+      "mae_surf_Uy": 0.22357816725947013,
+      "mae_vol_Uy": 0.6254021553326158,
+      "mae_surf_p": 33.264767980232065,
+      "mae_vol_p": 36.541141090920256
+    },
+    "val_geom_camber_rc": {
+      "vol_loss": 0.12496442951261998,
+      "surf_loss": 0.049597196523100136,
+      "loss": 0.6209363947436213,
+      "mae_surf_Ux": 0.6894933213287563,
+      "mae_vol_Ux": 2.512194651501126,
+      "mae_surf_Uy": 0.3736380311629242,
+      "mae_vol_Uy": 1.116152886661175,
+      "mae_surf_p": 47.180522068791596,
+      "mae_vol_p": 49.504032474893776
+    },
+    "val_geom_camber_cruise": {
+      "vol_loss": 0.030697961784899235,
+      "surf_loss": 0.010779462165664881,
+      "loss": 0.13849258344154805,
+      "mae_surf_Ux": 0.26180011220024774,
+      "mae_vol_Ux": 1.3797351285576163,
+      "mae_surf_Uy": 0.15834827153678402,
+      "mae_vol_Uy": 0.4309134713380339,
+      "mae_surf_p": 19.764994476037153,
+      "mae_vol_p": 21.236260591626447
+    },
+    "val_re_rand": {
+      "vol_loss": 0.09787225529551506,
+      "surf_loss": 0.051091845310293135,
+      "loss": 0.6087907083984464,
+      "mae_surf_Ux": 0.5072200406662739,
+      "mae_vol_Ux": 1.8506571104362008,
+      "mae_surf_Uy": 0.2687511635788087,
+      "mae_vol_Uy": 0.7523866857267938,
+      "mae_surf_p": 36.232499863171235,
+      "mae_vol_p": 36.0007451867407
+    }
+  },
+  "val_avg": {
+    "avg/mae_surf_Ux": 0.44672476018135465,
+    "avg/mae_surf_Uy": 0.25607890838449676,
+    "avg/mae_surf_p": 34.11069609705801,
+    "avg/mae_vol_Ux": 1.8975071279149955,
+    "avg/mae_vol_Uy": 0.7312137997646546,
+    "avg/mae_vol_p": 35.82054483604529
+  },
+  "test_per_split": {
+    "test_single_in_dist": {
+      "vol_loss": 0.10702325031161308,
+      "surf_loss": 0.09569151488714851,
+      "loss": 1.0639383991830982,
+      "mae_surf_Ux": 0.38629035923169114,
+      "mae_vol_Ux": 1.796670313914099,
+      "mae_surf_Uy": 0.23706927911326,
+      "mae_vol_Uy": 0.6392100909539328,
+      "mae_surf_p": 32.34190124142641,
+      "mae_vol_p": 36.44177787428923
+    },
+    "test_geom_camber_rc": {
+      "vol_loss": 0.11202122278511524,
+      "surf_loss": 0.04365217818878591,
+      "loss": 0.5485430046729743,
+      "mae_surf_Ux": 0.6575478000056766,
+      "mae_vol_Ux": 2.4354636378103542,
+      "mae_surf_Uy": 0.3461771817526042,
+      "mae_vol_Uy": 1.0349875919029843,
+      "mae_surf_p": 41.12837009107532,
+      "mae_vol_p": 44.316702628328606
+    },
+    "test_geom_camber_cruise": {
+      "vol_loss": 0.024710494289174677,
+      "surf_loss": 0.006397978369495832,
+      "loss": 0.08869027798413301,
+      "mae_surf_Ux": 0.23943705088073658,
+      "mae_vol_Ux": 1.2891210686713583,
+      "mae_surf_Uy": 0.14111100048788558,
+      "mae_vol_Uy": 0.3912583384970731,
+      "mae_surf_p": 15.791347570247593,
+      "mae_vol_p": 17.598307067445425
+    },
+    "test_re_rand": {
+      "vol_loss": 0.05248509252443909,
+      "surf_loss": 0.021412309329025447,
+      "loss": 0.2666081858146936,
+      "mae_surf_Ux": 0.3921737935238953,
+      "mae_vol_Ux": 1.6712574095355148,
+      "mae_surf_Uy": 0.226797590796287,
+      "mae_vol_Uy": 0.6327734377053057,
+      "mae_surf_p": 27.353987418476905,
+      "mae_vol_p": 28.84149539841365
+    }
+  },
+  "test_avg": {
+    "avg/mae_surf_Ux": 0.4188622509104999,
+    "avg/mae_surf_Uy": 0.2377887630375092,
+    "avg/mae_surf_p": 29.153901580306556,
+    "avg/mae_vol_Ux": 1.7981281074828317,
+    "avg/mae_vol_Uy": 0.674557364764824,
+    "avg/mae_vol_p": 31.79957074211923
+  }
+}
