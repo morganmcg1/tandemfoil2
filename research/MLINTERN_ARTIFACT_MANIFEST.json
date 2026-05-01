@@ -1,0 +1,87 @@
+{
+  "artifact_count": 9,
+  "artifacts": [
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/stdout_logs/ml-intern-replicate-2-20260430_095953.log.gz",
+      "bytes": 8882,
+      "compressed": true,
+      "sha256": "c8f9ef163febc1580bf40634dfc85fe605988b14a2147bde67f526cbc563996a",
+      "source": "/workspace/ml-intern-benchmark/logs/ml-intern-replicate-2-20260430_095953.log"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/prompt.md",
+      "bytes": 4540,
+      "compressed": false,
+      "sha256": "65f6ea4d1b553363ab4a250e21d69bfaacd582ccdda6860b764b88aa00f35d50",
+      "source": "/workspace/ml-intern-benchmark/prompt.md"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/deadline.txt.gz",
+      "bytes": 128,
+      "compressed": true,
+      "sha256": "3248c8b77a05b8e680e1b7ee205a7bc5c8ecfe09f3d9a398f98ce8875ac44513",
+      "source": "/workspace/ml-intern-benchmark/deadline.txt"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/cli_agent_config.json",
+      "bytes": 172,
+      "compressed": false,
+      "sha256": "3d1a039ec08b7d253e7b1bc4af56f5a6b20e7e3631094427b70d1f9957e25ac2",
+      "source": "/workspace/ml-intern-benchmark/cli_agent_config.json"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/session_logs/session_21a48556-7f7a-4331-ba3d-6190c5211e99_20260430_100059.json",
+      "bytes": 2546107,
+      "compressed": false,
+      "kind": "ml_intern_session_trajectory",
+      "sha256": "3a3d5529bce20942d88bd7c346978fde5b8d3363878a1be9b994ae109ee9ab21",
+      "source": "/workspace/ml-intern-benchmark/target/session_logs/session_21a48556-7f7a-4331-ba3d-6190c5211e99_20260430_100059.json"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_CONVERSATION.jsonl",
+      "bytes": 2393591,
+      "compressed": false,
+      "kind": "ml_intern_conversation_jsonl",
+      "sha256": "7b723111c30f217daf414d44f2e1f3d0152ca01fcbe3dc07d079e88705e1a512",
+      "source": "session_logs/session_*.json"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/tmp_logs/bash_output_41rs3p46.txt.gz",
+      "bytes": 11839,
+      "compressed": true,
+      "sha256": "9d46ba9f7c251d85c4c3ba7893c6d463003536a0623e983f6fb007544d3315bf",
+      "source": "/tmp/bash_output_41rs3p46.txt"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/tmp_logs/bash_output_9jk11f5f.txt.gz",
+      "bytes": 12628,
+      "compressed": true,
+      "sha256": "ed6e965a01e1a63963b062cbfdf1e0aff6f0e6b67e2bf40296b0e70a9a35c97b",
+      "source": "/tmp/bash_output_9jk11f5f.txt"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/tmp_logs/bash_output_yr8uui4e.txt.gz",
+      "bytes": 11839,
+      "compressed": true,
+      "sha256": "6f9fa29bb13dbdb56e348e41aada9f7d19c8bd23ecfec1a87e59f044a8a0f468",
+      "source": "/tmp/bash_output_yr8uui4e.txt"
+    }
+  ],
+  "base_ref": "main",
+  "conversation_session_count": 1,
+  "default_epochs": 999,
+  "finished_epoch": 1777628400,
+  "gpus_per_replicate": 8,
+  "ml_intern_exit_code": 0,
+  "ml_intern_timeout_seconds": 258900,
+  "model": "anthropic/claude-opus-4-7",
+  "replicate": "2",
+  "research_tag": "mlintern-pai2-72h-v4",
+  "runner": "ml-intern",
+  "senpai_timeout_minutes": 720.0,
+  "target_branch": "mlintern-pai2-72h-v4-r2",
+  "target_repo_url": "https://github.com/morganmcg1/TandemFoilSet-Balanced.git",
+  "wall_clock_seconds": 259200,
+  "wandb_entity": "wandb-applied-ai-team",
+  "wandb_project": "senpai-v1-ml-intern"
+}
