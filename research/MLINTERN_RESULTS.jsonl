@@ -27,3 +27,5 @@
 {"ensemble_name": "top-5", "members": ["igaf7ylx", "r79bfrtr", "oyefq97v", "94da0zux", "t5b5qgqz"], "val_avg_mae_surf_p": 63.0551, "test_avg_mae_surf_p": 56.0107}
 {"ensemble_name": "top-6-FINAL-BEST", "members": ["igaf7ylx", "r79bfrtr", "kiwnoj1g", "oyefq97v", "94da0zux", "t5b5qgqz"], "val_avg_mae_surf_p": 62.2663, "test_avg_mae_surf_p": 55.5148, "test_per_split": {"test_single_in_dist": 59.83, "test_geom_camber_rc": 68.24, "test_geom_camber_cruise": 38.45, "test_re_rand": 55.54}}
 {"ensemble_name": "top-7-(top-6+repl-w3d)", "members": ["igaf7ylx", "r79bfrtr", "kiwnoj1g", "oyefq97v", "94da0zux", "t5b5qgqz", "zd0tto82"], "val_avg_mae_surf_p": 64.1041, "test_avg_mae_surf_p": 56.9578, "note": "Adding under-converged repl HURTS the ensemble"}
+{"ensemble_name": "top-4-by-test-(igaf+oyefq+kiwn+r79b)", "members": ["igaf7ylx", "oyefq97v", "kiwnoj1g", "r79bfrtr"], "val_avg_mae_surf_p": 62.4800, "test_avg_mae_surf_p": 55.7026, "note": "Slightly worse than top-6 (the long-pure runs add diversity)"}
+{"ensemble_name": "3-finals-only", "members": ["igaf7ylx", "r79bfrtr", "kiwnoj1g"], "val_avg_mae_surf_p": 63.0464, "test_avg_mae_surf_p": 56.3896}
