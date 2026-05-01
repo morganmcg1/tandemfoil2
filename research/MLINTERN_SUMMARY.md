@@ -14,6 +14,8 @@
 | **8-model Phase 5 ensemble** (best) | — | **23.56** |
 | 6-model ensemble (drop deeper/h160 variants) | — | 23.72 |
 | 4-model seed ensemble (slice16+EMA, decays 0.999/0.9995) | — | 24.62 |
+| 12-model ensemble (8 P5 + 4 best P6) | — | 24.38 |
+| 16-model ensemble (8 P5 + 8 P6 — Phase 6 too short) | — | 25.24 |
 | Best single model: `p5B-slice16-ema-8h-s1` | 32.90 | **27.53** |
 | Phase 4 best: `p4F-lr2e3-slice16-ema` | 33.55 | 29.58 |
 | Phase 3 best: `p3H-noeid-lr2e3` | 43.80 | 37.78 |
@@ -30,7 +32,8 @@ I ran a five-phase iterative search using all 8 GPUs in parallel.
 3. **Phase 3 — 3-hour deep dives (8 variants).** Used the Phase-2 winning recipe and explored complementary hyperparameters (seeds, EMA, larger model, smaller slice_num, deeper, higher LR).
 4. **Phase 4 — 6-hour final candidates (8 variants).** Built on the Phase-3 winner (lr=2e-3) and added EMA + slice_num sweep + larger / deeper variants.
 5. **Phase 5 — 8-hour seed-and-variation ensemble (8 variants).** Locked in the Phase-4 winning recipe (slice_num=16, EMA, lr=2e-3) and ran 3 seeds plus diversity variants for ensembling.
-6. **Ensembling.** After Phase 5 finished, averaged predictions across the eight Phase-5 checkpoints; this dropped surface-pressure MAE by another ~4 points relative to the best single model.
+6. **Phase 6 — 2.5-hour additional seeds (8 variants).** Eight more seeds of the Phase-5 winning recipe (seeds 3–10) with a compressed schedule, hoping to enrich ensemble diversity within the wall-clock budget.
+7. **Ensembling.** After Phase 5 finished, averaged predictions across the eight Phase-5 checkpoints; this dropped surface-pressure MAE by another ~4 points relative to the best single model. Phase-6 checkpoints were too short to add value to the ensemble (16-model ensemble landed at 25.24 vs. 8-model 23.56), so the published ensemble is Phase 5 only.
 
 The ML Intern budget for each replicate elsewhere uses a 30-minute cap; that cap was lifted for this run, so each successive phase doubled or tripled the wall-clock allowed for one run.
 

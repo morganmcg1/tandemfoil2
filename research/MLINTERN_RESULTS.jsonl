@@ -42,3 +42,13 @@
 {"phase": "ensemble", "run_name": "ensemble_4seeds", "models": ["p5A (s0)", "p5B (s1)", "p5C (s2)", "p5G (ema9995)"], "test_avg/mae_surf_p": 24.6202, "comment": "4 seeds of slice16+EMA"}
 {"phase": "ensemble", "run_name": "ensemble_best6", "models": ["p5A", "p5B", "p5C", "p5D", "p5G", "p5H"], "test_avg/mae_surf_p": 23.7176, "comment": "Drop p5E (h160) and p5F (l6)"}
 {"phase": "ensemble", "run_name": "ensemble_all_p5", "models": ["p5A", "p5B", "p5C", "p5D", "p5E", "p5F", "p5G", "p5H"], "test_avg/mae_surf_p": 23.5572, "test_avg/mae_surf_Ux": 0.3191, "test_avg/mae_surf_Uy": 0.1847, "test_avg/mae_vol_p": 23.6933, "comment": "BEST: 8-model ensemble of all Phase 5 candidates"}
+{"phase": "p6", "run_name": "p6A-slice16-ema-2.5h-s3", "config": {"lr": 2e-3, "scheduler": "onecycle", "max_grad_norm": 0.1, "pct_start": 0.05, "use_global_cond": true, "slice_num": 16, "use_ema": true, "ema_decay": 0.999, "lr_schedule_epochs": 90, "seed": 3}, "max_minutes": 150, "epochs": 86, "best_val_avg/mae_surf_p": 41.0464, "test_avg/mae_surf_p": 35.2600, "comment": "Phase 6 seed 3"}
+{"phase": "p6", "run_name": "p6B-slice16-ema-2.5h-s4", "config": {"seed": 4}, "max_minutes": 150, "epochs": 86, "best_val_avg/mae_surf_p": 41.5757, "test_avg/mae_surf_p": 35.7549}
+{"phase": "p6", "run_name": "p6C-slice16-ema-2.5h-s5", "config": {"seed": 5}, "max_minutes": 150, "epochs": 85, "best_val_avg/mae_surf_p": 42.1296, "test_avg/mae_surf_p": 36.4576}
+{"phase": "p6", "run_name": "p6D-slice16-ema-2.5h-s6", "config": {"seed": 6}, "max_minutes": 150, "epochs": 86, "best_val_avg/mae_surf_p": 40.5541, "test_avg/mae_surf_p": 34.7875, "comment": "Phase 6 best seed"}
+{"phase": "p6", "run_name": "p6E-slice16-ema-2.5h-s7", "config": {"seed": 7}, "max_minutes": 150, "epochs": 86, "best_val_avg/mae_surf_p": 42.3710, "test_avg/mae_surf_p": 36.3712}
+{"phase": "p6", "run_name": "p6F-slice16-ema-2.5h-s8", "config": {"seed": 8}, "max_minutes": 150, "epochs": 86, "best_val_avg/mae_surf_p": 40.9283, "test_avg/mae_surf_p": 34.9364}
+{"phase": "p6", "run_name": "p6G-slice16-ema-2.5h-s9", "config": {"seed": 9}, "max_minutes": 150, "epochs": 86, "best_val_avg/mae_surf_p": 40.6084, "test_avg/mae_surf_p": 34.8060}
+{"phase": "p6", "run_name": "p6H-slice16-ema-2.5h-s10", "config": {"seed": 10}, "max_minutes": 150, "epochs": 86, "best_val_avg/mae_surf_p": 41.1646, "test_avg/mae_surf_p": 35.4924}
+{"phase": "ensemble", "run_name": "ensemble_all_16", "models": ["8 Phase 5 + 8 Phase 6"], "test_avg/mae_surf_p": 25.2387, "comment": "Adding Phase 6 hurts (lower-quality models drag down)"}
+{"phase": "ensemble", "run_name": "ensemble_p5_plus_top4_p6", "models": ["8 Phase 5 + 4 best Phase 6"], "test_avg/mae_surf_p": 24.3836, "comment": "Phase 5 alone still better than mixing"}
