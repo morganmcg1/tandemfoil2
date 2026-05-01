@@ -11,8 +11,10 @@ venv/
 *.ckpt
 checkpoints/
 
-# Run logs
+# Run logs (harvested separately into research/ by the pod entrypoint)
 run*.log
+logs/
+session_logs/
 wandb/
 models/
 

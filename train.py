@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import time
@@ -214,15 +215,60 @@ class Transolver(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Loss helpers
+# ---------------------------------------------------------------------------
+
+def per_node_residual(pred: torch.Tensor, target: torch.Tensor, loss_type: str,
+                      huber_beta: float = 0.1) -> torch.Tensor:
+    """Per-node residual scalar (C-summed): shape [B, N].
+
+    pred/target: [B, N, C]
+    loss_type: 'mse' | 'l1' | 'huber'
+    """
+    if loss_type == "mse":
+        r = (pred - target) ** 2
+    elif loss_type == "l1":
+        r = (pred - target).abs()
+    elif loss_type == "huber":
+        # Smooth-L1 / Huber on each element; robust to outliers.
+        r = F.smooth_l1_loss(pred, target, beta=huber_beta, reduction="none")
+    else:
+        raise ValueError(f"Unknown loss_type: {loss_type}")
+    return r  # [B, N, C]
+
+
+def channel_weighted_split_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    submask: torch.Tensor,
+    loss_type: str,
+    huber_beta: float,
+    channel_weights: torch.Tensor,
+) -> torch.Tensor:
+    """Mean masked residual with per-channel weights.
+
+    Returns a scalar tensor. Robust if submask sums to 0.
+    """
+    r = per_node_residual(pred, target, loss_type, huber_beta)  # [B, N, C]
+    r = r * channel_weights.view(1, 1, -1)
+    masked = r * submask.unsqueeze(-1).to(r.dtype)
+    denom = submask.sum().clamp(min=1).to(r.dtype) * channel_weights.sum()
+    return masked.sum() / denom
+
+
+# ---------------------------------------------------------------------------
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_split(model, loader, stats, surf_weight, device) -> dict[str, float]:
+def evaluate_split(model, loader, stats, surf_weight, device,
+                   loss_type: str = "mse", huber_beta: float = 0.1) -> dict[str, float]:
     """Run inference over a split and return metrics matching the organizer scorer.
 
     ``loss`` is the normalized-space loss used for training monitoring; the MAE
     channels are in the original target space and accumulated per organizer
-    ``score.py`` (float64, non-finite samples skipped).
+    ``score.py`` (float64, non-finite samples skipped). The reported loss uses
+    MSE (for backward-compat reporting), regardless of ``loss_type`` used during
+    training.
     """
     vol_loss_sum = surf_loss_sum = 0.0
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
@@ -375,22 +421,49 @@ DEFAULT_TIMEOUT_MIN = float(os.environ.get("SENPAI_TIMEOUT_MINUTES", "30"))
 
 @dataclass
 class Config:
+    # --- Optim / sched ---
     lr: float = 5e-4
+    min_lr: float = 0.0
     weight_decay: float = 1e-4
+    optimizer: str = "adamw"          # adamw | adam
+    warmup_epochs: int = 0
+    grad_clip: float = 0.0            # 0 disables
     batch_size: int = 4
-    surf_weight: float = 10.0
     epochs: int = 50
+
+    # --- Loss config ---
+    loss_type: str = "mse"            # mse | l1 | huber
+    huber_beta: float = 0.1
+    surf_weight: float = 10.0         # multiplier on surface loss term
+    p_extra_weight: float = 0.0       # extra weight on pressure (channel 2) on surface; 0 disables
+    ux_weight: float = 1.0
+    uy_weight: float = 1.0
+    p_weight: float = 1.0
+
+    # --- Architecture ---
+    n_hidden: int = 128
+    n_layers: int = 5
+    n_head: int = 4
+    slice_num: int = 64
+    mlp_ratio: int = 2
+    dropout: float = 0.0
+
+    # --- Misc ---
     splits_dir: str = "/mnt/new-pvc/datasets/tandemfoil/splits_v2"
     wandb_group: str | None = None
     wandb_name: str | None = None
     agent: str | None = None
     debug: bool = False
     skip_test: bool = False  # skip end-of-run test evaluation
+    seed: int = 0
 
 
 cfg = sp.parse(Config)
 MAX_EPOCHS = 3 if cfg.debug else cfg.epochs
 MAX_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN
+
+if cfg.seed:
+    torch.manual_seed(cfg.seed)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}" + (" [DEBUG]" if cfg.debug else ""))
@@ -418,21 +491,48 @@ model_config = dict(
     space_dim=2,
     fun_dim=X_DIM - 2,
     out_dim=3,
-    n_hidden=128,
-    n_layers=5,
-    n_head=4,
-    slice_num=64,
-    mlp_ratio=2,
+    n_hidden=cfg.n_hidden,
+    n_layers=cfg.n_layers,
+    n_head=cfg.n_head,
+    slice_num=cfg.slice_num,
+    mlp_ratio=cfg.mlp_ratio,
+    dropout=cfg.dropout,
     output_fields=["Ux", "Uy", "p"],
     output_dims=[1, 1, 1],
 )
 
 model = Transolver(**model_config).to(device)
 n_params = sum(p.numel() for p in model.parameters())
-print(f"Model: Transolver ({n_params/1e6:.2f}M params)")
+print(f"Model: Transolver ({n_params/1e6:.2f}M params)  cfg.n_hidden={cfg.n_hidden} "
+      f"n_layers={cfg.n_layers} n_head={cfg.n_head} slice_num={cfg.slice_num} mlp_ratio={cfg.mlp_ratio}")
+print(f"Loss: {cfg.loss_type} (huber_beta={cfg.huber_beta})  surf_weight={cfg.surf_weight} "
+      f"p_extra_weight={cfg.p_extra_weight}  channel weights Ux={cfg.ux_weight} Uy={cfg.uy_weight} p={cfg.p_weight}")
+print(f"Optim: {cfg.optimizer}  lr={cfg.lr} min_lr={cfg.min_lr} wd={cfg.weight_decay} warmup={cfg.warmup_epochs} "
+      f"grad_clip={cfg.grad_clip} bs={cfg.batch_size}")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
+# Optimizer
+if cfg.optimizer == "adamw":
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+elif cfg.optimizer == "adam":
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+else:
+    raise ValueError(f"Unknown optimizer: {cfg.optimizer}")
+
+# LR scheduler with optional warmup, then cosine to min_lr
+if cfg.warmup_epochs > 0 and MAX_EPOCHS > cfg.warmup_epochs:
+    warmup = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.01, end_factor=1.0, total_iters=cfg.warmup_epochs)
+    cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(1, MAX_EPOCHS - cfg.warmup_epochs), eta_min=cfg.min_lr)
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer, schedulers=[warmup, cosine], milestones=[cfg.warmup_epochs])
+else:
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=MAX_EPOCHS, eta_min=cfg.min_lr)
+
+# Channel weights (broadcast: Ux, Uy, p)
+chan_w = torch.tensor([cfg.ux_weight, cfg.uy_weight, cfg.p_weight],
+                      dtype=torch.float32, device=device)
 
 run = wandb.init(
     entity=os.environ.get("WANDB_ENTITY"),
@@ -487,19 +587,45 @@ for epoch in range(MAX_EPOCHS):
         x_norm = (x - stats["x_mean"]) / stats["x_std"]
         y_norm = (y - stats["y_mean"]) / stats["y_std"]
         pred = model({"x": x_norm})["preds"]
-        sq_err = (pred - y_norm) ** 2
 
+        # Compute loss using configured loss_type and channel weights.
         vol_mask = mask & ~is_surface
         surf_mask = mask & is_surface
-        vol_loss = (sq_err * vol_mask.unsqueeze(-1)).sum() / vol_mask.sum().clamp(min=1)
-        surf_loss = (sq_err * surf_mask.unsqueeze(-1)).sum() / surf_mask.sum().clamp(min=1)
-        loss = vol_loss + cfg.surf_weight * surf_loss
+
+        # Per-element residuals (already C-channelled)
+        r = per_node_residual(pred, y_norm, cfg.loss_type, cfg.huber_beta)  # [B,N,C]
+        # Channel weights broadcast over [B,N,C]
+        r_w = r * chan_w.view(1, 1, -1)
+
+        # Volume mean (over valid volume nodes, sum across channels then normalize)
+        vol_mask_f = vol_mask.unsqueeze(-1).to(r_w.dtype)
+        vol_mask_count = vol_mask.sum().clamp(min=1).to(r_w.dtype)
+        vol_loss = (r_w * vol_mask_f).sum() / (vol_mask_count * chan_w.sum())
+
+        # Surface mean (likewise)
+        surf_mask_f = surf_mask.unsqueeze(-1).to(r_w.dtype)
+        surf_mask_count = surf_mask.sum().clamp(min=1).to(r_w.dtype)
+        surf_loss = (r_w * surf_mask_f).sum() / (surf_mask_count * chan_w.sum())
+
+        # Optional extra pressure-only surface term (puts more pressure on the
+        # surface-pressure channel, which is the primary metric).
+        extra_p = torch.zeros((), device=device, dtype=r.dtype)
+        if cfg.p_extra_weight > 0:
+            r_p = r[..., 2]  # [B, N]
+            extra_p = (r_p * surf_mask.to(r.dtype)).sum() / surf_mask_count
+
+        loss = vol_loss + cfg.surf_weight * surf_loss + cfg.p_extra_weight * extra_p
 
         optimizer.zero_grad()
         loss.backward()
+        if cfg.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
         global_step += 1
-        wandb.log({"train/loss": loss.item(), "global_step": global_step})
+        wandb.log({"train/loss": loss.item(),
+                   "train/vol_loss_step": vol_loss.item(),
+                   "train/surf_loss_step": surf_loss.item(),
+                   "global_step": global_step})
 
         epoch_vol += vol_loss.item()
         epoch_surf += surf_loss.item()
@@ -512,7 +638,8 @@ for epoch in range(MAX_EPOCHS):
     # --- Validate ---
     model.eval()
     split_metrics = {
-        name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+        name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                             loss_type=cfg.loss_type, huber_beta=cfg.huber_beta)
         for name, loader in val_loaders.items()
     }
     val_avg = aggregate_splits(split_metrics)
@@ -550,7 +677,8 @@ for epoch in range(MAX_EPOCHS):
     print(
         f"Epoch {epoch+1:3d} ({dt:.0f}s) [{peak_gb:.1f}GB]  "
         f"train[vol={epoch_vol:.4f} surf={epoch_surf:.4f}]  "
-        f"val_avg_surf_p={avg_surf_p:.4f}{tag}"
+        f"val_avg_surf_p={avg_surf_p:.4f}{tag}",
+        flush=True,
     )
     for name in VAL_SPLIT_NAMES:
         print_split_metrics(name, split_metrics[name])
@@ -580,7 +708,8 @@ if best_metrics:
             for name, ds in test_datasets.items()
         }
         test_metrics = {
-            name: evaluate_split(model, loader, stats, cfg.surf_weight, device)
+            name: evaluate_split(model, loader, stats, cfg.surf_weight, device,
+                                 loss_type=cfg.loss_type, huber_beta=cfg.huber_beta)
             for name, loader in test_loaders.items()
         }
         test_avg = aggregate_splits(test_metrics)
