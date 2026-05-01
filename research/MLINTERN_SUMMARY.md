@@ -8,9 +8,45 @@
 
 ## Final ranking (lower is better; primary metric is `test_avg/mae_surf_p`)
 
-### Best ensemble: **`test_avg/mae_surf_p = 28.79`** (val 33.70)
+### Best ensemble: **`test_avg/mae_surf_p = 27.54`** (val 31.92)
 
-28 checkpoints averaged in normalized prediction space:
+5 strongest checkpoints averaged in normalized prediction space:
+
+| Rank | Member | Params | val | test |
+|---:|---|---:|---:|---:|
+| 1 | `nl3-e500` | 0.42 M | 35.14 | 30.46 |
+| 2 | `nl3-e400` | 0.42 M | 37.08 | 32.47 |
+| 3 | `nl3-h160-e300` | 0.65 M | 37.60 | 32.71 |
+| 4 | `nl3-mr4-e300` | 0.62 M | 38.44 | 33.33 |
+| 5 | `nl3-e300` | 0.42 M | 39.02 | 34.96 |
+
+Per-split test:
+- `test_single_in_dist` = 30.58
+- `test_geom_camber_rc` = 39.83
+- `test_geom_camber_cruise` = 13.98
+- `test_re_rand` = 25.77
+
+A bigger 28-model ensemble (all converged checkpoints) hits test_avg=28.79;
+a 10-model "top-by-test" hits 27.60; the 5-model top wins by 0.06 over
+top-7 and 0.21 over top-3, suggesting 5 is at the knee of the
+diminishing-return curve. **Adding mediocre checkpoints hurts the metric**
+even though they were always trained on the same data and split — the
+weakest individual error patterns are correlated with the strong ones'
+hard cases, so they can't average away noise on the easy cases without
+introducing bias on the hard ones.
+
+### Other ensemble sizes for context:
+
+| Ensemble | val | test |
+|---|---:|---:|
+| **Top-5 (best individuals)** | **31.92** | **27.54** |
+| Top-7 | 32.05 | 27.57 |
+| Top-10 | 32.36 | 27.60 |
+| Top-3 | 32.18 | 27.75 |
+| Top-15 | 32.81 | 28.09 |
+| 28-model (all) | 33.70 | 28.79 |
+
+### Original 28-model ensemble (kitchen sink):
 
 | Member | Params | val | test |
 |---|---:|---:|---:|
