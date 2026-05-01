@@ -6,7 +6,8 @@
 |---|---|---|
 | Original repo baseline (Transolver 1M, MSE, 30 min cap, leaderboard ref) | ~38–80 (varied) | 39–90 |
 | **Best single model** (`baseline-l1-200-s4`, phase 3, 191 epochs) | **29.000** | **29.946** |
-| **Best 10-model ensemble** (`ensemble_top10`, mixed phase 2 + 3 baselines) | **25.246** | **25.647** |
+| Top-10 simple-mean ensemble | 25.246 | 25.647 |
+| **Best ensemble** (top-10 inverse-val weighted, α=30) | **25.211** | **25.628** |
 
 \*The `test_geom_camber_cruise` split has one ground-truth file
 (`000020.pt`) with 761 `+inf` values in the pressure channel. The shared
@@ -90,6 +91,36 @@ Top 12 by `val_avg/mae_surf_p` (lower = better). `test_3` is the
 Best single test_3: `baseline-l1-200-lr1e3` at **29.215**.
 
 ## Ensemble eval
+
+### Best — top-10 inverse-val-weighted (α=30)
+
+Each model's prediction is multiplied by `1/val^30`, then renormalized
+across members. With α=30 the lowest-val checkpoint dominates but the
+9 others still contribute. Results:
+
+| Split | mae_surf_p | mae_surf_Ux | mae_surf_Uy |
+|---|---|---|---|
+| **val_avg** | **25.211** | (see ensemble_top10_alpha30.json) | |
+| test_single_in_dist | 22.504 | | |
+| test_geom_camber_rc | 35.345 | | |
+| test_geom_camber_cruise | nan (data) | | |
+| test_re_rand | 19.033 | | |
+| **test_avg_3splits** | **25.628** | | |
+
+α-sweep on top-10 (val score; lower better):
+| α | val |
+|---|---|
+| 0 (uniform mean) | 25.246 |
+| 1 | 25.244 |
+| 2 | 25.243 |
+| 5 | 25.238 |
+| 10 | 25.230 |
+| 15 | 25.224 |
+| 20 | 25.219 |
+| **30** | **25.211** |
+| 50 | nan (numerical) |
+
+### Top-K simple-mean (α=0) sweep
 
 Top-10 by val score, averaged in the model's normalized output space
 before denormalization (matches the organizer's scorer):
@@ -214,16 +245,17 @@ CUDA_VISIBLE_DEVICES=0 python launchers/ensemble_eval.py \
 
 ## Best validation metric
 
-**val_avg/mae_surf_p = 25.246** (top-10 ensemble of 1M-param Transolver
-baselines, all `n_hidden=128 n_layers=5 n_head=4 slice_num=64 mlp_ratio=2`).
+**val_avg/mae_surf_p = 25.211** (top-10 inverse-val-weighted ensemble of
+1M-param Transolver baselines, all
+`n_hidden=128 n_layers=5 n_head=4 slice_num=64 mlp_ratio=2`).
 Best single seed `baseline-l1-200-s4` reached val 29.000 — ensembling
-buys 3.75 points on val (~13% relative).
+buys 3.79 points on val (~13% relative).
 
 ## Best test metric
 
-**test_avg/mae_surf_p (3 clean splits) = 25.647**, top-10 ensemble.
-Best single test_3 was `baseline-l1-200-lr1e3` at **29.215** — ensembling
-buys ~3.6 points on test (~12% relative). The 4-split
+**test_avg/mae_surf_p (3 clean splits) = 25.628**, top-10 weighted
+ensemble. Best single test_3 was `baseline-l1-200-lr1e3` at **29.215**
+— ensembling buys ~3.6 points on test (~12% relative). The 4-split
 `test_avg/mae_surf_p` (which the repo's `aggregate_splits` would print
 in W&B) is `nan` for *every* trained model in this repo because of the
 `+inf` pressure values in `test_geom_camber_cruise/000020.pt`.
