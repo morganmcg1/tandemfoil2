@@ -1,0 +1,28 @@
+Device: cuda
+Loaded model-igaf7ylx: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+Loaded model-r79bfrtr: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+Loaded model-kiwnoj1g: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+Loaded model-oyefq97v: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+Loaded model-94da0zux: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+Loaded model-t5b5qgqz: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+Loaded model-zd0tto82: 3.94M params, cfg={'ada_temp': False, 'dropout': 0.0, 'fun_dim': 22, 'mlp_ratio': 2, 'n_head': 8, 'n_hidden': 256, 'n_layers': 8, 'out_dim': 3, 'output_dims': [1, 1, 1], 'output_fields': ['Ux', 'Uy', 'p'], 'rep_slice': False, 'slice_num': 64, 'space_dim': 2}
+
+Ensembling 7 models
+Train: 1499, val_single_in_dist: 100, val_geom_camber_rc: 100, val_geom_camber_cruise: 100, val_re_rand: 100
+Test: test_single_in_dist: 200, test_geom_camber_rc: 200, test_geom_camber_cruise: 200, test_re_rand: 200
+
+=== Val ===
+    val_single_in_dist         loss=0.0000  surf[p=66.7529 Ux=0.8119 Uy=0.4065]  vol[p=89.7623 Ux=3.7963 Uy=1.5257]
+    val_geom_camber_rc         loss=0.0000  surf[p=76.6301 Ux=1.5460 Uy=0.6532]  vol[p=92.2452 Ux=4.5968 Uy=2.3445]
+    val_geom_camber_cruise     loss=0.0000  surf[p=48.8038 Ux=0.5519 Uy=0.3648]  vol[p=59.2162 Ux=2.7378 Uy=1.0679]
+    val_re_rand                loss=0.0000  surf[p=64.2296 Ux=1.0508 Uy=0.5087]  vol[p=74.0068 Ux=3.4843 Uy=1.6361]
+
+  ENSEMBLE VAL  avg_surf_p = 64.1041
+
+=== Test ===
+    test_single_in_dist        loss=0.0000  surf[p=60.8098 Ux=0.8096 Uy=0.4112]  vol[p=83.2741 Ux=3.5077 Uy=1.4703]
+    test_geom_camber_rc        loss=0.0000  surf[p=69.2830 Ux=1.4888 Uy=0.6040]  vol[p=84.5023 Ux=4.5063 Uy=2.2308]
+    test_geom_camber_cruise    loss=0.0000  surf[p=40.2935 Ux=0.5335 Uy=0.3269]  vol[p=51.0143 Ux=2.5641 Uy=0.9792]
+    test_re_rand               loss=0.0000  surf[p=57.4449 Ux=0.8861 Uy=0.4690]  vol[p=69.7939 Ux=3.2945 Uy=1.5096]
+
+  ENSEMBLE TEST avg_surf_p = 56.9578
