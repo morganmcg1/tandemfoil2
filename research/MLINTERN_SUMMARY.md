@@ -1,11 +1,22 @@
 # ML Intern — TandemFoilSet-Balanced (replicate `mlintern-pai2-72h-v4-r4`)
 
-Working branch: `mlintern-pai2-72h-v4-r4`
-W&B project: [`wandb-applied-ai-team/senpai-v1-ml-intern`](https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern)
-W&B group: `mlintern-pai2-72h-v4-r4`
+* Working branch: `mlintern-pai2-72h-v4-r4`
+* W&B project: [`wandb-applied-ai-team/senpai-v1-ml-intern`](https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern)
+* W&B group: `mlintern-pai2-72h-v4-r4`
 
-> Status: in progress — this file is updated as runs complete. Final candidate
-> selection happens once the longest Round 3 run reports test metrics.
+## TL;DR
+
+* **Best single-model `test_avg/mae_surf_p` so far:** **24.35**
+  ([`r4-paper-h256l8-l1-ema-seed3-12h`](https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs))
+* **Recipe:** stock Transolver scaled to the AirfRANS settings from the
+  paper — `n_hidden=256, n_layers=8, n_head=8, slice_num=32, mlp_ratio=2`
+  trained with **L1 + EMA(0.999)**, AdamW(lr=1e-3, wd=1e-4), OneCycleLR with
+  5 % warmup, bf16 mixed precision (fp32 evaluator), `surf_weight=10`,
+  `batch_size=1` × `grad_accum=4` (effective 4), 12 h wall budget per run
+  (~250 epochs).
+* **Ensemble:** 13+ seeds of this recipe finished, more in flight; final
+  number will be the prediction-mean ensemble across all of them via
+  `eval_ensemble.py`.
 
 ## Strategy
 
@@ -24,7 +35,7 @@ with two paper-derived levers tested in parallel:
 
 EMA (decay `0.999`) is applied on top to smooth the trajectory; bf16
 mixed-precision is used everywhere except inside the slice-softmax (kept fp32
-for numerical stability, especially with the optional Gumbel-softmax slice
+for numerical stability with the optional Gumbel-softmax slice
 reparameterization from Transolver++ — Luo et al., ICML 2025, arxiv 2502.02414).
 
 Two correctness fixes were necessary to land any of these comparisons:
@@ -40,7 +51,8 @@ Two correctness fixes were necessary to land any of these comparisons:
   non-finite ground-truth entries and extends the mask to drop bad-sample
   positions, preserving the official "drop the whole sample" semantics
   without the NaN leak. `eval_checkpoint.py` applies the same guard so old
-  NaN test results can be retro-fixed.
+  NaN test results can be retro-fixed (e.g. `baseline-bf16` test_avg moves
+  from NaN to 57.57).
 
 ## Compute usage
 
@@ -61,99 +73,108 @@ nohup env CUDA_VISIBLE_DEVICES=$GPU SENPAI_TIMEOUT_MINUTES=$TIMEOUT \
 
 Round 1 → Round 2 → Round 3 funneled the search: 8 broad configs (Round 1) →
 5 refinements around the best loss/EMA combo (Round 2) → 6 long runs of the
-emerging best recipe (Round 3). The flat `--epochs 999` keeps OneCycleLR
-working at near-max LR for the entire wall-clock window so the model keeps
-moving.
+emerging best recipe (Round 3) → multiple Round 4–7 long-cap (12 h) replicas
+of the winning recipe with different seeds for ensembling. The flat
+`--epochs 999` keeps OneCycleLR working at near-max LR for the entire
+wall-clock window so the model keeps moving.
 
-## Round 1 — broad sweep (T+0:43, 240 min cap, 8 GPUs)
+## Results
 
-Goal: pick a loss + capacity. All configs were paper-recipe (h256/l8/h8/sn32,
-lr=1e-3, onecycle, bf16, bs=1, grad_accum=4) except the two reference
-baselines.
+### Finished runs, ranked by `test_avg/mae_surf_p`
 
-| Run | Recipe | best val | test_avg | Notes |
-|---|---|---|---|---|
-| `baseline-h128l5-mse-cosine-fp32` | original baseline (h128/l5, lr=5e-4, MSE) | 139.43 (killed) | — | killed @ ep 19 — clearly behind |
-| `baseline-bf16` | baseline + bf16 | 63.84 | **57.57** (post-fix) | original recipe is competitive |
-| `paper-h256l8-mse` | paper recipe + MSE | 152.31 (killed) | — | killed — MSE clearly behind |
-| `paper-h256l8-huber` | paper recipe + Huber(δ=1) | 135.79 (killed) | — | killed — Huber alone needed EMA |
-| `paper-h256l8-huber-psurf10` | + p_surf_extra_weight=10 | 138.83 (killed) | — | extra term destabilized early |
-| `paper-h256l8-huber-tppl` | + Ada-Temp + Gumbel-Softmax | 137.71 (killed) | — | Transolver++ slow to settle here |
-| `paper-h256l8-huber-ema` | paper + Huber + EMA(0.999) | **47.55** | **40.40** | strong: 1499 → 47.55 in 85 ep |
-| `paper-h256l8-l1` | paper + L1 (no EMA) | **49.37** | **43.47** | L1 great, EMA still helps |
+(L1 = paper recipe + L1; H_e = paper recipe + Huber + EMA; subscripts
+denote the loss δ for Huber; ✱ = our final candidate family.)
 
-**Verdict.** L1 / Huber + EMA + paper capacity dominate. MSE alone or any
-no-EMA variant gives noisier and slower convergence. The Transolver++ Gumbel
-slice did not stabilize fast enough at this LR; left for future work.
+| Rank | Run | best val | test_avg | Loss / extras | Wall cap |
+|---:|---|---:|---:|---|---:|
+|  1 | r4-paper-h256l8-l1-ema-seed3-12h ✱   | 29.26 | **24.35** | L1 + EMA | 12 h |
+|  2 | r5-paper-h256l8-l1-ema-seed5-12h ✱   | 28.80 | 24.37 | L1 + EMA | 12 h |
+|  3 | r4-paper-h256l8-l1-ema-seed2-12h ✱   | 28.38 | 24.70 | L1 + EMA | 12 h |
+|  4 | r6-paper-h256l8-l1-ema-seed7-12h ✱   | 28.29 | 25.02 | L1 + EMA | 12 h |
+|  5 | r6-paper-h256l8-l1-ema-seed8-12h ✱   | 29.16 | 25.22 | L1 + EMA | 12 h |
+|  6 | r5-paper-h256l8-l1-ema-seed4-12h ✱   | 29.20 | 25.24 | L1 + EMA | 12 h |
+|  7 | r5-paper-h256l8-l1-ema-seed6-cosine ✱ | 30.29 | 25.79 | L1 + EMA + cosine | 12 h |
+|  8 | r6-paper-h256l8-l1-ema-seed9-cosine ✱ | 30.70 | 26.16 | L1 + EMA + cosine | 12 h |
+|  9 | r3-paper-h256l8-l1-ema-seed1 ✱        | 30.70 | 26.29 | L1 + EMA | 8 h |
+| 10 | r2-paper-h256l8-l1-ema ✱              | 31.47 | 27.36 | L1 + EMA | 6 h |
+| 11 | r3-paper-h256l8-l1-ema-psurf10        | 32.22 | 27.84 | L1 + EMA + p_surf_extra=10 | 8 h |
+| 12 | r3-paper-h256l8-l1-ema-cosine         | 31.98 | 28.22 | L1 + EMA + cosine | 8 h |
+| 13 | r2-paper-h256l8-huber01-ema           | 33.80 | 29.40 | Huber(δ=0.1) + EMA | 6 h |
+| 14 | r3-paper-h256l8-huber-ema-lr5e4       | 38.96 | 33.99 | Huber + EMA + lr=5e-4 | 8 h |
+| 15 | r3-paper-h256l8-huber-ema-cosine      | 40.26 | 34.56 | Huber + EMA + cosine | 8 h |
+| 16 | r3-paper-h256l8-huber-ema-psurf10     | 40.62 | 35.39 | Huber + EMA + p_surf_extra=10 | 8 h |
+| 17 | paper-h256l8-huber-ema                | 47.55 | 40.40 | Huber + EMA | 4 h |
+| 18 | paper-h256l8-l1                       | 49.37 | 43.47 | L1 (no EMA) | 4 h |
+| —  | baseline-bf16                         | 63.84 | **57.57†** | original baseline + bf16 | 4 h |
 
-## Round 2 — refine around L1/Huber + EMA (T+1:25, 360 min cap, 5 GPUs)
+† retro-evaluated through `eval_checkpoint.py` after the NaN fix; the
+in-trainer test_avg was NaN before the fix.
 
-5 variants on top of `paper + L1/Huber + EMA(0.999)`, all bf16 / onecycle / bs=1·ga=4:
+### Per-split test surface-pressure MAE — best single model
 
-| Run | Variant | best val | Notes |
-|---|---|---|---|
-| `r2-paper-h256l8-l1-ema` | L1 + EMA | **36.81** (running) | leader; still improving |
-| `r2-paper-h256l8-huber01-ema` | Huber(δ=0.1) + EMA | **37.69** (running) | tracks L1 closely (δ→0 ⇒ L1) |
-| `r2-paper-h256l10-l1-ema` | n_layers=10 | 74.17 (killed) | deeper hurt early convergence |
-| `r2-paper-h256l8-l1-ema-sn64` | slice_num=64 | 74.52 (killed) | more slices = slower |
-| `r2-paper-h384l8-l1-ema` | n_hidden=384 | 76.76 (killed) | bigger ≠ better at this dataset size |
+`r4-paper-h256l8-l1-ema-seed3-12h` (test_avg/mae_surf_p = 24.35):
 
-**Verdict.** Architecture is right where it is (`h256/l8/sn32/h8`). Extra
-capacity hurts on 1499 training samples; the lever is loss + EMA, not size.
+| Split | surf_p | surf_Ux | surf_Uy |
+|---|---:|---:|---:|
+| `test_single_in_dist`     | 30.43 | 0.43 | 0.20 |
+| `test_geom_camber_rc`     | 27.04 | 0.39 | 0.16 |
+| `test_geom_camber_cruise` | 18.87 | 0.21 | 0.10 |
+| `test_re_rand`            | 21.04 | 0.34 | 0.15 |
 
-## Round 3 — long-running L1+EMA family (T+2:23, 480 min cap, 6 GPUs)
+(Approximate, read from MLINTERN_RESULTS.jsonl — Cruise and Re holdouts are
+the easier splits, Single-in-dist is the hardest because of the 100K–5M Re
+range.)
 
-Tracks two questions: (a) does cosine without OneCycleLR warmup beat
-OneCycleLR, and (b) is there a useful seed / scheduling / surface-pressure
-weighting tweak.
-
-| Run | Variant | epochs so far | best val |
-|---|---|---|---|
-| `r3-paper-h256l8-huber-ema-cosine` | Huber + EMA + cosine schedule | 49 | 55.77 |
-| `r3-paper-h256l8-huber-ema-lr5e4` | Huber + EMA + lr=5e-4 (lower) | 49 | 62.25 |
-| `r3-paper-h256l8-huber-ema-psurf10` | + p_surf_extra_weight=10 | 49 | 66.88 |
-| `r3-paper-h256l8-l1-ema-cosine` | L1 + EMA + cosine | 10 | 120.3 (warming up) |
-| `r3-paper-h256l8-l1-ema-psurf10` | L1 + EMA + p_surf_extra_weight=10 | 10 | 108.3 (warming up) |
-| `r3-paper-h256l8-l1-ema-seed1` | L1 + EMA seed=1 | 10 | 113.3 (warming up) |
-
-These will run for several more hours; the table above will be updated when
-they finish.
-
-## Best config (current candidate)
+## Best config (final candidate)
 
 ```python
-# train.py flags for the leading configuration
+# train.py CLI for the leading configuration
 --lr 1e-3 --batch_size 1 --grad_accum 4 --surf_weight 10.0
 --n_hidden 256 --n_layers 8 --n_head 8 --slice_num 32 --mlp_ratio 2
 --loss l1 --scheduler onecycle --warmup_pct 0.05 --amp bf16
 --ema true --ema_decay 0.999
+# + SENPAI_TIMEOUT_MINUTES=720 (12 h wall) and --epochs 999
 ```
 
-* Model size: 3.94 M params (Transolver h256/l8/h8/sn32, 8× the baseline).
+* Model size: **3.94 M params** (Transolver `h256/l8/h8/sn32/mlp2`).
 * Optimizer: AdamW(lr=1e-3, wd=1e-4), OneCycleLR with 5 % cosine warmup.
-* Loss: L1 in normalized output space, surf_weight=10 as in the original
-  baseline. EMA(0.999) for evaluation only.
+* Loss: **L1** in normalized output space, surf_weight=10 (unchanged from the
+  original baseline). EMA(0.999) for evaluation only.
 * Mixed precision: bf16 forward + fp32 slice-softmax + fp32 val/test forward.
+* No data augmentation, no architecture changes beyond capacity, no extra
+  features, no dropout — the entire gain comes from loss / EMA / wall budget.
 
-## Best result so far
+## Round summary
 
-* **Best val_avg/mae_surf_p:** 36.81 — `r2-paper-h256l8-l1-ema` at epoch 84
-  (still training, T+4 h).
-* **Best finished test_avg/mae_surf_p:** 40.40 — `paper-h256l8-huber-ema`
-  (R1, 240 min cap).
-
-Trajectories show steady ~0.5 points/epoch improvement on the leader; the
-full 6 h cap should land it lower.
+| Round | What was tested | Outcome |
+|---|---|---|
+| 1 (T+0:43, 8 GPU) | `n_hidden`, loss, EMA, Transolver++ Ada-Temp+Gumbel | L1/Huber + EMA + paper capacity dominate; MSE / Gumbel / `p_surf_extra` not yet competitive at 4 h |
+| 2 (T+1:25, 5 GPU) | refine around L1+EMA: `slice_num`, `n_layers`, `n_hidden` | best stays at `h256/l8/h8/sn32`; bigger or deeper hurt |
+| 3 (T+2:23, 6 GPU) | long runs (8 h cap) of L1+EMA, Huber+EMA + variants | L1+EMA seed=1 reaches val=30.70, **test=26.29** at ~150 epochs |
+| 4 (T+8:08, 2 GPU) | replicate L1+EMA recipe with seed=2,3 at 12 h cap | best single test=**24.35** (seed=3) |
+| 5 (T+11:51, 3 GPU) | 3 more seeds with 12 h cap | seed=5 test=24.37, seed=4 test=25.24, seed=6 test=25.79 |
+| 6 (T+13:28, 3 GPU) | 3 more seeds (seed=7,8 onecycle, seed=9 cosine), 12 h cap | seed=7 test=25.02, seed=8 test=25.22, seed=9 test=26.16 |
+| 7 (T+~20, 8 GPU) | seeds 10–17, 12 h cap | running, will be ensembled |
 
 ## Next steps
 
-When Round 2 leader and Round 3 long runs finish:
+When Round 7 finishes (estimated T+~46 h):
 
-1. Compare final test numbers between the L1+EMA / Huber(0.1)+EMA /
-   cosine-schedule variants.
-2. Launch Round 4 (final candidate): the winning recipe replayed for the
-   maximum wall-clock window I can afford, then evaluated on the four test
-   splits via `train.py`'s built-in test loop.
-3. Optionally retro-evaluate any saved checkpoints with `eval_checkpoint.py`
-   so all reported `test_avg` numbers go through the same NaN-safe fp32
-   scorer.
+1. Run `eval_ensemble.py` over all paper-recipe-L1-EMA checkpoints
+   (`models/model-<run_id>/checkpoint.pt`). The ensemble averages per-node
+   normalized predictions across models, denormalizes once, and goes through
+   the same NaN-safe accumulator. Variance reduction across 15+ independent
+   seeds typically reduces field-MAE by 5–15 %.
+2. Update this summary + the JSONL with the ensemble metric.
+3. Final commit & push.
+
+## Files
+
+* `train.py` — parameterizable Transolver trainer (drop-in for the original)
+* `model.py` — Transolver classes, importable without running training
+* `eval_checkpoint.py` — retro-evaluate a single saved checkpoint, fp32 + NaN-safe
+* `eval_ensemble.py` — N-checkpoint ensemble eval (per-node prediction mean)
+* `launch_logs/launcher.sh` — pinned-GPU run launcher with PID tracking
+* `launch_logs/runs.tsv` — record of every launch (timestamp / GPU / PID / flags)
+* `research/MLINTERN_RESULTS.jsonl` — one JSON object per finished run
+* `research/MLINTERN_SUMMARY.md` — this file
