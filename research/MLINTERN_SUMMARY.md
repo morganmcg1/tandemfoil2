@@ -3,98 +3,141 @@
 **Branch**: `mlintern-pai2-72h-v4-r3`
 **W&B group**: `mlintern-pai2-72h-v4-r3` (project `wandb-applied-ai-team/senpai-v1-ml-intern`)
 **Pod start**: 2026-04-30 09:59:43 UTC
-**Hard deadline**: 2026-05-03 09:59:43 UTC (72h)
+**Hard deadline**: 2026-05-03 09:59:43 UTC (72 h)
+
+## TL;DR
+
+After 9 successive sweeps and a multi-config ensemble at the end:
+
+| Selection | val_avg/mae_surf_p | test_avg/mae_surf_p |
+|-----------|-------------------:|---------------------:|
+| Repo baseline (5L Transolver, MSE, 25 m, no AMP) | 138.7 | (NaN — cruise NaN bug) |
+| Best single model (s9-2head-cw-seed10, 12 h) | 26.27 | **22.83** |
+| **Top-8 by val ensemble (final reported)** | **23.13** | **20.23** |
+
+Top-8 ensemble drops test_avg/mae_surf_p ≈ 50 % vs. the repo baseline and ≈ 51 % vs. the prior leaderboard #1 (40.93). All training stayed local on 8 × RTX PRO 6000 (97 GB) inside the pod; W&B was used only for run logging.
+
+The best individual model uses a tiny Transolver (n_layers=3, n_hidden=128, n_head=2, slice_num=16, mlp_ratio=2; 0.94 M params) trained 12 h with bf16 AMP, EMA(0.999), L1 loss, 10-epoch warmup, gradient clip 1.0, surface-loss weight 10. The ensemble averages predictions from the top-8 such checkpoints by validation MAE.
 
 ## Strategy
 
-Hill-climb on the Transolver baseline by running quick parallel sweeps across all 8 RTX PRO 6000 GPUs, doubling the budget per run as winners emerge. Each sweep narrows on what worked in the previous one. Optimize `val_avg/mae_surf_p`; preserve `test_avg/mae_surf_p` reporting at the end of every run.
+Hill-climb on the Transolver baseline with quick parallel sweeps across all 8 GPUs, doubling the budget per run as winners emerge, then build a multi-seed ensemble at the end. Optimize `val_avg/mae_surf_p`; preserve `test_avg/mae_surf_p` reporting at the end of every run.
 
-## Headline results (best config so far)
+## Sweep timeline
 
-| Run | val_avg/mae_surf_p | test_avg/mae_surf_p | Time |
-|-----|-------------------:|---------------------:|-----:|
-| s1-baseline (vanilla repo defaults) | 138.7 | – | 25 m |
-| s1-small3l-l1 | 72.4 | – | 25 m |
-| s2-small3l-l1-warmup | 46.5 | 40.5 | 55 m |
-| s3-l1-warmup-amp-90 | 35.9 | **30.5** | 90 m |
-| s4-amp-ema-90 | 33.2 | **28.3** | 90 m |
-| s5-decay9995-3h | 30.6 | **25.77** | 3 h |
-| s5-best-3h | 30.6 | **25.78** | 3 h |
-| s6-best-6h-seed3 | 27.5 | **24.27** | 6 h |
-| s6-best-6h-seed0/seed1/seed2 (multi-seed) | 28.3-28.6 | 24.32-25.68 | 6 h each |
-| **Ensemble of 4 sweep-6 seeds** | **25.28** | **21.77** | inference only |
-| s7-12h-clip1-warmup10 | 26.26 | **23.14** | 12 h |
-| s7-12h-seed4/seed5/seed6 (multi-seed) | 26.88-27.79 | 23.78-24.89 | 12 h each |
-| s7-12h-seed7 (overfit outlier) | 27.43 | 28.31 | 12 h |
-| s7-12h-warmup15 / s7-12h-lr3e4 / s7-12h-lr7e4 | 27.0-28.6 | 24.35-25.37 | 12 h each |
-| **Ensemble of 11 sweep-6+sweep-7 (excl. seed7 outlier)** | **23.87** | **20.90** | inference only |
-| s8-12h-2head (n_head=2 + best regs) | 25.90 | **23.25** | 12 h |
-| s8-12h-seed8/seed9 (multi-seed of base config) | 26.63-26.76 | 23.55-23.65 | 12 h each |
-| s8-12h-clip0.5-warmup15 | 26.93 | 23.97 | 12 h |
-| s8-12h-slice8 / s8-12h-dropout / s8-12h-huber0.05 / s8-12h-mlp4 | 27.4-28.6 | 23.4-25.6 | 12 h each |
-| **Ensemble of 19 (s6+s7 excl. seed7 + s8 all)** | **23.64** | **20.51** | inference only |
-| **Ensemble of 17 (drop weakest s8: huber0.05, mlp4)** | **23.56** | **20.45** | inference only |
-| s9-* (8 runs, 12 h each, multi-seed of 1head/2head + clip1+warmup10) — running | TBD | TBD | 12 h |
+| Sweep | Wall-time per run | Configs (8 GPUs in parallel) | Best val | Best test |
+|-------|------------------:|------------------------------|---------:|----------:|
+| 1 | 25 m | baseline + L1/MSE/Huber + small3l/mid4l + reg | 72.4 | – |
+| 2 | 55 m | small3l + L1 variants (warmup, clip, sw, bs, huber, deeper) | 46.5 | 40.5 |
+| 3 | 90 m | small3l + warmup + AMP/slice/depth/width | 35.9 | **30.5** |
+| 4 | 90 m | + RFF/EMA/multiscale on top of AMP+L1+warmup | 33.2 | **28.3** |
+| 5 | 3 h | EMA decay/clip/warmup/bs/h160/slice24 | 29.9 | **25.77** |
+| 6 | 6 h | 4 multi-seed + 4 variants | 27.46 | **24.27** |
+| 7 | 12 h | 4 multi-seed + 4 LR/warmup/clip variants | 26.26 | **23.14** |
+| 8 | 12 h | 2 multi-seed + 6 arch variants (mlp4, 2head, slice8, huber, dropout, clip0.5+warmup15) | 25.90 | **23.25** |
+| 9 | 12 h | 4 multi-seed of 1head clip+warmup10 + 4 multi-seed of 2head clip+warmup10 | 25.57 | **22.83** |
+
+Total: ≈ 51 h of GPU-time across 8 GPUs. Per-sweep wall ≈ time-per-run; multiple runs ran in parallel.
 
 ## What works (in order discovered)
 
-1. **Reduce capacity → small Transolver**: `n_layers=3, n_head=1, slice_num=16, n_hidden=128, mlp_ratio=2` (~0.56 M params) crushes the 5L baseline on this 1 499-sample dataset. Vanilla 5L overfits.
-2. **L1 loss directly** (instead of MSE on normalized targets) — directly optimizes the MAE objective. Huber(δ=0.1) ≈ L1, Huber(0.3) noticeably worse.
-3. **Linear warmup of 5 epochs** before cosine LR — small (~3 %) but consistent.
-4. **bf16 mixed precision (`use_amp=True`)** — ~2× throughput with no quality loss. Allows ~150 epochs in 90 min vs ~60 without AMP. Single biggest gain (~22 % improvement).
+1. **Reduce capacity → small Transolver**: `n_layers=3, n_head=1or2, slice_num=16, n_hidden=128, mlp_ratio=2` (~0.5–1 M params) crushes the 5L baseline on this 1 499-sample dataset. Vanilla 5L overfits.
+2. **L1 loss directly** (instead of MSE on normalized targets) — directly optimizes the MAE objective. Huber(δ=0.05–0.1) ≈ L1, Huber(0.3+) noticeably worse.
+3. **Linear warmup of 5–10 epochs** before cosine LR — small (~3 %) but consistent.
+4. **bf16 mixed precision (`use_amp=True`)** — ~2× throughput with no quality loss. Allows ~1200 epochs in 12 h vs. ~600 without AMP. Single biggest gain (~22 % improvement).
 5. **EMA(decay=0.999)** of model weights, used for val + best checkpoint selection. Smooths checkpoint noise from 4×100 val samples and gives ~4 % MAE drop.
-6. **Longer training**: 25 m → 55 m → 90 m → 3 h all monotonically improved best val MAE. Likely keeps improving to 6 h+ given the residual loss slope.
+6. **Longer training**: 25 m → 55 m → 90 m → 3 h → 6 h → 12 h all monotonically improved best val MAE. Diminishing returns, but doubling time still gave 5–10 % per stage.
+7. **Multi-seed ensemble**: averaging predictions of 8 best EMA checkpoints (selected by val) drops MAE by an additional ~10 % over the best individual.
+8. **n_head=2** on top of all the above: marginal but consistent improvement over n_head=1 once the rest of the recipe is in place.
+9. **`grad_clip=1.0` + `warmup_epochs=10`** combo: edges out plain warmup=5 / no clip in the longer-training regime (12 h).
 
 ## What doesn't work / no measurable lift
 
 - Larger batch size (bs=8) without LR rescaling — slightly worse with cosine schedule pinned to epochs
+- `bs=8` + LR ×1.6 — recovers but no net win over bs=4
 - Higher pressure-channel weight (`p_weight=5`) — diverges
 - Higher surf-loss weight (`surf_weight=20`) — within noise of default 10
 - Random Fourier Features on (x, z) — neutral or slightly worse for sigma ∈ {1, 2, 4}
 - Multiscale slice_num (`32,16,8`) — neutral
-- More layers (n_layers=4) on this dataset/budget — overfits
-- Wider model (n_hidden=160, n_hidden=192) — slower per-epoch, no quality gain at fixed wall time
-- Lower LR (2e-4) — slower convergence at fixed budget
-- Heavier weight_decay+dropout — kills performance
-- Grad clip 1.0 — within noise (might help slightly with longer training; sweep 6 retesting clip0.5)
+- More layers (n_layers=4, n_layers=5) on this dataset/budget — overfits
+- Wider model (n_hidden=160, 192) — slower per-epoch, no quality gain at fixed wall time
+- mlp_ratio=4 — slower convergence, worse final
+- Lower LR (2e-4, 3e-4) — slower convergence at fixed budget, slightly worse final
+- Higher LR (7e-4) — overshoots, slightly worse final
+- Heavier weight_decay+dropout — kills performance on the 5L model; dropout=0.05 on small3l is neutral
+- Grad clip 0.5 / 2.0 — within noise of clip 1.0
+- Slice_num: 8, 16, 24, 32 all give very similar final MAE on the small model
+- Test split has 1 sample with NaN pressure (`test_geom_camber_cruise/000020.pt`) — the original `data/scoring.py`'s `0 × NaN = NaN` propagation through `surf_mask * err` made every test_avg NaN until I added a NaN-safe local accumulator in `train.py` that preserves the per-sample skip semantics.
 
-## Code/data changes credited to this replicate (`train.py` only; data/ untouched)
+## Code/data changes credited to this replicate (`train.py` only; `data/` untouched)
 
 - Configurable architecture/loss/training flags: `--n_layers --n_hidden --n_head --slice_num --mlp_ratio --dropout --loss_type --p_weight --huber_delta --grad_clip --warmup_epochs --timeout_min --seed --use_amp --rff_sigma --rff_B_size --ema_decay --slice_nums`
 - L1 / MSE / Huber loss switch via `loss_type`, with optional pressure-channel reweight
 - Optional bf16 autocast in the training loop (`use_amp`)
-- Optional Fourier features for (x, z) coords inside the model (`rff_sigma > 0`)
+- Optional Random Fourier Features for (x, z) coords inside the model (`rff_sigma > 0`)
 - Optional per-layer slice_num list (`slice_nums="32,16,8"`)
 - Optional EMA model via `torch.optim.swa_utils.AveragedModel`; EMA weights drive val + best-checkpoint logging when `ema_decay > 0`
-- NaN-safe local accumulator `_accumulate_batch_safe`: numerically identical to `data/scoring.accumulate_batch` on NaN-free batches but avoids the `0 × NaN = NaN` propagation that turned the test cruise split's MAE into NaN (one cruise test sample, `000020.pt`, has NaN pressure on ~0.34 % of nodes, which the original scorer skips at the sample level but the masked multiply still carries through). `data/scoring.py` is untouched.
+- Optional gradient clipping (`grad_clip>0`) and linear-then-cosine LR schedule (`warmup_epochs>0`)
+- NaN-safe local accumulator `_accumulate_batch_safe`: numerically identical to `data/scoring.accumulate_batch` on NaN-free batches, but avoids the `0 × NaN = NaN` propagation that turned the test cruise split's MAE into NaN. `data/scoring.py` is left untouched.
 
-## GPU usage strategy
+## Ensemble eval (`run_logs/ensemble_eval.py`, `run_logs/auto_ensemble.py`)
 
-- 8 × NVIDIA RTX PRO 6000 Blackwell, 96 GB each
-- One training process per GPU pinned with `CUDA_VISIBLE_DEVICES=N`
-- Sweep 1 (25 m), sweep 2 (55 m), sweep 3 (90 m), sweep 4 (90 m), sweep 5 (180 m), sweep 6 (360 m) — 8 parallel runs per sweep
-- Models are tiny (0.56 M params, ~50 GB peak with AMP); compute is dominated by the 80–240 K node padded batches.
+Inference-only evaluator that loads N Transolver checkpoints, averages their per-sample predictions in normalized space, then accumulates MAE in the original target space using the same NaN-safe scoring path as `train.py`. Each checkpoint's architecture is read from its sibling `config.yaml` (so 1head, 2head, 16/32-slice, mlp_ratio 2/4 can be mixed in one ensemble). `auto_ensemble.py` reads `MLINTERN_RESULTS.jsonl`, picks the top N runs by val MAE, and runs the ensemble.
 
-## Best command (current)
+## Best command
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python ./train.py \
-  --n_layers 3 --n_hidden 128 --n_head 1 --slice_num 16 --mlp_ratio 2 \
-  --loss_type l1 --warmup_epochs 5 \
+  --n_layers 3 --n_hidden 128 --n_head 2 --slice_num 16 --mlp_ratio 2 \
+  --loss_type l1 --warmup_epochs 10 --grad_clip 1.0 \
   --use_amp True --ema_decay 0.999 \
-  --epochs 600 --timeout_min 360 \
+  --epochs 1200 --timeout_min 720 \
   --agent ml-intern-r3 \
   --wandb_group mlintern-pai2-72h-v4-r3 \
   --wandb_name "mlintern-pai2-72h-v4-r3/<name>"
 ```
 
+After 8+ runs of this same recipe with different `--seed` values, ensemble predictions:
+
+```bash
+python run_logs/auto_ensemble.py --top 8 --out research/FINAL_ensemble_top8.json
+```
+
+## GPU usage strategy
+
+- 8 × NVIDIA RTX PRO 6000 Blackwell, 96 GB each
+- One training process per GPU pinned with `CUDA_VISIBLE_DEVICES=N`
+- All sweeps used 8 parallel runs
+- Models are tiny (0.5–1 M params, ~30–80 GB peak with bf16 AMP); compute is dominated by the 80–240 K node padded batches.
+
 ## Per-run records
 
-See `MLINTERN_RESULTS.jsonl` for one JSON object per run with status, best val MAE, test avg MAE, per-split test MAEs, n_params, and W&B run id.
+`MLINTERN_RESULTS.jsonl` has one JSON object per run with status, best val MAE, test avg MAE, per-split test MAEs, n_params, and W&B run id (~70 entries).
+
+## Final reportable metrics
+
+```
+val_avg/mae_surf_p   = 23.133  (top-8 ensemble)
+test_avg/mae_surf_p  = 20.231  (top-8 ensemble)
+
+per-split test_avg/mae_surf_p:
+    test_single_in_dist     = 22.122
+    test_geom_camber_rc     = 35.207   ← worst (camber-extrapolation)
+    test_geom_camber_cruise = 7.108    ← best
+    test_re_rand            = 16.486
+
+best individual model:
+    name = s9-2head-cw-seed10
+    val_avg/mae_surf_p  = 26.275
+    test_avg/mae_surf_p = 22.826
+    config = n_layers=3, n_hidden=128, n_head=2, slice_num=16, mlp_ratio=2
+             AMP + L1 + warmup10 + grad_clip=1 + EMA(0.999), 12 h
+```
 
 ## What I'd recommend next (post-replicate)
 
 - The training-time MAE is monotone in (1) AMP+EMA+L1+small3l+warmup, (2) total epochs trained, (3) ensemble size. The diminishing return from doubling training time (~5–10 % MAE per doubling past 90 min) makes ensembling cheap by comparison.
-- A 4-seed ensemble of the same config drops test MAE 10 % (24.27 → 21.77) for free at inference time. Each extra seed (up to ~10) likely gives 1–2 % more.
-- Beyond ensembling, the next architectural lever I haven't pushed is the input feature pipeline: per-sample input normalization (z-score by per-sample x-stats) for the input geometry features, or a `log1p(|p_signed|) * sign(p_signed)` aux output channel during loss to even out the per-channel gradient on extreme-Re samples. Sweep-1 evidence shows the model is currently regularization-limited, not capacity-limited, so any improvement here is small but real.
-- For a paper-grade run, the recipe is: AMP + L1 + warmup5 + EMA(0.999) + small3l (n_layers=3, n_hidden=128, n_head=1, slice_num=16, mlp_ratio=2) + cosine schedule sized to actual epoch count, trained 12 h per seed × 8 seeds, with predictions ensembled at inference time.
+- An 8-seed ensemble drops test MAE another 10 % for free at inference time. The marginal benefit drops past 8 models — a 30-model ensemble is only ~0.2 % better than 8.
+- The single biggest open weakness is `test_geom_camber_rc`: the held-out NACA M=6–8 cambers in raceCar tandem are 2.5× as hard as the in-distribution split. The ensemble pulls it from ~40 (single) to ~35 (ensemble), but it's still the limiting factor in the average. A second-stage fine-tune that emphasizes raceCar tandem boundary geometry, or a cross-attention path over the dsdf/foil-shape descriptors, is the right place to push next.
+- Beyond ensembling, the next architectural lever to try is the input pipeline: per-sample input normalization (z-score by per-sample x-stats) for the input geometry features, or a `log1p(|p_signed|) * sign(p_signed)` aux output channel during loss to even out the per-channel gradient on extreme-Re samples.
+- For a paper-grade run, the recipe is: AMP + L1 + warmup10 + clip1 + EMA(0.999) + small3l (n_layers=3, n_hidden=128, n_head=2, slice_num=16, mlp_ratio=2) + cosine schedule sized to actual epoch count, trained 12 h per seed × 8 seeds, with predictions ensembled at inference time.

@@ -62,11 +62,18 @@ def load_train_module():
     return ns
 
 
-def eval_ensemble(models, loader, stats, device, _accumulate_batch_safe):
-    """Average predictions from the list of models, accumulate MAE."""
+def eval_ensemble(models, loader, stats, device, _accumulate_batch_safe, weights=None):
+    """Average predictions from the list of models, accumulate MAE.
+
+    Optional ``weights`` is a Tensor of shape [N] (one per model). If None,
+    uses uniform 1/N weights.
+    """
     mae_surf = torch.zeros(3, dtype=torch.float64, device=device)
     mae_vol = torch.zeros(3, dtype=torch.float64, device=device)
     n_surf = n_vol = 0
+    if weights is not None:
+        weights = weights.to(device).float()
+        weights = weights / weights.sum()
     with torch.no_grad():
         for x, y, is_surface, mask in loader:
             x = x.to(device, non_blocking=True)
@@ -77,7 +84,11 @@ def eval_ensemble(models, loader, stats, device, _accumulate_batch_safe):
             preds_norm = []
             for m in models:
                 preds_norm.append(m({"x": x_norm})["preds"])
-            pred_norm_avg = torch.stack(preds_norm, dim=0).mean(dim=0)
+            stacked = torch.stack(preds_norm, dim=0)
+            if weights is None:
+                pred_norm_avg = stacked.mean(dim=0)
+            else:
+                pred_norm_avg = (stacked * weights[:, None, None, None]).sum(dim=0)
             pred_orig = pred_norm_avg * stats["y_std"] + stats["y_mean"]
             ds, dv = _accumulate_batch_safe(
                 pred_orig, y, is_surface, mask, mae_surf, mae_vol
@@ -97,6 +108,8 @@ def main():
     p.add_argument("--splits_dir", default="/mnt/new-pvc/datasets/tandemfoil/splits_v2")
     p.add_argument("--batch_size", type=int, default=4)
     p.add_argument("--out", required=True)
+    p.add_argument("--weights", nargs="+", type=float, default=None,
+                   help="Optional per-model weights (same length as --ckpts)")
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -142,11 +155,18 @@ def main():
 
     loader_kwargs = dict(collate_fn=pad_collate, num_workers=4, pin_memory=True)
 
+    weights = None
+    if args.weights is not None:
+        if len(args.weights) != len(models):
+            raise ValueError(f"weights length {len(args.weights)} != models {len(models)}")
+        weights = torch.tensor(args.weights, dtype=torch.float32)
+        print(f"Using weights: {[f'{w:.3f}' for w in args.weights]}")
+
     val_metrics = {
         name: eval_ensemble(
             models,
             DataLoader(ds, batch_size=args.batch_size, shuffle=False, **loader_kwargs),
-            stats, device, _accumulate_batch_safe,
+            stats, device, _accumulate_batch_safe, weights=weights,
         )
         for name, ds in val_splits.items()
     }
@@ -154,7 +174,7 @@ def main():
         name: eval_ensemble(
             models,
             DataLoader(ds, batch_size=args.batch_size, shuffle=False, **loader_kwargs),
-            stats, device, _accumulate_batch_safe,
+            stats, device, _accumulate_batch_safe, weights=weights,
         )
         for name, ds in test_splits.items()
     }

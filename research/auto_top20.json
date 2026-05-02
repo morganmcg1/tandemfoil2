@@ -1,0 +1,133 @@
+{
+  "ckpts": [
+    "models/model-pk32z2he/checkpoint.pt",
+    "models/model-8xf75b10/checkpoint.pt",
+    "models/model-949gswoe/checkpoint.pt",
+    "models/model-kh3nefuh/checkpoint.pt",
+    "models/model-o0bashel/checkpoint.pt",
+    "models/model-m2j5kh8c/checkpoint.pt",
+    "models/model-utzmuobv/checkpoint.pt",
+    "models/model-pls84mrk/checkpoint.pt",
+    "models/model-evzsp44t/checkpoint.pt",
+    "models/model-zimh68rk/checkpoint.pt",
+    "models/model-l2oj7zwh/checkpoint.pt",
+    "models/model-wpi4gj57/checkpoint.pt",
+    "models/model-w0aknoi0/checkpoint.pt",
+    "models/model-cb9oy472/checkpoint.pt",
+    "models/model-0qktvl6e/checkpoint.pt",
+    "models/model-s05moo60/checkpoint.pt",
+    "models/model-ikwaab28/checkpoint.pt",
+    "models/model-6fwswn5j/checkpoint.pt",
+    "models/model-geh7vg81/checkpoint.pt",
+    "models/model-yij03r36/checkpoint.pt"
+  ],
+  "model_config": {
+    "dropout": 0.05,
+    "fun_dim": 22,
+    "mlp_ratio": 2,
+    "n_head": 1,
+    "n_hidden": 128,
+    "n_layers": 3,
+    "out_dim": 3,
+    "output_dims": [
+      1,
+      1,
+      1
+    ],
+    "output_fields": [
+      "Ux",
+      "Uy",
+      "p"
+    ],
+    "rff_B_size": 16,
+    "rff_coord_dims": 2,
+    "rff_sigma": 0.0,
+    "slice_num": 16,
+    "slice_nums": null,
+    "space_dim": 2
+  },
+  "val_avg": {
+    "avg/mae_surf_Ux": 0.27442034926815845,
+    "avg/mae_surf_Uy": 0.17675140864051544,
+    "avg/mae_surf_p": 23.123588273405886,
+    "avg/mae_vol_Ux": 1.2337514543072834,
+    "avg/mae_vol_Uy": 0.4664308193715291,
+    "avg/mae_vol_p": 22.113623835488028
+  },
+  "test_avg": {
+    "avg/mae_surf_Ux": 0.26429279111013604,
+    "avg/mae_surf_Uy": 0.16220232606258533,
+    "avg/mae_surf_p": 20.36884999102398,
+    "avg/mae_vol_Ux": 1.1589764852094877,
+    "avg/mae_vol_Uy": 0.4236416085139582,
+    "avg/mae_vol_p": 19.617868436865415
+  },
+  "val_per_split": {
+    "val_single_in_dist": {
+      "mae_surf_Ux": 0.17937798177367903,
+      "mae_vol_Ux": 1.104949534043873,
+      "mae_surf_Uy": 0.15714657085806108,
+      "mae_vol_Uy": 0.3489048514804896,
+      "mae_surf_p": 22.179750633493136,
+      "mae_vol_p": 20.851516744604375
+    },
+    "val_geom_camber_rc": {
+      "mae_surf_Ux": 0.47220432938228424,
+      "mae_vol_Ux": 1.8347396413675345,
+      "mae_surf_Uy": 0.27892988671431573,
+      "mae_vol_Uy": 0.8012472513977642,
+      "mae_surf_p": 35.508752409870155,
+      "mae_vol_p": 35.50234730842376
+    },
+    "val_geom_camber_cruise": {
+      "mae_surf_Ux": 0.12722391307474185,
+      "mae_vol_Ux": 0.7837256981017584,
+      "mae_surf_Uy": 0.08648953577268002,
+      "mae_vol_Uy": 0.2265235097730318,
+      "mae_surf_p": 9.456043276923616,
+      "mae_vol_p": 8.873879451031486
+    },
+    "val_re_rand": {
+      "mae_surf_Ux": 0.31887517284192873,
+      "mae_vol_Ux": 1.2115909437159678,
+      "mae_surf_Uy": 0.18443964121700493,
+      "mae_vol_Uy": 0.48904766483483075,
+      "mae_surf_p": 25.349806773336645,
+      "mae_vol_p": 23.226751837892497
+    }
+  },
+  "test_per_split": {
+    "test_single_in_dist": {
+      "mae_surf_Ux": 0.23416369390870942,
+      "mae_vol_Ux": 1.0775822341333936,
+      "mae_surf_Uy": 0.16219420328989248,
+      "mae_vol_Uy": 0.3554758061253563,
+      "mae_surf_p": 22.990241759161158,
+      "mae_vol_p": 21.59347869412862
+    },
+    "test_geom_camber_rc": {
+      "mae_surf_Ux": 0.4849772222789481,
+      "mae_vol_Ux": 1.8046837407863978,
+      "mae_surf_Uy": 0.2681088287122907,
+      "mae_vol_Uy": 0.7592253898921588,
+      "mae_surf_p": 34.430745382364314,
+      "mae_vol_p": 34.1038926764555
+    },
+    "test_geom_camber_cruise": {
+      "mae_surf_Ux": 0.11081755246924735,
+      "mae_vol_Ux": 0.72374584637082,
+      "mae_surf_Uy": 0.07347019745580005,
+      "mae_vol_Uy": 0.20171452464666764,
+      "mae_surf_p": 7.01588591205801,
+      "mae_vol_p": 6.899142290097519
+    },
+    "test_re_rand": {
+      "mae_surf_Ux": 0.22721269578363923,
+      "mae_vol_Ux": 1.0298941195473397,
+      "mae_surf_Uy": 0.14503607479235806,
+      "mae_vol_Uy": 0.3781507133916502,
+      "mae_surf_p": 17.038526910512427,
+      "mae_vol_p": 15.87496008678001
+    }
+  }
+}
