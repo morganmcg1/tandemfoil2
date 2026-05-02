@@ -91,9 +91,9 @@ def eval_ensemble(models, loader, stats, device, _accumulate_batch_safe):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--ckpts", nargs="+", required=True)
-    p.add_argument("--model_config", required=True,
-                   help='JSON string for Transolver kwargs '
-                        '(must match training-time config)')
+    p.add_argument("--model_config", default=None,
+                   help='JSON string for shared Transolver kwargs. If omitted, '
+                        'each checkpoint dir must contain a config.yaml.')
     p.add_argument("--splits_dir", default="/mnt/new-pvc/datasets/tandemfoil/splits_v2")
     p.add_argument("--batch_size", type=int, default=4)
     p.add_argument("--out", required=True)
@@ -106,22 +106,35 @@ def main():
     Transolver = train_ns["Transolver"]
     _accumulate_batch_safe = train_ns["_accumulate_batch_safe"]
 
-    cfg = json.loads(args.model_config)
-    print(f"Model config: {cfg}")
+    import yaml
+    shared_cfg = json.loads(args.model_config) if args.model_config else None
 
     models = []
     for ck in args.ckpts:
+        ck_path = Path(ck)
+        ck_dir = ck_path.parent
+        if shared_cfg is not None:
+            cfg = dict(shared_cfg)
+        else:
+            cfg_path = ck_dir / "config.yaml"
+            if not cfg_path.exists():
+                raise FileNotFoundError(f"No config.yaml in {ck_dir} and no --model_config")
+            with open(cfg_path) as f:
+                cfg = yaml.safe_load(f)
         m = Transolver(**cfg).to(device)
         sd = torch.load(ck, map_location=device, weights_only=True)
-        # Some saves are EMA modules with extra "n_averaged" buffer; strip it
         sd = {k: v for k, v in sd.items() if k != "n_averaged"}
-        # Also handle "module." prefix from AveragedModel
         sd = {(k[len("module."):] if k.startswith("module.") else k): v
               for k, v in sd.items()}
         m.load_state_dict(sd)
         m.eval()
         models.append(m)
-        print(f"Loaded {ck} ({sum(p.numel() for p in m.parameters())/1e6:.2f} M)")
+        n_p = sum(p.numel() for p in m.parameters()) / 1e6
+        n_layers = cfg.get("n_layers", "?")
+        n_head = cfg.get("n_head", "?")
+        slice_num = cfg.get("slice_num", "?")
+        mlp_ratio = cfg.get("mlp_ratio", "?")
+        print(f"Loaded {ck_dir.name}: {n_p:.2f}M (n_layers={n_layers}, n_head={n_head}, slice={slice_num}, mlp_ratio={mlp_ratio})")
 
     train_ds, val_splits, stats, _ = load_data(args.splits_dir, debug=False)
     stats = {k: v.to(device) for k, v in stats.items()}
