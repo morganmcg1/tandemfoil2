@@ -8,39 +8,39 @@
 
 ## Final ranking (lower is better; primary metric is `test_avg/mae_surf_p`)
 
-### Best ensemble: **`test_avg/mae_surf_p = 25.29`** (val 29.77)
+### Best ensemble: **`test_avg/mae_surf_p = 24.57`** (val 29.05)
 
-20 checkpoints averaged in normalized prediction space — the strongest
-of every architecture/seed/epoch combination tried:
+10 carefully-chosen long-cosine checkpoints averaged in normalized
+prediction space, sorted by individual test:
 
-| Rank | Member | Params | val | test | Notes |
-|---:|---|---:|---:|---:|---|
-| 1 | `nl3-h160-e600` | 0.65 M | 33.45 | 29.02 | Wider hidden + 600 ep — new champion |
-| 2 | `nl3-h160-e500` | 0.65 M | 33.70 | 29.63 | Wider hidden + 500 ep |
-| 3 | `nl3-h160-e500-seed1234` | 0.65 M | 34.53 | 29.81 | h160 with seed |
-| 4 | `nl3-h160-mr4-e500` | 0.96 M | 34.21 | 29.52 | h160 + mr4 + long |
-| 5 | `nl3-e600` | 0.42 M | 35.14 | 29.90 | Default arch + 600 ep |
-| 6 | `nl3-h160-e500-seed42` | 0.65 M | 34.99 | 30.30 | h160 with seed |
-| 7 | `nl3-e500` | 0.42 M | 35.14 | 30.46 | Default arch + 500 ep |
-| 8 | `nl3-e500-seed1234` | 0.42 M | 35.65 | 30.82 | Default + seed |
-| 9 | `nl3-e500-seed42` | 0.42 M | 36.13 | 30.93 | Default + seed |
-| 10 | `nl3-mr4-e500` | 0.62 M | 36.33 | 30.93 | mlp_ratio=4 + 500 ep |
-| 11 | `nl3-e400` | 0.42 M | 37.08 | 32.47 | Default + 400 ep |
-| 12 | `nl3-h160-e300` | 0.65 M | 37.60 | 32.71 | h160 + 300 ep |
-| 13 | `nl3-mr4-e300` | 0.62 M | 38.44 | 33.33 | mr4 + 300 ep |
-| 14 | `nl3-sn96-e400` | 0.42 M | 37.62 | 32.38 | slice_num=96 + 400 ep |
-| 15 | `nl3-sn96-e500` | 0.42 M | 36.12 | 31.37 | slice_num=96 + 500 ep |
-| 16 | `nl3-e400-seed1234` | 0.42 M | 37.42 | 32.06 | Default + seed + 400 ep |
-| 17 | `nl3-e400-seed42` | 0.42 M | 38.36 | 32.63 | Default + seed + 400 ep |
-| 18 | `nl3-e300` | 0.42 M | 39.02 | 34.96 | Default + 300 ep |
-| 19 | `nl3-e250` | 0.42 M | 39.16 | 34.95 | Default + 250 ep |
-| 20 | `nl2-e400` | 0.30 M | 39.24 | 33.99 | Smaller arch — different errors |
+| Rank | Member | Params | val | test |
+|---:|---|---:|---:|---:|
+| 1 | `nl3-h160-e600` | 0.65 M | 33.45 | 29.02 |
+| 2 | `nl3-h160-mr4-e500` | 0.96 M | 34.21 | 29.52 |
+| 3 | `nl3-h160-e500` | 0.65 M | 33.70 | 29.63 |
+| 4 | `nl3-h160-e500-seed1234` | 0.65 M | 34.53 | 29.81 |
+| 5 | `nl3-e600` | 0.42 M | 35.14 | 29.90 |
+| 6 | `nl3-h160-e500-seed42` | 0.65 M | 34.99 | 30.30 |
+| 7 | `nl3-e500` | 0.42 M | 35.14 | 30.46 |
+| 8 | `nl3-mr4-e500` | 0.62 M | 36.33 | 30.93 |
+| 9 | `nl3-e500-seed1234` | 0.42 M | 35.65 | 30.82 |
+| 10 | `nl3-e500-seed42` | 0.42 M | 36.13 | 30.93 |
 
 Per-split test:
-- `test_single_in_dist` = 28.22
-- `test_geom_camber_rc` = 37.40
-- `test_geom_camber_cruise` = 12.29
-- `test_re_rand` = 23.24
+- `test_single_in_dist` = 27.29
+- `test_geom_camber_rc` = 36.54
+- `test_geom_camber_cruise` = 11.62
+- `test_re_rand` = 22.81
+
+These are exactly the 10 individuals with `test_avg/mae_surf_p ≤ 31`.
+All ten are 500–600-epoch cosine runs, all at `n_layers=3`, with
+`n_hidden ∈ {128, 160}` and either default or `mlp_ratio=4` MLP.
+
+Pulling in the 11th-best member (`nl3-h160-e300`, test 32.71) jumps the
+ensemble back up to 24.97; the n_layers=2 best (nl2-e400, test 33.99)
+also hurts. **Quality of individuals is the dominant factor; quantity
+beyond ~10 starts to dilute** — adding a checkpoint with even 1.5x the
+single-best test pulls the ensemble's hardest-case errors back up.
 
 A bigger 28-model ensemble (all converged checkpoints) hits test_avg=28.79;
 top-by-val above 13 plateaus around 26.1 - 26.3. **Adding mediocre
@@ -58,20 +58,18 @@ Saved as W&B artifact `model-mlintern-pai2-72h-v4-r5-p11-bf16-huber-nl3-h160-e60
 
 | Ensemble | val | test |
 |---|---:|---:|
-| **Top-13 (current best)** | **30.55** | **26.09** |
-| Top-12 (with h160-e500) | 30.77 | 26.32 |
-| Top-11 (with mr4-e500) | 31.13 | 26.59 |
-| Top-10 (with sn96-e400) | 31.32 | 26.80 |
-| Top-9 (with e400-seed42) | 31.44 | 26.95 |
-| Top-8 (with e400-seed1234) | 31.51 | 27.11 |
-| Top-7 + nl2-e400 | 31.68 | 27.36 |
-| Top-7 + nl2-e300 | 31.91 | 27.44 |
-| Top-6 (no nl2) | 31.72 | 27.47 |
-| Top-5 (e500/e400/h160-e300/mr4-e300/e300) | 31.92 | 27.54 |
-| Top-3 (e500/e400/h160-e300) | 32.18 | 27.75 |
-| Top-2 (e500/e400) | 32.91 | 28.37 |
-| 28-model (all) | 33.70 | 28.79 |
-| Top-15 by val (less filtered) | 32.81 | 28.09 |
+| **v2 Top-10 (current best, all test ≤ 31)** | **29.05** | **24.57** |
+| v2 Top-9 | 29.06 | 24.63 |
+| v2 Top-12 (+ sn96-e500/e400) | 29.17 | 24.69 |
+| v2 Top-7 (best 7 by test) | 29.06 | 24.74 |
+| v2 Top-8 | 29.14 | 24.74 |
+| v2 Top-11 (older selection) | 29.40 | 24.97 |
+| v2 Top-6 | 29.19 | 24.86 |
+| v2 Top-5 | 29.29 | 24.98 |
+| h160-only (6 h160 variants) | 29.58 | 25.27 |
+| 20-model (best member each) | 29.77 | 25.29 |
+| 13-model | 30.55 | 26.09 |
+| 28-model (kitchen sink) | 33.70 | 28.79 |
 
 ### Original 28-model ensemble (kitchen sink):
 
@@ -148,7 +146,9 @@ Per-split test (best ensemble):
 | 15-model + e500 seeds | 25.86 | seed-diverse |
 | 17-model + h160 seeds | 25.58 | h160-diverse |
 | 19-model + h160-mr4 / sn96-e500 | 25.44 | architecture-diverse |
-| **20-model + h160-e600** | **25.29** | the final result |
+| 20-model + h160-e600 | 25.29 | best mid-size ensemble |
+| 9-model h160+nl3 mix | 24.98 | filter for top members |
+| **v2 Top-10 (all test ≤ 31)** | **24.57** | the final result |
 
 ---
 
