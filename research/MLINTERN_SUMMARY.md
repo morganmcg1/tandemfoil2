@@ -8,31 +8,39 @@
 
 ## Final ranking (lower is better; primary metric is `test_avg/mae_surf_p`)
 
-### Best ensemble: **`test_avg/mae_surf_p = 26.09`** (val 30.55)
+### Best ensemble: **`test_avg/mae_surf_p = 25.29`** (val 29.77)
 
-13 checkpoints averaged in normalized prediction space:
+20 checkpoints averaged in normalized prediction space — the strongest
+of every architecture/seed/epoch combination tried:
 
 | Rank | Member | Params | val | test | Notes |
 |---:|---|---:|---:|---:|---|
-| 1 | `nl3-h160-e500` | 0.65 M | 33.70 | 29.63 | Wider hidden + 500 ep cosine |
-| 2 | `nl3-e500` | 0.42 M | 35.14 | 30.46 | Default arch + 500 ep cosine |
-| 3 | `nl3-e600` | 0.42 M | 35.14 | 29.90 | Default arch + 600 ep cosine |
-| 4 | `nl3-mr4-e500` | 0.62 M | 36.33 | 30.93 | mlp_ratio=4 + 500 ep cosine |
-| 5 | `nl3-e400` | 0.42 M | 37.08 | 32.47 | Default arch + 400 ep cosine |
-| 6 | `nl3-h160-e300` | 0.65 M | 37.60 | 32.71 | Wider hidden + 300 ep cosine |
-| 7 | `nl3-mr4-e300` | 0.62 M | 38.44 | 33.33 | mlp_ratio=4 + 300 ep cosine |
-| 8 | `nl3-sn96-e400` | 0.42 M | 37.62 | 32.38 | slice_num=96 + 400 ep cosine |
-| 9 | `nl3-e400-seed42` | 0.42 M | 38.36 | 32.63 | Seed variation |
-| 10 | `nl3-e400-seed1234` | 0.42 M | 37.42 | 32.06 | Seed variation |
-| 11 | `nl3-e300` | 0.42 M | 39.02 | 34.96 | Default + 300 ep cosine |
-| 12 | `nl3-e250` | 0.42 M | 39.16 | 34.95 | Default + 250 ep cosine |
-| 13 | `nl2-e400` | 0.30 M | 39.24 | 33.99 | Smaller arch — different errors |
+| 1 | `nl3-h160-e600` | 0.65 M | 33.45 | 29.02 | Wider hidden + 600 ep — new champion |
+| 2 | `nl3-h160-e500` | 0.65 M | 33.70 | 29.63 | Wider hidden + 500 ep |
+| 3 | `nl3-h160-e500-seed1234` | 0.65 M | 34.53 | 29.81 | h160 with seed |
+| 4 | `nl3-h160-mr4-e500` | 0.96 M | 34.21 | 29.52 | h160 + mr4 + long |
+| 5 | `nl3-e600` | 0.42 M | 35.14 | 29.90 | Default arch + 600 ep |
+| 6 | `nl3-h160-e500-seed42` | 0.65 M | 34.99 | 30.30 | h160 with seed |
+| 7 | `nl3-e500` | 0.42 M | 35.14 | 30.46 | Default arch + 500 ep |
+| 8 | `nl3-e500-seed1234` | 0.42 M | 35.65 | 30.82 | Default + seed |
+| 9 | `nl3-e500-seed42` | 0.42 M | 36.13 | 30.93 | Default + seed |
+| 10 | `nl3-mr4-e500` | 0.62 M | 36.33 | 30.93 | mlp_ratio=4 + 500 ep |
+| 11 | `nl3-e400` | 0.42 M | 37.08 | 32.47 | Default + 400 ep |
+| 12 | `nl3-h160-e300` | 0.65 M | 37.60 | 32.71 | h160 + 300 ep |
+| 13 | `nl3-mr4-e300` | 0.62 M | 38.44 | 33.33 | mr4 + 300 ep |
+| 14 | `nl3-sn96-e400` | 0.42 M | 37.62 | 32.38 | slice_num=96 + 400 ep |
+| 15 | `nl3-sn96-e500` | 0.42 M | 36.12 | 31.37 | slice_num=96 + 500 ep |
+| 16 | `nl3-e400-seed1234` | 0.42 M | 37.42 | 32.06 | Default + seed + 400 ep |
+| 17 | `nl3-e400-seed42` | 0.42 M | 38.36 | 32.63 | Default + seed + 400 ep |
+| 18 | `nl3-e300` | 0.42 M | 39.02 | 34.96 | Default + 300 ep |
+| 19 | `nl3-e250` | 0.42 M | 39.16 | 34.95 | Default + 250 ep |
+| 20 | `nl2-e400` | 0.30 M | 39.24 | 33.99 | Smaller arch — different errors |
 
 Per-split test:
-- `test_single_in_dist` = 29.29
-- `test_geom_camber_rc` = 38.23
-- `test_geom_camber_cruise` = 12.92
-- `test_re_rand` = 23.90
+- `test_single_in_dist` = 28.22
+- `test_geom_camber_rc` = 37.40
+- `test_geom_camber_cruise` = 12.29
+- `test_re_rand` = 23.24
 
 A bigger 28-model ensemble (all converged checkpoints) hits test_avg=28.79;
 top-by-val above 13 plateaus around 26.1 - 26.3. **Adding mediocre
@@ -43,8 +51,8 @@ noise on the easy cases without introducing bias on the hard ones.
 
 ### Single best model
 
-`p10-bf16+huber+nl3+h160+e500`: **`test_avg/mae_surf_p = 29.63`** (val 33.70).
-Saved as W&B artifact `model-mlintern-pai2-72h-v4-r5-p10-bf16-huber-nl3-h160-e500-rn8corg4`.
+`p11-bf16+huber+nl3+h160+e600`: **`test_avg/mae_surf_p = 29.02`** (val 33.45).
+Saved as W&B artifact `model-mlintern-pai2-72h-v4-r5-p11-bf16-huber-nl3-h160-e600-9zzkx93b`.
 
 ### Ensemble-size ablation:
 
@@ -136,7 +144,11 @@ Per-split test (best ensemble):
 | 10-model + sn96-e400 | 26.80 | + different slice_num + long |
 | 11-model + mr4-e500 | 26.59 | + larger mlp_ratio + long |
 | 12-model + h160-e500 | 26.32 | + new single-best member |
-| **13-model + e600** | **26.09** | the final result |
+| 13-model + e600 | 26.09 | early sub-26 ensemble |
+| 15-model + e500 seeds | 25.86 | seed-diverse |
+| 17-model + h160 seeds | 25.58 | h160-diverse |
+| 19-model + h160-mr4 / sn96-e500 | 25.44 | architecture-diverse |
+| **20-model + h160-e600** | **25.29** | the final result |
 
 ---
 
