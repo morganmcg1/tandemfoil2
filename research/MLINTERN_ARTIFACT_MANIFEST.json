@@ -1,0 +1,73 @@
+{
+  "artifact_count": 7,
+  "artifacts": [
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/stdout_logs/ml-intern-replicate-1-20260430_095945.log.gz",
+      "bytes": 11950,
+      "compressed": true,
+      "sha256": "8309f3b88c3ff5e671c9ccb644f45e040f02bc28e7089a97caaad537620e5587",
+      "source": "/workspace/ml-intern-benchmark/logs/ml-intern-replicate-1-20260430_095945.log"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/prompt.md",
+      "bytes": 4540,
+      "compressed": false,
+      "sha256": "f06810f3a8a071897cc80276a298c8ca6b0a74f5e28a7a25f19e7b690153f6e2",
+      "source": "/workspace/ml-intern-benchmark/prompt.md"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/deadline.txt.gz",
+      "bytes": 128,
+      "compressed": true,
+      "sha256": "d6c19b136bea79cbafc9d2a1217240a528ae01cc9be266b064ac1917816bf9be",
+      "source": "/workspace/ml-intern-benchmark/deadline.txt"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/cli_agent_config.json",
+      "bytes": 172,
+      "compressed": false,
+      "sha256": "3d1a039ec08b7d253e7b1bc4af56f5a6b20e7e3631094427b70d1f9957e25ac2",
+      "source": "/workspace/ml-intern-benchmark/cli_agent_config.json"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/session_logs/session_07ffd4a7-fb31-4204-883b-fb160fcc2cfe_20260430_100029.json",
+      "bytes": 3091229,
+      "compressed": false,
+      "kind": "ml_intern_session_trajectory",
+      "sha256": "b725629ab65a6d890a4f3acfb043486566919061bbebe8264d51647564a7525b",
+      "source": "/workspace/ml-intern-benchmark/target/session_logs/session_07ffd4a7-fb31-4204-883b-fb160fcc2cfe_20260430_100029.json"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_CONVERSATION.jsonl",
+      "bytes": 2835957,
+      "compressed": false,
+      "kind": "ml_intern_conversation_jsonl",
+      "sha256": "38d09a29647242501ed43af383387f8f952f8ff14218748d81c60f3ee41b059c",
+      "source": "session_logs/session_*.json"
+    },
+    {
+      "artifact": "/workspace/ml-intern-benchmark/target/research/MLINTERN_ARTIFACTS/tmp_logs/bash_output_g5afle5h.txt.gz",
+      "bytes": 7345,
+      "compressed": true,
+      "sha256": "ac15273a2dc4a8207c32886527d972b19d6de79c56fe47e12b8519a86e560061",
+      "source": "/tmp/bash_output_g5afle5h.txt"
+    }
+  ],
+  "base_ref": "main",
+  "conversation_session_count": 1,
+  "default_epochs": 999,
+  "finished_epoch": 1777800118,
+  "gpus_per_replicate": 8,
+  "ml_intern_exit_code": 0,
+  "ml_intern_timeout_seconds": 258900,
+  "model": "anthropic/claude-opus-4-7",
+  "replicate": "1",
+  "research_tag": "mlintern-pai2-72h-v4",
+  "runner": "ml-intern",
+  "senpai_timeout_minutes": 720.0,
+  "target_branch": "mlintern-pai2-72h-v4-r1",
+  "target_repo_url": "https://github.com/morganmcg1/TandemFoilSet-Balanced.git",
+  "wall_clock_seconds": 259200,
+  "wandb_entity": "wandb-applied-ai-team",
+  "wandb_project": "senpai-v1-ml-intern"
+}
