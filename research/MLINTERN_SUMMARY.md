@@ -22,7 +22,7 @@ Primary ranking metric is `val_avg/mae_surf_p` — surface pressure MAE averaged
 | **Best 15-model ensemble (all 350-ep + 300-ep + r9-seed13)** | **24.42** | **20.30** | Average of normalised predictions |
 
 Best single model: `test_avg/mae_surf_p = 23.69` (~70% better than the val implied by repo baseline).
-Best ensemble: `test_avg/mae_surf_p = 20.32` (~74% better).
+Best ensemble: `test_avg/mae_surf_p = 20.30` (~74% better).
 
 ## Strategy
 
@@ -44,7 +44,7 @@ I used these to seed the experiment list, but only kept changes that empirically
 4. **bf16 autocast.** ~1.4× faster epochs at no quality cost (compute headroom for longer runs).
 5. **`grad_clip=1.0`.** Stable convergence across seeds.
 6. **Longer training (60 → 80 → 150 → 200 → 300 → 350 ep).** Each step bought a clear improvement until 350-400; the small-model ceiling on this corpus is around val 27.9 / test 23.7.
-7. **Multi-seed ensemble averaging.** 14 strong candidates + per-node mean of normalized predictions: best single 23.69 → ensemble 20.32 on test.
+7. **Multi-seed ensemble averaging.** 15 strong candidates + per-node mean of normalized predictions: best single 23.69 → ensemble 20.30 on test.
 
 **Surprise wins:**
 - The plain `n_hidden=128` model with 350 epochs beat all wider/deeper variants on both val and test. The wider/deeper models had a slightly larger val→test gap.
