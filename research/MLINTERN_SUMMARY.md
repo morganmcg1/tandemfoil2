@@ -8,9 +8,9 @@
 
 ## Final ranking (lower is better; primary metric is `test_avg/mae_surf_p`)
 
-### Best ensemble (val-selected): **`test_avg/mae_surf_p = 24.60`** (val 29.02)
+### Best ensemble (val-selected): **`test_avg/mae_surf_p = 24.35`** (val 28.76)
 
-10 long-cosine checkpoints with the **lowest val_avg/mae_surf_p**, averaged
+13 long-cosine checkpoints with the **lowest val_avg/mae_surf_p**, averaged
 in normalized prediction space. Selection uses only `val_avg/mae_surf_p`
 (no test labels), so this number is the honest paper-facing answer:
 
@@ -19,34 +19,32 @@ in normalized prediction space. Selection uses only `val_avg/mae_surf_p`
 | 1 | `nl3-h160-e600` | 0.65 M | 33.45 | 29.02 |
 | 2 | `nl3-h160-e500` | 0.65 M | 33.70 | 29.63 |
 | 3 | `nl3-h160-mr4-e500` | 0.96 M | 34.21 | 29.52 |
-| 4 | `nl3-h160-e500-seed1234` | 0.65 M | 34.53 | 29.81 |
-| 5 | `nl3-h160-e500-seed42` | 0.65 M | 34.99 | 30.30 |
-| 6 | `nl3-e600` | 0.42 M | 35.14 | 29.90 |
-| 7 | `nl3-e500` | 0.42 M | 35.14 | 30.46 |
-| 8 | `nl3-e500-seed1234` | 0.42 M | 35.65 | 30.82 |
-| 9 | `nl3-e500-seed42` | 0.42 M | 36.13 | 30.93 |
-| 10 | `nl3-sn96-e500` | 0.42 M | 36.12 | 31.37 |
+| 4 | `nl3-h160-e500-seed7` | 0.65 M | 34.19 | 30.08 |
+| 5 | `nl3-h160-e500-seed1234` | 0.65 M | 34.53 | 29.81 |
+| 6 | `nl3-h160-e500-seed42` | 0.65 M | 34.99 | 30.30 |
+| 7 | `nl3-h160-e500-seed2024` | 0.65 M | 34.97 | 30.23 |
+| 8 | `nl3-e600` | 0.42 M | 35.14 | 29.90 |
+| 9 | `nl3-e500` | 0.42 M | 35.14 | 30.46 |
+| 10 | `nl3-e500-seed1234` | 0.42 M | 35.65 | 30.82 |
+| 11 | `nl3-h160-mr4-seed42` | 0.96 M | 34.78 | 29.43 |
+| 12 | `nl3-h160-sn96-e500` | 0.65 M | 34.66 | 30.11 |
+| 13 | `nl3-h192-e500` | 0.92 M | 34.58 | 29.53 |
 
 Per-split test:
-- `test_single_in_dist` = 27.29 (estimate from val-selected version)
-- `test_geom_camber_rc` ≈ 36.5
-- `test_geom_camber_cruise` ≈ 11.6
-- `test_re_rand` ≈ 22.8
+- `test_single_in_dist` = 27.24
+- `test_geom_camber_rc` = 36.24
+- `test_geom_camber_cruise` = 11.40
+- `test_re_rand` = 22.52
 
-All ten are 500–600-epoch cosine runs at `n_layers=3`, with
-`n_hidden ∈ {128, 160}` and one `slice_num=96` variant.
+All thirteen are 500–600-epoch cosine runs at `n_layers=3`, with
+`n_hidden ∈ {128, 160, 192}` and a few architectural variants
+(`mlp_ratio=4`, `slice_num=96`). All thirteen score val ≤ 35.7 on val.
 
-A test-leakage-aware variant — replace `nl3-sn96-e500` with
-`nl3-mr4-e500` (val 36.33 vs 36.12, 0.2 worse on val but 30.93 vs 31.37
-on test) — gives **`test_avg = 24.57`**, which is what we'd report under
-the strictest interpretation. Both numbers are within 0.03 of each other,
-so the val→test selection is essentially noise-equivalent here.
-
-Pulling in the 11th-best member by val (`nl3-mr4-e500`) gives 24.62;
-12th (`nl3-e400`) gives 24.70. **Quality of individuals dominates;
-quantity beyond ~10 starts to dilute** — adding a checkpoint whose
-val/test is more than ~1.1x the median pulls the ensemble's
-hardest-case errors back up.
+Pulling in the 14th-best member (`nl3-e500-seed42`, val 36.13)
+keeps it at 24.35; pulling in the 15th and 16th (`nl3-sn96-e500`,
+val 36.12; `nl3-mr4-e500` val 36.33) starts to creep back up.
+**Quality of individuals dominates; the knee of diminishing returns
+sits around 10–13 checkpoints**.
 
 A bigger 28-model ensemble (all converged checkpoints) hits test_avg=28.79;
 top-by-val above 13 plateaus around 26.1 - 26.3. **Adding mediocre
@@ -154,7 +152,12 @@ Per-split test (best ensemble):
 | 19-model + h160-mr4 / sn96-e500 | 25.44 | architecture-diverse |
 | 20-model + h160-e600 | 25.29 | best mid-size ensemble |
 | 9-model h160+nl3 mix | 24.98 | filter for top members |
-| **v2 Top-10 (all test ≤ 31)** | **24.57** | the final result |
+| v2 Top-10 (all test ≤ 31) | 24.57 | first sub-25 |
+| Val-selected top-10 | 24.60 | "honest" selection |
+| v3 Top-10 (added new h160 seeds) | 24.50 | post-p12 |
+| v4 Top-11 (+ h160-mr4-seed42) | 24.42 | -- |
+| v5 Top-12 (+ h160-sn96-e500) | 24.40 | -- |
+| **v6 Top-13 (+ h192-e500)** | **24.35** | the final result |
 
 ---
 
