@@ -116,14 +116,15 @@ in-trainer test_avg was NaN before the fix.
 
 | Split | surf_p | surf_Ux | surf_Uy |
 |---|---:|---:|---:|
-| `test_single_in_dist`     | 30.43 | 0.43 | 0.20 |
-| `test_geom_camber_rc`     | 27.04 | 0.39 | 0.16 |
-| `test_geom_camber_cruise` | 18.87 | 0.21 | 0.10 |
-| `test_re_rand`            | 21.04 | 0.34 | 0.15 |
+| `test_single_in_dist`     | 26.38 | 0.28 | 0.17 |
+| `test_geom_camber_rc`     | 37.21 | 0.53 | 0.29 |
+| `test_geom_camber_cruise` | 11.74 | 0.17 | 0.10 |
+| `test_re_rand`            | 22.04 | 0.30 | 0.17 |
 
-(Approximate, read from MLINTERN_RESULTS.jsonl — Cruise and Re holdouts are
-the easier splits, Single-in-dist is the hardest because of the 100K–5M Re
-range.)
+Cruise is by far the easiest split (lower target magnitudes); RaceCar tandem
+P2 (`geom_camber_rc`) is the hardest because the model never sees front-foil
+NACA M=6–8 in training, only M=2–5 and M=9 — so it has to extrapolate over
+the camber gap.
 
 ## Best config (final candidate)
 
