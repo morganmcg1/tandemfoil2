@@ -118,6 +118,9 @@ def main():
     p.add_argument("--skip_individual", action="store_true",
                    help="Skip per-model eval, only run ensemble.")
     p.add_argument("--out_json", type=str, default=None)
+    p.add_argument("--mode", choices=["mean", "median", "weighted"], default="mean")
+    p.add_argument("--weights", type=str, default=None,
+                   help="Comma-separated weights for --mode weighted (one per model).")
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -152,15 +155,23 @@ def main():
             return pred_orig, pred_norm, y_norm
         return f
 
-    def make_ensemble_predictor(models):
+    def make_ensemble_predictor(models, mode="mean", weights=None):
+        if weights is not None:
+            w = torch.tensor(weights, dtype=torch.float32, device=device)
+            w = w / w.sum()
         def f(x, y, is_surface, mask):
             x_norm = (x - stats["x_mean"]) / stats["x_std"]
             y_norm = (y - stats["y_mean"]) / stats["y_std"]
-            pred_norm = None
-            for m in models:
-                p_n = m({"x": x_norm})["preds"].float()
-                pred_norm = p_n if pred_norm is None else pred_norm + p_n
-            pred_norm = pred_norm / len(models)
+            preds = [m({"x": x_norm})["preds"].float() for m in models]
+            if mode == "mean":
+                pred_norm = torch.stack(preds, dim=0).mean(dim=0)
+            elif mode == "median":
+                pred_norm = torch.stack(preds, dim=0).median(dim=0).values
+            elif mode == "weighted":
+                stacked = torch.stack(preds, dim=0)  # [K, B, N, 3]
+                pred_norm = (stacked * w[:, None, None, None]).sum(dim=0)
+            else:
+                raise ValueError(mode)
             pred_orig = pred_norm * stats["y_std"] + stats["y_mean"]
             return pred_orig, pred_norm, y_norm
         return f
@@ -204,13 +215,19 @@ def main():
                 "test_avg": ({k: float(v) for k, v in test_avg.items()} if test_avg else None),
             }
 
-    print(f"\n=== ENSEMBLE ({len(models)} models) ===")
+    print(f"\n=== ENSEMBLE ({len(models)} models, mode={args.mode}) ===")
+    weights = None
+    if args.mode == "weighted":
+        weights = [float(x) for x in args.weights.split(",")]
+        assert len(weights) == len(models), \
+            f"need {len(models)} weights, got {len(weights)}"
     val_loaders = {
         name: DataLoader(ds, batch_size=args.batch_size, shuffle=False, **loader_kwargs)
         for name, ds in val_splits.items()
     }
+    ensemble_pred_fn = make_ensemble_predictor(models, mode=args.mode, weights=weights)
     val_per = {
-        vname: _accumulate_split(make_ensemble_predictor(models), loader,
+        vname: _accumulate_split(ensemble_pred_fn, loader,
                                  stats, args.surf_weight, device)
         for vname, loader in val_loaders.items()
     }
@@ -229,7 +246,7 @@ def main():
             for name, ds in test_datasets.items()
         }
         test_per = {
-            tname: _accumulate_split(make_ensemble_predictor(models), loader,
+            tname: _accumulate_split(ensemble_pred_fn, loader,
                                      stats, args.surf_weight, device)
             for tname, loader in test_loaders.items()
         }

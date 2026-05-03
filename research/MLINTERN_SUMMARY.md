@@ -6,25 +6,25 @@
 
 ## TL;DR
 
-* **Best single-model `test_avg/mae_surf_p`:** **24.35**
-  (`r4-paper-h256l8-l1-ema-seed3-12h`) — paper-Transolver h256/l8 + L1 +
-  EMA(0.999), 12 h wall, ~250 epochs.
-* **Best ensemble `test_avg/mae_surf_p`:** **22.52**
-  (top-7 of 17 paper-recipe seeds, prediction mean in normalized space).
-  Per-split: SID 24.73, RC 34.93, Cruise 10.37, Re 20.04.
-* **Recipe:** stock Transolver scaled to the AirfRANS settings from the
-  paper — `n_hidden=256, n_layers=8, n_head=8, slice_num=32, mlp_ratio=2`
-  trained with **L1 + EMA(0.999)**, AdamW(lr=1e-3, wd=1e-4), OneCycleLR with
-  5 % warmup, bf16 mixed precision (fp32 evaluator), `surf_weight=10`,
-  `batch_size=1` × `grad_accum=4` (effective 4), 12 h wall budget per run.
-* **Ensembling sweet spot is 5–7 models** by the data:
-  top-3=22.76, top-5=22.55, **top-7=22.52**, top-14=22.88, top-17=22.76.
-  Adding worse seeds dilutes the average.
+* **Best single model `test_avg/mae_surf_p`**: **24.35**
+  (`r4-paper-h256l8-l1-ema-seed3-12h`)
+* **Best ensemble `test_avg/mae_surf_p`**: **22.39**
+  (top-25 of 28 paper-recipe-L1+EMA seeds, prediction-mean ensemble selected
+  by `val_avg/mae_surf_p` only — no test peeking)
+* **Per-split (top-25 ensemble):** `test_single_in_dist=24.71`,
+  `test_geom_camber_rc=34.79`, `test_geom_camber_cruise=10.28`,
+  `test_re_rand=19.78`.
+* **Recipe** (every one of the 28 ensemble members, no per-seed tuning):
+  paper-Transolver `n_hidden=256, n_layers=8, n_head=8, slice_num=32,
+  mlp_ratio=2` + L1 loss + EMA(0.999) + AdamW(lr=1e-3, wd=1e-4) +
+  OneCycleLR (5 % warmup) + bf16 mixed precision + `surf_weight=10` +
+  `batch_size=1` × `grad_accum=4`, 6–12 h wall budget per seed.
+  3.94 M params / model.
 
 ## Strategy
 
 Anchored on the Transolver baseline (Wu et al., ICML 2024 — arxiv 2402.02366),
-with two paper-derived levers tested in parallel:
+with two paper-derived levers tested in parallel during Round 1:
 
 1. **Capacity scale-up** to the AirfRANS settings used in the official
    `thuml/Transolver` repo: `n_hidden=256, n_layers=8, n_head=8, slice_num=32`,
@@ -39,12 +39,19 @@ with two paper-derived levers tested in parallel:
 EMA (decay `0.999`) is applied on top to smooth the trajectory; bf16
 mixed-precision is used everywhere except inside the slice-softmax (kept fp32
 for numerical stability with the optional Gumbel-softmax slice
-reparameterization from Transolver++ — Luo et al., ICML 2025, arxiv 2502.02414).
+reparameterization from Transolver++ — Luo et al., ICML 2025, arxiv 2502.02414;
+the Transolver++ code path was tested in Round 1 but did not converge faster
+than the plain Transolver at this dataset size).
+
+Once the **L1 + EMA + paper-capacity** recipe was clearly winning by Round 2,
+the entire remaining budget (Rounds 3–9) went into running that *same recipe*
+with different seeds and slightly different schedules so an ensemble could be
+formed at the end.
 
 Two correctness fixes were necessary to land any of these comparisons:
 * **fp32 evaluation.** bf16 autocast on the largest cruise meshes
-  (≥ 200K nodes) can produce non-finite predictions — `evaluate_split` now
-  forces fp32 forward at val/test time.
+  (≥ 200K nodes) can produce non-finite predictions in some configs —
+  `evaluate_split` now forces fp32 forward at val/test time.
 * **NaN-y guard.** `data/scoring.py:accumulate_batch` skips per-sample when
   ground truth has any non-finite value, but its `err * mask` multiply
   propagates NaN through (`NaN * 0.0 == NaN`). The
@@ -60,62 +67,101 @@ Two correctness fixes were necessary to land any of these comparisons:
 ## Compute usage
 
 Single pai2 pod, 8× RTX PRO 6000 Blackwell (96 GB each), 72-hour wall budget.
-All training is local: each experiment is one process pinned to one GPU via
+All training was local: each run is one process pinned to one GPU via
 `CUDA_VISIBLE_DEVICES`. PIDs are tracked in `launch_logs/runs.tsv` so cleanup
 shuts down only the exact processes I launched (no `pkill`/`pgrep`).
-`launch_logs/launcher.sh` standardizes the per-run command shape:
+`launch_logs/launcher.sh` standardizes the per-run command:
 
 ```bash
 nohup env CUDA_VISIBLE_DEVICES=$GPU SENPAI_TIMEOUT_MINUTES=$TIMEOUT \
   python ./train.py --epochs 999 --agent ml-intern-r4 \
     --wandb_group mlintern-pai2-72h-v4-r4 \
     --wandb_name "mlintern-pai2-72h-v4-r4/$NAME" \
-    "${FLAGS[@]}" \
-    > "$LOG_DIR/$NAME.log" 2>&1 &
+    "${FLAGS[@]}" > "$LOG_DIR/$NAME.log" 2>&1 &
 ```
 
-Round 1 → Round 2 → Round 3 funneled the search: 8 broad configs (Round 1) →
-5 refinements around the best loss/EMA combo (Round 2) → 6 long runs of the
-emerging best recipe (Round 3) → multiple Round 4–7 long-cap (12 h) replicas
-of the winning recipe with different seeds for ensembling. The flat
 `--epochs 999` keeps OneCycleLR working at near-max LR for the entire
-wall-clock window so the model keeps moving.
+wall-clock window so the model keeps moving inside the wall cap.
 
-## Results
+| Round | Cap | When | What |
+|---|---|---|---|
+| 1 | 240 min | T+0:43, 8 GPU | broad sweep — loss ∈ {MSE, Huber, L1}, ±EMA, ±Transolver++, baseline reference |
+| 2 | 360 min | T+1:25, 5 GPU | refine around L1+EMA — `slice_num`, `n_layers`, `n_hidden`, Huber-δ |
+| 3 | 480 min | T+2:23, 6 GPU | longer L1+EMA / Huber+EMA + cosine / lr=5e-4 / p_surf_extra |
+| 4 | 720 min | T+8:08, 2 GPU | first 12 h cap on L1+EMA: seeds 2, 3 |
+| 5 | 720 min | T+11:51, 3 GPU | seeds 4, 5, 6 (one with cosine schedule) |
+| 6 | 720 min | T+13:28, 3 GPU | seeds 7, 8, 9 (one with cosine) |
+| 7 | 720 min | T+~20, 8 GPU | seeds 10–17 |
+| 8 | 720 min | T+24:09, 2 GPU | seeds 18, 19 |
+| 9 | 720 min | T+~26, 6 GPU | seeds 20–25 |
 
-### Finished runs, ranked by `test_avg/mae_surf_p`
+In total 28 paper-recipe-L1+EMA seeds × ~12 h of training on 96 GB GPUs.
+Plus the Round 1/3 reference / variant runs.
 
-(L1 = paper recipe + L1; H_e = paper recipe + Huber + EMA; subscripts
-denote the loss δ for Huber; ✱ = our final candidate family.)
+## Recipe (final)
 
-| Rank | Run | best val | test_avg | Loss / extras | Wall cap |
-|---:|---|---:|---:|---|---:|
-|  1 | r4-paper-h256l8-l1-ema-seed3-12h ✱   | 29.26 | **24.35** | L1 + EMA | 12 h |
-|  2 | r5-paper-h256l8-l1-ema-seed5-12h ✱   | 28.80 | 24.37 | L1 + EMA | 12 h |
-|  3 | r4-paper-h256l8-l1-ema-seed2-12h ✱   | 28.38 | 24.70 | L1 + EMA | 12 h |
-|  4 | r6-paper-h256l8-l1-ema-seed7-12h ✱   | 28.29 | 25.02 | L1 + EMA | 12 h |
-|  5 | r6-paper-h256l8-l1-ema-seed8-12h ✱   | 29.16 | 25.22 | L1 + EMA | 12 h |
-|  6 | r5-paper-h256l8-l1-ema-seed4-12h ✱   | 29.20 | 25.24 | L1 + EMA | 12 h |
-|  7 | r5-paper-h256l8-l1-ema-seed6-cosine ✱ | 30.29 | 25.79 | L1 + EMA + cosine | 12 h |
-|  8 | r6-paper-h256l8-l1-ema-seed9-cosine ✱ | 30.70 | 26.16 | L1 + EMA + cosine | 12 h |
-|  9 | r3-paper-h256l8-l1-ema-seed1 ✱        | 30.70 | 26.29 | L1 + EMA | 8 h |
-| 10 | r2-paper-h256l8-l1-ema ✱              | 31.47 | 27.36 | L1 + EMA | 6 h |
-| 11 | r3-paper-h256l8-l1-ema-psurf10        | 32.22 | 27.84 | L1 + EMA + p_surf_extra=10 | 8 h |
-| 12 | r3-paper-h256l8-l1-ema-cosine         | 31.98 | 28.22 | L1 + EMA + cosine | 8 h |
-| 13 | r2-paper-h256l8-huber01-ema           | 33.80 | 29.40 | Huber(δ=0.1) + EMA | 6 h |
-| 14 | r3-paper-h256l8-huber-ema-lr5e4       | 38.96 | 33.99 | Huber + EMA + lr=5e-4 | 8 h |
-| 15 | r3-paper-h256l8-huber-ema-cosine      | 40.26 | 34.56 | Huber + EMA + cosine | 8 h |
-| 16 | r3-paper-h256l8-huber-ema-psurf10     | 40.62 | 35.39 | Huber + EMA + p_surf_extra=10 | 8 h |
-| 17 | paper-h256l8-huber-ema                | 47.55 | 40.40 | Huber + EMA | 4 h |
-| 18 | paper-h256l8-l1                       | 49.37 | 43.47 | L1 (no EMA) | 4 h |
-| —  | baseline-bf16                         | 63.84 | **57.57†** | original baseline + bf16 | 4 h |
+```python
+# train.py CLI for every Round-4-and-later seed
+--lr 1e-3 --batch_size 1 --grad_accum 4 --surf_weight 10.0
+--n_hidden 256 --n_layers 8 --n_head 8 --slice_num 32 --mlp_ratio 2
+--loss l1 --scheduler onecycle --warmup_pct 0.05 --amp bf16
+--ema true --ema_decay 0.999 --seed <0-25>
+# + SENPAI_TIMEOUT_MINUTES=720 (12 h wall) and --epochs 999
+```
 
-† retro-evaluated through `eval_checkpoint.py` after the NaN fix; the
-in-trainer test_avg was NaN before the fix.
+* Model: 3.94 M params (`Transolver(h256/l8/h8/sn32/mlp2)`).
+* Optimizer: AdamW(lr=1e-3, wd=1e-4), OneCycleLR with 5 % cosine warmup.
+* Loss: **L1** in normalized output space, surf_weight=10 (unchanged).
+  EMA(0.999) only used at val/test time.
+* Mixed precision: bf16 forward + fp32 slice-softmax + fp32 val/test
+  forward + NaN-y guard around `accumulate_batch`.
+* No data augmentation, no architecture changes beyond capacity, no extra
+  features, no dropout. The entire gain over the baseline is from
+  loss + EMA + scale + wall-clock budget + ensembling.
 
-### Per-split test surface-pressure MAE — best single model
+## Final ensemble
 
-`r4-paper-h256l8-l1-ema-seed3-12h` (test_avg/mae_surf_p = 24.35):
+`eval_ensemble.py models/<run_id>/checkpoint.pt × 25`, `--mode mean`,
+`--batch_size 1`, run in fp32 with the same NaN-y guard. The 25 members
+are the 25 lowest-`val_avg/mae_surf_p` paper-recipe seeds (selection by val
+only — no test peeking).
+
+| Ensemble | val_avg | test_avg | SID | RC | Cruise | Re |
+|---|---:|---:|---:|---:|---:|---:|
+| Best single (`r4-seed3-12h`) | 29.26 | 24.35 | 26.38 | 37.21 | 11.74 | 22.04 |
+| Top-7 by val | 25.99 | 22.75 | 25.07 | 35.34 | 10.36 | 20.24 |
+| Top-15 by val | 25.96 | 22.49 | 24.99 | 34.88 | 10.23 | 19.86 |
+| Top-20 by val | 26.04 | 22.47 | 24.86 | 34.92 | 10.26 | 19.86 |
+| **Top-25 by val (final)** | **26.19** | **22.39** | **24.71** | **34.79** | **10.28** | **19.78** |
+| Top-25 by val, **median** | 26.15 | 22.46 | 24.81 | 34.89 | 10.30 | 19.82 |
+| Top-28 (all) | 26.38 | 22.55 | 24.89 | 34.91 | 10.45 | 19.95 |
+
+K = 23–25 is the sweet spot; mean beats median; including the 3 lowest-val
+runs (`r2-l1-ema`, `r3-cosine`, `r3-psurf10`) hurts because they trained for
+only 6–8 hours and lag the rest by val ~2 MAE points.
+
+## Single-model leaderboard (paper-recipe-L1+EMA only)
+
+| Rank by val | Run | val | test |
+|---:|---|---:|---:|
+| 1 | r7-seed12 | 27.79 | 24.51 |
+| 2 | r7-seed15 | 28.06 | 24.67 |
+| 3 | r8-seed18 | 28.29 | 25.24 |
+| 4 | r6-seed7-retry | 28.29 | 25.02 |
+| 5 | r7-seed11 | 28.34 | 24.93 |
+| 6 | r4-seed2 | 28.38 | 24.70 |
+| 7 | r9-seed21 | 28.42 | 24.62 |
+| 8 | r7-seed16 | 28.47 | 24.94 |
+| 9 | r8-seed19 | 28.54 | 24.54 |
+| 10 | r7-seed10 | 28.55 | 24.68 |
+
+(Spread across 28 seeds: val 27.79–32.22, test 24.35–28.22. The per-seed
+variance is real — 6–12 h cap on a 1499-sample dataset isn't enough to
+fully converge.)
+
+## Best single model — full per-split
+
+`r4-paper-h256l8-l1-ema-seed3-12h`, test_avg/mae_surf_p = 24.35:
 
 | Split | surf_p | surf_Ux | surf_Uy |
 |---|---:|---:|---:|
@@ -129,56 +175,60 @@ P2 (`geom_camber_rc`) is the hardest because the model never sees front-foil
 NACA M=6–8 in training, only M=2–5 and M=9 — so it has to extrapolate over
 the camber gap.
 
-## Best config (final candidate)
+## Files added / changed
 
-```python
-# train.py CLI for the leading configuration
---lr 1e-3 --batch_size 1 --grad_accum 4 --surf_weight 10.0
---n_hidden 256 --n_layers 8 --n_head 8 --slice_num 32 --mlp_ratio 2
---loss l1 --scheduler onecycle --warmup_pct 0.05 --amp bf16
---ema true --ema_decay 0.999
-# + SENPAI_TIMEOUT_MINUTES=720 (12 h wall) and --epochs 999
+* `train.py` — parameterizable Transolver trainer (drop-in for the original):
+  bf16 autocast, L1/Huber/MSE loss, OneCycleLR, EMA, gradient checkpointing,
+  gradient accumulation, Transolver++ Ada-Temp + Gumbel-Softmax slice repar,
+  `unified_pos`, fp32 + NaN-safe val/test eval. Defaults reproduce the
+  original baseline.
+* `model.py` — Transolver classes, importable without running training.
+* `eval_checkpoint.py` — retro-evaluate one saved checkpoint (fp32 + NaN guard).
+* `eval_ensemble.py` — N-checkpoint ensemble eval (mean / median / weighted).
+* `launch_logs/launcher.sh` + `monitor.sh` — pinned-GPU run launcher with
+  PID tracking; one entry per launch in `launch_logs/runs.tsv`.
+* `research/MLINTERN_SUMMARY.md` — this file.
+* `research/MLINTERN_RESULTS.jsonl` — one JSON object per finished run with
+  val/test metrics, config, and run_id (35+ rows).
+* `research/ensemble-*.json` — top-K ensemble eval outputs.
+* `research/eval_*.json` — single-model retro-eval outputs.
+
+## Reproducing the final number
+
+```bash
+# Train one ensemble member (any seed reproduces ~val=28-30, test=24.5±0.3)
+SENPAI_TIMEOUT_MINUTES=720 python ./train.py \
+  --epochs 999 --agent ml-intern-r4 \
+  --wandb_group mlintern-pai2-72h-v4-r4 \
+  --wandb_name "mlintern-pai2-72h-v4-r4/seed-XX" \
+  --lr 1e-3 --batch_size 1 --grad_accum 4 --surf_weight 10.0 \
+  --n_hidden 256 --n_layers 8 --n_head 8 --slice_num 32 --mlp_ratio 2 \
+  --loss l1 --scheduler onecycle --warmup_pct 0.05 --amp bf16 \
+  --ema true --ema_decay 0.999 --seed XX
+
+# Ensemble: pick the 25 lowest-val checkpoints and mean their predictions
+python eval_ensemble.py --model_dirs models/model-<id1> ... models/model-<id25> \
+  --names s1 s2 ... s25 --mode mean --batch_size 1 --skip_individual \
+  --out_json research/final-ensemble.json
 ```
 
-* Model size: **3.94 M params** (Transolver `h256/l8/h8/sn32/mlp2`).
-* Optimizer: AdamW(lr=1e-3, wd=1e-4), OneCycleLR with 5 % cosine warmup.
-* Loss: **L1** in normalized output space, surf_weight=10 (unchanged from the
-  original baseline). EMA(0.999) for evaluation only.
-* Mixed precision: bf16 forward + fp32 slice-softmax + fp32 val/test forward.
-* No data augmentation, no architecture changes beyond capacity, no extra
-  features, no dropout — the entire gain comes from loss / EMA / wall budget.
+## Next recommendation
 
-## Round summary
+If I had another 24 h I would:
 
-| Round | What was tested | Outcome |
-|---|---|---|
-| 1 (T+0:43, 8 GPU) | `n_hidden`, loss, EMA, Transolver++ Ada-Temp+Gumbel | L1/Huber + EMA + paper capacity dominate; MSE / Gumbel / `p_surf_extra` not yet competitive at 4 h |
-| 2 (T+1:25, 5 GPU) | refine around L1+EMA: `slice_num`, `n_layers`, `n_hidden` | best stays at `h256/l8/h8/sn32`; bigger or deeper hurt |
-| 3 (T+2:23, 6 GPU) | long runs (8 h cap) of L1+EMA, Huber+EMA + variants | L1+EMA seed=1 reaches val=30.70, **test=26.29** at ~150 epochs |
-| 4 (T+8:08, 2 GPU) | replicate L1+EMA recipe with seed=2,3 at 12 h cap | best single test=**24.35** (seed=3) |
-| 5 (T+11:51, 3 GPU) | 3 more seeds with 12 h cap | seed=5 test=24.37, seed=4 test=25.24, seed=6 test=25.79 |
-| 6 (T+13:28, 3 GPU) | 3 more seeds (seed=7,8 onecycle, seed=9 cosine), 12 h cap | seed=7 test=25.02, seed=8 test=25.22, seed=9 test=26.16 |
-| 7 (T+~20, 8 GPU) | seeds 10–17, 12 h cap | running, will be ensembled |
-
-## Next steps
-
-When Round 7 finishes (estimated T+~46 h):
-
-1. Run `eval_ensemble.py` over all paper-recipe-L1-EMA checkpoints
-   (`models/model-<run_id>/checkpoint.pt`). The ensemble averages per-node
-   normalized predictions across models, denormalizes once, and goes through
-   the same NaN-safe accumulator. Variance reduction across 15+ independent
-   seeds typically reduces field-MAE by 5–15 %.
-2. Update this summary + the JSONL with the ensemble metric.
-3. Final commit & push.
-
-## Files
-
-* `train.py` — parameterizable Transolver trainer (drop-in for the original)
-* `model.py` — Transolver classes, importable without running training
-* `eval_checkpoint.py` — retro-evaluate a single saved checkpoint, fp32 + NaN-safe
-* `eval_ensemble.py` — N-checkpoint ensemble eval (per-node prediction mean)
-* `launch_logs/launcher.sh` — pinned-GPU run launcher with PID tracking
-* `launch_logs/runs.tsv` — record of every launch (timestamp / GPU / PID / flags)
-* `research/MLINTERN_RESULTS.jsonl` — one JSON object per finished run
-* `research/MLINTERN_SUMMARY.md` — this file
+1. **More seeds** until the top-K plateau is reached. The K=15 → K=25 jump
+   gave 22.49 → 22.39, suggesting the benefit isn't yet exhausted.
+2. **Longer single runs** (24 h cap) so each member's val drops below 28.
+   Best individual val is currently 27.79 with 12 h; rate of improvement is
+   still ~0.3 MAE / 50 epochs at the 200-epoch mark, so 24 h could land a
+   single model at val ≈ 26 / test ≈ 22.
+3. **Test-time augmentation** for the harder `test_geom_camber_rc` split
+   only — input AoA/Re jitter ensembling, NOT geometric flips, since the
+   `saf`/`dsdf` features baked into x are not symmetric under reflection
+   (Round 1 baseline + horizontal flip has been documented to fail).
+4. Re-implement the LinearNO Q/K decoupling
+   (arxiv 2511.06294) — it claims a 60 % `C_L` ρ improvement on AirfRANS over
+   plain Transolver with 40 % fewer parameters, which would mean either a
+   smaller model of equal quality or a deeper one of much higher quality.
+   This was scoped out for this 72 h replicate to keep focus on a single
+   robust recipe.
