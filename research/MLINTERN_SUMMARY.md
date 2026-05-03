@@ -19,7 +19,7 @@ Primary ranking metric is `val_avg/mae_surf_p` — surface pressure MAE averaged
 | Round-6 small (350 ep) | 28.32 | 23.93 | More epochs, peak hit |
 | Round-7 small (350 ep, seed=2) | **27.91** | **23.69** | Best single model (val + test) |
 | Round-8 (8 more 350-ep seeds) | various | 23.71-24.79 | All hit val 27.6-29.2, test 23.7-24.8 |
-| **Best 14-model ensemble (all 350-ep + 300-ep seeds)** | **24.78** | **20.32** | Average of normalised predictions |
+| **Best 14-model ensemble (all 350-ep + 300-ep seeds)** | **24.40** | **20.32** | Average of normalised predictions |
 
 Best single model: `test_avg/mae_surf_p = 23.69` (~70% better than the val implied by repo baseline).
 Best ensemble: `test_avg/mae_surf_p = 20.32` (~74% better).
@@ -128,7 +128,7 @@ python scripts/ensemble_eval.py --bf16 --batch_size 2 \
   --out_json research/eval_outputs/ensemble-FINAL-mega14b.json
 ```
 
-→ **val ensemble = ~24.78, test ensemble = 20.32**.
+→ **val ensemble = 24.40, test ensemble = 20.32**.
 
 These 14 are all `n_hidden=128, n_layers=5, slice_num=64, mlp_ratio=2` (the original baseline architecture) trained with **L1 + OneCycle + EMA(0.999) + bf16 + grad_clip(1.0)** at 300/350/400 epochs across {seed=0,1,2,3,4,5,7,8,9,11, lr=5e-4 variant}. Adding wider/deeper architectures or the weakest seeds (6, 10) was net-neutral or slightly harmful.
 
@@ -136,11 +136,11 @@ These 14 are all `n_hidden=128, n_layers=5, slice_num=64, mlp_ratio=2` (the orig
 
 | Split | val surface-p MAE | test surface-p MAE |
 |---|---:|---:|
-| `*_single_in_dist` (sanity) | ~23.4 | 21.24 |
-| `*_geom_camber_rc` (unseen camber, raceCar) | ~36.0 | 34.00 |
-| `*_geom_camber_cruise` (unseen camber, cruise) | ~12.5 | 8.88 |
-| `*_re_rand` (cross-Re holdout) | ~27.0 | 17.44 |
-| **avg** | **~24.78** | **20.32** |
+| `*_single_in_dist` (sanity) | 22.96 | 21.19 |
+| `*_geom_camber_rc` (unseen camber, raceCar) | 36.22 | 33.78 |
+| `*_geom_camber_cruise` (unseen camber, cruise) | 11.47 | 8.88 |
+| `*_re_rand` (cross-Re holdout) | 26.95 | 17.44 |
+| **avg** | **24.40** | **20.32** |
 
 The hardest split is `geom_camber_rc` (unseen front-foil camber on raceCar tandem with ground effect) — about 3.8× the easiest split (`geom_camber_cruise`). The `re_rand` split has a notably bigger val→test gap (27.0 vs 17.4) than the other splits, which is why the test ensemble is meaningfully lower than val.
 
