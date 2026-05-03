@@ -1,0 +1,123 @@
+{
+  "ckpts": [
+    "models/model-8ztzpoxh/checkpoint.pt",
+    "models/model-2oy26ziy/checkpoint.pt",
+    "models/model-pk32z2he/checkpoint.pt",
+    "models/model-twjw9azd/checkpoint.pt",
+    "models/model-bg2kvsv1/checkpoint.pt",
+    "models/model-8xf75b10/checkpoint.pt",
+    "models/model-6fwswn5j/checkpoint.pt",
+    "models/model-trnvje2c/checkpoint.pt",
+    "models/model-949gswoe/checkpoint.pt",
+    "models/model-utzmuobv/checkpoint.pt"
+  ],
+  "model_config": {
+    "dropout": 0.0,
+    "fun_dim": 22,
+    "mlp_ratio": 2,
+    "n_head": 1,
+    "n_hidden": 128,
+    "n_layers": 3,
+    "out_dim": 3,
+    "output_dims": [
+      1,
+      1,
+      1
+    ],
+    "output_fields": [
+      "Ux",
+      "Uy",
+      "p"
+    ],
+    "rff_B_size": 16,
+    "rff_coord_dims": 2,
+    "rff_sigma": 0.0,
+    "slice_num": 16,
+    "slice_nums": null,
+    "space_dim": 2
+  },
+  "val_avg": {
+    "avg/mae_surf_Ux": 0.27512980544846827,
+    "avg/mae_surf_Uy": 0.175831756156362,
+    "avg/mae_surf_p": 22.570432641957176,
+    "avg/mae_vol_Ux": 1.2117165956758964,
+    "avg/mae_vol_Uy": 0.4627402515666072,
+    "avg/mae_vol_p": 21.812356205650083
+  },
+  "test_avg": {
+    "avg/mae_surf_Ux": 0.2659206847084278,
+    "avg/mae_surf_Uy": 0.16197169993449928,
+    "avg/mae_surf_p": 20.24270147600815,
+    "avg/mae_vol_Ux": 1.1444629561380475,
+    "avg/mae_vol_Uy": 0.4218393216650409,
+    "avg/mae_vol_p": 19.778851445433848
+  },
+  "val_per_split": {
+    "val_single_in_dist": {
+      "mae_surf_Ux": 0.17948071430338108,
+      "mae_vol_Ux": 1.0769490667193582,
+      "mae_surf_Uy": 0.15575382539595656,
+      "mae_vol_Uy": 0.3472488504155129,
+      "mae_surf_p": 21.43657122483019,
+      "mae_vol_p": 20.490169226408224
+    },
+    "val_geom_camber_rc": {
+      "mae_surf_Ux": 0.4746715523407975,
+      "mae_vol_Ux": 1.8225333734703868,
+      "mae_surf_Uy": 0.2780732744549634,
+      "mae_vol_Uy": 0.7995342625644135,
+      "mae_surf_p": 34.899697143856386,
+      "mae_vol_p": 35.26631662026238
+    },
+    "val_geom_camber_cruise": {
+      "mae_surf_Ux": 0.12966332487353324,
+      "mae_vol_Ux": 0.7613325466360233,
+      "mae_surf_Uy": 0.08709142154582968,
+      "mae_vol_Uy": 0.22430960655997786,
+      "mae_surf_p": 9.391913098136072,
+      "mae_vol_p": 8.960339056184914
+    },
+    "val_re_rand": {
+      "mae_surf_Ux": 0.31670363027616133,
+      "mae_vol_Ux": 1.1860513958778174,
+      "mae_surf_Uy": 0.18240850322869848,
+      "mae_vol_Uy": 0.47986828672652454,
+      "mae_surf_p": 24.553549101006052,
+      "mae_vol_p": 22.53259991974482
+    }
+  },
+  "test_per_split": {
+    "test_single_in_dist": {
+      "mae_surf_Ux": 0.23402420677578434,
+      "mae_vol_Ux": 1.0613246078419012,
+      "mae_surf_Uy": 0.16044347463144132,
+      "mae_vol_Uy": 0.35434444856535485,
+      "mae_surf_p": 22.66277804824392,
+      "mae_vol_p": 22.032253651632107
+    },
+    "test_geom_camber_rc": {
+      "mae_surf_Ux": 0.4886908772929977,
+      "mae_vol_Ux": 1.800962966996525,
+      "mae_surf_Uy": 0.2694041305857425,
+      "mae_vol_Uy": 0.76068249980357,
+      "mae_surf_p": 34.7656552992886,
+      "mae_vol_p": 34.53729952146665
+    },
+    "test_geom_camber_cruise": {
+      "mae_surf_Ux": 0.11203702687734973,
+      "mae_vol_Ux": 0.7023773327405924,
+      "mae_surf_Uy": 0.07393684552509608,
+      "mae_vol_Uy": 0.19932608221769388,
+      "mae_surf_p": 7.026908985265891,
+      "mae_vol_p": 6.981014541936405
+    },
+    "test_re_rand": {
+      "mae_surf_Ux": 0.22893062788757923,
+      "mae_vol_Ux": 1.013186916973171,
+      "mae_surf_Uy": 0.14410234899571722,
+      "mae_vol_Uy": 0.37300425607354504,
+      "mae_surf_p": 16.515463571234193,
+      "mae_vol_p": 15.564838066700226
+    }
+  }
+}
