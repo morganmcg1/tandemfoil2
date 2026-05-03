@@ -6,17 +6,20 @@
 
 ## TL;DR
 
-* **Best single-model `test_avg/mae_surf_p` so far:** **24.35**
-  ([`r4-paper-h256l8-l1-ema-seed3-12h`](https://wandb.ai/wandb-applied-ai-team/senpai-v1-ml-intern/runs))
+* **Best single-model `test_avg/mae_surf_p`:** **24.35**
+  (`r4-paper-h256l8-l1-ema-seed3-12h`) — paper-Transolver h256/l8 + L1 +
+  EMA(0.999), 12 h wall, ~250 epochs.
+* **Best ensemble `test_avg/mae_surf_p`:** **22.52**
+  (top-7 of 17 paper-recipe seeds, prediction mean in normalized space).
+  Per-split: SID 24.73, RC 34.93, Cruise 10.37, Re 20.04.
 * **Recipe:** stock Transolver scaled to the AirfRANS settings from the
   paper — `n_hidden=256, n_layers=8, n_head=8, slice_num=32, mlp_ratio=2`
   trained with **L1 + EMA(0.999)**, AdamW(lr=1e-3, wd=1e-4), OneCycleLR with
   5 % warmup, bf16 mixed precision (fp32 evaluator), `surf_weight=10`,
-  `batch_size=1` × `grad_accum=4` (effective 4), 12 h wall budget per run
-  (~250 epochs).
-* **Ensemble:** 13+ seeds of this recipe finished, more in flight; final
-  number will be the prediction-mean ensemble across all of them via
-  `eval_ensemble.py`.
+  `batch_size=1` × `grad_accum=4` (effective 4), 12 h wall budget per run.
+* **Ensembling sweet spot is 5–7 models** by the data:
+  top-3=22.76, top-5=22.55, **top-7=22.52**, top-14=22.88, top-17=22.76.
+  Adding worse seeds dilutes the average.
 
 ## Strategy
 
