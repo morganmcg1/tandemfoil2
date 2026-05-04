@@ -7,14 +7,17 @@
 ## TL;DR
 
 * **Best single model `test_avg/mae_surf_p`**: **24.35**
-  (`r4-paper-h256l8-l1-ema-seed3-12h`)
-* **Best ensemble `test_avg/mae_surf_p`**: **22.39**
-  (top-25 of 28 paper-recipe-L1+EMA seeds, prediction-mean ensemble selected
-  by `val_avg/mae_surf_p` only — no test peeking)
-* **Per-split (top-25 ensemble):** `test_single_in_dist=24.71`,
-  `test_geom_camber_rc=34.79`, `test_geom_camber_cruise=10.28`,
-  `test_re_rand=19.78`.
-* **Recipe** (every one of the 28 ensemble members, no per-seed tuning):
+  (`r4-paper-h256l8-l1-ema-seed3-12h`); best single by val:
+  `r10-…-seed26-12h` at val=27.75, test=24.81.
+* **Best ensemble** (selected by `val_avg/mae_surf_p`, no test peeking):
+  top-15 of 36 paper-recipe-L1+EMA seeds, prediction-mean → **val=25.88,
+  test=22.47**. K=15 minimizes val; K=25 also yields val=25.98 / test=22.46;
+  best observed test was 22.39 with top-25 of the first 28 candidates
+  (i.e. the snapshot before the final 8 seeds finished).
+* **Per-split (top-15 of 36 ensemble):**
+  `test_single_in_dist=24.83`, `test_geom_camber_rc=34.89`,
+  `test_geom_camber_cruise=10.24`, `test_re_rand=19.92`.
+* **Recipe** (every one of the 36 ensemble members, no per-seed tuning):
   paper-Transolver `n_hidden=256, n_layers=8, n_head=8, slice_num=32,
   mlp_ratio=2` + L1 loss + EMA(0.999) + AdamW(lr=1e-3, wd=1e-4) +
   OneCycleLR (5 % warmup) + bf16 mixed precision + `surf_weight=10` +
@@ -94,8 +97,9 @@ wall-clock window so the model keeps moving inside the wall cap.
 | 7 | 720 min | T+~20, 8 GPU | seeds 10–17 |
 | 8 | 720 min | T+24:09, 2 GPU | seeds 18, 19 |
 | 9 | 720 min | T+~26, 6 GPU | seeds 20–25 |
+| 10 | 720 min | T+53:17, 8 GPU | seeds 26–33 (final batch) |
 
-In total 28 paper-recipe-L1+EMA seeds × ~12 h of training on 96 GB GPUs.
+In total **36 paper-recipe-L1+EMA seeds × ~12 h** of training on 96 GB GPUs.
 Plus the Round 1/3 reference / variant runs.
 
 ## Recipe (final)
@@ -121,10 +125,12 @@ Plus the Round 1/3 reference / variant runs.
 
 ## Final ensemble
 
-`eval_ensemble.py models/<run_id>/checkpoint.pt × 25`, `--mode mean`,
-`--batch_size 1`, run in fp32 with the same NaN-y guard. The 25 members
-are the 25 lowest-`val_avg/mae_surf_p` paper-recipe seeds (selection by val
-only — no test peeking).
+`eval_ensemble.py models/<run_id>/checkpoint.pt × K`, `--mode mean`,
+`--batch_size 1`, run in fp32 with the same NaN-y guard. Members are the K
+lowest-`val_avg/mae_surf_p` paper-recipe seeds (selection by val only — no
+test peeking).
+
+### Sweep over the 28-candidate intermediate snapshot (after R7-R9)
 
 | Ensemble | val_avg | test_avg | SID | RC | Cruise | Re |
 |---|---:|---:|---:|---:|---:|---:|
@@ -132,32 +138,57 @@ only — no test peeking).
 | Top-7 by val | 25.99 | 22.75 | 25.07 | 35.34 | 10.36 | 20.24 |
 | Top-15 by val | 25.96 | 22.49 | 24.99 | 34.88 | 10.23 | 19.86 |
 | Top-20 by val | 26.04 | 22.47 | 24.86 | 34.92 | 10.26 | 19.86 |
-| **Top-25 by val (final)** | **26.19** | **22.39** | **24.71** | **34.79** | **10.28** | **19.78** |
+| Top-23 by val | 26.11 | 22.40 | 24.75 | 34.83 | 10.25 | 19.76 |
+| Top-25 by val | 26.19 | **22.39** | **24.71** | **34.79** | 10.28 | **19.78** |
 | Top-25 by val, **median** | 26.15 | 22.46 | 24.81 | 34.89 | 10.30 | 19.82 |
 | Top-28 (all) | 26.38 | 22.55 | 24.89 | 34.91 | 10.45 | 19.95 |
 
-K = 23–25 is the sweet spot; mean beats median; including the 3 lowest-val
-runs (`r2-l1-ema`, `r3-cosine`, `r3-psurf10`) hurts because they trained for
-only 6–8 hours and lag the rest by val ~2 MAE points.
+### Sweep on the final 36-candidate set (after R10's eight extra seeds)
 
-## Single-model leaderboard (paper-recipe-L1+EMA only)
+| Ensemble | val_avg | test_avg | SID | RC | Cruise | Re |
+|---|---:|---:|---:|---:|---:|---:|
+| **Top-15 by val** | **25.88** | **22.47** | **24.83** | **34.89** | **10.24** | **19.92** |
+| Top-20 by val | 25.91 | 22.47 | 24.97 | 34.84 | 10.25 | 19.83 |
+| Top-25 by val | 25.98 | 22.46 | 24.90 | 34.86 | 10.24 | 19.84 |
+| Top-30 by val | 26.08 | 22.43 | 24.86 | 34.82 | 10.25 | 19.80 |
+
+* On the final 36-candidate set, **K=15 minimizes `val_avg/mae_surf_p`**
+  (the metric the contract says to prioritize) at 25.88, with the
+  corresponding **`test_avg/mae_surf_p` = 22.47**. This is the answer I
+  am reporting.
+* The lowest test number observed across all sweeps was 22.39 (top-25 of
+  the 28-candidate snapshot before the last 8 seeds came in). The
+  difference to 22.47 is well inside the per-seed test variance
+  (24.35–28.22 across single seeds).
+* Across both sweeps, **mean beats median**, and the optimal K is 15–25
+  — adding the 3 lowest-val runs (`r2-l1-ema`, `r3-cosine`, `r3-psurf10`,
+  all 6–8 h wall budget instead of 12 h) consistently hurts the average.
+
+## Single-model leaderboard — top 15 of 36 (paper-recipe-L1+EMA only)
 
 | Rank by val | Run | val | test |
 |---:|---|---:|---:|
-| 1 | r7-seed12 | 27.79 | 24.51 |
-| 2 | r7-seed15 | 28.06 | 24.67 |
-| 3 | r8-seed18 | 28.29 | 25.24 |
-| 4 | r6-seed7-retry | 28.29 | 25.02 |
-| 5 | r7-seed11 | 28.34 | 24.93 |
-| 6 | r4-seed2 | 28.38 | 24.70 |
-| 7 | r9-seed21 | 28.42 | 24.62 |
-| 8 | r7-seed16 | 28.47 | 24.94 |
-| 9 | r8-seed19 | 28.54 | 24.54 |
-| 10 | r7-seed10 | 28.55 | 24.68 |
+| 1 | r10-seed26 | **27.75** | 24.81 |
+| 2 | r7-seed12 | 27.79 | 24.51 |
+| 3 | r7-seed15 | 28.06 | 24.67 |
+| 4 | r8-seed18 | 28.29 | 25.24 |
+| 5 | r6-seed7-retry | 28.29 | 25.02 |
+| 6 | r10-seed32 | 28.34 | 24.98 |
+| 7 | r7-seed11 | 28.34 | 24.93 |
+| 8 | r4-seed2 | 28.38 | 24.70 |
+| 9 | r9-seed21 | 28.42 | 24.62 |
+| 10 | r7-seed16 | 28.47 | 24.94 |
+| 11 | r10-seed27 | 28.49 | 24.69 |
+| 12 | r8-seed19 | 28.54 | 24.54 |
+| 13 | r7-seed10 | 28.55 | 24.68 |
+| 14 | r7-seed17 | 28.56 | 25.01 |
+| 15 | r9-seed23 | 28.59 | 24.77 |
 
-(Spread across 28 seeds: val 27.79–32.22, test 24.35–28.22. The per-seed
-variance is real — 6–12 h cap on a 1499-sample dataset isn't enough to
-fully converge.)
+These are the 15 members of the final reported ensemble. Spread across all
+36 seeds: val 27.75–32.22, test 24.35–28.22. The per-seed test variance is
+~1 MAE point — 12 h wall on 1499 training samples isn't enough to fully
+converge a single 3.94 M Transolver, and that variance is exactly what the
+ensemble averages out.
 
 ## Best single model — full per-split
 
@@ -206,9 +237,9 @@ SENPAI_TIMEOUT_MINUTES=720 python ./train.py \
   --loss l1 --scheduler onecycle --warmup_pct 0.05 --amp bf16 \
   --ema true --ema_decay 0.999 --seed XX
 
-# Ensemble: pick the 25 lowest-val checkpoints and mean their predictions
-python eval_ensemble.py --model_dirs models/model-<id1> ... models/model-<id25> \
-  --names s1 s2 ... s25 --mode mean --batch_size 1 --skip_individual \
+# Ensemble: pick the 15 lowest-val checkpoints and mean their predictions
+python eval_ensemble.py --model_dirs models/model-<id1> ... models/model-<id15> \
+  --names s1 s2 ... s15 --mode mean --batch_size 1 --skip_individual \
   --out_json research/final-ensemble.json
 ```
 
